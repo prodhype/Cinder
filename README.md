@@ -70,6 +70,7 @@ cinder run app.ci -- first second
 
 ```python
 import stdio
+import math
 
 @reflect
 abstract class Shape:
@@ -96,7 +97,7 @@ class Circle(Shape):
 
     @override
     def area(self) -> f64:
-        return 3.141592653589793 * self.radius * self.radius
+        return math.pi * self.radius * self.radius
 
 
 def describe(shape: &dyn Shape) -> void:
