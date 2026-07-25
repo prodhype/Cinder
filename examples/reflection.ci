@@ -1,0 +1,38 @@
+import stdio
+
+@reflect
+struct User:
+    id: u64
+    name: const char*
+    active: bool
+
+    def enabled(self: &const User) -> bool:
+        return self.active
+
+
+static_assert(field_count(User) == 3, "User layout changed")
+static_assert(method_count(User) == 1)
+static_assert(has_field(User, "name"))
+static_assert(has_method(User, "enabled"))
+
+
+def print_compile_time_layout() -> void:
+    for field in comptime fields_of(User):
+        stdio.printf(
+            "compile-time field: %s, offset=%zu, size=%zu\n",
+            field.name,
+            field.offset,
+            field.size,
+        )
+
+
+def main() -> i32:
+    user = User(id=42, name="Cinder", active=true)
+    info = type_info(user)
+    stdio.printf("type: %s, fields=%zu, methods=%zu\n", info.name, info.field_count, info.method_count)
+
+    for field in fields(user):
+        stdio.printf("runtime field: %s (%s)\n", field.name, field.type_name)
+
+    print_compile_time_layout()
+    return 0

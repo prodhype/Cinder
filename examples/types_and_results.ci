@@ -1,0 +1,44 @@
+import stdio
+
+enum ParseError:
+    negative
+    too_large = 10
+
+union Number:
+    integer: i32
+    real: f64
+
+variant Token:
+    Integer(value: i32)
+    End
+
+
+def parse(value: i32) -> Result[Token, ParseError]:
+    if value < 0:
+        return Err(ParseError.negative)
+    if value > 100:
+        return Err(ParseError.too_large)
+    return Ok(Token.Integer(value))
+
+
+def increment(value: i32) -> Result[i32, ParseError]:
+    token = parse(value)?
+
+    match token:
+        case Token.Integer(parsed):
+            return Ok(parsed + 1)
+        case Token.End:
+            return Ok(0)
+
+
+def main() -> i32:
+    number = Number(integer=41)
+    result = increment(number.integer)
+
+    match result:
+        case Ok(value):
+            stdio.printf("value=%d\n", value)
+        case Err(error):
+            stdio.printf("error=%d\n", cast[i32](error))
+
+    return 0

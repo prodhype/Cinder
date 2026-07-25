@@ -1,0 +1,11 @@
+import stdio
+extern import "ctype.h"
+
+extern "C":
+    def toupper(character: c_int) -> c_int
+
+
+def main() -> i32:
+    result = toupper('a')
+    stdio.printf("%c\n", result)
+    return 0

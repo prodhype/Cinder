@@ -1,0 +1,4 @@
+[project]
+name = "class_project"
+source-root = "src"
+entry = "main.ci"

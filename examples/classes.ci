@@ -1,0 +1,39 @@
+import stdio
+
+@reflect
+abstract class Shape:
+    name: const char*
+
+    def __init__(self, name: const char*):
+        self.name = name
+
+    @abstractmethod
+    def area(self) -> f64:
+        pass
+
+    def describe(self) -> void:
+        stdio.printf("%s: %.2f\n", self.name, self.area())
+
+
+@reflect
+class Circle(Shape):
+    radius: f64
+
+    def __init__(self, radius: f64):
+        super().__init__("circle")
+        self.radius = radius
+
+    @override
+    def area(self) -> f64:
+        return 3.141592653589793 * self.radius * self.radius
+
+
+def describe(shape: &dyn Shape) -> void:
+    stdio.printf("runtime type: %s\n", type_name(shape))
+    shape.describe()
+
+
+def main() -> i32:
+    circle = Circle(radius=4.0)
+    describe(circle)
+    return 0

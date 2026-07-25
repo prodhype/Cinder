@@ -1,0 +1,14 @@
+import stdio
+
+
+def compute() -> i32:
+    values = alloc[i32](2)
+    defer free(values)
+    values[0] = 20
+    values[1] = 22
+    return values[0] + values[1]
+
+
+def main() -> i32:
+    stdio.printf("result: %d\n", compute())
+    return 0

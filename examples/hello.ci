@@ -1,0 +1,6 @@
+import stdio
+
+
+def main() -> i32:
+    stdio.printf("Hello from Cinder!\n")
+    return 0

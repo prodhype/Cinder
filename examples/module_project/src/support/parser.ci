@@ -1,0 +1,9 @@
+import model
+
+
+def parse(value: i32) -> Result[model.Token, model.ParseError]:
+    if value < 0:
+        return Err(model.ParseError.negative)
+    if value > 100:
+        return Err(model.ParseError.too_large)
+    return Ok(model.Token.Integer(value))

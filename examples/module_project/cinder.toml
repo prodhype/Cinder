@@ -1,0 +1,4 @@
+[project]
+name = "module_demo"
+source-root = "src"
+entry = "main.ci"

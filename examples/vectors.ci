@@ -1,0 +1,16 @@
+import math
+import stdio
+
+
+struct Vec2:
+    x: f32
+    y: f32
+
+    def length(self: &const Vec2) -> f32:
+        return math.sqrtf(self.x * self.x + self.y * self.y)
+
+
+def main() -> i32:
+    vector = Vec2(x=3.0, y=4.0)
+    stdio.printf("length: %.1f\n", vector.length())
+    return 0

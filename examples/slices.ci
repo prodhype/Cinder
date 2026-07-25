@@ -1,0 +1,16 @@
+import stdio
+
+
+def sum(values: []const i32) -> i32:
+    total: i32 = 0
+    for value in values:
+        total += value
+    return total
+
+
+def main() -> i32:
+    values: i32[5] = [1, 2, 3, 4, 5]
+    middle = values[1:4]
+    stdio.printf("sum: %d, length: %zu\n", sum(middle), middle.length)
+    stdio.printf("whole: %d\n", sum(values))
+    return 0

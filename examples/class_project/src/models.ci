@@ -1,0 +1,12 @@
+from shapes import Shape
+
+@reflect
+class Circle(Shape):
+    radius: f64
+
+    def __init__(self, radius: f64):
+        self.radius = radius
+
+    @override
+    def area(self) -> f64:
+        return 3.141592653589793 * self.radius * self.radius

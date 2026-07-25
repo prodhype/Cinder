@@ -1,0 +1,12 @@
+@reflect
+abstract class Shape:
+    @abstractmethod
+    def area(self) -> f64:
+        pass
+
+    def scaled(self, factor: f64) -> f64:
+        return self.area() * factor
+
+
+def measure(shape: &dyn Shape) -> f64:
+    return shape.scaled(2.0)

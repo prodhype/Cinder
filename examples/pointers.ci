@@ -1,0 +1,14 @@
+import stdio
+
+
+def increment(value: &i32) -> void:
+    value += 1
+
+
+def main() -> i32:
+    value: i32 = 40
+    increment(value)
+    pointer: *i32 = &value
+    pointer[0] += 1
+    stdio.printf("value: %d\n", value)
+    return 0

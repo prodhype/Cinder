@@ -1,0 +1,158 @@
+import stdio
+
+
+enum GraphError:
+    invalid_vertex
+    unreachable
+
+
+@reflect
+struct Graph:
+    weights: i32[36]
+
+    def weight(self: &const Graph, source: i32, target: i32) -> i32:
+        return self.weights[source * 6 + target]
+
+
+@reflect
+variant SearchEvent:
+    Visiting(vertex: i32, distance: i32)
+    Relaxed(source: i32, target: i32, distance: i32)
+    Finished(distance: i32)
+
+
+@reflect
+abstract class Reporter:
+    @abstractmethod
+    def emit(self, event: SearchEvent) -> void:
+        pass
+
+
+@reflect
+class ConsoleReporter(Reporter):
+    label: const char*
+
+    def __init__(self, label: const char*):
+        self.label = label
+
+    @override
+    def emit(self, event: SearchEvent) -> void:
+        match event:
+            case SearchEvent.Visiting(vertex, distance):
+                stdio.printf("%s visit %d at distance %d\n", self.label, vertex, distance)
+            case SearchEvent.Relaxed(source, target, distance):
+                stdio.printf("%s relax %d -> %d to %d\n", self.label, source, target, distance)
+            case SearchEvent.Finished(distance):
+                stdio.printf("%s shortest distance: %d\n", self.label, distance)
+
+
+static_assert(field_count(Graph) == 1, "Graph layout changed")
+static_assert(has_method(Graph, "weight"))
+static_assert(implements(ConsoleReporter, Reporter))
+
+
+def validate_vertex(vertex: i32) -> Result[i32, GraphError]:
+    if vertex < 0 or vertex >= 6:
+        return Err(GraphError.invalid_vertex)
+    return Ok(vertex)
+
+
+def print_path(previous: *const i32, vertex: i32) -> void:
+    if previous[vertex] != -1:
+        print_path(previous, previous[vertex])
+    stdio.printf("%d ", vertex)
+
+
+def shortest_path(
+    graph: &const Graph,
+    requested_source: i32,
+    requested_target: i32,
+    reporter: &dyn Reporter,
+) -> Result[i32, GraphError]:
+    source = validate_vertex(requested_source)?
+    target = validate_vertex(requested_target)?
+
+    distances = alloc[i32](6)
+    previous = alloc[i32](6)
+    visited = alloc[bool](6)
+    defer free(visited)
+    defer free(previous)
+    defer free(distances)
+
+    for vertex in range(0, 6):
+        distances[vertex] = 1000000
+        previous[vertex] = -1
+        visited[vertex] = false
+    distances[source] = 0
+
+    for step in range(0, 6):
+        current: i32 = -1
+        nearest: i32 = 1000000
+
+        for vertex in range(0, 6):
+            if not visited[vertex] and distances[vertex] < nearest:
+                current = vertex
+                nearest = distances[vertex]
+
+        if current == -1:
+            break
+
+        visited[current] = true
+        reporter.emit(SearchEvent.Visiting(current, nearest))
+
+        if current == target:
+            break
+
+        for neighbor in range(0, 6):
+            edge_weight = graph.weight(current, neighbor)
+            candidate = distances[current] + edge_weight
+            if edge_weight > 0 and not visited[neighbor] and candidate < distances[neighbor]:
+                distances[neighbor] = candidate
+                previous[neighbor] = current
+                reporter.emit(SearchEvent.Relaxed(current, neighbor, candidate))
+
+    if distances[target] == 1000000:
+        return Err(GraphError.unreachable)
+
+    stdio.printf("path: ")
+    print_path(previous, target)
+    stdio.puts("")
+    reporter.emit(SearchEvent.Finished(distances[target]))
+    return Ok(distances[target])
+
+
+def print_graph_layout() -> void:
+    for field in comptime fields_of(Graph):
+        stdio.printf(
+            "Graph.%s: offset=%zu, size=%zu\n",
+            field.name,
+            field.offset,
+            field.size,
+        )
+
+
+def main() -> i32:
+    graph = Graph(weights=[
+        0, 7, 9, 0, 0, 14,
+        7, 0, 10, 15, 0, 0,
+        9, 10, 0, 11, 0, 2,
+        0, 15, 11, 0, 6, 0,
+        0, 0, 0, 6, 0, 9,
+        14, 0, 2, 0, 9, 0,
+    ])
+    reporter = ConsoleReporter("dijkstra:")
+
+    info = type_info(graph)
+    stdio.printf("%s has %zu reflected field\n", info.name, info.field_count)
+    print_graph_layout()
+
+    result = shortest_path(graph, 0, 4, reporter)
+    match result:
+        case Ok(distance):
+            if distance != 20:
+                return 2
+        case Err(error):
+            stdio.printf("graph error: %d\n", cast[i32](error))
+            return 1
+
+    return 0

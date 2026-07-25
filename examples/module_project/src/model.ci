@@ -1,0 +1,9 @@
+enum ParseError:
+    negative
+    too_large
+
+variant Token:
+    Integer(value: i32)
+    End
+
+const offset: i32 = 1
