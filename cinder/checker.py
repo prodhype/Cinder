@@ -2711,6 +2711,8 @@ class Checker:
         match expression:
             case ast.LiteralExpr():
                 result = self._check_literal(expression, expected)
+            case ast.FStringExpr():
+                result = self._check_fstring_outside_print(expression)
             case ast.NameExpr():
                 result = self._check_name(expression)
             case ast.UnaryExpr():
@@ -2794,10 +2796,15 @@ class Checker:
             return ERROR
         return ERROR
 
+    def _check_fstring_outside_print(self, expression: ast.FStringExpr) -> Type:
+        self._error("f-strings are only supported inside print(...)", expression.span, code="C220")
+        self._check_fstring_parts(expression)
+        return string_type()
+
     def _check_name(self, expression: ast.NameExpr) -> Type:
         symbol = self.current_scope.lookup(expression.name)
         if symbol is None:
-            if expression.name in ("range", "len", "sort", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
+            if expression.name in ("range", "len", "sort", "print", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
                 return FunctionValueType(expression.name)
             if expression.name == "super" and isinstance(self.current_owner, ClassSymbol):
                 return FunctionValueType("super")
@@ -3291,6 +3298,8 @@ class Checker:
                 return self._check_len_call(expression)
             if name == "sort":
                 return self._check_sort_call(expression)
+            if name == "print":
+                return self._check_print_call(expression)
             if name in ("Ok", "Err"):
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_result_constructor(expression, expected, is_ok=name == "Ok")
@@ -4087,6 +4096,75 @@ class Checker:
         )
         return struct.type
 
+    def _check_print_call(self, call: ast.CallExpr) -> Type:
+        self.expr_types[id(call.callee)] = FunctionValueType("print")
+        if "<stdio.h>" not in self.includes:
+            self.includes.append("<stdio.h>")
+        for argument in call.arguments:
+            if argument.name is not None:
+                self._error("print does not accept named arguments", argument.span, code="C221")
+            self._check_print_argument(argument.value)
+        self.call_resolutions[id(call)] = CallResolution("print")
+        return VOID
+
+    def _check_print_argument(self, expression: ast.Expression) -> None:
+        if isinstance(expression, ast.FStringExpr):
+            self._check_fstring_parts(expression)
+            self.expr_types[id(expression)] = string_type()
+            return
+        actual = self._check_expr(expression)
+        self._validate_printable_type(actual, None, expression.span)
+
+    def _check_fstring_parts(self, expression: ast.FStringExpr) -> None:
+        for part in expression.parts:
+            if isinstance(part, ast.FStringText):
+                continue
+            actual: Type
+            if isinstance(part.expression, ast.FStringExpr):
+                self._check_fstring_parts(part.expression)
+                actual = string_type()
+                self.expr_types[id(part.expression)] = actual
+            else:
+                actual = self._check_expr(part.expression)
+            self._validate_printable_type(actual, part.format_spec, part.span)
+
+    def _validate_printable_type(
+        self,
+        type_: Type,
+        format_spec: str | None,
+        span: Span,
+    ) -> None:
+        raw = value_type(type_)
+        conversion = _print_conversion(format_spec)
+        if conversion is None and format_spec not in (None, ""):
+            self._error(f"unsupported print format specifier {format_spec!r}", span, code="C222")
+            return
+
+        if raw == BOOL:
+            if conversion not in (None, "s"):
+                self._error("bool print values support only the default format or :s", span, code="C223")
+            return
+        if raw == CHAR:
+            if conversion not in (None, "c"):
+                self._error("char print values support only the default format or :c", span, code="C224")
+            return
+        if _is_string_type(raw):
+            if conversion not in (None, "s"):
+                self._error("string print values support only the default format or :s", span, code="C225")
+            return
+        if is_float(raw):
+            if conversion is None or conversion in "fFeEgG":
+                return
+            self._error(f"float print values do not support :{conversion}", span, code="C226")
+            return
+        if is_integer(raw):
+            if conversion is None or conversion in "diuoxX":
+                return
+            self._error(f"integer print values do not support :{conversion}", span, code="C227")
+            return
+
+        self._error(f"type {type_name(type_)} cannot be printed", span, code="C228")
+
     def _check_range_call(self, call: ast.CallExpr) -> Type:
         if any(argument.name is not None for argument in call.arguments):
             self._error("range does not accept named arguments", call.span, code="C087")
@@ -4450,6 +4528,23 @@ class Checker:
 
 
 
+def _print_conversion(format_spec: str | None) -> str | None:
+    if format_spec in (None, ""):
+        return None
+    spec = format_spec or ""
+    if len(spec) == 1:
+        return spec if spec in "diuoxXfFeEgGsc" else None
+    if spec.startswith(".") and len(spec) > 2 and spec[-1] in "fFeEgG":
+        precision = spec[1:-1]
+        if precision.isdigit():
+            return spec[-1]
+    return None
+
+
+def _is_string_type(type_: Type) -> bool:
+    return isinstance(type_, PointerType) and strip_const(type_.inner) == CHAR
+
+
 def _contains_propagate(expression: ast.Expression) -> bool:
     match expression:
         case ast.PropagateExpr():
@@ -4478,6 +4573,12 @@ def _contains_propagate(expression: ast.Expression) -> bool:
             return _contains_propagate(value)
         case ast.AllocExpr(count=count):
             return count is not None and _contains_propagate(count)
+        case ast.FStringExpr(parts=parts):
+            return any(
+                isinstance(part, ast.FStringExpression)
+                and _contains_propagate(part.expression)
+                for part in parts
+            )
         case ast.NameExpr() | ast.LiteralExpr():
             return False
     raise AssertionError(f"unhandled expression: {expression!r}")

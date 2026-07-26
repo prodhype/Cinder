@@ -392,6 +392,10 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `sort(array_or_slice)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays are accepted directly when they refer to addressable storage; array literals are rejected. Slices may select a subrange to sort, but slicing a const array produces a const slice that cannot be sorted. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `char*` or `const char*` values use lexicographic C-string order. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
 
+`print(...)` is globally available and emits to standard output without importing `stdio`. It accepts zero or more printable values, separates multiple arguments with a space, and appends a newline. Printable values are booleans, characters, integers, floats, and `const char*` strings.
+
+`print` also accepts Python-style f-strings. Replacement fields use `{expression}` and may include simple format specs such as `{value:d}`, `{value:x}`, `{value:.2f}`, `{text:s}`, and `{letter:c}`. Literal braces are written as `{{` and `}}`. F-strings are currently supported only as `print` arguments.
+
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
 
 Result values expose `.is_ok`, `.value`, and `.error`. Accessing a `void` payload is rejected.

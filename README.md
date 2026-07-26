@@ -470,6 +470,16 @@ import stdio
 stdio.printf("%.2f\n", math.sqrt(9.0))
 ```
 
+For common console output, `print(...)` is available without an import:
+
+```python
+name = "Ada"
+score: i32 = 42
+print(f"{name}: {score:x}")
+```
+
+`print` separates multiple arguments with spaces, appends a newline, and supports f-string replacement fields with simple format specs. F-strings are currently limited to `print` arguments.
+
 `@export` preserves a top-level function's C symbol name:
 
 ```python
