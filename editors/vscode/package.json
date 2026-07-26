@@ -1,0 +1,52 @@
+{
+  "name": "cinder-language-support",
+  "displayName": "Cinder Language Support",
+  "description": "Syntax highlighting and editor support for the Cinder programming language.",
+  "version": "0.1.0",
+  "publisher": "cinder-lang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prodhype/Cinder.git",
+    "directory": "editors/vscode"
+  },
+  "files": [
+    "language-configuration.json",
+    "syntaxes/cinder.tmLanguage.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "cinder",
+    "language",
+    "syntax highlighting"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "cinder",
+        "aliases": [
+          "Cinder",
+          "cinder"
+        ],
+        "extensions": [
+          ".ci"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cinder",
+        "scopeName": "source.cinder",
+        "path": "./syntaxes/cinder.tmLanguage.json"
+      }
+    ]
+  }
+}
