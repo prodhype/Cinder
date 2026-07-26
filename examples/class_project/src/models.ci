@@ -1,4 +1,6 @@
 from shapes import Shape
+import math
+
 
 @reflect
 class Circle(Shape):
@@ -9,4 +11,4 @@ class Circle(Shape):
 
     @override
     def area(self) -> f64:
-        return 3.141592653589793 * self.radius * self.radius
+        return math.pi * self.radius * self.radius
