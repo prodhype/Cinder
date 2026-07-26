@@ -356,7 +356,7 @@ last = values.pop()
 
 An empty list needs a contextual `List[T]` type. List values are move-only: direct local variables and direct function returns own their buffers, replacement drops the previous buffer, and scope exit frees the active buffer. An addressable `List[T]` may be passed without copying to a `[]T` or `[]const T` function parameter; this call-only coercion does not permit storing or returning a List-backed slice. Mutable slices may update elements, while structural operations still require `&List[T]`. By-value List parameters, globals, nested owning lists, aggregate List fields, and destructor-bearing list elements are not implemented. Bind a returned or literal List to a local before indexing, iterating, sorting, calling `len`, or borrowing it as a slice.
 
-List indexing follows the current array/slice model and does not insert bounds checks. `pop` does check for an empty list and panics. A list cannot be structurally modified, replaced, or sorted through its direct variable while a `for` loop is iterating over it. Maps and sets remain a subsequent collection phase.
+List indexing follows the current array/slice model and does not insert bounds checks. `pop` does check for an empty list and panics. While a `for` loop iterates a List, the same storage cannot be structurally modified, replaced, sorted, or borrowed as mutable `[]T`, including through recognized aliases. Read-only `[]const T` helpers and provably unrelated Lists remain available. Maps and sets remain a subsequent collection phase.
 
 ## Result construction and propagation
 

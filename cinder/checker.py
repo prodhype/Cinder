@@ -1676,6 +1676,16 @@ class Checker:
                 code="C292",
                 note="use a []const T parameter for read-only access",
             )
+        elif (
+            not isinstance(target_raw.inner, ConstType)
+            and self._list_storage_is_active(expression)
+        ):
+            self._error(
+                "cannot borrow an actively iterated List as a mutable slice",
+                expression.span,
+                code="C293",
+                note="use a []const T parameter while iteration is active",
+            )
 
     def _make_function_symbol(
         self,

@@ -220,6 +220,86 @@ def test_list_to_slice_coercion_rejects_escaping_or_invalid_borrows(
 
 
 @pytest.mark.parametrize(
+    ("iterable", "argument"),
+    [
+        ("values", "values"),
+        ("*(&values)", "values"),
+        ("values", "*(&values)"),
+    ],
+)
+def test_iterated_list_rejects_mutable_slice_helper(
+    iterable: str,
+    argument: str,
+) -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def reorder(values: []i32) -> void:\n"
+            "    sort(values)\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    values = [3, 2, 1]\n"
+            f"    for value in {iterable}:\n"
+            f"        reorder({argument})\n"
+            "    return 0\n"
+        )
+    assert "cannot borrow an actively iterated List as a mutable slice" in str(
+        captured.value
+    )
+
+
+def test_unknown_iterator_alias_blocks_mutable_slice_helper() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def reorder(values: []i32) -> void:\n"
+            "    sort(values)\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    values = [3, 2, 1]\n"
+            "    other = [6, 5, 4]\n"
+            "    pointer = &values\n"
+            "    for value in *pointer:\n"
+            "        reorder(other)\n"
+            "    return 0\n"
+        )
+    assert "cannot borrow an actively iterated List as a mutable slice" in str(
+        captured.value
+    )
+
+
+def test_iterated_list_allows_const_slice_helper() -> None:
+    generated = compile_source(
+        "def total(values: []const i32) -> i32:\n"
+        "    result: i32 = 0\n"
+        "    for value in values:\n"
+        "        result += value\n"
+        "    return result\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values = [1, 2]\n"
+        "    result: i32 = 0\n"
+        "    for value in values:\n"
+        "        result += total(values)\n"
+        "    return result - 6\n"
+    )
+    assert "CinderSlice_const_i32" in generated
+
+
+def test_iterated_list_allows_unrelated_mutable_slice_helper() -> None:
+    generated = compile_source(
+        "def bump_first(values: []i32) -> void:\n"
+        "    values[0] += 1\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values = [1, 2]\n"
+        "    other = [3]\n"
+        "    for value in values:\n"
+        "        bump_first(other)\n"
+        "    return other[0] - 5\n"
+    )
+    assert "CinderSlice_i32" in generated
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         "values.append(value)",
