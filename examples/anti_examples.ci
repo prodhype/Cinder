@@ -38,7 +38,8 @@ answer: i32 = 42
 # def add(left, right) -> i32:
 #     return left + right
 
-# CORRECT: only a method's first `self` parameter may infer its type.
+# CORRECT: all top-level function parameters are explicitly typed.
+# Only a method's first `self` parameter may infer its type.
 def add(left: i32, right: i32) -> i32:
     return left + right
 
