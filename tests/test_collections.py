@@ -146,6 +146,79 @@ def test_borrowed_aggregate_list_parameter_is_allowed() -> None:
     assert "const CinderResult_list_i32_i32 *result" in generated
 
 
+def test_addressable_list_arguments_borrow_as_slices_without_copying() -> None:
+    generated = compile_source(
+        "def first(values: []const i32) -> i32:\n"
+        "    return values[0]\n"
+        "\n"
+        "def from_const_list(values: &const List[i32]) -> i32:\n"
+        "    return first(values)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values = [7, 8]\n"
+        "    return first(values) + from_const_list(values) - 14\n"
+    )
+    assert ".data = (values).data" in generated
+    assert ".length = (values).length" in generated
+    assert ".data = ((*values)).data" in generated
+
+
+@pytest.mark.parametrize(
+    ("source", "message"),
+    [
+        (
+            "def consume(values: []const i32) -> i32:\n"
+            "    return 0\n"
+            "\n"
+            "def make_values() -> List[i32]:\n"
+            "    return [1, 2]\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return consume(make_values())\n",
+            "List-to-slice coercion requires an addressable List",
+        ),
+        (
+            "def mutate(values: []i32) -> void:\n"
+            "    values[0] += 1\n"
+            "\n"
+            "def attempt(values: &const List[i32]) -> void:\n"
+            "    mutate(values)\n",
+            "cannot borrow a const List as a mutable slice",
+        ),
+        (
+            "def consume(values: []const f64) -> void:\n"
+            "    pass\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    consume(values)\n"
+            "    return 0\n",
+            "expected []const f64, got List[i32]",
+        ),
+        (
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    view: []i32 = values\n"
+            "    return 0\n",
+            "expected []i32, got List[i32]",
+        ),
+        (
+            "def view() -> []const i32:\n"
+            "    values = [1, 2]\n"
+            "    return values\n",
+            "expected []const i32, got List[i32]",
+        ),
+    ],
+)
+def test_list_to_slice_coercion_rejects_escaping_or_invalid_borrows(
+    source: str,
+    message: str,
+) -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(source)
+    assert message in str(captured.value)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -241,16 +314,24 @@ def test_native_tuples_and_lists_run_end_to_end(tmp_path: Path) -> None:
         "        values.append(value)\n"
         "    return values\n"
         "\n"
-        "def total(values: &const List[i32]) -> i32:\n"
+        "def total(values: []const i32) -> i32:\n"
         "    result: i32 = 0\n"
         "    for value in values:\n"
         "        result += value\n"
         "    return result\n"
         "\n"
+        "def bump_first(values: []i32) -> void:\n"
+        "    values[0] += 1\n"
+        "\n"
         "def main() -> i32:\n"
         "    values = make_values()\n"
         "    if len(values) != 20 or total(values) != 190:\n"
         "        return 1\n"
+        "    mutable = [4, 5]\n"
+        "    bump_first(mutable)\n"
+        "    fixed: i32[3] = [2, 3, 4]\n"
+        "    if mutable[0] != 5 or total(fixed) != 9 or total(fixed[1:]) != 7:\n"
+        "        return 7\n"
         "    sort(values)\n"
         "    popped = values.pop()\n"
         "    pair = (len(values), popped)\n"

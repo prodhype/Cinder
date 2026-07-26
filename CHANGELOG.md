@@ -4,7 +4,7 @@
 
 Cinder adds native heterogeneous `Tuple[...]` values and homogeneous growable `List[T]` buffers. Tuple literals use parenthesized comma syntax and support compile-time-checked indexing. Square-bracket literals now infer lists in untyped contexts while explicit fixed-array annotations preserve fixed C storage.
 
-Lists provide deterministic move-only ownership, direct return transfer, indexing, iteration, `len`, `sort`, `append`, `pop`, and `clear`. The compiler emits readable per-element C specializations and uses a checked runtime growth helper. Cross-module generated headers share guarded tuple/list layouts and helpers.
+Lists provide deterministic move-only ownership, direct return transfer, indexing, iteration, `len`, `sort`, `append`, `pop`, and `clear`. Addressable Lists can also borrow as `[]T` or `[]const T` function arguments without copying, so slice-based APIs work across Lists, fixed arrays, and slices. The compiler emits readable per-element C specializations and uses a checked runtime growth helper. Cross-module generated headers share guarded tuple/list layouts and helpers.
 
 This first collection phase rejects nested lists, aggregate/global ownership, by-value list parameters, and destructor-bearing elements. Maps and sets remain planned after hash and equality semantics are defined.
 

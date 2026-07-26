@@ -426,27 +426,27 @@ def can_assign(target: Type, source: Type) -> bool:
         if source == NULL:
             return True
         if isinstance(source, ReferenceType):
-            return _pointee_compatible(target.inner, source.inner)
+            return can_borrow_elements(target.inner, source.inner)
         if isinstance(source, PointerType):
-            return _pointee_compatible(target.inner, source.inner)
+            return can_borrow_elements(target.inner, source.inner)
         if isinstance(source, ArrayType):
-            return _pointee_compatible(target.inner, source.inner)
+            return can_borrow_elements(target.inner, source.inner)
         return False
 
     if isinstance(target, ReferenceType):
         if source == NULL:
             return False
         if isinstance(source, ReferenceType):
-            return _pointee_compatible(target.inner, source.inner)
+            return can_borrow_elements(target.inner, source.inner)
         if isinstance(source, PointerType):
-            return _pointee_compatible(target.inner, source.inner)
+            return can_borrow_elements(target.inner, source.inner)
         return can_assign(target.inner, source)
 
     if isinstance(target, SliceType):
         if isinstance(source, SliceType):
-            return _pointee_compatible(target.inner, source.inner)
+            return can_borrow_elements(target.inner, source.inner)
         if isinstance(source, ArrayType):
-            return _pointee_compatible(target.inner, source.inner)
+            return can_borrow_elements(target.inner, source.inner)
         return False
 
     if isinstance(target, DynType) and isinstance(source, DynType):
@@ -467,7 +467,7 @@ def can_assign(target: Type, source: Type) -> bool:
     return False
 
 
-def _pointee_compatible(target: Type, source: Type) -> bool:
+def can_borrow_elements(target: Type, source: Type) -> bool:
     if target == source:
         return True
     target_unqualified = strip_const(target)
