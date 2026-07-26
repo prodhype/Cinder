@@ -480,6 +480,14 @@ print(f"{name}: {score:x}")
 
 `print` separates multiple arguments with spaces, appends a newline, and supports f-string replacement fields with simple format specs. F-strings are currently limited to `print` arguments.
 
+For console input, `input()` is also available without an import. `input(prompt)` writes the prompt without a newline, reads one line, and returns it without the trailing newline:
+
+```python
+name = input("name: ")
+defer free(cast[void*](name))
+print("hello", name)
+```
+
 `@export` preserves a top-level function's C symbol name:
 
 ```python

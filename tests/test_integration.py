@@ -15,7 +15,12 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def build_and_run(tmp_path: Path, source: str) -> subprocess.CompletedProcess[str]:
+def build_and_run(
+    tmp_path: Path,
+    source: str,
+    *,
+    stdin: str | None = None,
+) -> subprocess.CompletedProcess[str]:
     source_path = tmp_path / "program.ci"
     source_path.write_text(source, encoding="utf-8")
     executable = tmp_path / ("program.exe" if shutil.which("cl") and not shutil.which("cc") else "program")
@@ -27,6 +32,7 @@ def build_and_run(tmp_path: Path, source: str) -> subprocess.CompletedProcess[st
     return subprocess.run(
         [str(artifact.executable)],
         check=False,
+        input=stdin,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -93,6 +99,36 @@ def test_builtin_print_and_fstrings(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "\nplain 42\nhello Ada 2a 3.14 {ok} 100% true Z\n"
+
+
+def test_builtin_input_reads_stdin_with_optional_prompt(tmp_path: Path) -> None:
+    long_line = "x" * 130
+    result = build_and_run(
+        tmp_path,
+        "def main() -> i32:\n"
+        "    name = input(\"Name: \")\n"
+        "    blank = input()\n"
+        "    long_line = input()\n"
+        "    print(name)\n"
+        "    print(len(blank))\n"
+        "    print(len(long_line))\n"
+        "    return 0\n",
+        stdin=f"Ada\n\n{long_line}\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "Name: Ada\n0\n130\n"
+
+
+def test_builtin_input_panics_on_eof_before_line(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "def main() -> i32:\n"
+        "    input()\n"
+        "    return 0\n",
+        stdin="",
+    )
+    assert result.returncode != 0
+    assert "panic: input reached EOF" in result.stderr
 
 
 def test_unsigned_integer_explicit_decimal_print(tmp_path: Path) -> None:

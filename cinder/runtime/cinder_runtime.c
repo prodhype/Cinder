@@ -29,6 +29,60 @@ void *cinder_alloc(size_t count, size_t element_size)
     return memory;
 }
 
+char *cinder_input(const char *prompt)
+{
+    if (prompt != NULL) {
+        if (fputs(prompt, stdout) == EOF || fflush(stdout) == EOF) {
+            cinder_panic("input prompt write failed");
+        }
+    }
+
+    size_t capacity = 64;
+    size_t length = 0;
+    char *buffer = cinder_alloc(capacity, sizeof(char));
+
+    for (;;) {
+        int character = fgetc(stdin);
+        if (character == EOF) {
+            if (ferror(stdin)) {
+                free(buffer);
+                cinder_panic("input read failed");
+            }
+            if (length == 0) {
+                free(buffer);
+                cinder_panic("input reached EOF");
+            }
+            break;
+        }
+        if (character == '\n') {
+            break;
+        }
+
+        if (length + 1 >= capacity) {
+            if (capacity > SIZE_MAX / 2) {
+                free(buffer);
+                cinder_panic("input line is too long");
+            }
+            size_t next_capacity = capacity * 2;
+            char *grown = realloc(buffer, next_capacity);
+            if (grown == NULL) {
+                free(buffer);
+                cinder_panic("out of memory");
+            }
+            buffer = grown;
+            capacity = next_capacity;
+        }
+        buffer[length] = (char)character;
+        length += 1;
+    }
+
+    if (length > 0 && buffer[length - 1] == '\r') {
+        length -= 1;
+    }
+    buffer[length] = '\0';
+    return buffer;
+}
+
 static void cinder_merge_sort(
     unsigned char *base,
     unsigned char *buffer,

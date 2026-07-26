@@ -1782,6 +1782,8 @@ class CGenerator:
         resolution = self.semantic.call_resolutions[id(expression)]
         if resolution.kind == "print":
             return self._emit_print_call(expression)
+        if resolution.kind == "input":
+            return self._emit_input_call(expression)
         if resolution.kind in {
             "constructor",
             "union_constructor",
@@ -1896,6 +1898,14 @@ class CGenerator:
         if not arguments:
             return f"printf({c_string(format_string)})"
         return f"printf({c_string(format_string)}, {', '.join(arguments)})"
+
+    def _emit_input_call(self, expression: ast.CallExpr) -> str:
+        arguments = self._emit_ordered_call_arguments(
+            expression,
+            self.semantic.call_resolutions[id(expression)],
+        )
+        prompt = arguments[0] if arguments else "NULL"
+        return f"cinder_input({prompt})"
 
     def _collect_print_argument(
         self,

@@ -396,6 +396,8 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `print` also accepts Python-style f-strings. Replacement fields use `{expression}` and may include simple format specs such as `{value:d}`, `{value:x}`, `{value:.2f}`, `{text:s}`, and `{letter:c}`. Literal braces are written as `{{` and `}}`. F-strings are currently supported only as `print` arguments.
 
+`input()` is globally available and reads a line from standard input without importing `stdio`. `input(prompt)` writes the `const char*` prompt to standard output without a newline, flushes it, then reads. The returned `const char*` excludes the trailing newline, strips a preceding carriage return for CRLF input, and owns a freshly allocated buffer; release it with `free(cast[void*](line))` when the value is no longer needed. Reaching EOF before any bytes are read panics, since Cinder does not currently have exceptions.
+
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
 
 Result values expose `.is_ok`, `.value`, and `.error`. Accessing a `void` payload is rejected.
