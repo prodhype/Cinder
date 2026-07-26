@@ -240,7 +240,7 @@ for value in range(0, 20):
 last = values.pop()
 ```
 
-List ownership follows the existing explicit move-only direction. A direct local owns its buffer, a direct return transfers it, replacement drops the previous buffer, and all normal scope exits free it. Lists are passed by `&List[T]` or `&const List[T]`. Nested lists, aggregate list fields, globals, by-value parameters, and destructor-bearing elements wait for a broader aggregate ownership model.
+List ownership follows the existing explicit move-only direction. A direct local owns its buffer, a direct return transfers it, replacement drops the previous buffer, and all normal scope exits free it. Generic element-processing functions can accept `[]T` or `[]const T`; addressable Lists, fixed arrays, and slices all pass to those parameters without copying. List-to-slice coercion is call-only so a borrowed view cannot be stored or returned implicitly. Mutable slices can update elements, while structural operations use `&List[T]`. Nested lists, aggregate list fields, globals, by-value parameters, and destructor-bearing elements wait for a broader aggregate ownership model.
 
 Square-bracket literals infer lists in untyped contexts. An explicit array type still selects fixed C storage, so `values: i32[3] = [1, 2, 3]` remains an array declaration. Maps and sets are intentionally deferred until hashing and equality constraints are defined.
 

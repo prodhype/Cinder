@@ -1,4 +1,4 @@
-def summarize(values: &const List[i32]) -> Tuple[i32, usize]:
+def summarize(values: []const i32) -> Tuple[i32, usize]:
     total: i32 = 0
     for value in values:
         total += value

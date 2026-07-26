@@ -403,7 +403,7 @@ sort(values)
 last = values.pop()
 ```
 
-Lists are move-only direct locals and return values, and are freed deterministically on every normal cleanup path. Pass them as `&List[T]` or `&const List[T]`. Nested lists, list fields/globals, by-value list parameters, and destructor-bearing elements are intentionally deferred with broader aggregate ownership work.
+Lists are move-only direct locals and return values, and are freed deterministically on every normal cleanup path. Addressable Lists may be passed without copying to `[]T` and `[]const T` parameters, letting one element-processing function accept Lists, fixed arrays, and slices. This coercion is call-only; structural operations still use `&List[T]`. Nested lists, list fields/globals, by-value list parameters, and destructor-bearing elements are intentionally deferred with broader aggregate ownership work.
 
 ## Structs and methods
 

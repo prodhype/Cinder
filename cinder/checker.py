@@ -68,6 +68,7 @@ from cinder.types import (
     USIZE,
     VariantType,
     VOID,
+    can_borrow_elements,
     can_assign,
     common_type,
     is_condition_type,
@@ -1638,6 +1639,52 @@ class Checker:
                 expression.span,
                 code="C238",
                 note="bind the class value to a local before borrowing it as &dyn",
+            )
+
+    @staticmethod
+    def _is_list_slice_argument(target: Type, source: Type) -> bool:
+        target_raw = strip_const(target)
+        source_value = value_type(source)
+        return (
+            isinstance(target_raw, SliceType)
+            and isinstance(source_value, ListType)
+            and strip_const(target_raw.inner) == strip_const(source_value.inner)
+            and can_borrow_elements(target_raw.inner, source_value.inner)
+        )
+
+    def _validate_list_slice_argument(
+        self,
+        target: Type,
+        expression: ast.Expression,
+    ) -> None:
+        target_raw = strip_const(target)
+        assert isinstance(target_raw, SliceType)
+        if not self._is_addressable(expression):
+            self._error(
+                "List-to-slice coercion requires an addressable List",
+                expression.span,
+                code="C291",
+                note="bind the List to a local before passing it to a slice parameter",
+            )
+        if (
+            not isinstance(target_raw.inner, ConstType)
+            and self._lvalue_is_const(expression)
+        ):
+            self._error(
+                "cannot borrow a const List as a mutable slice",
+                expression.span,
+                code="C292",
+                note="use a []const T parameter for read-only access",
+            )
+        elif (
+            not isinstance(target_raw.inner, ConstType)
+            and self._list_storage_is_active(expression)
+        ):
+            self._error(
+                "cannot borrow an actively iterated List as a mutable slice",
+                expression.span,
+                code="C293",
+                note="use a []const T parameter while iteration is active",
             )
 
     def _make_function_symbol(
@@ -4520,8 +4567,11 @@ class Checker:
             expected_types.append(expected)
             argument = call.arguments[argument_index]
             actual = self._check_expr(argument.value, expected=expected)
-            if not self._can_assign(expected, actual):
+            list_slice_argument = self._is_list_slice_argument(expected, actual)
+            if not self._can_assign(expected, actual) and not list_slice_argument:
                 self._type_mismatch(expected, actual, argument.value.span)
+            if list_slice_argument:
+                self._validate_list_slice_argument(expected, argument.value)
             self._validate_borrow_source(expected, actual, argument.value)
             if isinstance(expected, ReferenceType):
                 if actual == NULL:
