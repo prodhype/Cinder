@@ -2797,7 +2797,7 @@ class Checker:
     def _check_name(self, expression: ast.NameExpr) -> Type:
         symbol = self.current_scope.lookup(expression.name)
         if symbol is None:
-            if expression.name in ("range", "len", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
+            if expression.name in ("range", "len", "sort", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
                 return FunctionValueType(expression.name)
             if expression.name == "super" and isinstance(self.current_owner, ClassSymbol):
                 return FunctionValueType("super")
@@ -3273,7 +3273,14 @@ class Checker:
                 bound_type = self._check_expr(bound, expected=USIZE)
                 if not is_integer(value_type(bound_type)):
                     self._error("slice bounds must be integers", bound.span, code="C071")
-        return SliceType(raw.inner)
+        element_type = raw.inner
+        if (
+            isinstance(raw, ArrayType)
+            and not isinstance(element_type, ConstType)
+            and self._lvalue_is_const(expression.value)
+        ):
+            element_type = ConstType(element_type)
+        return SliceType(element_type)
 
     def _check_call(self, expression: ast.CallExpr, expected: Type | None = None) -> Type:
         if isinstance(expression.callee, ast.NameExpr):
@@ -3282,6 +3289,8 @@ class Checker:
                 return self._check_range_call(expression)
             if name == "len":
                 return self._check_len_call(expression)
+            if name == "sort":
+                return self._check_sort_call(expression)
             if name in ("Ok", "Err"):
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_result_constructor(expression, expected, is_ok=name == "Ok")
@@ -4127,6 +4136,58 @@ class Checker:
         )
         self.expr_types[id(call.callee)] = FunctionValueType("len")
         return USIZE
+
+    def _check_sort_call(self, call: ast.CallExpr) -> Type:
+        if len(call.arguments) != 1 or call.arguments[0].name is not None:
+            self._error("sort expects exactly one positional argument", call.span, code="C239")
+            for call_argument in call.arguments:
+                self._check_expr(call_argument.value)
+            return VOID
+
+        argument_expression = call.arguments[0].value
+        argument_type = value_type(self._check_expr(argument_expression))
+        if not isinstance(argument_type, (ArrayType, SliceType)):
+            self._error(
+                f"sort requires an array or slice, got {type_name(argument_type)}",
+                argument_expression.span,
+                code="C240",
+            )
+            return VOID
+        if isinstance(argument_type, ArrayType) and not self._is_addressable(
+            argument_expression
+        ):
+            self._error(
+                "sort requires an addressable fixed array",
+                argument_expression.span,
+                code="C243",
+            )
+
+        element_type = argument_type.inner
+        is_const_array = isinstance(argument_type, ArrayType) and self._lvalue_is_const(
+            argument_expression
+        )
+        if isinstance(element_type, ConstType) or is_const_array:
+            self._error("sort requires mutable elements", argument_expression.span, code="C241")
+        elif not self._is_sortable_element_type(element_type):
+            self._error(
+                f"sort does not support elements of type {type_name(element_type)}",
+                argument_expression.span,
+                code="C242",
+            )
+
+        slice_type = SliceType(element_type)
+        self.call_resolutions[id(call)] = CallResolution(
+            "sort", argument_order=(0,), expected_types=(slice_type,)
+        )
+        self.expr_types[id(call.callee)] = FunctionValueType("sort")
+        return VOID
+
+    @staticmethod
+    def _is_sortable_element_type(type_: Type) -> bool:
+        raw = strip_const(type_)
+        if is_numeric(raw) or raw == BOOL or isinstance(raw, EnumType):
+            return True
+        return isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR
 
     def _check_array_literal(self, expression: ast.ArrayLiteralExpr, expected: Type | None) -> Type:
         expected_value = value_type(expected) if expected is not None else None

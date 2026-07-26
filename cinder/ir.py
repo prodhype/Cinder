@@ -86,6 +86,7 @@ class IRModule:
     functions: tuple[IRFunction, ...]
     globals: tuple[IRGlobal, ...]
     slice_types: tuple[SliceType, ...]
+    sort_types: tuple[Type, ...]
     result_types: tuple[ResultType, ...]
     definition_order: tuple[Type, ...]
 
@@ -136,6 +137,7 @@ class Lowerer:
                 globals_.append(IRGlobal(symbol, declaration))
 
         slices = tuple(sorted(self._collect_slices(), key=type_key))
+        sort_types = tuple(sorted(self._collect_sort_types(), key=type_key))
         results = tuple(sorted(self._collect_results(), key=type_key))
         definition_order = tuple(self._definition_order(results))
         return IRModule(
@@ -148,6 +150,7 @@ class Lowerer:
             functions=tuple(functions),
             globals=tuple(globals_),
             slice_types=slices,
+            sort_types=sort_types,
             result_types=results,
             definition_order=definition_order,
         )
@@ -177,6 +180,10 @@ class Lowerer:
         values.extend(symbol.type for symbol in self.semantic.implicit_declarations.values())
         values.extend(symbol.type for symbol in self.semantic.foreach_symbols.values())
         values.extend(self.semantic.expr_types.values())
+        for resolution in self.semantic.call_resolutions.values():
+            values.extend(
+                expected for expected in resolution.expected_types if expected is not None
+            )
         return values
 
     def _collect_slices(self) -> set[SliceType]:
@@ -197,6 +204,16 @@ class Lowerer:
 
         for type_ in self._all_semantic_types():
             collect(type_)
+        return result
+
+    def _collect_sort_types(self) -> set[Type]:
+        result: set[Type] = set()
+        for resolution in self.semantic.call_resolutions.values():
+            if resolution.kind != "sort" or not resolution.expected_types:
+                continue
+            expected = resolution.expected_types[0]
+            if isinstance(expected, SliceType):
+                result.add(expected.inner)
         return result
 
     def _collect_results(self) -> set[ResultType]:
