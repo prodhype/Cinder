@@ -426,7 +426,12 @@ class PropagateExpr(Expression):
 
 
 @dataclass(slots=True)
-class ArrayLiteralExpr(Expression):
+class ListLiteralExpr(Expression):
+    elements: list[Expression]
+
+
+@dataclass(slots=True)
+class TupleLiteralExpr(Expression):
     elements: list[Expression]
 
 

@@ -39,6 +39,40 @@ void *cinder_alloc(size_t count, size_t element_size)
     return memory;
 }
 
+void *cinder_grow_array(
+    void *data,
+    size_t *capacity,
+    size_t minimum_capacity,
+    size_t element_size
+)
+{
+    if (capacity == NULL || element_size == 0) {
+        cinder_panic("invalid array growth arguments");
+    }
+    if (*capacity >= minimum_capacity) {
+        return data;
+    }
+
+    size_t next_capacity = *capacity == 0 ? 4 : *capacity;
+    while (next_capacity < minimum_capacity) {
+        if (next_capacity > SIZE_MAX / 2) {
+            next_capacity = minimum_capacity;
+            break;
+        }
+        next_capacity *= 2;
+    }
+    if (next_capacity < minimum_capacity || next_capacity > SIZE_MAX / element_size) {
+        cinder_panic("array capacity overflow");
+    }
+
+    void *grown = realloc(data, next_capacity * element_size);
+    if (grown == NULL) {
+        cinder_panic("out of memory");
+    }
+    *capacity = next_capacity;
+    return grown;
+}
+
 char *cinder_input(const char *prompt)
 {
     if (prompt != NULL) {

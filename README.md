@@ -10,6 +10,8 @@ Cinder 0.5.0 completes the first five language milestones.
 
 The procedural core includes indentation-aware parsing, primitive and C ABI types, typed globals, inferred locals, functions, named arguments, native control flow, structs and methods, pointers and references, fixed arrays, slices, explicit allocation, scoped `defer`, C imports, exported C functions, and readable C11 generation.
 
+Native collection support includes heterogeneous value tuples and homogeneous growable lists. Lists have deterministic move-only ownership, generated element specializations, iteration, indexing, `len`, `sort`, `append`, `pop`, and `clear`. Maps and sets are planned as a later collection phase.
+
 The project system includes deterministic `cinder.toml` manifests, local imports, dotted module paths, dependency ordering, cycle diagnostics, one generated header and translation unit per module, deterministic internal symbols, content-stable generated files, and optional amalgamated output.
 
 The algebraic-data layer includes C enums, plain unions, tagged variants, exhaustive `match`, `Result[T, E]`, contextual `Ok` and `Err`, and postfix `?` propagation that preserves active cleanups.
@@ -18,7 +20,7 @@ Cinder 0.4 adds classes, constructors, destructors, private fields, one implemen
 
 Cinder 0.5 adds opt-in `@reflect` metadata, runtime type/field/method inspection, dynamic runtime type names, compile-time type and member queries, top-level `static_assert`, and unrolled `comptime` field and method loops.
 
-The implementation remains alpha software. General-purpose generics, function pointer types, closures, exceptions, aggregate ownership for destructor-bearing classes, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
+The implementation remains alpha software. User-defined generics, maps and sets, function pointer types, closures, exceptions, aggregate ownership for lists or destructor-bearing classes, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
 
 ## Installation
 
@@ -323,7 +325,7 @@ Patterns do not yet support guards, alternatives, literals, or nested destructur
 
 ## Typed Results and propagation
 
-`Result[T, E]` is the only generic type implemented in 0.5.
+`Result[T, E]`, `Tuple[...]`, and `List[T]` are compiler-provided generic families. User-defined generic declarations are not implemented.
 
 ```python
 def parse(value: i32) -> Result[i32, ParseError]:
@@ -337,7 +339,7 @@ def increment(value: i32) -> Result[i32, ParseError]:
     return Ok(parsed + 1)
 ```
 
-`Ok` and `Err` are contextual constructors. Postfix `?` evaluates its operand once, checks the explicit tag, runs active deferred calls and class drops on error, and performs an ordinary early return.
+`Ok` and `Err` are contextual constructors. Postfix `?` evaluates its operand once, checks the explicit tag, runs active deferred calls, List cleanup, and class drops on error, and performs an ordinary early return.
 
 To preserve straightforward C evaluation order, `?` is not accepted in `while` conditions, `elif` conditions, C-style loop conditions or updates, the right side of `and` or `or`, or deferred calls.
 
@@ -381,6 +383,27 @@ view: []i32 = values[1:]
 ```
 
 A slice is emitted as a typed `{data, length}` struct. Mutable arrays and slices can be passed to const slice parameters without copying. Slicing and indexing currently perform no bounds checks.
+
+Tuples are immutable heterogeneous values:
+
+```python
+entry: Tuple[i32, const char*] = (7, "ready")
+code = entry[0]
+```
+
+Tuple indices must be integer literals. Empty and singleton tuples use `()` and `(value,)`.
+
+Lists are homogeneous owning buffers. An untyped square-bracket literal infers a list, while an explicit fixed-array annotation keeps fixed storage:
+
+```python
+fixed: i32[3] = [3, 1, 2]
+values = [3, 1, 2]
+values.append(4)
+sort(values)
+last = values.pop()
+```
+
+Lists are move-only direct locals and return values, and are freed deterministically on every normal cleanup path. Pass them as `&List[T]` or `&const List[T]`. Nested lists, list fields/globals, by-value list parameters, and destructor-bearing elements are intentionally deferred with broader aggregate ownership work.
 
 ## Structs and methods
 

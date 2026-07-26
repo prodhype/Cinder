@@ -18,7 +18,7 @@ The compiler implements C-compatible enums, plain unions, tagged variants, exhau
 
 Every representation is explicit in generated C. Variants and results use a tag enum plus a payload union. Matching lowers to ordinary tag comparisons and branches. Propagation lowers to one evaluated temporary, a tag test, deferred cleanup, and an early return. There is no exception runtime or unwinding metadata.
 
-Pattern matching remains intentionally restricted. It does not include nested patterns, guards, alternatives, or literals. `Result[T, E]` is still the only generic type.
+Pattern matching remains intentionally restricted. It does not include nested patterns, guards, alternatives, or literals. `Result[T, E]` was the first compiler-provided generic family.
 
 ## 0.4: Classes and explicit interfaces - complete
 
@@ -38,17 +38,23 @@ The compiler implements `type_of`, `type_name`, `type_info`, `size_of`, `align_o
 
 Runtime metadata is inspectable in `cinder_runtime.h`, has no startup registration step, and has a measurable binary-size cost. Unreflected concrete types emit no metadata arrays.
 
+## Native collections - tuple/list phase complete
+
+Cinder implements specialized heterogeneous `Tuple[...]` values and homogeneous owning `List[T]` buffers. Square-bracket literals infer lists unless a fixed-array context is explicit. Lists support deterministic cleanup, direct return transfer, references, indexing, iteration, `len`, `sort`, `append`, `pop`, and `clear`; tuple indexing is compile-time checked.
+
+This phase deliberately keeps ownership narrow. Lists are move-only direct locals and return values. Nested lists, aggregate fields, globals, by-value parameters, and destructor-bearing elements are rejected. `Map[K, V]` and `Set[T]` remain the next collection phase because they require explicit hashability and equality rules.
+
 ## 0.6 candidates
 
 The next useful compiler milestone should focus on build and ABI maturity rather than expanding the surface language indiscriminately. Candidate work includes separate object compilation, dependency-aware object caching, parallel builds, depfiles, richer package configuration, stable exported-name controls, and ABI conformance fixtures for supported compilers.
 
-Ownership work should remain explicit. Viable additions include opt-in copy operations, user-defined move hooks, owned pointer wrappers, and containers whose destruction is visible in generated C. A full borrow checker or inferred ownership system is not currently planned.
+Ownership work should remain explicit. Viable additions include opt-in copy operations, user-defined move hooks, owned pointer wrappers, and broader aggregate ownership building on List cleanup. A full borrow checker or inferred ownership system is not currently planned.
 
 Compile-time work may grow toward user-defined constant functions and serializer generation, but it should not become unrestricted AST macros. Runtime reflection may add field-value visitors only if the access rules, alignment requirements, and generated C remain straightforward.
 
 ## Later language work
 
-Other plausible additions include function pointer types, closures with explicit environment structs, generic monomorphization beyond `Result`, richer match patterns, package dependencies, and a documented stable C ABI for selected exported declarations.
+Other plausible additions include maps and sets, function pointer types, closures with explicit environment structs, user-defined generic monomorphization, richer match patterns, package dependencies, and a documented stable C ABI for selected exported declarations.
 
 ## Non-goals
 

@@ -200,7 +200,7 @@ The compiler emits an explicit tag enum, payload union, and enclosing struct. Co
 type               := dyn_type
                     | prefix* "const"? dotted_name generic_args? postfix*
 prefix             := "*" | "&" | "[]"
-generic_args       := "[" type ("," type)* "]"
+generic_args       := "[" (type ("," type)* ","?)? "]"
 postfix            := "*" | "[" INTEGER "]"
 ```
 
@@ -215,11 +215,13 @@ i32
 i32[16]
 Result[i32, ParseError]
 Result[void, Error]
+Tuple[i32, const char*]
+List[i32]
 geometry.Vec2
 &dyn geometry.Shape
 ```
 
-`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]` is the only generic type implemented in 0.5; other generic applications are rejected.
+`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Tuple[...]`, and `List[T]` are compiler-provided generic families; user-defined generics are not implemented.
 
 References, dynamic references, slices, fixed arrays, class values, and plain `void` have placement restrictions that follow their generated C representations and lifetime rules.
 
@@ -276,7 +278,7 @@ unsafe_stmt        := "unsafe" ":" suite
 
 An untyped assignment to an unknown local name declares that local and infers its type. Later assignments update the existing symbol. Locals use lexical block scope.
 
-`defer` accepts a call expression. Deferred calls run in reverse declaration order on normal scope exit, `return`, `break`, `continue`, and propagated error returns. Class destructor cleanup uses the same control-flow cleanup paths.
+`defer` accepts a call expression. Deferred calls run in reverse declaration order on normal scope exit, `return`, `break`, `continue`, and propagated error returns. Class destructor and owned-List cleanup use the same control-flow cleanup paths.
 
 A `comptime` foreach is valid only with `fields_of(...)` or `methods_of(...)`. The loop is unrolled and its binding cannot escape into runtime storage.
 
@@ -327,9 +329,34 @@ alloc[ElementType]()
 alloc[ElementType](count)
 ```
 
-Array literals use square brackets. Slice expressions support `value[:]`, `value[start:]`, and `value[start:stop]`. Slice steps are not implemented.
+List literals use square brackets. In an untyped local, `[1, 2]` infers `List[i32]`; an explicit fixed-array context such as `values: i32[2] = [1, 2]` retains C array storage. Slice expressions support `value[:]`, `value[start:]`, and `value[start:stop]`. Slice steps are not implemented.
+
+Parenthesized comma expressions are tuple literals: `(left, right)`, `(single,)`, and `()`. Parentheses without a comma remain grouping.
 
 `super().__init__(...)` and `super().method(...)` are recognized only inside a derived class method. Abstract base methods cannot be called directly through `super`.
+
+## Tuples and lists
+
+Tuples are immutable heterogeneous value aggregates. Their element types and length are part of the type. `len(tuple)` is compile-time-known, and tuple indexing requires a non-negative integer literal:
+
+```python
+entry: Tuple[i32, const char*] = (7, "ready")
+code = entry[0]
+```
+
+Lists are homogeneous, owning, growable buffers represented in generated C by `data`, `length`, and `capacity`. They support `len`, indexing and element assignment, `for` iteration, `sort`, and the mutating methods `append`, `pop`, and `clear`.
+
+```python
+values: List[i32] = []
+values.append(3)
+values.append(1)
+sort(values)
+last = values.pop()
+```
+
+An empty list needs a contextual `List[T]` type. List values are move-only: direct local variables and direct function returns own their buffers, replacement drops the previous buffer, and scope exit frees the active buffer. Pass lists as `&List[T]` or `&const List[T]`; by-value parameters, globals, nested owning lists, aggregate List fields, and destructor-bearing list elements are not implemented. Bind a returned or literal List to a local before indexing, iterating, sorting, or calling `len`.
+
+List indexing follows the current array/slice model and does not insert bounds checks. `pop` does check for an empty list and panics. A list cannot be structurally modified, replaced, or sorted through its direct variable while a `for` loop is iterating over it. Maps and sets remain a subsequent collection phase.
 
 ## Result construction and propagation
 
@@ -388,9 +415,9 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `range(stop)`, `range(start, stop)`, and `range(start, stop, step)` are valid only as loop iterables.
 
-`len(array)` and `len(slice)` return `usize`. `len(const char*)` emits `strlen`.
+`len(array)`, `len(slice)`, `len(tuple)`, and `len(list)` return `usize`. `len(const char*)` emits `strlen`.
 
-`sort(array_or_slice)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays are accepted directly when they refer to addressable storage; array literals are rejected. Slices may select a subrange to sort, but slicing a const array produces a const slice that cannot be sorted. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `char*` or `const char*` values use lexicographic C-string order. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
+`sort(array_or_slice_or_list)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays and lists must refer to addressable storage. Slices may select a subrange to sort, but slicing a const array produces a const slice that cannot be sorted. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `char*` or `const char*` values use lexicographic C-string order. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
 
 `print(...)` is globally available and emits to standard output without importing `stdio`. It accepts zero or more printable values, separates multiple arguments with a space, and appends a newline. Printable values are booleans, characters, integers, floats, and `const char*` strings.
 
@@ -404,4 +431,4 @@ Result values expose `.is_ok`, `.value`, and `.error`. Accessing a `void` payloa
 
 ## Deliberate omissions
 
-The 0.5 grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, general-purpose generics, function pointer types, closures, exceptions, automatic ownership inference, aggregate ownership for destructor-bearing classes, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, or multi-root package dependency graphs.
+The 0.5 grammar and checker do not implement maps, sets, user-defined generics, multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, aggregate ownership for owning lists or destructor-bearing classes, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, or multi-root package dependency graphs.

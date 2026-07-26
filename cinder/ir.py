@@ -19,11 +19,13 @@ from cinder.types import (
     ClassType,
     DynType,
     EnumType,
+    ListType,
     PointerType,
     ReferenceType,
     ResultType,
     SliceType,
     StructType,
+    TupleType,
     Type,
     UnionType,
     VariantType,
@@ -86,6 +88,8 @@ class IRModule:
     functions: tuple[IRFunction, ...]
     globals: tuple[IRGlobal, ...]
     slice_types: tuple[SliceType, ...]
+    tuple_types: tuple[TupleType, ...]
+    list_types: tuple[ListType, ...]
     sort_types: tuple[Type, ...]
     result_types: tuple[ResultType, ...]
     definition_order: tuple[Type, ...]
@@ -137,9 +141,11 @@ class Lowerer:
                 globals_.append(IRGlobal(symbol, declaration))
 
         slices = tuple(sorted(self._collect_slices(), key=type_key))
+        tuples = tuple(sorted(self._collect_tuples(), key=type_key))
+        lists = tuple(sorted(self._collect_lists(), key=type_key))
         sort_types = tuple(sorted(self._collect_sort_types(), key=type_key))
         results = tuple(sorted(self._collect_results(), key=type_key))
-        definition_order = tuple(self._definition_order(results))
+        definition_order = tuple(self._definition_order(results, tuples))
         return IRModule(
             semantic=self.semantic,
             structs=structs,
@@ -150,6 +156,8 @@ class Lowerer:
             functions=tuple(functions),
             globals=tuple(globals_),
             slice_types=slices,
+            tuple_types=tuples,
+            list_types=lists,
             sort_types=sort_types,
             result_types=results,
             definition_order=definition_order,
@@ -201,6 +209,59 @@ class Lowerer:
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, ListType):
+                collect(raw.inner)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_tuples(self) -> set[TupleType]:
+        result: set[TupleType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, TupleType):
+                if raw in result:
+                    return
+                result.add(raw)
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, (PointerType, ReferenceType, ArrayType, SliceType, ListType)):
+                collect(raw.inner)
+            elif isinstance(raw, DynType):
+                collect(raw.interface)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_lists(self) -> set[ListType]:
+        result: set[ListType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, ListType):
+                if raw in result:
+                    return
+                result.add(raw)
+                collect(raw.inner)
+            elif isinstance(raw, (PointerType, ReferenceType, ArrayType, SliceType)):
+                collect(raw.inner)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, DynType):
+                collect(raw.interface)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
 
         for type_ in self._all_semantic_types():
             collect(type_)
@@ -229,18 +290,27 @@ class Lowerer:
                 collect(raw.error)
             elif isinstance(raw, (PointerType, ReferenceType, ArrayType, SliceType)):
                 collect(raw.inner)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, ListType):
+                collect(raw.inner)
 
         for type_ in self._all_semantic_types():
             collect(type_)
         return result
 
-    def _definition_order(self, result_types: tuple[ResultType, ...]) -> list[Type]:
+    def _definition_order(
+        self,
+        result_types: tuple[ResultType, ...],
+        tuple_types: tuple[TupleType, ...],
+    ) -> list[Type]:
         nominal_by_type: dict[Type, NominalSymbol] = {}
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.structs.values()})
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.classes.values()})
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.unions.values()})
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.variants.values()})
-        nodes: set[Type] = {*nominal_by_type, *result_types}
+        nodes: set[Type] = {*nominal_by_type, *result_types, *tuple_types}
         permanent: set[Type] = set()
         temporary: set[Type] = set()
         ordered: list[Type] = []
@@ -273,6 +343,11 @@ class Lowerer:
                 *self._by_value_definition_types(type_.ok),
                 *self._by_value_definition_types(type_.error),
             }
+        if isinstance(type_, TupleType):
+            dependencies: set[Type] = set()
+            for element in type_.elements:
+                dependencies.update(self._by_value_definition_types(element))
+            return dependencies
 
         symbol = nominal_by_type.get(type_)
         fields: list[Type] = []
@@ -283,20 +358,23 @@ class Lowerer:
         elif isinstance(symbol, VariantSymbol):
             for case in symbol.cases.values():
                 fields.extend(field.type for field in case.fields.values())
-        result: set[Type] = set()
+        dependencies = set()
         for field_type in fields:
-            result.update(self._by_value_definition_types(field_type))
-        return result
+            dependencies.update(self._by_value_definition_types(field_type))
+        return dependencies
 
     def _by_value_definition_types(self, type_: Type) -> set[Type]:
         raw = strip_const(type_)
         if is_void(raw):
             return set()
-        if isinstance(raw, (StructType, ClassType, UnionType, VariantType, ResultType)):
+        if isinstance(
+            raw,
+            (StructType, ClassType, UnionType, VariantType, ResultType, TupleType),
+        ):
             return {raw}
         if isinstance(raw, ArrayType):
             return self._by_value_definition_types(raw.inner)
-        if isinstance(raw, (PointerType, ReferenceType, SliceType, EnumType)):
+        if isinstance(raw, (PointerType, ReferenceType, SliceType, ListType, EnumType)):
             return set()
         return set()
 
