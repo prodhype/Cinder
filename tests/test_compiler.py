@@ -65,7 +65,19 @@ def test_print_fstring_generates_escaped_printf_format() -> None:
         "    print(f\"value={value:x} pi={pi:.2f} {{ok}} 100%\")\n"
         "    return 0\n"
     )
-    assert 'printf("value=%llx pi=%.2f {ok} 100%%\\n", ((unsigned long long)(value)), pi);' in generated
+    assert "int32_t __cinder_print_integer_1 = value;" in generated
+    assert 'printf("value=%s%llx pi=%.2f {ok} 100%%\\n"' in generated
+    assert '((__cinder_print_integer_1) < 0 ? "-" : "")' in generated
+
+
+def test_nested_fstrings_are_supported_inside_print() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    value: i32 = 42\n"
+        "    print(f\"outer {f'inner {value}'}\")\n"
+        "    return 0\n"
+    )
+    assert 'printf("outer inner %lld\\n", ((long long)(value)));' in generated
 
 
 def test_unsigned_integer_decimal_format_preserves_unsigned_codegen() -> None:

@@ -4119,7 +4119,13 @@ class Checker:
         for part in expression.parts:
             if isinstance(part, ast.FStringText):
                 continue
-            actual = self._check_expr(part.expression)
+            actual: Type
+            if isinstance(part.expression, ast.FStringExpr):
+                self._check_fstring_parts(part.expression)
+                actual = string_type()
+                self.expr_types[id(part.expression)] = actual
+            else:
+                actual = self._check_expr(part.expression)
             self._validate_printable_type(actual, part.format_spec, part.span)
 
     def _validate_printable_type(

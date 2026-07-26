@@ -1908,35 +1908,45 @@ class CGenerator:
                 if isinstance(part, ast.FStringText):
                     format_parts.append(_printf_literal(part.value))
                     continue
-                specifier, argument = self._printf_value(part.expression, part.format_spec)
+                if isinstance(part.expression, ast.FStringExpr):
+                    self._collect_print_argument(part.expression, format_parts, arguments)
+                    continue
+                specifier, value_arguments = self._printf_value(
+                    part.expression,
+                    part.format_spec,
+                )
                 format_parts.append(specifier)
-                arguments.append(argument)
+                arguments.extend(value_arguments)
             return
-        specifier, argument = self._printf_value(expression, None)
+        specifier, value_arguments = self._printf_value(expression, None)
         format_parts.append(specifier)
-        arguments.append(argument)
+        arguments.extend(value_arguments)
 
     def _printf_value(
         self,
         expression: ast.Expression,
         format_spec: str | None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, tuple[str, ...]]:
         type_ = value_type(self.semantic.expression_type(expression))
         value = self._emit_expr(expression)
         conversion = _print_conversion(format_spec)
 
         if type_ == BOOL:
-            return "%s", f"(({value}) ? \"true\" : \"false\")"
+            return "%s", (f"(({value}) ? \"true\" : \"false\")",)
         if type_ == CHAR:
-            return "%c", f"((int)({value}))"
+            return "%c", (f"((int)({value}))",)
         if _is_printf_string_type(type_):
-            return "%s", value
+            return "%s", (value,)
         if isinstance(type_, PrimitiveType) and type_.category == "float":
             specifier = _printf_float_specifier(format_spec, conversion)
             if type_ == F32:
                 value = f"((double)({value}))"
-            return specifier, value
+            return specifier, (value,)
         if isinstance(type_, PrimitiveType) and type_.category == "integer":
+            if type_.signed is True and conversion is not None and conversion in "oxX":
+                temporary = self._new_temp("print_integer")
+                self.writer.line(f"{c_decl(type_, temporary)} = {value};")
+                value = temporary
             return _printf_integer_value(type_, conversion, value)
 
         raise AssertionError(f"type {type_name(type_)} cannot be printed")
@@ -2581,16 +2591,24 @@ def _printf_integer_value(
     type_: PrimitiveType,
     conversion: str | None,
     value: str,
-) -> tuple[str, str]:
+) -> tuple[str, tuple[str, ...]]:
     if conversion is None:
         conversion = "u" if type_.signed is False else "d"
     if conversion not in "diuoxX":
         raise AssertionError(f"invalid integer print conversion {conversion!r}")
     if type_.signed is False and conversion in "di":
         conversion = "u"
+    if type_.signed is True and conversion in "oxX":
+        sign = f'(({value}) < 0 ? "-" : "")'
+        magnitude = (
+            f"((({value}) < 0) "
+            f"? (0ULL - ((unsigned long long)({value}))) "
+            f": ((unsigned long long)({value})))"
+        )
+        return f"%s%ll{conversion}", (sign, magnitude)
     if conversion in "uoxX":
-        return f"%ll{conversion}", f"((unsigned long long)({value}))"
-    return f"%ll{conversion}", f"((long long)({value}))"
+        return f"%ll{conversion}", (f"((unsigned long long)({value}))",)
+    return f"%ll{conversion}", (f"((long long)({value}))",)
 
 
 def _is_printf_string_type(type_: Type) -> bool:

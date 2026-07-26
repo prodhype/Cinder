@@ -107,6 +107,30 @@ def test_unsigned_integer_explicit_decimal_print(tmp_path: Path) -> None:
     assert result.stdout == "18446744073709551615\n"
 
 
+def test_nested_fstrings_and_signed_integer_radix_formats(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "calls: i32 = 0\n"
+        "\n"
+        "def minimum_i64() -> i64:\n"
+        "    calls += 1\n"
+        "    return -9223372036854775807 - 1\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    value: i32 = 42\n"
+        "    print(f\"outer {f'inner {value}'}\")\n"
+        "    print(f\"{minimum_i64():x} {minimum_i64():X} {minimum_i64():o}\")\n"
+        "    if calls != 3:\n"
+        "        return 1\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "outer inner 42\n"
+        "-8000000000000000 -8000000000000000 -1000000000000000000000\n"
+    )
+
+
 def test_native_classes_dyn_reflection_and_destructor_order(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,
