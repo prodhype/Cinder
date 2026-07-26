@@ -3,12 +3,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 CINDER_NORETURN void cinder_panic(const char *message)
 {
     const char *text = message != NULL ? message : "Cinder panic";
     (void)fprintf(stderr, "panic: %s\n", text);
     abort();
+}
+
+double cinder_wall_time(void)
+{
+    struct timespec timestamp;
+    if (timespec_get(&timestamp, TIME_UTC) != TIME_UTC) {
+        cinder_panic("wall clock read failed");
+    }
+    return (double)timestamp.tv_sec + (double)timestamp.tv_nsec / 1000000000.0;
 }
 
 void *cinder_alloc(size_t count, size_t element_size)

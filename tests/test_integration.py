@@ -85,6 +85,24 @@ def test_c_header_interop(tmp_path: Path) -> None:
     assert result.stdout == "A\n"
 
 
+def test_runtime_wall_time_returns_fractional_seconds(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "extern \"C\":\n"
+        "    def cinder_wall_time() -> f64\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    started = cinder_wall_time()\n"
+        "    finished = cinder_wall_time()\n"
+        "    if finished < started:\n"
+        "        return 1\n"
+        "    print(f\"{finished - started:.6f}\")\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert float(result.stdout) >= 0.0
+
+
 def test_builtin_print_and_fstrings(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

@@ -1,0 +1,210 @@
+extern import "time.h"
+
+extern "C":
+    def clock() -> clock_t
+    def cinder_wall_time() -> f64
+
+
+def cpu_ticks() -> u64:
+    unsafe:
+        return cast[u64](clock())
+
+
+def count_n_queens(
+    columns: u64,
+    left_diagonals: u64,
+    right_diagonals: u64,
+    full_mask: u64,
+) -> u64:
+    if columns == full_mask:
+        return 1
+
+    available = full_mask & ~(columns | left_diagonals | right_diagonals)
+    total: u64 = 0
+
+    while available != 0:
+        position = available & (~available + 1)
+        available &= ~position
+        total += count_n_queens(
+            columns | position,
+            ((left_diagonals | position) << 1) & full_mask,
+            (right_diagonals | position) >> 1,
+            full_mask,
+        )
+
+    return total
+
+
+def solve_n_queens(size: i32) -> u64:
+    one: u64 = 1
+    full_mask = (one << size) - one
+    return count_n_queens(0, 0, 0, full_mask)
+
+
+def build_travel_costs(costs: *i32, city_count: usize) -> void:
+    for source in range(0, city_count):
+        for target in range(0, city_count):
+            index = source * city_count + target
+            if source == target:
+                costs[index] = 0
+            else:
+                mixed = (
+                    (source + 3) * (target + 5) * 17
+                    + source * 13
+                    + target * 29
+                )
+                costs[index] = cast[i32](mixed % 97 + 3)
+
+
+def exact_traveling_salesperson(costs: *const i32, city_count: usize) -> i32:
+    one: usize = 1
+    state_count = one << city_count
+    table_size = state_count * city_count
+    unreachable: i32 = 1000000000
+
+    best = alloc[i32](table_size)
+    defer free(best)
+
+    for index in range(0, table_size):
+        best[index] = unreachable
+    best[one * city_count] = 0
+
+    for visited in range(1, state_count):
+        if (visited & one) == 0:
+            continue
+
+        for current in range(0, city_count):
+            current_bit = one << current
+            if (visited & current_bit) == 0:
+                continue
+
+            current_cost = best[visited * city_count + current]
+            if current_cost == unreachable:
+                continue
+
+            for next_city in range(1, city_count):
+                next_bit = one << next_city
+                if (visited & next_bit) != 0:
+                    continue
+
+                next_state = visited | next_bit
+                candidate = current_cost + costs[current * city_count + next_city]
+                next_index = next_state * city_count + next_city
+                if candidate < best[next_index]:
+                    best[next_index] = candidate
+
+    all_visited = state_count - one
+    shortest = unreachable
+    for current in range(1, city_count):
+        candidate = (
+            best[all_visited * city_count + current]
+            + costs[current * city_count]
+        )
+        if candidate < shortest:
+            shortest = candidate
+
+    return shortest
+
+
+def fill_edit_inputs(left: *u8, right: *u8, length: usize) -> void:
+    for index in range(0, length):
+        left[index] = cast[u8]((index * 17 + index / 11 + 5) % 23)
+        right[index] = cast[u8](((index + 3) * 19 + index / 13 + 7) % 23)
+
+
+def minimum_three(first: i32, second: i32, third: i32) -> i32:
+    result = first
+    if second < result:
+        result = second
+    if third < result:
+        result = third
+    return result
+
+
+def edit_distance(
+    left: *const u8,
+    right: *const u8,
+    left_length: usize,
+    right_length: usize,
+) -> i32:
+    previous = alloc[i32](right_length + 1)
+    current = alloc[i32](right_length + 1)
+    defer free(current)
+    defer free(previous)
+
+    for column in range(0, right_length + 1):
+        previous[column] = cast[i32](column)
+
+    for row in range(1, left_length + 1):
+        current[0] = cast[i32](row)
+
+        for column in range(1, right_length + 1):
+            substitution_cost: i32 = 0
+            if left[row - 1] != right[column - 1]:
+                substitution_cost = 1
+
+            current[column] = minimum_three(
+                previous[column] + 1,
+                current[column - 1] + 1,
+                previous[column - 1] + substitution_cost,
+            )
+
+        swap = previous
+        previous = current
+        current = swap
+
+    return previous[right_length]
+
+
+def main() -> i32:
+    print("Algorithm benchmarks (lower elapsed times are better)")
+    print("CPU ticks are implementation-defined; wall time is elapsed fractional seconds.")
+
+    queens_size: i32 = 15
+    wall_started = cinder_wall_time()
+    cpu_started = cpu_ticks()
+    queens_solutions = solve_n_queens(queens_size)
+    queens_ticks = cpu_ticks() - cpu_started
+    queens_seconds = cinder_wall_time() - wall_started
+    print(f"N-Queens n={queens_size}: {queens_seconds:.6f} seconds, {queens_ticks} CPU ticks, {queens_solutions} solutions")
+
+    # Repeating 20 cities keeps peak memory lower than one much larger state space.
+    city_count: usize = 20
+    travel_runs: i32 = 4
+    travel_costs = alloc[i32](city_count * city_count)
+    defer free(travel_costs)
+    build_travel_costs(travel_costs, city_count)
+
+    wall_started = cinder_wall_time()
+    cpu_started = cpu_ticks()
+    shortest_tour: i32 = 0
+    travel_checksum: i32 = 0
+    for run in range(0, travel_runs):
+        shortest_tour = exact_traveling_salesperson(travel_costs, city_count)
+        travel_checksum += shortest_tour + run
+    travel_ticks = cpu_ticks() - cpu_started
+    travel_seconds = cinder_wall_time() - wall_started
+    print(f"Exact TSP cities={city_count} runs={travel_runs}: {travel_seconds:.6f} seconds, {travel_ticks} CPU ticks, minimum cost {shortest_tour}")
+
+    sequence_length: usize = 30000
+    left = alloc[u8](sequence_length)
+    right = alloc[u8](sequence_length)
+    defer free(right)
+    defer free(left)
+    fill_edit_inputs(left, right, sequence_length)
+
+    wall_started = cinder_wall_time()
+    cpu_started = cpu_ticks()
+    distance = edit_distance(left, right, sequence_length, sequence_length)
+    edit_ticks = cpu_ticks() - cpu_started
+    edit_seconds = cinder_wall_time() - wall_started
+    print(f"Edit distance length={sequence_length}: {edit_seconds:.6f} seconds, {edit_ticks} CPU ticks, distance {distance}")
+
+    if queens_solutions != 2279184:
+        return 1
+    if travel_checksum != 1106:
+        return 2
+    if distance != 27921:
+        return 3
+
+    return 0
