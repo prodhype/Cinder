@@ -97,6 +97,27 @@ def test_sort_codegen_reuses_a_specialization_and_coerces_arrays() -> None:
             "sort requires mutable elements",
         ),
         (
+            "const values: i32[2] = [2, 1]\n"
+            "def main() -> i32:\n"
+            "    sort(values[0:2])\n"
+            "    return 0\n",
+            "sort requires mutable elements",
+        ),
+        (
+            "const values: i32[2] = [2, 1]\n"
+            "def main() -> i32:\n"
+            "    view = values[0:2]\n"
+            "    sort(view)\n"
+            "    return 0\n",
+            "sort requires mutable elements",
+        ),
+        (
+            "def main() -> i32:\n"
+            "    sort([2, 1])\n"
+            "    return 0\n",
+            "sort requires an addressable fixed array",
+        ),
+        (
             "struct Item:\n"
             "    value: i32\n"
             "def main() -> i32:\n"

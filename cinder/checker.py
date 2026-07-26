@@ -3273,7 +3273,14 @@ class Checker:
                 bound_type = self._check_expr(bound, expected=USIZE)
                 if not is_integer(value_type(bound_type)):
                     self._error("slice bounds must be integers", bound.span, code="C071")
-        return SliceType(raw.inner)
+        element_type = raw.inner
+        if (
+            isinstance(raw, ArrayType)
+            and not isinstance(element_type, ConstType)
+            and self._lvalue_is_const(expression.value)
+        ):
+            element_type = ConstType(element_type)
+        return SliceType(element_type)
 
     def _check_call(self, expression: ast.CallExpr, expected: Type | None = None) -> Type:
         if isinstance(expression.callee, ast.NameExpr):
@@ -4146,6 +4153,14 @@ class Checker:
                 code="C240",
             )
             return VOID
+        if isinstance(argument_type, ArrayType) and not self._is_addressable(
+            argument_expression
+        ):
+            self._error(
+                "sort requires an addressable fixed array",
+                argument_expression.span,
+                code="C243",
+            )
 
         element_type = argument_type.inner
         is_const_array = isinstance(argument_type, ArrayType) and self._lvalue_is_const(
