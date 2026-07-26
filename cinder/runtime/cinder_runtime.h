@@ -77,6 +77,7 @@ extern "C" {
 CINDER_NORETURN void cinder_panic(const char *message);
 void *cinder_alloc(size_t count, size_t element_size);
 char *cinder_input(const char *prompt);
+double cinder_wall_time(void);
 void cinder_sort(
     void *base,
     size_t count,

@@ -18,6 +18,10 @@
 
 `long_string_sort.ci` demonstrates lexicographic sorting of C strings without importing `string`.
 
+`algorithm_benchmarks.ci` times exact N-Queens, traveling-salesperson, and edit-distance
+solutions. It reports both fractional wall-clock seconds and implementation-defined C CPU
+ticks.
+
 `defer.ci` demonstrates explicit allocation and cleanup before a returned value leaves scope.
 
 `interop.ci` includes a system C header and supplies a checked external declaration.
