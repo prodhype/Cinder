@@ -1,9 +1,8 @@
-import stdio
 import shapes
 from models import Circle
 
 
 def main() -> i32:
     circle = Circle(2.0)
-    stdio.printf("%s: %.2f\n", type_name(circle), shapes.measure(circle))
+    print(f"{type_name(circle)}: {shapes.measure(circle):.2f}")
     return 0

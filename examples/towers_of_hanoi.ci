@@ -1,17 +1,14 @@
-import stdio
-
-
 def move_disks(count: i32, source: const char*, target: const char*, spare: const char*) -> void:
     if count == 0:
         return
 
     move_disks(count - 1, source, spare, target)
-    stdio.printf("move disk %d from %s to %s\n", count, source, target)
+    print(f"move disk {count} from {source} to {target}")
     move_disks(count - 1, spare, target, source)
 
 
 def main() -> i32:
     disks: i32 = 4
-    stdio.printf("solving Towers of Hanoi with %d disks\n", disks)
+    print(f"solving Towers of Hanoi with {disks} disks")
     move_disks(disks, "A", "C", "B")
     return 0

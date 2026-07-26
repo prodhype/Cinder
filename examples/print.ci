@@ -1,11 +1,26 @@
 def main() -> i32:
     name = "Cinder"
+    enabled = true
     count: i32 = 3
+    large_signed: i64 = -9_223_372_036_854_775_807 - 1
+    large_unsigned: u64 = 18_446_744_073_709_551_615
+    hex_value: u32 = 0xDEAD_BEEF
+    octal_value: u16 = 493
+    binary_value: u16 = 44_272
     pi: f64 = 3.14159
     initial = 'C'
 
     print("print is available without importing stdio")
-    print("multiple values:", name, count, true)
-    print(f"{name} count={count:d} hex={count:x} pi={pi:.2f} initial={initial:c}")
+    print("multiple values:", name, count, enabled)
+    print(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}")
+    print(f"explicit scalar formats: string={name:s} bool={enabled:s} char={initial:c}")
+    print(f"integer formats: d={count:d} i={count:i} u={count:u} o={count:o} x={count:x} X={count:X}")
+    print(f"large integers: signed={large_signed:d} unsigned={large_unsigned:u} hex={large_unsigned:X}")
+    print(f"base values: hex={hex_value:X} octal={octal_value:o} binary 0b1010110011110000={binary_value:d}")
+    print(f"float formats: f={pi:f} F={pi:F} e={pi:e} E={pi:E} g={pi:g} G={pi:G}")
+    print(f"float precision: f={pi:.2f} F={pi:.2F} e={pi:.3e} E={pi:.3E} g={pi:.4g} G={pi:.4G}")
+    print(f"expressions: count + 1={count + 1:d} nested={f'{name:s} #{count:d}'}")
     print(f"escaped braces {{like this}} and a literal percent 100%")
+
+    # Binary literals are supported, but there is currently no :b format specifier.
     return 0

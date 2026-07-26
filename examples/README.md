@@ -4,7 +4,7 @@
 
 `print.ci` demonstrates import-free `print`, multi-argument output, and f-strings with format specs.
 
-`vectors.ci` demonstrates structs, named field initialization, const methods, the checked math module, and C varargs promotion.
+`vectors.ci` demonstrates structs, named field initialization, const methods, and the checked math module.
 
 `slices.ci` demonstrates fixed arrays, slicing, mutable-to-const slice conversion, collection iteration, and `.length`.
 
