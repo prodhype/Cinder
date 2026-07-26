@@ -1,0 +1,445 @@
+# Cinder anti-examples
+#
+# Every WRONG snippet below is commented out because it must not compile.
+# The matching CORRECT snippet is live code, so this file can still be checked:
+#
+#     cinder check examples/anti_examples.ci
+
+import stdio
+
+
+# -----------------------------------------------------------------------------
+# Layout, declarations, and calls
+
+# WRONG: leading tabs are rejected. Indentation must use spaces.
+# def tabbed() -> void:
+#	 pass
+
+# WRONG: a backslash does not continue a statement onto the next line.
+# total = 1 + \
+#     2
+
+# CORRECT: delimiters permit a multiline expression.
+def multiline_total() -> i32:
+    return (
+        1
+        + 2
+    )
+
+
+# WRONG: top-level globals cannot rely on local-style type inference.
+# answer = 42
+
+# CORRECT: top-level globals have an explicit type.
+answer: i32 = 42
+
+
+# WRONG: a top-level function parameter requires a type annotation.
+# def add(left, right) -> i32:
+#     return left + right
+
+# CORRECT: only a method's first `self` parameter may infer its type.
+def add(left: i32, right: i32) -> i32:
+    return left + right
+
+
+def clamp(value: i32, low: i32, high: i32) -> i32:
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+# WRONG: positional arguments cannot follow named arguments.
+# clamp(value=12, 0, 10)
+
+# CORRECT: put positional arguments first, or name all remaining arguments.
+def clamped_example() -> i32:
+    return clamp(value=12, low=0, high=10)
+
+
+# WRONG: fixed arrays cannot be assigned after their declaration.
+# values: i32[3] = [1, 2, 3]
+# values = [4, 5, 6]
+
+# CORRECT: mutate elements, and borrow arrays as slices at call boundaries.
+def sum_values(values: []const i32) -> i32:
+    total: i32 = 0
+    for value in values:
+        total += value
+    return total
+
+
+def array_example() -> i32:
+    values: i32[3] = [1, 2, 3]
+    values[0] = 4
+    return sum_values(values)
+
+
+# WRONG: integer-to-pointer and unrelated pointer casts require `unsafe`.
+# pointer = cast[*u8](address)
+
+# CORRECT: make the reinterpretation explicit.
+def read_byte(address: usize) -> u8:
+    unsafe:
+        pointer = cast[*u8](address)
+        return pointer[0]
+
+
+# WRONG: `range` is a loop iterable, not a runtime collection value.
+# numbers = range(0, 4)
+
+# CORRECT: consume it directly in a loop.
+def range_total() -> i32:
+    total: i32 = 0
+    for number in range(0, 4):
+        total += number
+    return total
+
+
+# WRONG: `defer` accepts a call expression, not an arbitrary value.
+# defer allocation
+
+# CORRECT: defer the cleanup call.
+def allocation_example() -> i32:
+    allocation = alloc[i32](1)
+    defer free(allocation)
+    allocation[0] = 7
+    return allocation[0]
+
+
+# -----------------------------------------------------------------------------
+# Structs, classes, and ownership
+
+# WRONG: structs do not have inheritance or `__init__`.
+# struct ColoredPoint(Point):
+#     color: u32
+#
+#     def __init__(self, color: u32):
+#         self.color = color
+
+# CORRECT: initialize a struct by its named fields.
+struct Point:
+    x: i32
+    y: i32
+
+
+def point_example() -> Point:
+    return Point(y=20, x=10)
+
+
+# WRONG: a derived constructor must initialize its implementation base before
+# touching derived state.
+# class BadChild(Base):
+#     other: i32
+#
+#     def __init__(self, value: i32, other: i32):
+#         self.other = other
+#         super().__init__(value)
+
+# CORRECT: `super().__init__` is the first executable statement.
+class Base:
+    value: i32
+
+    def __init__(self, value: i32):
+        self.value = value
+
+
+class Child(Base):
+    other: i32
+
+    def __init__(self, value: i32, other: i32):
+        super().__init__(value)
+        self.other = other
+
+
+# WRONG: a class cannot have two implementation bases with object state.
+# class Invalid(LeftImplementation, RightImplementation):
+#     pass
+
+# CORRECT: use one implementation base plus interface-only abstract bases.
+class Entity:
+    id: i32
+
+
+abstract class Named:
+    @abstractmethod
+    def name_code(self) -> i32:
+        pass
+
+
+class User(Entity, Named):
+    @override
+    def name_code(self) -> i32:
+        return 42
+
+
+# WRONG: abstract classes cannot be constructed.
+# named = Named()
+
+# WRONG: a concrete class must implement every inherited abstract method.
+# class Incomplete(Named):
+#     pass
+
+# CORRECT: construct a complete concrete implementation.
+def user_example() -> i32:
+    user = User()
+    return user.name_code()
+
+
+abstract class Shape:
+    @abstractmethod
+    def area(self) -> f64:
+        pass
+
+
+class Square(Shape):
+    side: f64
+
+    def __init__(self, side: f64):
+        self.side = side
+
+    @override
+    def area(self) -> f64:
+        return self.side * self.side
+
+
+def measure(shape: &dyn Shape) -> f64:
+    return shape.area()
+
+
+# WRONG: a constructor temporary is not addressable and cannot become `&dyn`.
+# result = measure(Square(4.0))
+
+# CORRECT: bind the owner to a local before borrowing it dynamically.
+def measured_square() -> f64:
+    square = Square(4.0)
+    return measure(square)
+
+
+class Secret:
+    private value: i32
+
+    def __init__(self, value: i32):
+        self.value = value
+
+    def reveal(self: &const Secret) -> i32:
+        return self.value
+
+
+# WRONG: private fields are inaccessible outside methods of their class.
+# def reveal_badly(secret: &const Secret) -> i32:
+#     return secret.value
+
+# CORRECT: expose behavior through a class method.
+def reveal_safely(secret: &const Secret) -> i32:
+    return secret.reveal()
+
+
+class Resource:
+    value: i32
+
+    def __init__(self, value: i32):
+        self.value = value
+
+    def __del__(self):
+        self.value = 0
+
+
+# WRONG: destructor-bearing values are move-only and cannot be copied.
+# original = Resource(7)
+# copy = original
+
+# WRONG: `__del__` is compiler-managed and cannot be called directly.
+# original.__del__()
+
+# CORRECT: borrow the resource; cleanup runs automatically when its owner exits.
+def inspect_resource(resource: &const Resource) -> i32:
+    return resource.value
+
+
+def resource_example() -> i32:
+    resource = Resource(7)
+    return inspect_resource(resource)
+
+
+# -----------------------------------------------------------------------------
+# Enums, variants, matches, and Results
+
+# WRONG: duplicate enum values make exhaustive matching ambiguous.
+# enum BadState:
+#     ready = 1
+#     running = 1
+
+# CORRECT: every enum member has a distinct integer value.
+enum State:
+    ready = 1
+    running = 2
+
+
+variant Token:
+    Integer(value: i32)
+    End
+
+
+# WRONG: matches must be exhaustive.
+# match token:
+#     case Token.Integer(value):
+#         return value
+
+# WRONG: a wildcard must be the final case; guards and nested patterns are not
+# supported in Cinder 0.5.
+# match token:
+#     case _:
+#         return 0
+#     case Token.End:
+#         return 1
+
+# CORRECT: cover every case explicitly.
+def token_value(token: Token) -> i32:
+    match token:
+        case Token.Integer(value):
+            return value
+        case Token.End:
+            return 0
+
+
+enum ParseError:
+    negative
+
+
+def parse_positive(value: i32) -> Result[i32, ParseError]:
+    if value < 0:
+        return Err(ParseError.negative)
+    return Ok(value)
+
+
+# WRONG: `Ok` and `Err` need an expected Result type.
+# result = Ok(42)
+
+# CORRECT: an annotation supplies the contextual Result type.
+def contextual_result() -> Result[i32, ParseError]:
+    result: Result[i32, ParseError] = Ok(42)
+    return result
+
+
+# WRONG: a function using `?` must itself return a compatible Result.
+# def parsed_value(value: i32) -> i32:
+#     return parse_positive(value)?
+
+# CORRECT: propagation remains visible in the return type.
+def parsed_value(value: i32) -> Result[i32, ParseError]:
+    parsed = parse_positive(value)?
+    return Ok(parsed)
+
+
+def enabled_result() -> Result[bool, ParseError]:
+    return Ok(true)
+
+
+# WRONG: propagation is rejected on the right side of short-circuit `and` or
+# `or`, and in loop conditions, C-style loop updates, `elif`, and `defer`.
+# return Ok(enabled and enabled_result()?)
+
+# CORRECT: propagate in a preceding statement.
+def checked_enabled(enabled: bool) -> Result[bool, ParseError]:
+    if not enabled:
+        return Ok(false)
+    checked = enabled_result()?
+    return Ok(checked)
+
+
+# WRONG: plain unions have no active-case tag and cannot be matched.
+# match number:
+#     case Number.integer(value):
+#         return value
+
+# CORRECT: use a tagged variant when checked matching is required.
+variant Number:
+    Integer(value: i32)
+    Real(value: f64)
+
+
+# -----------------------------------------------------------------------------
+# Reflection and compile-time inspection
+
+# WRONG: runtime metadata operations require `@reflect`.
+# struct PlainRecord:
+#     value: i32
+#
+# info = type_info(PlainRecord(value=1))
+
+# CORRECT: opt in on the nominal type.
+@reflect
+struct ReflectedRecord:
+    value: i32
+
+
+def reflected_field_count() -> usize:
+    record = ReflectedRecord(value=1)
+    return type_info(record).field_count
+
+
+# WRONG: `fields_of` and `methods_of` are not runtime iterables.
+# for field in fields_of(ReflectedRecord):
+#     stdio.printf("%s\n", field.name)
+
+# CORRECT: consume them with `comptime`; the compiler unrolls the loop.
+def print_compile_time_fields() -> void:
+    for field in comptime fields_of(ReflectedRecord):
+        stdio.printf("compile-time field: %s\n", field.name)
+
+
+# WRONG: `type_of(...)` is a compiler-only value and cannot be stored at
+# runtime.
+# reflected_type = type_of(ReflectedRecord(value=1))
+
+# CORRECT: use type values inside compile-time operations.
+static_assert(field_count(ReflectedRecord) == 1)
+
+
+# WRONG: Result is the only generic type implemented in Cinder 0.5.
+# value: Box[i32]
+
+# CORRECT: define a concrete nominal type for each required representation.
+struct I32Box:
+    value: i32
+
+
+def main() -> i32:
+    point = point_example()
+    secret = Secret(5)
+    boxed = I32Box(value=answer)
+
+    if multiline_total() != 3:
+        return 1
+    if add(point.x, point.y) != 30:
+        return 2
+    if clamped_example() != 10:
+        return 3
+    if array_example() != 9:
+        return 4
+    if range_total() != 6:
+        return 5
+    if allocation_example() != 7:
+        return 6
+    if user_example() != 42:
+        return 7
+    if cast[i32](measured_square()) != 16:
+        return 8
+    if reveal_safely(secret) != 5:
+        return 9
+    if resource_example() != 7:
+        return 10
+    if token_value(Token.Integer(11)) != 11:
+        return 11
+    if not contextual_result().is_ok:
+        return 12
+    if reflected_field_count() != 1:
+        return 13
+    if boxed.value != 42:
+        return 14
+
+    print_compile_time_fields()
+    return 0
