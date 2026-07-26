@@ -11,12 +11,25 @@ The compiler lexer in `../../cinder/lexer.py` is the source of truth for the gra
 
 ## Install in Cursor
 
-Package the extension from this directory:
+From the repository root, package the extension:
 
 ```sh
+cd editors/vscode
 npx --yes @vscode/vsce package --out cinder-language-support.vsix
-cursor --install-extension cinder-language-support.vsix
 ```
+
+### macOS
+
+The `cursor` command may point to the Cursor Agent CLI instead of the desktop IDE.
+Install the extension with the desktop app's bundled launcher:
+
+```sh
+"/Applications/Cursor.app/Contents/Resources/app/bin/cursor" \
+  --install-extension "$PWD/cinder-language-support.vsix"
+```
+
+Alternatively, open the Command Palette in Cursor, run
+**Extensions: Install from VSIX...**, and select `cinder-language-support.vsix`.
 
 Reload Cursor after installation. The extension automatically selects Cinder mode for
 files ending in `.ci`.
