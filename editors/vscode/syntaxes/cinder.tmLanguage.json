@@ -1,0 +1,336 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Cinder",
+  "scopeName": "source.cinder",
+  "fileTypes": [
+    "ci"
+  ],
+  "patterns": [
+    {
+      "include": "#invalid-indentation"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#decorators"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#language-constants"
+    },
+    {
+      "include": "#primitive-types"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#language-variables"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "invalid-indentation": {
+      "patterns": [
+        {
+          "name": "invalid.illegal.indentation.cinder",
+          "match": "^(?: *\\t)[ \\t]*"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.cinder",
+          "begin": "#",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.cinder"
+            }
+          },
+          "end": "$"
+        },
+        {
+          "name": "comment.line.double-slash.cinder",
+          "begin": "//",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.cinder"
+            }
+          },
+          "end": "$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.cinder",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.cinder"
+            }
+          },
+          "end": "\"|$",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.cinder"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.cinder",
+          "begin": "'",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.cinder"
+            }
+          },
+          "end": "'|$",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.cinder"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#escapes"
+            }
+          ]
+        }
+      ]
+    },
+    "escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.cinder",
+          "match": "\\\\(?:[\\\\'\"abfnrtv]|[0-7]{1,3}|x[0-9A-Fa-f]{1,2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|N\\{[^}\\r\\n]+\\}|.)"
+        }
+      ]
+    },
+    "decorators": {
+      "patterns": [
+        {
+          "match": "(@)([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.annotation.cinder"
+            },
+            "2": {
+              "name": "entity.name.function.decorator.cinder"
+            }
+          }
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(def)(\\s+)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.function.cinder"
+            },
+            "3": {
+              "name": "entity.name.function.cinder"
+            }
+          }
+        },
+        {
+          "match": "\\b(class|struct|enum|union|variant)(\\s+)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.cinder"
+            },
+            "3": {
+              "name": "entity.name.type.cinder"
+            }
+          }
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.integer.hexadecimal.cinder",
+          "match": "(?<![A-Za-z0-9_])0[xX][0-9A-Fa-f_]+(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "constant.numeric.integer.binary.cinder",
+          "match": "(?<![A-Za-z0-9_])0[bB][01_]+(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "constant.numeric.integer.octal.cinder",
+          "match": "(?<![A-Za-z0-9_])0[oO][0-7_]+(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "constant.numeric.float.cinder",
+          "match": "(?<![A-Za-z0-9_])(?:(?:[0-9][0-9_]*\\.[0-9_]*|\\.[0-9][0-9_]*)(?:[eE][+-]?[0-9][0-9_]*)?|[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*)(?![A-Za-z0-9_])"
+        },
+        {
+          "name": "constant.numeric.integer.decimal.cinder",
+          "match": "(?<![A-Za-z0-9_])[0-9][0-9_]*(?![A-Za-z0-9_.])"
+        }
+      ]
+    },
+    "language-constants": {
+      "patterns": [
+        {
+          "name": "constant.language.cinder",
+          "match": "\\b(?:true|false|null)\\b"
+        }
+      ]
+    },
+    "primitive-types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.cinder",
+          "match": "\\b(?:void|bool|char|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|isize|usize|c_int|c_long|c_size_t)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.cinder",
+          "match": "\\b(?:static_assert|cast|alloc|range|len|Ok|Err|free|panic|type_of|type_name|type_info|size_of|align_of|field_count|method_count|fields|methods|fields_of|methods_of|has_field|has_method|implements)\\b(?=\\s*(?:\\(|\\[))"
+        }
+      ]
+    },
+    "language-variables": {
+      "patterns": [
+        {
+          "name": "variable.language.cinder",
+          "match": "\\b(?:self|super)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.augmented.cinder",
+          "match": "<<=|>>=|\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^="
+        },
+        {
+          "name": "keyword.operator.return-type.cinder",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.variadic.cinder",
+          "match": "\\.\\.\\."
+        },
+        {
+          "name": "keyword.operator.comparison.cinder",
+          "match": "==|!=|<=|>="
+        },
+        {
+          "name": "keyword.operator.bitwise.shift.cinder",
+          "match": "<<|>>"
+        },
+        {
+          "name": "keyword.operator.logical.cinder",
+          "match": "\\b(?:and|or|not)\\b|!"
+        },
+        {
+          "name": "keyword.operator.comparison.cinder",
+          "match": "<|>"
+        },
+        {
+          "name": "keyword.operator.bitwise.cinder",
+          "match": "&|\\||\\^|~"
+        },
+        {
+          "name": "keyword.operator.arithmetic.cinder",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.assignment.cinder",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.propagation.cinder",
+          "match": "\\?"
+        },
+        {
+          "name": "constant.character.escape.line-continuation.cinder",
+          "match": "\\\\\\s*$"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.import.cinder",
+          "match": "\\b(?:import|from|as)\\b"
+        },
+        {
+          "name": "keyword.control.conditional.cinder",
+          "match": "\\b(?:if|elif|else|match|case)\\b"
+        },
+        {
+          "name": "keyword.control.loop.cinder",
+          "match": "\\b(?:while|for|in)\\b"
+        },
+        {
+          "name": "keyword.control.flow.cinder",
+          "match": "\\b(?:return|break|continue|pass|defer)\\b"
+        },
+        {
+          "name": "storage.type.cinder",
+          "match": "\\b(?:def|struct|enum|union|variant|class)\\b"
+        },
+        {
+          "name": "storage.modifier.cinder",
+          "match": "\\b(?:extern|abstract|dyn|comptime|const|unsafe|private)\\b"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.parens.cinder",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.section.brackets.cinder",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.section.braces.cinder",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.separator.cinder",
+          "match": "[:,;]"
+        },
+        {
+          "name": "punctuation.accessor.cinder",
+          "match": "\\."
+        }
+      ]
+    }
+  }
+}

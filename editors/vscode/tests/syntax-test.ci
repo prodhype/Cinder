@@ -1,0 +1,50 @@
+# SYNTAX TEST "source.cinder" "Cinder core syntax"
+
+@reflect
+# <- punctuation.definition.annotation.cinder
+#^^^^^^^ entity.name.function.decorator.cinder
+
+abstract class Shape:
+# <- storage.modifier.cinder
+#        ^^^^^ storage.type.cinder
+#              ^^^^^ entity.name.type.cinder
+
+def area(self: &const Shape) -> f64:
+# <- storage.type.function.cinder
+#   ^^^^ entity.name.function.cinder
+
+f64
+# <- support.type.primitive.cinder
+
+true false null
+# <- constant.language.cinder
+
+static_assert(true)
+# <- support.function.builtin.cinder
+
+self super
+# <- variable.language.cinder
+
+if elif else while for match case in return break continue pass defer
+# <- keyword.control.conditional.cinder
+
+extern comptime const unsafe private dyn
+# <- storage.modifier.cinder
+
+0xFF 0b1010 0o755 1_000 3.14 .5 1e6
+# <- constant.numeric.integer.hexadecimal.cinder
+
+"Cinder\n"
+# <- string.quoted.double.cinder
+
+'x'
+# <- string.quoted.single.cinder
+
+# ordinary comment
+# <- comment.line.number-sign.cinder
+
+// ordinary comment
+# <- comment.line.double-slash.cinder
+
+<<= >>= -> ... == != <= >= << >> += -= *= /= %= &= |= ^= = + - * / % & | ^ ~ ! < > ?
+# <- keyword.operator.assignment.augmented.cinder
