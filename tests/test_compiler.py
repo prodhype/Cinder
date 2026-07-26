@@ -47,6 +47,47 @@ def test_array_to_const_slice_coercion() -> None:
     assert ".data = values, .length = 2" in generated
 
 
+def test_builtin_print_generates_printf_without_import() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    print(\"answer\", 42)\n"
+        "    return 0\n"
+    )
+    assert "#include <stdio.h>" in generated
+    assert 'printf("%s %lld\\n", "answer", ((long long)(42)));' in generated
+
+
+def test_print_fstring_generates_escaped_printf_format() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    value: i32 = 42\n"
+        "    pi: f64 = 3.14159\n"
+        "    print(f\"value={value:x} pi={pi:.2f} {{ok}} 100%\")\n"
+        "    return 0\n"
+    )
+    assert 'printf("value=%llx pi=%.2f {ok} 100%%\\n", ((unsigned long long)(value)), pi);' in generated
+
+
+def test_fstrings_are_rejected_outside_print() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    message = f\"value {1}\"\n"
+            "    return 0\n"
+        )
+    assert "f-strings are only supported inside print(...)" in str(captured.value)
+
+
+def test_print_rejects_incompatible_fstring_format() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    print(f\"{1:s}\")\n"
+            "    return 0\n"
+        )
+    assert "integer print values do not support :s" in str(captured.value)
+
+
 def test_scoped_defer_runs_before_return_value_is_released() -> None:
     generated = compile_source(
         "def compute() -> i32:\n"

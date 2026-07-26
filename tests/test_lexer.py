@@ -32,6 +32,13 @@ def test_multiline_call_suppresses_physical_newlines() -> None:
     assert [token.kind for token in tokens].count(TokenKind.NEWLINE) == 3
 
 
+def test_fstring_token() -> None:
+    tokens = lex('def main() -> i32:\n    print(f"hello {name}")\n    return 0\n', Path("test.ci"))
+    fstrings = [token for token in tokens if token.kind is TokenKind.FSTRING]
+    assert len(fstrings) == 1
+    assert fstrings[0].lexeme == 'f"hello {name}"'
+
+
 def test_tabs_are_rejected() -> None:
     with pytest.raises(CompilationFailed, match="tabs are not allowed"):
         lex("def main() -> i32:\n\treturn 0\n", Path("test.ci"))

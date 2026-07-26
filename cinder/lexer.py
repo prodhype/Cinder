@@ -17,6 +17,7 @@ class TokenKind(StrEnum):
     INTEGER = "INTEGER"
     FLOAT = "FLOAT"
     STRING = "STRING"
+    FSTRING = "FSTRING"
     CHAR = "CHAR"
 
     IMPORT = "import"
@@ -341,6 +342,14 @@ class Lexer:
                 index = self._scan_string(line, line_number, index)
                 continue
 
+            if (
+                character in "fF"
+                and index + 1 < len(line)
+                and line[index + 1] in ('"', "'")
+            ):
+                index = self._scan_string(line, line_number, index, prefix_length=1)
+                continue
+
             if _is_identifier_start(character):
                 end = index + 1
                 while end < len(line) and _is_identifier_continue(line[end]):
@@ -409,9 +418,16 @@ class Lexer:
 
         return explicit_continuation
 
-    def _scan_string(self, line: str, line_number: int, start: int) -> int:
-        quote = line[start]
-        index = start + 1
+    def _scan_string(
+        self,
+        line: str,
+        line_number: int,
+        start: int,
+        *,
+        prefix_length: int = 0,
+    ) -> int:
+        quote = line[start + prefix_length]
+        index = start + prefix_length + 1
         escaped = False
         decoded_length = 0
         while index < len(line):
@@ -428,7 +444,10 @@ class Lexer:
             if character == quote:
                 end = index + 1
                 lexeme = line[start:end]
-                kind = TokenKind.CHAR if quote == "'" and decoded_length == 1 else TokenKind.STRING
+                if prefix_length:
+                    kind = TokenKind.FSTRING
+                else:
+                    kind = TokenKind.CHAR if quote == "'" and decoded_length == 1 else TokenKind.STRING
                 self.tokens.append(
                     Token(
                         kind,

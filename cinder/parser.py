@@ -6,8 +6,7 @@ from typing import NoReturn
 
 from cinder import ast
 from cinder.diagnostics import CompilationFailed, DiagnosticBag, Span
-from cinder.lexer import Token, TokenKind
-
+from cinder.lexer import Token, TokenKind, lex
 
 _ASSIGNMENT_KINDS: dict[TokenKind, str] = {
     TokenKind.ASSIGN: "=",
@@ -1016,6 +1015,8 @@ class Parser:
             return ast.LiteralExpr(token.span, token.value, "float", token.lexeme)
         if self.match(TokenKind.STRING):
             return ast.LiteralExpr(token.span, _decode_string(token), "string", token.lexeme)
+        if self.match(TokenKind.FSTRING):
+            return self.parse_fstring(token)
         if self.match(TokenKind.CHAR):
             return ast.LiteralExpr(token.span, _decode_string(token), "char", token.lexeme)
         if self.match(TokenKind.TRUE):
@@ -1063,6 +1064,182 @@ class Parser:
 
         self.error("expected an expression", token.span, code="P082")
 
+    def parse_fstring(self, token: Token) -> ast.FStringExpr:
+        if len(token.lexeme) < 3:
+            self.error("invalid f-string literal", token.span, code="P083")
+        quote = token.lexeme[1]
+        content = token.lexeme[2:-1]
+        parts: list[ast.FStringPart] = []
+        literal_start = 0
+        index = 0
+
+        def append_literal(until: int) -> None:
+            nonlocal literal_start
+            if until <= literal_start:
+                literal_start = until
+                return
+            raw = content[literal_start:until]
+            parts.append(ast.FStringText(token.span, _decode_string_fragment(raw, quote)))
+            literal_start = until
+
+        while index < len(content):
+            character = content[index]
+            if character == "{":
+                if index + 1 < len(content) and content[index + 1] == "{":
+                    append_literal(index)
+                    parts.append(ast.FStringText(token.span, "{"))
+                    index += 2
+                    literal_start = index
+                    continue
+                append_literal(index)
+                expression_start = index + 1
+                expression_end, format_spec, close = self._scan_fstring_expression(
+                    content,
+                    expression_start,
+                    token,
+                )
+                expression_text = content[expression_start:expression_end].strip()
+                if not expression_text:
+                    self.error("empty f-string expression", token.span, code="P084")
+                expression = self._parse_fstring_expression(
+                    expression_text,
+                    token,
+                    expression_start + len(content[expression_start:expression_end]) - len(content[expression_start:expression_end].lstrip()),
+                )
+                parts.append(ast.FStringExpression(expression.span, expression, format_spec))
+                index = close + 1
+                literal_start = index
+                continue
+            if character == "}":
+                if index + 1 < len(content) and content[index + 1] == "}":
+                    append_literal(index)
+                    parts.append(ast.FStringText(token.span, "}"))
+                    index += 2
+                    literal_start = index
+                    continue
+                self.error("single '}' is not allowed in an f-string", token.span, code="P085")
+            index += 1
+
+        append_literal(len(content))
+        return ast.FStringExpr(token.span, parts)
+
+    def _scan_fstring_expression(
+        self,
+        content: str,
+        start: int,
+        token: Token,
+    ) -> tuple[int, str | None, int]:
+        index = start
+        depth = 0
+        format_start: int | None = None
+        while index < len(content):
+            character = content[index]
+            if character in ('"', "'"):
+                index = _skip_quoted_text(content, index)
+                continue
+            if character in "([":
+                depth += 1
+                index += 1
+                continue
+            if character in ")]":
+                if depth > 0:
+                    depth -= 1
+                index += 1
+                continue
+            if character == ":" and depth == 0 and format_start is None:
+                format_start = index
+                index += 1
+                continue
+            if character == "}" and depth == 0:
+                if format_start is None:
+                    return index, None, index
+                spec = content[format_start + 1 : index].strip()
+                return format_start, spec, index
+            if character == "{" and format_start is not None:
+                self.error("nested replacement fields are not supported in f-string format specs", token.span, code="P086")
+            index += 1
+        self.error("unterminated f-string expression", token.span, code="P087")
+
+    def _parse_fstring_expression(
+        self,
+        expression_text: str,
+        token: Token,
+        content_column: int,
+    ) -> ast.Expression:
+        try:
+            tokens = lex(expression_text, self.path)
+        except CompilationFailed as error:
+            note = error.diagnostics[0].message if error.diagnostics else None
+            self.error("invalid f-string expression", token.span, code="P088", note=note)
+
+        parser = Parser(tokens, expression_text, self.path)
+        try:
+            expression = parser.parse_expression()
+            parser.match(TokenKind.NEWLINE)
+            if not parser.at(TokenKind.EOF):
+                parser.error("expected end of f-string expression", parser.current.span, code="P089")
+        except _ParseAbort:
+            note = parser.diagnostics.items[0].message if parser.diagnostics.items else None
+            self.error("invalid f-string expression", token.span, code="P088", note=note)
+        if parser.diagnostics.has_errors:
+            note = parser.diagnostics.items[0].message if parser.diagnostics.items else None
+            self.error("invalid f-string expression", token.span, code="P088", note=note)
+        self._offset_expression_spans(
+            expression,
+            token.span.start_line,
+            token.span.start_column + 2 + content_column,
+        )
+        return expression
+
+    def _offset_expression_spans(
+        self,
+        expression: ast.Expression,
+        line: int,
+        column: int,
+    ) -> None:
+        expression.span = _offset_span(expression.span, line, column)
+        match expression:
+            case ast.UnaryExpr(operand=operand):
+                self._offset_expression_spans(operand, line, column)
+            case ast.BinaryExpr(left=left, right=right):
+                self._offset_expression_spans(left, line, column)
+                self._offset_expression_spans(right, line, column)
+            case ast.AttributeExpr(value=value):
+                self._offset_expression_spans(value, line, column)
+            case ast.IndexExpr(value=value, index=index):
+                self._offset_expression_spans(value, line, column)
+                self._offset_expression_spans(index, line, column)
+            case ast.SliceExpr(value=value, start=start_expr, stop=stop_expr):
+                self._offset_expression_spans(value, line, column)
+                if start_expr is not None:
+                    self._offset_expression_spans(start_expr, line, column)
+                if stop_expr is not None:
+                    self._offset_expression_spans(stop_expr, line, column)
+            case ast.CallExpr(callee=callee, arguments=arguments):
+                self._offset_expression_spans(callee, line, column)
+                for argument in arguments:
+                    argument.span = _offset_span(argument.span, line, column)
+                    self._offset_expression_spans(argument.value, line, column)
+            case ast.PropagateExpr(value=value):
+                self._offset_expression_spans(value, line, column)
+            case ast.ArrayLiteralExpr(elements=elements):
+                for element in elements:
+                    self._offset_expression_spans(element, line, column)
+            case ast.CastExpr(target_type=target_type, value=value):
+                target_type.span = _offset_span(target_type.span, line, column)
+                self._offset_expression_spans(value, line, column)
+            case ast.AllocExpr(element_type=element_type, count=count):
+                element_type.span = _offset_span(element_type.span, line, column)
+                if count is not None:
+                    self._offset_expression_spans(count, line, column)
+            case ast.FStringExpr(parts=parts):
+                for part in parts:
+                    part.span = _offset_span(part.span, line, column)
+                    if isinstance(part, ast.FStringExpression):
+                        self._offset_expression_spans(part.expression, line, column)
+            case _:
+                return
+
 
 def _decode_string(token: Token) -> str:
     try:
@@ -1070,6 +1247,50 @@ def _decode_string(token: Token) -> str:
     except (SyntaxError, ValueError):
         return token.lexeme[1:-1]
     return str(value)
+
+
+def _decode_string_fragment(raw: str, quote: str) -> str:
+    try:
+        value = python_ast.literal_eval(f"{quote}{raw}{quote}")
+    except (SyntaxError, ValueError):
+        return raw
+    return str(value)
+
+
+def _skip_quoted_text(text: str, start: int) -> int:
+    quote = text[start]
+    index = start + 1
+    escaped = False
+    while index < len(text):
+        character = text[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if character == "\\":
+            escaped = True
+            index += 1
+            continue
+        if character == quote:
+            return index + 1
+        index += 1
+    return index
+
+
+def _offset_span(span: Span, line: int, column: int) -> Span:
+    if span.start_line == 1:
+        start_line = line
+        start_column = column + span.start_column - 1
+    else:
+        start_line = line + span.start_line - 1
+        start_column = span.start_column
+    if span.end_line == 1:
+        end_line = line
+        end_column = column + span.end_column - 1
+    else:
+        end_line = line + span.end_line - 1
+        end_column = span.end_column
+    return Span(span.path, start_line, start_column, end_line, end_column)
 
 
 def parse(tokens: list[Token], source: str, path: Path) -> ast.Module:

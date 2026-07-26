@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TypeAlias
 
 from cinder.diagnostics import Span
 
@@ -359,6 +358,25 @@ class LiteralExpr(Expression):
 
 
 @dataclass(slots=True)
+class FStringText(Node):
+    value: str
+
+
+@dataclass(slots=True)
+class FStringExpression(Node):
+    expression: Expression
+    format_spec: str | None = None
+
+
+FStringPart = FStringText | FStringExpression
+
+
+@dataclass(slots=True)
+class FStringExpr(Expression):
+    parts: list[FStringPart]
+
+
+@dataclass(slots=True)
 class UnaryExpr(Expression):
     operator: str
     operand: Expression
@@ -424,7 +442,7 @@ class AllocExpr(Expression):
     count: Expression | None
 
 
-TopLevelItem: TypeAlias = (
+type TopLevelItem = (
     ImportDecl
     | FromImportDecl
     | ExternImportDecl

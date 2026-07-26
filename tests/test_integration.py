@@ -79,6 +79,22 @@ def test_c_header_interop(tmp_path: Path) -> None:
     assert result.stdout == "A\n"
 
 
+def test_builtin_print_and_fstrings(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "def main() -> i32:\n"
+        "    name = \"Ada\"\n"
+        "    value: i32 = 42\n"
+        "    pi: f64 = 3.14159\n"
+        "    print()\n"
+        "    print(\"plain\", value)\n"
+        "    print(f\"hello {name} {value:x} {pi:.2f} {{ok}} 100%\", true, 'Z')\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "\nplain 42\nhello Ada 2a 3.14 {ok} 100% true Z\n"
+
+
 def test_native_classes_dyn_reflection_and_destructor_order(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

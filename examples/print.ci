@@ -1,0 +1,11 @@
+def main() -> i32:
+    name = "Cinder"
+    count: i32 = 3
+    pi: f64 = 3.14159
+    initial = 'C'
+
+    print("print is available without importing stdio")
+    print("multiple values:", name, count, true)
+    print(f"{name} count={count:d} hex={count:x} pi={pi:.2f} initial={initial:c}")
+    print(f"escaped braces {{like this}} and a literal percent 100%")
+    return 0

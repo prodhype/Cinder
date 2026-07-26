@@ -1473,6 +1473,8 @@ class CGenerator:
         match expression:
             case ast.LiteralExpr():
                 return self._emit_literal(expression)
+            case ast.FStringExpr():
+                raise AssertionError("f-strings may only be emitted as print arguments")
             case ast.NameExpr():
                 return self._emit_name(expression, mode)
             case ast.UnaryExpr(operator=operator, operand=operand):
@@ -1778,6 +1780,8 @@ class CGenerator:
 
     def _emit_call(self, expression: ast.CallExpr) -> str:
         resolution = self.semantic.call_resolutions[id(expression)]
+        if resolution.kind == "print":
+            return self._emit_print_call(expression)
         if resolution.kind in {
             "constructor",
             "union_constructor",
@@ -1879,6 +1883,63 @@ class CGenerator:
         arguments.extend(self._emit_ordered_call_arguments(expression, resolution))
 
         return f"{c_identifier(function.c_name)}({', '.join(arguments)})"
+
+    def _emit_print_call(self, expression: ast.CallExpr) -> str:
+        format_parts: list[str] = []
+        arguments: list[str] = []
+        for index, argument in enumerate(expression.arguments):
+            if index:
+                format_parts.append(" ")
+            self._collect_print_argument(argument.value, format_parts, arguments)
+        format_parts.append("\n")
+        format_string = "".join(format_parts)
+        if not arguments:
+            return f"printf({c_string(format_string)})"
+        return f"printf({c_string(format_string)}, {', '.join(arguments)})"
+
+    def _collect_print_argument(
+        self,
+        expression: ast.Expression,
+        format_parts: list[str],
+        arguments: list[str],
+    ) -> None:
+        if isinstance(expression, ast.FStringExpr):
+            for part in expression.parts:
+                if isinstance(part, ast.FStringText):
+                    format_parts.append(_printf_literal(part.value))
+                    continue
+                specifier, argument = self._printf_value(part.expression, part.format_spec)
+                format_parts.append(specifier)
+                arguments.append(argument)
+            return
+        specifier, argument = self._printf_value(expression, None)
+        format_parts.append(specifier)
+        arguments.append(argument)
+
+    def _printf_value(
+        self,
+        expression: ast.Expression,
+        format_spec: str | None,
+    ) -> tuple[str, str]:
+        type_ = value_type(self.semantic.expression_type(expression))
+        value = self._emit_expr(expression)
+        conversion = _print_conversion(format_spec)
+
+        if type_ == BOOL:
+            return "%s", f"(({value}) ? \"true\" : \"false\")"
+        if type_ == CHAR:
+            return "%c", f"((int)({value}))"
+        if _is_printf_string_type(type_):
+            return "%s", value
+        if isinstance(type_, PrimitiveType) and type_.category == "float":
+            specifier = _printf_float_specifier(format_spec, conversion)
+            if type_ == F32:
+                value = f"((double)({value}))"
+            return specifier, value
+        if isinstance(type_, PrimitiveType) and type_.category == "integer":
+            return _printf_integer_value(type_, conversion, value)
+
+        raise AssertionError(f"type {type_name(type_)} cannot be printed")
 
     def _emit_ordered_call_arguments(
         self,
@@ -2489,6 +2550,49 @@ class CGenerator:
     def _new_temp(self, purpose: str) -> str:
         self.temp_counter += 1
         return f"__cinder_{purpose}_{self.temp_counter}"
+
+
+def _printf_literal(value: str) -> str:
+    return value.replace("%", "%%")
+
+
+def _print_conversion(format_spec: str | None) -> str | None:
+    if format_spec in (None, ""):
+        return None
+    spec = format_spec or ""
+    if len(spec) == 1:
+        return spec if spec in "diuoxXfFeEgGsc" else None
+    if spec.startswith(".") and len(spec) > 2 and spec[-1] in "fFeEgG":
+        precision = spec[1:-1]
+        if precision.isdigit():
+            return spec[-1]
+    return None
+
+
+def _printf_float_specifier(format_spec: str | None, conversion: str | None) -> str:
+    if format_spec in (None, ""):
+        return "%g"
+    if conversion is None or conversion not in "fFeEgG":
+        raise AssertionError(f"invalid float print format {format_spec!r}")
+    return f"%{format_spec}"
+
+
+def _printf_integer_value(
+    type_: PrimitiveType,
+    conversion: str | None,
+    value: str,
+) -> tuple[str, str]:
+    if conversion is None:
+        conversion = "u" if type_.signed is False else "d"
+    if conversion not in "diuoxX":
+        raise AssertionError(f"invalid integer print conversion {conversion!r}")
+    if conversion in "uoxX":
+        return f"%ll{conversion}", f"((unsigned long long)({value}))"
+    return f"%ll{conversion}", f"((long long)({value}))"
+
+
+def _is_printf_string_type(type_: Type) -> bool:
+    return isinstance(type_, PointerType) and strip_const(type_.inner) == CHAR
 
 
 def c_identifier(name: str) -> str:
