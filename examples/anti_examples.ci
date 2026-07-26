@@ -5,9 +5,6 @@
 #
 #     cinder check examples/anti_examples.ci
 
-import stdio
-
-
 # -----------------------------------------------------------------------------
 # Layout, declarations, and calls
 
@@ -384,12 +381,12 @@ def reflected_field_count() -> usize:
 
 # WRONG: `fields_of` and `methods_of` are not runtime iterables.
 # for field in fields_of(ReflectedRecord):
-#     stdio.printf("%s\n", field.name)
+#     print(field.name)
 
 # CORRECT: consume them with `comptime`; the compiler unrolls the loop.
 def print_compile_time_fields() -> void:
     for field in comptime fields_of(ReflectedRecord):
-        stdio.printf("compile-time field: %s\n", field.name)
+        print(f"compile-time field: {field.name}")
 
 
 # WRONG: `type_of(...)` is a compiler-only value and cannot be stored at

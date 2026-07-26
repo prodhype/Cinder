@@ -1,5 +1,4 @@
 import math
-import stdio
 
 
 struct Vec2:
@@ -12,5 +11,5 @@ struct Vec2:
 
 def main() -> i32:
     vector = Vec2(x=3.0, y=4.0)
-    stdio.printf("length: %.1f\n", vector.length())
+    print(f"length: {vector.length():.1f}")
     return 0

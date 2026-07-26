@@ -1,6 +1,3 @@
-import stdio
-
-
 enum GraphError:
     invalid_vertex
     unreachable
@@ -39,11 +36,11 @@ class ConsoleReporter(Reporter):
     def emit(self, event: SearchEvent) -> void:
         match event:
             case SearchEvent.Visiting(vertex, distance):
-                stdio.printf("%s visit %d at distance %d\n", self.label, vertex, distance)
+                print(f"{self.label} visit {vertex} at distance {distance}")
             case SearchEvent.Relaxed(source, target, distance):
-                stdio.printf("%s relax %d -> %d to %d\n", self.label, source, target, distance)
+                print(f"{self.label} relax {source} -> {target} to {distance}")
             case SearchEvent.Finished(distance):
-                stdio.printf("%s shortest distance: %d\n", self.label, distance)
+                print(f"{self.label} shortest distance: {distance}")
 
 
 static_assert(field_count(Graph) == 1, "Graph layout changed")
@@ -60,7 +57,7 @@ def validate_vertex(vertex: i32) -> Result[i32, GraphError]:
 def print_path(previous: *const i32, vertex: i32) -> void:
     if previous[vertex] != -1:
         print_path(previous, previous[vertex])
-    stdio.printf("%d ", vertex)
+    print(vertex)
 
 
 def shortest_path(
@@ -114,21 +111,15 @@ def shortest_path(
     if distances[target] == 1000000:
         return Err(GraphError.unreachable)
 
-    stdio.printf("path: ")
+    print("path:")
     print_path(previous, target)
-    stdio.puts("")
     reporter.emit(SearchEvent.Finished(distances[target]))
     return Ok(distances[target])
 
 
 def print_graph_layout() -> void:
     for field in comptime fields_of(Graph):
-        stdio.printf(
-            "Graph.%s: offset=%zu, size=%zu\n",
-            field.name,
-            field.offset,
-            field.size,
-        )
+        print(f"Graph.{field.name}: offset={field.offset}, size={field.size}")
 
 
 def main() -> i32:
@@ -143,7 +134,7 @@ def main() -> i32:
     reporter = ConsoleReporter("dijkstra:")
 
     info = type_info(graph)
-    stdio.printf("%s has %zu reflected field\n", info.name, info.field_count)
+    print(f"{info.name} has {info.field_count} reflected field")
     print_graph_layout()
 
     result = shortest_path(graph, 0, 4, reporter)
@@ -152,7 +143,7 @@ def main() -> i32:
             if distance != 20:
                 return 2
         case Err(error):
-            stdio.printf("graph error: %d\n", cast[i32](error))
+            print(f"graph error: {cast[i32](error)}")
             return 1
 
     return 0
