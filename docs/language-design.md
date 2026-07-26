@@ -1,6 +1,6 @@
 # Cinder language design
 
-> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, and compile-time member inspection. General-purpose generics and the more expansive metaprogramming ideas remain proposals.
+> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, compile-time member inspection, native tuples, and owning lists. User-defined generics, maps, sets, and the more expansive metaprogramming ideas remain proposals.
 
 This is a language that compiles to portable C11, not a modification of the C standard. Trying to make whitespace significant while remaining valid C would create a preprocessing mess and poor tooling compatibility.
 
@@ -221,6 +221,28 @@ Compatible arrays convert to slices automatically, and mutable slices convert to
 const slices. `value[:]`, `value[start:]`, and `value[start:stop]` create subviews;
 slice steps are not implemented. Indexing and slicing compile to direct C access and
 pointer arithmetic, with no implicit bounds checks.
+
+## Tuples and lists
+
+`Tuple[...]` is a compiler-specialized heterogeneous value aggregate. Tuple layout is explicit in generated C, tuple elements are immutable, and indices must be compile-time integer literals.
+
+```python
+entry: Tuple[i32, const char*] = (7, "ready")
+code = entry[0]
+```
+
+`List[T]` is a homogeneous owning buffer specialized for `T`. It is represented as a generated `{data, length, capacity}` struct and uses the small Cinder runtime only for checked allocation and growth.
+
+```python
+values: List[i32] = []
+for value in range(0, 20):
+    values.append(value)
+last = values.pop()
+```
+
+List ownership follows the existing explicit move-only direction. A direct local owns its buffer, a direct return transfers it, replacement drops the previous buffer, and all normal scope exits free it. Lists are passed by `&List[T]` or `&const List[T]`. Nested lists, aggregate list fields, globals, by-value parameters, and destructor-bearing elements wait for a broader aggregate ownership model.
+
+Square-bracket literals infer lists in untyped contexts. An explicit array type still selects fixed C storage, so `values: i32[3] = [1, 2, 3]` remains an array declaration. Maps and sets are intentionally deferred until hashing and equality constraints are defined.
 
 ## Structs
 
@@ -678,9 +700,9 @@ cinder emit-project . -o generated
 
 ## Implemented milestones
 
-The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection.
+The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns without introducing user-defined generics.
 
-General-purpose generics, function pointer types, richer ownership abstractions, closures, and broader compile-time execution remain later work.
+User-defined generics, maps and sets, function pointer types, richer ownership abstractions, closures, and broader compile-time execution remain later work.
 
 The crucial constraint remains this: Cinder must be understandable by reading its
 generated C. Hidden allocation, unpredictable dispatch, exception machinery, or

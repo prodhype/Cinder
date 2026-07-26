@@ -16,6 +16,9 @@ def area(self: &const Shape) -> f64:
 f64
 # <- support.type.primitive.cinder
 
+Tuple List Result
+# <- support.type.builtin.cinder
+
 true false null
 # <- constant.language.cinder
 

@@ -10,6 +10,8 @@
 
 `slices.ci` demonstrates fixed arrays, slicing, mutable-to-const slice conversion, collection iteration, and `.length`.
 
+`collections.ci` demonstrates heterogeneous tuples, inferred and typed owning lists, deterministic list cleanup, mutation, sorting, iteration, and reference-based list parameters.
+
 `pointers.ci` demonstrates address-of, raw pointers, transparent references, and pointer indexing.
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.

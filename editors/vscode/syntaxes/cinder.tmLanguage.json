@@ -271,6 +271,10 @@
         {
           "name": "support.type.primitive.cinder",
           "match": "\\b(?:void|bool|char|i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|isize|usize|c_int|c_long|c_size_t)\\b"
+        },
+        {
+          "name": "support.type.builtin.cinder",
+          "match": "\\b(?:Result|Tuple|List)\\b"
         }
       ]
     },

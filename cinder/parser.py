@@ -887,6 +887,8 @@ class Parser:
                     arguments.append(self.parse_type())
                     if not self.match(TokenKind.COMMA):
                         break
+                    if self.at(TokenKind.RIGHT_BRACKET):
+                        break
             close = self.expect(TokenKind.RIGHT_BRACKET, "expected ']' after generic arguments", code="P123")
             result = ast.GenericTypeNode(result.span.merge(close.span), result, arguments)
 
@@ -1045,10 +1047,22 @@ class Parser:
             return ast.NameExpr(token.span, token.lexeme)
 
         if self.match(TokenKind.LEFT_PAREN):
-            expression = self.parse_expression()
+            if self.match(TokenKind.RIGHT_PAREN):
+                return ast.TupleLiteralExpr(token.span.merge(self.tokens[self.index - 1].span), [])
+
+            first = self.parse_expression()
+            if self.match(TokenKind.COMMA):
+                tuple_elements = [first]
+                while not self.at(TokenKind.RIGHT_PAREN):
+                    tuple_elements.append(self.parse_expression())
+                    if not self.match(TokenKind.COMMA):
+                        break
+                close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after tuple literal", code="P080")
+                return ast.TupleLiteralExpr(token.span.merge(close.span), tuple_elements)
+
             close = self.expect(TokenKind.RIGHT_PAREN, "expected ')'", code="P080")
-            expression.span = token.span.merge(close.span)
-            return expression
+            first.span = token.span.merge(close.span)
+            return first
 
         if self.match(TokenKind.LEFT_BRACKET):
             elements: list[ast.Expression] = []
@@ -1059,8 +1073,8 @@ class Parser:
                         break
                     if self.at(TokenKind.RIGHT_BRACKET):
                         break
-            close = self.expect(TokenKind.RIGHT_BRACKET, "expected ']' after array literal", code="P081")
-            return ast.ArrayLiteralExpr(token.span.merge(close.span), elements)
+            close = self.expect(TokenKind.RIGHT_BRACKET, "expected ']' after list literal", code="P081")
+            return ast.ListLiteralExpr(token.span.merge(close.span), elements)
 
         self.error("expected an expression", token.span, code="P082")
 
@@ -1222,7 +1236,7 @@ class Parser:
                     self._offset_expression_spans(argument.value, line, column)
             case ast.PropagateExpr(value=value):
                 self._offset_expression_spans(value, line, column)
-            case ast.ArrayLiteralExpr(elements=elements):
+            case ast.ListLiteralExpr(elements=elements) | ast.TupleLiteralExpr(elements=elements):
                 for element in elements:
                     self._offset_expression_spans(element, line, column)
             case ast.CastExpr(target_type=target_type, value=value):

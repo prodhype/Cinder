@@ -63,6 +63,16 @@ class ResultType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class TupleType(Type):
+    elements: tuple[Type, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ListType(Type):
+    inner: Type
+
+
+@dataclass(frozen=True, slots=True)
 class OpaqueType(Type):
     name: str
     c_name: str
@@ -211,6 +221,15 @@ def result_c_name(type_: ResultType) -> str:
     return f"CinderResult_{type_key(type_.ok)}_{type_key(type_.error)}"
 
 
+def tuple_c_name(type_: TupleType) -> str:
+    suffix = "_".join(type_key(element) for element in type_.elements)
+    return f"CinderTuple_{len(type_.elements)}" + (f"_{suffix}" if suffix else "")
+
+
+def list_c_name(type_: ListType) -> str:
+    return f"CinderList_{type_key(type_.inner)}"
+
+
 def type_name(type_: Type) -> str:
     match type_:
         case PrimitiveType(name=name):
@@ -219,6 +238,10 @@ def type_name(type_: Type) -> str:
             return name
         case ResultType(ok=ok, error=error):
             return f"Result[{type_name(ok)}, {type_name(error)}]"
+        case TupleType(elements=elements):
+            return "Tuple[" + ", ".join(type_name(element) for element in elements) + "]"
+        case ListType(inner=inner):
+            return f"List[{type_name(inner)}]"
         case OpaqueType(name=name):
             return name
         case ConstType(inner=inner):
@@ -309,7 +332,7 @@ def is_condition_type(type_: Type) -> bool:
 
 def element_type(type_: Type) -> Type | None:
     type_ = strip_const(type_)
-    if isinstance(type_, (ArrayType, SliceType, PointerType, ReferenceType)):
+    if isinstance(type_, (ArrayType, SliceType, ListType, PointerType, ReferenceType)):
         return type_.inner
     return None
 
@@ -435,6 +458,12 @@ def can_assign(target: Type, source: Type) -> bool:
     if isinstance(target, ArrayType) and isinstance(source, ArrayType):
         return target.length == source.length and can_assign(target.inner, source.inner)
 
+    if isinstance(target, TupleType) and isinstance(source, TupleType):
+        return target == source
+
+    if isinstance(target, ListType) and isinstance(source, ListType):
+        return target == source
+
     return False
 
 
@@ -462,6 +491,11 @@ def type_key(type_: Type) -> str:
             return _sanitize_key(nominal_c_name(type_))
         case ResultType(ok=ok, error=error):
             return f"result_{type_key(ok)}_{type_key(error)}"
+        case TupleType(elements=elements):
+            suffix = "_".join(type_key(element) for element in elements)
+            return f"tuple_{len(elements)}" + (f"_{suffix}" if suffix else "")
+        case ListType(inner=inner):
+            return f"list_{type_key(inner)}"
         case OpaqueType(c_name=c_name):
             return _sanitize_key(c_name)
         case ConstType(inner=inner):
