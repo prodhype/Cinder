@@ -68,6 +68,16 @@ def test_print_fstring_generates_escaped_printf_format() -> None:
     assert 'printf("value=%llx pi=%.2f {ok} 100%%\\n", ((unsigned long long)(value)), pi);' in generated
 
 
+def test_unsigned_integer_decimal_format_preserves_unsigned_codegen() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    value: u64 = 18446744073709551615\n"
+        "    print(f\"{value:d}\")\n"
+        "    return 0\n"
+    )
+    assert 'printf("%llu\\n", ((unsigned long long)(value)));' in generated
+
+
 def test_fstrings_are_rejected_outside_print() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(

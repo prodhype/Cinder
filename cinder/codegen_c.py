@@ -2586,6 +2586,8 @@ def _printf_integer_value(
         conversion = "u" if type_.signed is False else "d"
     if conversion not in "diuoxX":
         raise AssertionError(f"invalid integer print conversion {conversion!r}")
+    if type_.signed is False and conversion in "di":
+        conversion = "u"
     if conversion in "uoxX":
         return f"%ll{conversion}", f"((unsigned long long)({value}))"
     return f"%ll{conversion}", f"((long long)({value}))"

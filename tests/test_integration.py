@@ -95,6 +95,18 @@ def test_builtin_print_and_fstrings(tmp_path: Path) -> None:
     assert result.stdout == "\nplain 42\nhello Ada 2a 3.14 {ok} 100% true Z\n"
 
 
+def test_unsigned_integer_explicit_decimal_print(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "def main() -> i32:\n"
+        "    value: u64 = 18446744073709551615\n"
+        "    print(f\"{value:d}\")\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "18446744073709551615\n"
+
+
 def test_native_classes_dyn_reflection_and_destructor_order(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,
