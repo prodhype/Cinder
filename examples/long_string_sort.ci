@@ -1,0 +1,20 @@
+import stdio
+
+
+def main() -> i32:
+    values: const char*[8] = [
+        "a lighthouse keeper recorded every passing storm in a weathered journal by the window",
+        "the observatory remained open long after midnight while the final measurements were checked",
+        "careful preparation turns a complicated journey into a sequence of manageable small decisions",
+        "beneath the old railway bridge the river carried autumn leaves toward the distant harbor",
+        "every successful expedition depends on clear maps reliable tools and patient communication",
+        "during the quiet afternoon the library filled with the soft rustle of pages being turned",
+        "scientists compared decades of field notes before announcing the unexpected migration pattern",
+        "when the workshop doors opened the newly restored clock began marking time across the square",
+    ]
+
+    sort(values)
+
+    for value in values:
+        stdio.puts(value)
+    return 0

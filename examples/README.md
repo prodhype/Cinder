@@ -10,6 +10,10 @@
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
+`binary_sort.ci` demonstrates the import-free stable `sort` builtin on a numeric array.
+
+`long_string_sort.ci` demonstrates lexicographic sorting of C strings without importing `string`.
+
 `defer.ci` demonstrates explicit allocation and cleanup before a returned value leaves scope.
 
 `interop.ci` includes a system C header and supplies a checked external declaration.

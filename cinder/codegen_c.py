@@ -162,6 +162,7 @@ class CGenerator:
         self._emit_enum_definitions()
         self._emit_slice_types()
         self._emit_type_definitions()
+        self._emit_sort_helpers()
         self._emit_interface_definitions()
         self._emit_reflection_declarations()
         self._emit_function_prototypes()
@@ -223,6 +224,7 @@ class CGenerator:
         self.writer.line()
         self.writer.line(f'#include "{header_name}"')
         self.writer.line()
+        self._emit_sort_helpers()
         self._emit_globals()
         self._emit_reflection_definitions()
         self._emit_class_support_definitions()
@@ -388,6 +390,48 @@ class CGenerator:
                 self._emit_result_definition(type_)
             else:
                 raise AssertionError(f"unhandled definition type: {type_!r}")
+
+    def _emit_sort_helpers(self) -> None:
+        for element_type in self.ir.sort_types:
+            compare_name = self._sort_compare_name(element_type)
+            pointer_type = PointerType(ConstType(element_type))
+            pointer_c_type = c_type_expression(pointer_type)
+
+            self.writer.line(
+                f"static CINDER_MAYBE_UNUSED int {compare_name}("
+                "const void *left_value, const void *right_value)"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(
+                f"{c_decl(pointer_type, 'left')} = ({pointer_c_type})left_value;"
+            )
+            self.writer.line(
+                f"{c_decl(pointer_type, 'right')} = ({pointer_c_type})right_value;"
+            )
+            raw = strip_const(element_type)
+            if isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR:
+                self.writer.line("return strcmp(*left, *right);")
+            else:
+                self.writer.line("return (*left > *right) - (*left < *right);")
+            self.writer.indent -= 1
+            self.writer.line("}")
+            self.writer.line()
+
+            helper_name = self._sort_helper_name(element_type)
+            slice_type = SliceType(element_type)
+            self.writer.line(
+                f"static CINDER_MAYBE_UNUSED void {helper_name}("
+                f"{self._slice_name(slice_type)} values)"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(
+                f"cinder_sort(values.data, values.length, sizeof(*values.data), {compare_name});"
+            )
+            self.writer.indent -= 1
+            self.writer.line("}")
+            self.writer.line()
 
     def _emit_class_definition(self, class_: ClassSymbol) -> None:
         name = c_identifier(class_.c_name)
@@ -1767,6 +1811,12 @@ class CGenerator:
             if isinstance(argument_type, SliceType):
                 return f"({self._emit_expr(argument)}).length"
             return f"strlen({self._emit_expr(argument)})"
+        if resolution.kind == "sort":
+            expected = resolution.expected_types[0]
+            if not isinstance(expected, SliceType):
+                raise AssertionError("sort has no slice element type")
+            sort_argument = self._emit_with_expected(expression.arguments[0].value, expected)
+            return f"{self._sort_helper_name(expected.inner)}({sort_argument})"
         if resolution.kind == "range":
             raise AssertionError("range may only be emitted as a for-loop iterable")
 
@@ -2077,6 +2127,14 @@ class CGenerator:
 
     def _slice_name(self, slice_type: SliceType) -> str:
         return "CinderSlice_" + c_identifier(type_key(slice_type.inner))
+
+    @staticmethod
+    def _sort_compare_name(element_type: Type) -> str:
+        return "CinderSortCompare_" + c_identifier(type_key(element_type))
+
+    @staticmethod
+    def _sort_helper_name(element_type: Type) -> str:
+        return "CinderSort_" + c_identifier(type_key(element_type))
 
     def _result_tag(self, result_type: ResultType, suffix: str) -> str:
         return f"{c_identifier(result_c_name(result_type))}_Tag_{suffix}"

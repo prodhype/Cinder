@@ -1,32 +1,9 @@
 import stdio
 
 
-def binary_sort(values: []i32) -> void:
-    index: usize = 1
-    while index < values.length:
-        value = values[index]
-        low: usize = 0
-        high = index
-
-        while low < high:
-            middle = low + (high - low) / 2
-            if value < values[middle]:
-                high = middle
-            else:
-                low = middle + 1
-
-        current = index
-        while current > low:
-            values[current] = values[current - 1]
-            current -= 1
-
-        values[low] = value
-        index += 1
-
-
 def main() -> i32:
     values: i32[8] = [29, 10, 14, 37, 13, 5, 42, 3]
-    binary_sort(values)
+    sort(values)
 
     for value in values:
         stdio.printf("%d ", value)

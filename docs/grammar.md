@@ -390,6 +390,8 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `len(array)` and `len(slice)` return `usize`. `len(const char*)` emits `strlen`.
 
+`sort(array_or_slice)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays are accepted directly, and slices may select a subrange to sort. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `char*` or `const char*` values use lexicographic C-string order. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
+
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
 
 Result values expose `.is_ok`, `.value`, and `.error`. Accessing a `void` payload is rejected.

@@ -216,7 +216,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.cinder",
-          "match": "\\b(?:static_assert|cast|alloc|range|len|Ok|Err|free|panic|type_of|type_name|type_info|size_of|align_of|field_count|method_count|fields|methods|fields_of|methods_of|has_field|has_method|implements)\\b(?=\\s*(?:\\(|\\[))"
+          "match": "\\b(?:static_assert|cast|alloc|range|len|sort|Ok|Err|free|panic|type_of|type_name|type_info|size_of|align_of|field_count|method_count|fields|methods|fields_of|methods_of|has_field|has_method|implements)\\b(?=\\s*(?:\\(|\\[))"
         }
       ]
     },
