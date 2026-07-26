@@ -1,0 +1,5 @@
+def main() -> i32:
+    name = input("Name: ")
+    defer free(cast[void*](name))
+    print("Hello", name)
+    return 0

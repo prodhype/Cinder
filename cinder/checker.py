@@ -2804,7 +2804,7 @@ class Checker:
     def _check_name(self, expression: ast.NameExpr) -> Type:
         symbol = self.current_scope.lookup(expression.name)
         if symbol is None:
-            if expression.name in ("range", "len", "sort", "print", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
+            if expression.name in ("range", "len", "sort", "print", "input", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
                 return FunctionValueType(expression.name)
             if expression.name == "super" and isinstance(self.current_owner, ClassSymbol):
                 return FunctionValueType("super")
@@ -3300,6 +3300,8 @@ class Checker:
                 return self._check_sort_call(expression)
             if name == "print":
                 return self._check_print_call(expression)
+            if name == "input":
+                return self._check_input_call(expression)
             if name in ("Ok", "Err"):
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_result_constructor(expression, expected, is_ok=name == "Ok")
@@ -4106,6 +4108,28 @@ class Checker:
             self._check_print_argument(argument.value)
         self.call_resolutions[id(call)] = CallResolution("print")
         return VOID
+
+    def _check_input_call(self, call: ast.CallExpr) -> Type:
+        self.expr_types[id(call.callee)] = FunctionValueType("input")
+        if len(call.arguments) > 1:
+            self._error("input expects zero or one positional argument", call.span, code="C244")
+        expected_types: list[Type | None] = []
+        argument_order: list[int] = []
+        for index, argument in enumerate(call.arguments):
+            if argument.name is not None:
+                self._error("input does not accept named arguments", argument.span, code="C245")
+            expected = string_type() if index == 0 else None
+            actual = self._check_expr(argument.value, expected=expected)
+            if index == 0 and not self._can_assign(string_type(), actual):
+                self._type_mismatch(string_type(), actual, argument.value.span)
+            argument_order.append(index)
+            expected_types.append(expected)
+        self.call_resolutions[id(call)] = CallResolution(
+            "input",
+            argument_order=tuple(argument_order),
+            expected_types=tuple(expected_types),
+        )
+        return string_type()
 
     def _check_print_argument(self, expression: ast.Expression) -> None:
         if isinstance(expression, ast.FStringExpr):

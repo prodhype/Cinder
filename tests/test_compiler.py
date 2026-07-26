@@ -57,6 +57,32 @@ def test_builtin_print_generates_printf_without_import() -> None:
     assert 'printf("%s %lld\\n", "answer", ((long long)(42)));' in generated
 
 
+def test_builtin_input_generates_runtime_call_without_import() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    name = input(\"Name: \")\n"
+        "    other = input()\n"
+        "    return cast[i32](len(name) + len(other))\n"
+    )
+    assert 'const char *name = cinder_input("Name: ");' in generated
+    assert "const char *other = cinder_input(NULL);" in generated
+
+
+def test_input_rejects_invalid_arguments() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    input(\"a\", \"b\")\n"
+            "    input(prompt=\">\")\n"
+            "    input(1)\n"
+            "    return 0\n"
+        )
+    text = str(captured.value)
+    assert "input expects zero or one positional argument" in text
+    assert "input does not accept named arguments" in text
+    assert "expected *const char, got i32" in text
+
+
 def test_print_fstring_generates_escaped_printf_format() -> None:
     generated = compile_source(
         "def main() -> i32:\n"

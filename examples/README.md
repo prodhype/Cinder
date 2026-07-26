@@ -4,6 +4,8 @@
 
 `print.ci` demonstrates import-free `print`, multi-argument output, and f-strings with format specs.
 
+`input.ci` demonstrates import-free `input` with a Python-style prompt.
+
 `vectors.ci` demonstrates structs, named field initialization, const methods, and the checked math module.
 
 `slices.ci` demonstrates fixed arrays, slicing, mutable-to-const slice conversion, collection iteration, and `.length`.
