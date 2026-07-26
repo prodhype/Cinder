@@ -2,23 +2,21 @@
 
 > Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, and compile-time member inspection. General-purpose generics and the more expansive metaprogramming ideas remain proposals.
 
-This should be a new language that compiles to portable C11, not a modification of the C standard. Trying to make whitespace significant while remaining valid C would create a preprocessing mess and poor tooling compatibility.
-
-Call it `Cinder` for now.
+This is a language that compiles to portable C11, not a modification of the C standard. Trying to make whitespace significant while remaining valid C would create a preprocessing mess and poor tooling compatibility.
 
 ## Design goals
 
-Cinder should preserve the useful parts of C:
+Cinder preserves the useful parts of C:
 
 * Predictable native performance
-* Deterministic memory management
+* Explicit, deterministic resource cleanup
 * C-compatible structs, functions, pointers, and libraries
 * No mandatory garbage collector
 * Portable C11 output
 * Straightforward generated code
 * Easy embedding into existing C projects
 
-The surface language should borrow from Python:
+The surface language borrows from Python:
 
 * Indentation-based blocks
 * Newline-terminated statements
@@ -27,12 +25,12 @@ The surface language should borrow from Python:
 * Type annotations
 * Abstract base classes
 * Constructors and destructors
-* Optional runtime introspection
+* Opt-in runtime reflection
 * Named arguments
 * Method syntax
-* Modules instead of header files
+* Semantic imports between Cinder modules instead of textual source inclusion
 
-It should not inherit Python's dynamic type system, monkey patching, reference counting, global interpreter lock, or unpredictable allocation behavior.
+It does not inherit Python's dynamic type system, monkey patching, reference counting, global interpreter lock, or unpredictable allocation behavior.
 
 ## Example
 
@@ -76,11 +74,14 @@ class Circle(Shape):
         return math.pi * self.radius * self.radius
 
 
+def print_shape(shape: &dyn Shape) -> void:
+    shape.describe()
+    stdio.printf("runtime type: %s\n", type_name(shape))
+
+
 def main(argc: i32, argv: **char) -> i32:
     circle = Circle(radius=4.0)
-    circle.describe()
-
-    stdio.printf("runtime type: %s\n", type_name(circle))
+    print_shape(circle)
 
     for field in fields(circle):
         stdio.printf("field: %s\n", field.name)
@@ -90,11 +91,13 @@ def main(argc: i32, argv: **char) -> i32:
 
 ## Type system
 
-Typing should be static and mandatory for public declarations.
+Typing is static. Top-level globals require explicit types. Parameters require
+annotations except for a method's first `self` parameter, whose owner type is
+inferred. An omitted function return type defaults to `void`.
 
 ```python
 count: i32 = 10
-temperature = 72.5
+temperature: f64 = 72.5
 name: const char* = "Cinder"
 ```
 
@@ -105,7 +108,7 @@ count = 10
 temperature = 72.5
 ```
 
-The primitive types should be explicit:
+The primitive types are explicit:
 
 ```python
 bool
@@ -130,7 +133,7 @@ usize
 void
 ```
 
-C-compatible aliases can still exist:
+C-compatible aliases are provided:
 
 ```python
 c_int
@@ -142,7 +145,7 @@ This avoids platform-dependent surprises from C's `int`, `long`, and `char` rule
 
 ## Pointers and references
 
-Raw pointers should remain available:
+Raw pointers are available:
 
 ```python
 value: i32 = 10
@@ -167,25 +170,32 @@ def magnitude(vector: &const Vec2) -> f32:
 
 A reference is still represented as a pointer in generated C, but the compiler rejects null assignment and certain unsafe operations.
 
-Unsafe pointer operations should be explicit:
+Casts between integers and pointers, or between unrelated pointer types, require an
+explicit `unsafe` block:
 
 ```python
-unsafe:
-    pointer = cast[*u8](address)
-    pointer[4] = 255
+def write_byte(address: usize) -> void:
+    unsafe:
+        pointer = cast[*u8](address)
+        pointer[4] = 255
 ```
 
-This is not intended to make C memory-safe. It merely makes dangerous operations visible.
+Numeric casts and compatible pointer casts do not require `unsafe`. Raw pointer
+access has no implicit bounds or lifetime checks; the block only makes dangerous
+reinterpretation visible.
 
 ## Arrays and slices
 
-C arrays remain fixed-size values:
+Fixed arrays have a compile-time length and use ordinary C array storage:
 
 ```python
-values: i32[16]
+values: i32[4] = [1, 2, 3, 4]
 ```
 
-Slices should be built into the language:
+They support indexing, iteration, `len`, and slicing. As in C, a fixed array cannot be
+assigned after its declaration or returned by value.
+
+A slice is a non-owning view represented by a pointer and a length:
 
 ```python
 def sum(values: []const i32) -> i64:
@@ -197,16 +207,20 @@ def sum(values: []const i32) -> i64:
     return total
 ```
 
-A slice compiles to something equivalent to:
+The compiler generates a concrete C struct for each slice element type. For
+`[]const i32`, that struct is equivalent to:
 
 ```c
-typedef struct {
+typedef struct CinderSlice_const_i32 {
     const int32_t *data;
     size_t length;
-} CinderSliceI32;
+} CinderSlice_const_i32;
 ```
 
-This eliminates the constant `pointer, length` pairing found in normal C APIs.
+Compatible arrays convert to slices automatically, and mutable slices convert to
+const slices. `value[:]`, `value[start:]`, and `value[start:stop]` create subviews;
+slice steps are not implemented. Indexing and slicing compile to direct C access and
+pointer arithmetic, with no implicit bounds checks.
 
 ## Structs
 
@@ -221,28 +235,34 @@ struct Rectangle:
         return self.width * self.height
 ```
 
-Methods are syntax sugar for namespaced functions. The generated function might look like:
+Methods use static dispatch and compile to namespaced functions. For example:
 
 ```c
 double Rectangle_area(const Rectangle *self);
 ```
 
-Structs can be initialized by field:
+Structs can be initialized by named field. Arguments are reordered by the checker,
+and omitted fields are zero-initialized:
 
 ```python
-rectangle = Rectangle(
-    width=20.0,
-    height=10.0
-)
+def make_rectangle() -> Rectangle:
+    return Rectangle(
+        width=20.0,
+        height=10.0
+    )
 ```
 
 ## Classes
 
-Classes add constructors, destructors, private fields, inheritance, and virtual methods.
+Classes are values with constructors, destructors, private fields, and single
+implementation inheritance. Constructing a class produces a zero-initialized value
+and calls `__init__`; it does not allocate implicitly.
 
 ```python
+import stdio
+
 class File:
-    private handle: *FILE
+    private handle: *stdio.FILE
 
     def __init__(self, path: const char*, mode: const char*):
         self.handle = stdio.fopen(path, mode)
@@ -255,13 +275,22 @@ class File:
             stdio.fclose(self.handle)
 ```
 
-Cinder should support single implementation inheritance only. Multiple inheritance creates layout, destructor, pointer-adjustment, and ABI problems that are not worth importing into a C-oriented language.
+For a local destructor-bearing value, the compiler calls `__del__` on every normal
+scope exit, including early returns and Result propagation. Such classes are
+move-only in 0.5: implicit copies, by-value parameters, globals, arrays, variants,
+Results, and other owning aggregates are rejected. `__del__` cannot be called
+directly.
 
-Multiple abstract base classes can be supported because they are represented as interface tables rather than inherited object layouts.
+Cinder supports one implementation base. A stateful abstract base counts as that
+base; additional abstract bases must be interface-only, with no fields, constructor,
+or destructor. Each interface-only base uses a separate interface table rather than
+adding another object subobject.
 
 ## Abstract base classes
 
 ```python
+import stdio
+
 abstract class Reader:
     @abstractmethod
     def read(self, output: []u8) -> usize:
@@ -285,7 +314,7 @@ A concrete implementation must provide every abstract method:
 
 ```python
 class FileReader(Reader):
-    handle: *FILE
+    handle: *stdio.FILE
 
     def read(self, output: []u8) -> usize:
         return stdio.fread(
@@ -298,7 +327,7 @@ class FileReader(Reader):
 
 Failure to implement an abstract method is a compile-time error.
 
-Dynamic dispatch should be explicit in function signatures:
+Dynamic dispatch is explicit in function signatures:
 
 ```python
 def consume(reader: &dyn Reader) -> void:
@@ -306,13 +335,20 @@ def consume(reader: &dyn Reader) -> void:
     count = reader.read(buffer[:])
 ```
 
-Using `dyn` tells the programmer that a vtable call is involved. Without `dyn`, the compiler uses static dispatch whenever the concrete type is known.
+Using `dyn` tells the programmer that an interface-table call is involved. A dynamic
+value is a non-owning object-and-table pair, and conversion requires an addressable
+concrete object. Methods declared on concrete classes, including override
+implementations, use direct static calls. Default methods declared on an abstract
+class receive dynamic `self`; calling one through a concrete value still uses the
+interface table so calls it makes to abstract methods remain dynamic.
 
 ## Introspection
 
 Full Python-style introspection is incompatible with zero-overhead C unless the compiler emits runtime metadata. Cinder therefore separates opt-in runtime reflection from compile-time inspection.
 
 ```python
+import stdio
+
 @reflect
 class User:
     id: u64
@@ -343,90 +379,115 @@ Compile-time inspection is broader because it does not require runtime metadata:
 static_assert(field_count(User) == 3)
 static_assert(has_field(User, "name"))
 
-for field in comptime fields_of(User):
-    stdio.printf("%s: %zu\n", field.name, field.offset)
+def print_layout() -> void:
+    for field in comptime fields_of(User):
+        stdio.printf("%s: %zu\n", field.name, field.offset)
 ```
 
-Implemented operations include:
+Runtime metadata operations are:
+
+```python
+type_name(expression)
+type_info(expression)
+fields(expression)
+methods(expression)
+```
+
+Concrete `type_name` is compile-time text. Dynamic `type_name`, `type_info`, `fields`,
+and `methods` require a reflected type or interface. Implementations of a reflected
+abstract interface must also be marked `@reflect`.
+
+Compile-time operations are:
 
 ```python
 type_of(expression)
-type_name(expression)
-type_info(expression)
 size_of(Type)
 align_of(Type)
 field_count(Type)
 method_count(Type)
-fields(expression)
-methods(expression)
 fields_of(Type)
 methods_of(Type)
-implements(Type, Interface)
+implements(ConcreteClass, AbstractClass)
 has_field(Type, "name")
 has_method(Type, "serialize")
 ```
 
-Runtime `type_info`, `fields`, and `methods` require `@reflect`. Concrete `type_name` is compile-time text; dynamic `type_name` requires a reflected interface. Compile-time member loops are unrolled into ordinary C. See `docs/reflection.md` for the exact metadata ABI and limits.
+Compile-time inspection does not emit per-object metadata. Member loops must appear
+inside a function and are unrolled into ordinary C blocks. See `docs/reflection.md`
+for the exact metadata ABI and limits.
 
 ## Memory management
 
-The initial language should not attempt automatic ownership inference. That would turn this into a Rust-scale project.
-
-Use C allocation with better syntax:
+Cinder does not perform automatic ownership inference or hide heap allocation.
+`alloc[T]` returns uninitialized storage, and `free` releases it:
 
 ```python
-user = alloc[User]()
-defer free(user)
+def initialize(count: usize) -> void:
+    values = alloc[i32](count)
+    defer free(values)
+
+    for index in range(0, count):
+        values[index] = 0
 ```
 
-Array allocation:
+`defer` accepts a call and runs deferred calls in reverse declaration order on normal
+scope exit, `return`, `break`, `continue`, and Result propagation:
 
 ```python
-values = alloc[i32](count)
-defer free(values)
-```
+enum ProcessError:
+    empty_input
 
-Scoped cleanup:
 
-```python
-def process_file(path: const char*) -> Result[void, Error]:
-    file = File(path, "rb")
-    defer file.close()
+def process_values(count: usize) -> Result[void, ProcessError]:
+    if count == 0:
+        return Err(ProcessError.empty_input)
 
-    buffer = alloc[u8](4096)
+    buffer = alloc[u8](count)
     defer free(buffer)
+    buffer[0] = 0
 
     return Ok()
 ```
 
-`defer` is much more valuable for C code than pretending destructors alone can cover every resource-management case.
+Class values with `__del__` use compiler-managed scope cleanup instead. `defer` is
+for resources that are not already owned by such a class.
 
 ## Error handling
 
-Native exceptions would require hidden control flow, unwinding metadata, or `setjmp` and `longjmp`. None of those fit the original goal well.
+Cinder does not implement native exceptions. Supporting them would require hidden
+control flow, unwinding metadata, or `setjmp` and `longjmp`, none of which fit the
+language's generated-C model.
 
-Use typed results:
-
-```python
-def parse_number(text: const char*) -> Result[i64, ParseError]:
-    if text == null:
-        return Err(ParseError.null_input)
-
-    value = parse_i64(text)
-
-    if not value.valid:
-        return Err(ParseError.invalid_number)
-
-    return Ok(value.number)
-```
-
-Propagation syntax:
+Cinder uses typed Results:
 
 ```python
-number = parse_number(text)?
+enum ParseError:
+    negative
+    too_large
+
+
+def parse_number(value: i32) -> Result[i32, ParseError]:
+    if value < 0:
+        return Err(ParseError.negative)
+    if value > 100:
+        return Err(ParseError.too_large)
+
+    return Ok(value)
 ```
 
-This can compile into ordinary branches and tagged structs.
+The postfix `?` propagates a compatible error from a function that also returns a
+Result:
+
+```python
+def increment(value: i32) -> Result[i32, ParseError]:
+    number = parse_number(value)?
+    return Ok(number + 1)
+```
+
+Results compile to tagged structs. Propagation evaluates its operand once, runs
+active cleanup on error, and emits an ordinary early return. It is rejected in
+expression contexts where inserting that return would obscure short-circuit or
+repeated evaluation; see `docs/algebraic-types.md` for the complete rules.
 
 ## Control flow
 
@@ -454,18 +515,18 @@ for value in values:
     process(value)
 ```
 
-C-style loops should remain available for low-level code:
+C-style loops are available for low-level code:
 
 ```python
 for i: usize = 0; i < count; i += 1:
     process(values[i])
 ```
 
-That is one of the few places where semicolons should remain syntactically meaningful.
+This is one of the few places where semicolons are syntactically meaningful.
 
 ## Pattern matching
 
-A restricted `match` statement would work well for enums and tagged unions:
+Cinder implements exhaustive `match` for enums, variants, and Results:
 
 ```python
 match result:
@@ -476,7 +537,10 @@ match result:
         report(error)
 ```
 
-Enums:
+Every case must be covered. A final `_` wildcard can cover the remaining cases;
+guards, literal patterns, and nested patterns are not implemented.
+
+Enums use distinct integer values:
 
 ```python
 enum TokenKind:
@@ -487,7 +551,7 @@ enum TokenKind:
     minus
 ```
 
-Tagged unions:
+Plain unions map directly to untagged C unions and cannot be matched:
 
 ```python
 union TokenValue:
@@ -495,7 +559,7 @@ union TokenValue:
     string: const char*
 ```
 
-Safer combined form:
+Variants combine a tag with checked payloads and support construction and matching:
 
 ```python
 variant Token:
@@ -504,18 +568,23 @@ variant Token:
     String(value: const char*)
     Plus
     Minus
+
+def integer_token(value: i64) -> Token:
+    return Token.Integer(value)
 ```
 
 ## C interoperability
 
-Existing C headers should be imported directly:
+`extern import` emits a C `#include`:
 
 ```python
 extern import "SDL2/SDL.h"
 extern import "sqlite3.h"
 ```
 
-External declarations:
+The compiler does not parse arbitrary headers. An `extern "C"` block supplies the
+signatures Cinder checks; otherwise unknown types in these declarations are emitted
+as opaque C types:
 
 ```python
 extern "C":
@@ -525,15 +594,16 @@ extern "C":
     ) -> c_int
 ```
 
-Cinder declarations should also be exportable:
+`@export` preserves the C symbol name of a top-level Cinder function:
 
 ```python
 @export
-def engine_update(delta_time: f64) -> void:
-    world.update(delta_time)
+def seconds(milliseconds: f64) -> f64:
+    return milliseconds / 1000.0
 ```
 
-The generated symbol would use the C calling convention and remain callable from C, C++, Rust, Python extensions, or any other FFI-compatible language.
+The generated symbol uses the C calling convention and remains callable from C,
+C++, Rust, Python extensions, or other FFI-compatible languages.
 
 ## Modules
 
@@ -543,13 +613,21 @@ from engine.memory import Arena
 import stdio
 ```
 
-A source file is a module. There should be no textual `#include` equivalent in normal Cinder code.
+A source file is a module. Cinder imports are semantic rather than textual; Cinder
+source has no `#include` equivalent.
 
-The compiler emits generated headers only for exported declarations.
+Imports form a checked acyclic dependency graph. A `cinder.toml` manifest can define
+the project name, source root, and entry module; file and directory inputs also use
+the documented project-discovery rules.
+
+Each source module emits one generated header and one C translation unit under
+`cinder_gen`. All top-level Cinder declarations are module-visible in 0.5.
+`@export` is separate: it preserves a top-level function name for external C callers.
+C headers remain available through `extern import`.
 
 ## Compiler architecture
 
-The first compiler should be written in Python 3.12 and emit readable C11.
+The compiler is written in Python 3.12+ and emits readable C11.
 
 ```text
 source
@@ -563,10 +641,12 @@ source
   -> system C compiler
 ```
 
-The implementation should have these core components:
+The implementation has these core components:
 
 ```text
 cinder/
+    __init__.py
+    __main__.py
     lexer.py
     parser.py
     ast.py
@@ -575,22 +655,25 @@ cinder/
     checker.py
     ir.py
     codegen_c.py
+    stdlib.py
+    project.py
     diagnostics.py
     compiler.py
+    toolchain.py
     cli.py
-
-runtime/
-    cinder_runtime.h
-    cinder_runtime.c
+    runtime/
+        cinder_runtime.h
+        cinder_runtime.c
 ```
 
-The compiler CLI should be simple:
+The CLI accepts a source file, project directory, or manifest:
 
 ```text
 cinder build src/main.ci
 cinder run src/main.ci
 cinder check src/main.ci
 cinder emit-c src/main.ci
+cinder emit-project . -o generated
 ```
 
 ## Implemented milestones
@@ -599,4 +682,7 @@ The first usable compiler milestone established indentation parsing, primitive t
 
 General-purpose generics, function pointer types, richer ownership abstractions, closures, and broader compile-time execution remain later work.
 
-The crucial constraint remains this: Cinder should be understandable by reading its generated C. Once the compiler begins hiding allocation, unpredictable dispatch, exception machinery, or implicit object lifetimes, it stops being Python-shaped C and becomes a much more complicated systems language.
+The crucial constraint remains this: Cinder must be understandable by reading its
+generated C. Hidden allocation, unpredictable dispatch, exception machinery, or
+implicit object lifetimes would turn it from Python-shaped C into a much more
+complicated systems language.
