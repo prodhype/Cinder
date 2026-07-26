@@ -10,7 +10,7 @@
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
-`binary_sort.ci` demonstrates the import-free stable `sort` builtin on a numeric array.
+`binary_sort.ci` implements stable binary insertion sort on a numeric array.
 
 `long_string_sort.ci` demonstrates lexicographic sorting of C strings without importing `string`.
 
