@@ -60,6 +60,11 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
             "cannot own a List by value",
         ),
         (
+            "def consume(result: Result[List[i32], i32]) -> void:\n"
+            "    pass\n",
+            "parameter consume.result contains an owning List",
+        ),
+        (
             "def main() -> i32:\n"
             "    values = [1]\n"
             "    copied = values\n"
@@ -129,6 +134,91 @@ def test_const_list_reference_rejects_mutation() -> None:
             "    values.append(1)\n"
         )
     assert "cannot call mutating method 'append' on a const List" in str(
+        captured.value
+    )
+
+
+def test_borrowed_aggregate_list_parameter_is_allowed() -> None:
+    generated = compile_source(
+        "def inspect(result: &const Result[List[i32], i32]) -> i32:\n"
+        "    return 0\n"
+    )
+    assert "const CinderResult_list_i32_i32 *result" in generated
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "values.append(value)",
+        "values.pop()",
+        "values.clear()",
+        "sort(values)",
+    ],
+)
+def test_dereferenced_list_iteration_rejects_structural_mutation(
+    mutation: str,
+) -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    for value in *(&values):\n"
+            f"        {mutation}\n"
+            "    return 0\n"
+        )
+    assert "while iterating" in str(captured.value)
+
+
+def test_dereferenced_mutation_receiver_matches_direct_iterator() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    for value in values:\n"
+            "        (*(&values)).append(value)\n"
+            "    return 0\n"
+        )
+    assert "cannot call List.append while iterating over that List" in str(
+        captured.value
+    )
+
+
+def test_dereferenced_iterator_rejects_list_replacement() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    for value in *(&values):\n"
+            "        values = [3, 4]\n"
+            "    return 0\n"
+        )
+    assert "cannot replace a List while iterating over it" in str(captured.value)
+
+
+def test_dereferenced_iterator_allows_unrelated_direct_list_mutation() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    values = [1, 2]\n"
+        "    other = [3]\n"
+        "    for value in *(&values):\n"
+        "        other.append(value)\n"
+        "    return cast[i32](len(other)) - 3\n"
+    )
+    assert "CinderList_i32_append((&(other)), value);" in generated
+
+
+def test_unknown_list_pointer_iteration_conservatively_blocks_mutation() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    other = [3]\n"
+            "    pointer = &values\n"
+            "    for value in *pointer:\n"
+            "        other.append(value)\n"
+            "    return 0\n"
+        )
+    assert "cannot call List.append while iterating over that List" in str(
         captured.value
     )
 

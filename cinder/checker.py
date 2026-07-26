@@ -105,6 +105,9 @@ _REFLECTION_BUILTINS = frozenset(
 )
 
 
+type _ListStorage = tuple[VariableSymbol | None, bool]
+
+
 @dataclass(slots=True)
 class SemanticModel:
     module: ast.Module
@@ -251,7 +254,7 @@ class Checker:
         self.current_owner: StructSymbol | ClassSymbol | None = None
         self.loop_depth = 0
         self.unsafe_depth = 0
-        self.active_list_iterators: list[VariableSymbol] = []
+        self.active_list_iterators: list[_ListStorage] = []
 
     def check(self) -> SemanticModel:
         self._install_builtins()
@@ -1430,6 +1433,16 @@ class Checker:
                         code="C249",
                         note="pass List values by reference or pointer",
                     )
+                elif self._contains_list_value(parameter.type):
+                    self._error(
+                        f"parameter {function.name}.{parameter.name} contains an owning List",
+                        parameter.span,
+                        code="C290",
+                        note=(
+                            "aggregate List ownership is not implemented; "
+                            "pass the value by reference or pointer"
+                        ),
+                    )
                 if self._destructible_class(parameter.type) is not None:
                     self._error(
                         f"parameter {function.name}.{parameter.name} cannot own a "
@@ -2441,8 +2454,7 @@ class Checker:
         owned_list = self._owned_list(effective_target)
         destructible = self._destructible_class(effective_target)
         if owned_list is not None:
-            iterator_owner = self._list_variable_symbol(statement.target)
-            if iterator_owner in self.active_list_iterators:
+            if self._list_storage_is_active(statement.target):
                 self._error(
                     "cannot replace a List while iterating over it",
                     statement.target.span,
@@ -2725,21 +2737,21 @@ class Checker:
         )
         loop_scope.declare(symbol)
         self.foreach_symbols[id(statement)] = symbol
-        iterator_owner = (
-            self._list_variable_symbol(statement.iterable)
+        iterator_storage = (
+            self._list_storage(statement.iterable)
             if isinstance(iterable_value, ListType)
             else None
         )
-        if iterator_owner is not None:
-            self.active_list_iterators.append(iterator_owner)
+        if iterator_storage is not None:
+            self.active_list_iterators.append(iterator_storage)
         self.loop_depth += 1
         try:
             self._check_block(statement.body, loop_scope, create_scope=True)
         finally:
             self.loop_depth -= 1
-            if iterator_owner is not None:
+            if iterator_storage is not None:
                 popped = self.active_list_iterators.pop()
-                assert popped is iterator_owner
+                assert popped[0] is iterator_storage[0] and popped[1] == iterator_storage[1]
 
     def _check_for_c(self, statement: ast.ForCStmt) -> None:
         loop_scope = Scope(self.current_scope)
@@ -3781,8 +3793,7 @@ class Checker:
             )
             return ERROR
 
-        iterator_owner = self._list_variable_symbol(receiver)
-        if iterator_owner in self.active_list_iterators:
+        if self._list_storage_is_active(receiver):
             self._error(
                 f"cannot call List.{method} while iterating over that List",
                 receiver.span,
@@ -3849,21 +3860,50 @@ class Checker:
         )
         return receiver_type.inner if method == "pop" else VOID
 
-    def _list_variable_symbol(
+    def _list_storage(
         self,
         expression: ast.Expression,
-    ) -> VariableSymbol | None:
-        if not isinstance(expression, ast.NameExpr):
-            return None
-        symbol = self.name_symbols.get(id(expression))
-        if symbol is None:
-            symbol = self.current_scope.lookup(expression.name)
-        if not isinstance(symbol, VariableSymbol):
-            return None
-        return (
-            symbol
-            if isinstance(value_type(symbol.type), ListType)
-            else None
+    ) -> _ListStorage:
+        if (
+            isinstance(expression, ast.UnaryExpr)
+            and expression.operator == "*"
+            and isinstance(expression.operand, ast.UnaryExpr)
+            and expression.operand.operator == "&"
+        ):
+            return self._list_storage(expression.operand.operand)
+
+        if isinstance(expression, ast.NameExpr):
+            symbol = self.name_symbols.get(id(expression))
+            if symbol is None:
+                symbol = self.current_scope.lookup(expression.name)
+            if isinstance(symbol, VariableSymbol):
+                storage_type = strip_const(symbol.type)
+                if isinstance(storage_type, ListType):
+                    return symbol, False
+                if isinstance(storage_type, (PointerType, ReferenceType)) and isinstance(
+                    strip_const(storage_type.inner),
+                    ListType,
+                ):
+                    return symbol, True
+
+        return None, True
+
+    @staticmethod
+    def _list_storages_may_alias(
+        left: _ListStorage,
+        right: _ListStorage,
+    ) -> bool:
+        left_symbol, left_may_alias = left
+        right_symbol, right_may_alias = right
+        if left_symbol is not None and left_symbol is right_symbol:
+            return True
+        return left_may_alias or right_may_alias
+
+    def _list_storage_is_active(self, expression: ast.Expression) -> bool:
+        storage = self._list_storage(expression)
+        return any(
+            self._list_storages_may_alias(storage, active)
+            for active in self.active_list_iterators
         )
 
     def _check_class_constructor(self, call: ast.CallExpr, class_: ClassSymbol) -> Type:
@@ -4768,8 +4808,7 @@ class Checker:
             )
         if (
             isinstance(argument_type, ListType)
-            and self._list_variable_symbol(argument_expression)
-            in self.active_list_iterators
+            and self._list_storage_is_active(argument_expression)
         ):
             self._error(
                 "cannot sort a List while iterating over it",
