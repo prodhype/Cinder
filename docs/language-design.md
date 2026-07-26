@@ -627,7 +627,7 @@ C headers remain available through `extern import`.
 
 ## Compiler architecture
 
-The compiler is written in Python 3.12+ and emits readable C11.
+The compiler requires Python 3.14+ and emits readable C11.
 
 ```text
 source

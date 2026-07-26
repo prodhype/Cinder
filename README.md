@@ -2,7 +2,7 @@
 
 Cinder is a statically typed systems language with Python-shaped syntax and a transparent C11 backend. It uses indentation for blocks, newlines for statements, explicit types at public boundaries, C-compatible data layouts, deterministic cleanup, and ordinary native toolchains.
 
-The compiler is written in Python 3.12+, emits readable portable C11, and can invoke GCC, Clang, or MSVC-compatible toolchains.
+The compiler requires Python 3.14+, emits readable portable C11, and can invoke GCC, Clang, or MSVC-compatible toolchains.
 
 ## Status
 
@@ -25,7 +25,7 @@ The implementation remains alpha software. General-purpose generics, function po
 From the project root:
 
 ```sh
-python3.12 -m venv .venv
+python3.14 -m venv .venv
 . .venv/bin/activate
 python -m pip install -e .
 ```
@@ -33,7 +33,7 @@ python -m pip install -e .
 On Windows PowerShell:
 
 ```powershell
-py -3.12 -m venv .venv
+py -3.14 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -e .
 ```
@@ -524,7 +524,7 @@ ruff check cinder tests
 mypy cinder
 ```
 
-Integration tests compile generated C and execute native programs. The test suite also validates GCC and Clang warnings-as-errors builds, cross-module class/interface ABI behavior, content-stable project emission, and generated-header use from C++17. CI runs on Linux, macOS, and Windows with Python 3.12.
+Integration tests compile generated C and execute native programs. The test suite also validates GCC and Clang warnings-as-errors builds, cross-module class/interface ABI behavior, content-stable project emission, and generated-header use from C++17. CI runs on Linux, macOS, and Windows with Python 3.14.
 
 ## Design constraint
 
