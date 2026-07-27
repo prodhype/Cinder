@@ -319,19 +319,47 @@ class CGenerator:
         emitted = False
         for struct in self.ir.structs:
             name = c_identifier(struct.symbol.c_name)
-            self.writer.line(f"typedef struct {name} {name};")
+            if struct.symbol.type_args or struct.symbol.template_name:
+                guard = f"CINDER_DECLARED_{name.upper()}"
+                self.writer.line(f"#ifndef {guard}")
+                self.writer.line(f"#define {guard}")
+                self.writer.line(f"typedef struct {name} {name};")
+                self.writer.line("#endif")
+            else:
+                self.writer.line(f"typedef struct {name} {name};")
             emitted = True
         for class_ in self.ir.classes:
             name = c_identifier(class_.symbol.c_name)
-            self.writer.line(f"typedef struct {name} {name};")
+            if class_.symbol.type_args or class_.symbol.template_name:
+                guard = f"CINDER_DECLARED_{name.upper()}"
+                self.writer.line(f"#ifndef {guard}")
+                self.writer.line(f"#define {guard}")
+                self.writer.line(f"typedef struct {name} {name};")
+                self.writer.line("#endif")
+            else:
+                self.writer.line(f"typedef struct {name} {name};")
             emitted = True
         for union in self.ir.unions:
             name = c_identifier(union.symbol.c_name)
-            self.writer.line(f"typedef union {name} {name};")
+            if union.symbol.type_args or union.symbol.template_name:
+                guard = f"CINDER_DECLARED_{name.upper()}"
+                self.writer.line(f"#ifndef {guard}")
+                self.writer.line(f"#define {guard}")
+                self.writer.line(f"typedef union {name} {name};")
+                self.writer.line("#endif")
+            else:
+                self.writer.line(f"typedef union {name} {name};")
             emitted = True
         for variant in self.ir.variants:
             name = c_identifier(variant.symbol.c_name)
-            self.writer.line(f"typedef struct {name} {name};")
+            if variant.symbol.type_args or variant.symbol.template_name:
+                guard = f"CINDER_DECLARED_{name.upper()}"
+                self.writer.line(f"#ifndef {guard}")
+                self.writer.line(f"#define {guard}")
+                self.writer.line(f"typedef struct {name} {name};")
+                self.writer.line("#endif")
+            else:
+                self.writer.line(f"typedef struct {name} {name};")
             emitted = True
         for tuple_type in self.ir.tuple_types:
             name = c_identifier(tuple_c_name(tuple_type))
@@ -425,6 +453,11 @@ class CGenerator:
     def _emit_enum_definitions(self) -> None:
         for enum in self.ir.enums:
             name = c_identifier(enum.symbol.c_name)
+            specialized = bool(enum.symbol.type_args or enum.symbol.template_name)
+            if specialized:
+                guard = f"CINDER_DEFINED_{name.upper()}"
+                self.writer.line(f"#ifndef {guard}")
+                self.writer.line(f"#define {guard}")
             self.writer.line(f"typedef enum {name}")
             self.writer.line("{")
             self.writer.indent += 1
@@ -435,6 +468,8 @@ class CGenerator:
                 )
             self.writer.indent -= 1
             self.writer.line(f"}} {name};")
+            if specialized:
+                self.writer.line(f"#endif /* {guard} */")
             self.writer.line()
 
     def _emit_slice_types(self) -> None:
@@ -2306,6 +2341,11 @@ class CGenerator:
 
     def _emit_class_definition(self, class_: ClassSymbol) -> None:
         name = c_identifier(class_.c_name)
+        specialized = bool(class_.type_args or class_.template_name)
+        if specialized:
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
         self.writer.line(f"struct {name}")
         self.writer.line("{")
         self.writer.indent += 1
@@ -2320,10 +2360,17 @@ class CGenerator:
             self.writer.line("unsigned char _cinder_empty;")
         self.writer.indent -= 1
         self.writer.line("};")
+        if specialized:
+            self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
     def _emit_struct_definition(self, struct: StructSymbol) -> None:
         name = c_identifier(struct.c_name)
+        specialized = bool(struct.type_args or struct.template_name)
+        if specialized:
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
         self.writer.line(f"struct {name}")
         self.writer.line("{")
         self.writer.indent += 1
@@ -2333,10 +2380,17 @@ class CGenerator:
             self.writer.line(c_decl(field.type, c_identifier(field.name)) + ";")
         self.writer.indent -= 1
         self.writer.line("};")
+        if specialized:
+            self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
     def _emit_union_definition(self, union: UnionSymbol) -> None:
         name = c_identifier(union.c_name)
+        specialized = bool(union.type_args or union.template_name)
+        if specialized:
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
         self.writer.line(f"union {name}")
         self.writer.line("{")
         self.writer.indent += 1
@@ -2346,10 +2400,17 @@ class CGenerator:
             self.writer.line(c_decl(field.type, c_identifier(field.name)) + ";")
         self.writer.indent -= 1
         self.writer.line("};")
+        if specialized:
+            self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
     def _emit_variant_definition(self, variant: VariantSymbol) -> None:
         name = c_identifier(variant.c_name)
+        specialized = bool(variant.type_args or variant.template_name)
+        if specialized:
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
         tag_name = f"{name}_Tag"
         self.writer.line(f"typedef enum {tag_name}")
         self.writer.line("{")
@@ -2382,6 +2443,8 @@ class CGenerator:
         self.writer.line("} data;")
         self.writer.indent -= 1
         self.writer.line("};")
+        if specialized:
+            self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
     def _emit_result_definition(self, type_: ResultType) -> None:
@@ -2499,8 +2562,13 @@ class CGenerator:
     def _emit_reflection_declarations(self) -> None:
         reflected = [nominal for nominal in self._local_nominals() if nominal.reflected]
         for nominal in reflected:
+            linkage = (
+                "static "
+                if nominal.type_args or nominal.template_name
+                else "extern "
+            )
             self.writer.line(
-                f"extern const CinderTypeInfo {self._type_info_name(nominal)};"
+                f"{linkage}const CinderTypeInfo {self._type_info_name(nominal)};"
             )
         if reflected:
             self.writer.line()
@@ -2516,8 +2584,13 @@ class CGenerator:
             if class_.is_abstract:
                 continue
             for interface in self._implemented_interfaces(class_):
+                linkage = (
+                    "static "
+                    if class_.type_args or class_.template_name
+                    else "extern "
+                )
                 self.writer.line(
-                    f"extern const {c_identifier(interface_vtable_c_name(interface.type))} "
+                    f"{linkage}const {c_identifier(interface_vtable_c_name(interface.type))} "
                     f"{self._vtable_instance_name(class_, interface)};"
                 )
         for struct in self.semantic.structs.values():
@@ -2734,7 +2807,14 @@ class CGenerator:
                 self.writer.line()
 
             type_expression = c_type_expression(nominal.type)
-            self.writer.line(f"const CinderTypeInfo {self._type_info_name(nominal)} =")
+            type_info_linkage = (
+                "static "
+                if nominal.type_args or nominal.template_name
+                else ""
+            )
+            self.writer.line(
+                f"{type_info_linkage}const CinderTypeInfo {self._type_info_name(nominal)} ="
+            )
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line(f".name = {c_string(nominal.name)},")
@@ -2855,7 +2935,7 @@ class CGenerator:
     def _struct_drop_signature(self, struct_: StructSymbol, *, definition: bool) -> str:
         del definition
         return (
-            f"{self._class_support_linkage()}void {self._struct_drop_name(struct_)}"
+            f"{self._class_support_linkage(struct_)}void {self._struct_drop_name(struct_)}"
             f"({c_identifier(struct_.c_name)} *self)"
         )
 
@@ -2894,8 +2974,13 @@ class CGenerator:
             self.writer.line("}")
             self.writer.line()
 
+        vtable_linkage = (
+            "static "
+            if class_.type_args or class_.template_name
+            else ""
+        )
         self.writer.line(
-            f"const {vtable_type} {self._vtable_instance_name(class_, interface)} ="
+            f"{vtable_linkage}const {vtable_type} {self._vtable_instance_name(class_, interface)} ="
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -5458,7 +5543,12 @@ class CGenerator:
     def _class_drop_name(class_: ClassSymbol) -> str:
         return c_identifier(f"{class_.c_name}__drop")
 
-    def _class_support_linkage(self) -> str:
+    def _class_support_linkage(
+        self,
+        nominal: StructSymbol | ClassSymbol | None = None,
+    ) -> str:
+        if nominal is not None and (nominal.type_args or nominal.template_name):
+            return "static CINDER_MAYBE_UNUSED "
         return "" if self.semantic.module_mode else "static CINDER_MAYBE_UNUSED "
 
     def _class_new_signature(self, class_: ClassSymbol, *, definition: bool) -> str:
@@ -5472,7 +5562,7 @@ class CGenerator:
         if not parameters:
             parameters.append("void")
         return (
-            f"{self._class_support_linkage()}"
+            f"{self._class_support_linkage(class_)}"
             f"{c_decl(class_.type, self._class_new_name(class_))}"
             f"({', '.join(parameters)})"
         )
@@ -5480,7 +5570,7 @@ class CGenerator:
     def _class_drop_signature(self, class_: ClassSymbol, *, definition: bool) -> str:
         del definition
         return (
-            f"{self._class_support_linkage()}void {self._class_drop_name(class_)}"
+            f"{self._class_support_linkage(class_)}void {self._class_drop_name(class_)}"
             f"({c_identifier(class_.c_name)} *self)"
         )
 

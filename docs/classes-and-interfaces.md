@@ -168,4 +168,4 @@ All internal names receive deterministic project-and-module prefixes. Generated 
 
 ## Deliberate limits
 
-Cinder 0.5 does not implement multiple implementation inheritance, downcasting, runtime interface queries, class templates, copy constructors, user-defined move hooks, exceptions, or a stable long-term binary ABI guarantee. The generated C representation is documented and tested, but the compiler remains alpha software and may revise mangled names before 1.0.
+Cinder 0.5 does not implement multiple implementation inheritance, downcasting, runtime interface queries, copy constructors, user-defined move hooks, exceptions, or a stable long-term binary ABI guarantee. Class templates are supported through monomorphization. The generated C representation is documented and tested, but the compiler remains alpha software and may revise mangled names before 1.0.

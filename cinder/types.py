@@ -22,30 +22,35 @@ class PrimitiveType(Type):
 class StructType(Type):
     name: str
     c_name: str | None = None
+    type_args: tuple[Type, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class ClassType(Type):
     name: str
     c_name: str | None = None
+    type_args: tuple[Type, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class EnumType(Type):
     name: str
     c_name: str | None = None
+    type_args: tuple[Type, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class UnionType(Type):
     name: str
     c_name: str | None = None
+    type_args: tuple[Type, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class VariantType(Type):
     name: str
     c_name: str | None = None
+    type_args: tuple[Type, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,7 +304,13 @@ def type_name(type_: Type) -> str:
     match type_:
         case PrimitiveType(name=name):
             return name
-        case StructType(name=name) | ClassType(name=name) | EnumType(name=name) | UnionType(name=name) | VariantType(name=name):
+        case StructType(name=name, type_args=type_args) | ClassType(name=name, type_args=type_args) | EnumType(name=name, type_args=type_args) | UnionType(name=name, type_args=type_args) | VariantType(name=name, type_args=type_args):
+            if type_args:
+                return (
+                    f"{name}["
+                    + ", ".join(type_name(argument) for argument in type_args)
+                    + "]"
+                )
             return name
         case ResultType(ok=ok, error=error):
             return f"Result[{type_name(ok)}, {type_name(error)}]"

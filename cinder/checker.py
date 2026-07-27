@@ -7,6 +7,16 @@ from dataclasses import field as dataclass_field
 
 from cinder import ast
 from cinder.diagnostics import CompilationFailed, DiagnosticBag, Span
+from cinder.generics import (
+    make_type_param_mapping,
+    specialization_suffix,
+    specialize_class,
+    specialize_enum,
+    specialize_function,
+    specialize_struct,
+    specialize_union,
+    specialize_variant,
+)
 from cinder.ownership import (
     class_needs_drop as ownership_class_needs_drop,
     struct_needs_drop as ownership_struct_needs_drop,
@@ -24,6 +34,7 @@ from cinder.symbols import (
     EnumSymbol,
     FieldSymbol,
     FunctionSymbol,
+    FunctionTemplateSymbol,
     IndexResolution,
     MatchCaseResolution,
     MatchResolution,
@@ -37,6 +48,7 @@ from cinder.symbols import (
     StructSymbol,
     Symbol,
     SymbolKind,
+    TypeTemplateSymbol,
     UnionSymbol,
     VariableSymbol,
     VariantCaseSymbol,
@@ -73,6 +85,7 @@ from cinder.types import (
     OptionType,
     OwnedType,
     PointerType,
+    PrimitiveType,
     RangeType,
     ReferenceType,
     ResultType,
@@ -153,6 +166,8 @@ class SemanticModel:
     globals: OrderedDict[str, VariableSymbol]
     includes: list[str]
     libraries: list[str]
+    type_templates: dict[str, TypeTemplateSymbol] = dataclass_field(default_factory=dict)
+    function_templates: dict[str, FunctionTemplateSymbol] = dataclass_field(default_factory=dict)
     expr_types: dict[int, Type] = dataclass_field(default_factory=dict)
     type_nodes: dict[int, Type] = dataclass_field(default_factory=dict)
     name_symbols: dict[int, Symbol] = dataclass_field(default_factory=dict)
@@ -201,16 +216,33 @@ class SemanticModel:
         type_symbols.update(self.enums)
         type_symbols.update(self.unions)
         type_symbols.update(self.variants)
+        # Export only non-specialized concrete types under their source names.
+        exported_types: dict[str, Type] = {}
+        exported_type_symbols: dict[str, NominalSymbol] = {}
+        for name, symbol in type_symbols.items():
+            if symbol.type_args:
+                continue
+            # Specializations are keyed by mangled names; skip those.
+            if symbol.template_name is not None:
+                continue
+            exported_types[symbol.name] = symbol.type
+            exported_type_symbols[symbol.name] = symbol
         return ModuleSymbol(
             name=self.module_name.rsplit(".", 1)[-1],
             span=self.module.span,
             kind=SymbolKind.MODULE,
             module_name=self.module_name,
-            functions=dict(self.functions),
+            functions={
+                name: symbol
+                for name, symbol in self.functions.items()
+                if symbol.template_name is None and not symbol.type_args
+            },
             constants=constants,
             globals=public_globals,
-            types={name: symbol.type for name, symbol in type_symbols.items()},
-            type_symbols=type_symbols,
+            types=exported_types,
+            type_symbols=exported_type_symbols,
+            type_templates=dict(self.type_templates),
+            function_templates=dict(self.function_templates),
             includes=tuple(self.includes),
             libraries=tuple(self.libraries),
         )
@@ -248,6 +280,15 @@ class Checker:
         self.enums: OrderedDict[str, EnumSymbol] = OrderedDict()
         self.unions: OrderedDict[str, UnionSymbol] = OrderedDict()
         self.variants: OrderedDict[str, VariantSymbol] = OrderedDict()
+        self.type_templates: dict[str, TypeTemplateSymbol] = {}
+        self.function_templates: dict[str, FunctionTemplateSymbol] = {}
+        self._type_specializations: dict[tuple[str, str, tuple[Type, ...]], NominalSymbol] = {}
+        self._function_specializations: dict[tuple[str, tuple[Type, ...]], FunctionSymbol] = {}
+        self._instantiating: set[tuple[str, str, tuple[Type, ...]]] = set()
+        self._checking_functions = False
+        self._pending_specialized_checks: list[
+            tuple[FunctionSymbol, StructSymbol | ClassSymbol | None]
+        ] = []
         self.nominal_symbols: dict[Type, NominalSymbol] = {}
         self.structs_by_type: dict[StructType, StructSymbol] = {}
         self.classes_by_type: dict[ClassType, ClassSymbol] = {}
@@ -325,6 +366,8 @@ class Checker:
             variants=self.variants,
             functions=self.functions,
             globals=self.globals,
+            type_templates=self.type_templates,
+            function_templates=self.function_templates,
             includes=self.includes,
             libraries=self.libraries,
             expr_types=self.expr_types,
@@ -453,6 +496,8 @@ class Checker:
                     globals=module.globals,
                     types=module.types,
                     type_symbols=module.type_symbols,
+                    type_templates=module.type_templates,
+                    function_templates=module.function_templates,
                     includes=module.includes,
                     libraries=module.libraries,
                     generated_header=module.generated_header,
@@ -465,6 +510,10 @@ class Checker:
                     nominal = imported.type_symbols.get(name)
                     if nominal is not None:
                         self._register_nominal(type_, nominal)
+                for name, template in imported.type_templates.items():
+                    self.type_templates[f"{alias}.{name}"] = template
+                for name, template in imported.function_templates.items():
+                    self.function_templates[f"{alias}.{name}"] = template
 
             elif isinstance(item, ast.FromImportDecl):
                 module = self.available_modules.get(item.module)
@@ -521,6 +570,42 @@ class Checker:
                                 True,
                             )
                         )
+                    elif imported_name in module.type_templates:
+                        template = module.type_templates[imported_name]
+                        if public_name in self.type_templates or public_name in self.types:
+                            self._error(
+                                f"type name {public_name!r} is already defined",
+                                item.span,
+                                code="C003",
+                            )
+                            continue
+                        aliased = TypeTemplateSymbol(
+                            name=public_name,
+                            span=item.span,
+                            kind=SymbolKind.TYPE_TEMPLATE,
+                            type_params=template.type_params,
+                            declaration=template.declaration,
+                            template_kind=template.template_kind,
+                            defining_module=template.defining_module,
+                            is_abstract=template.is_abstract,
+                            c_prefix=template.c_prefix,
+                        )
+                        self.type_templates[public_name] = aliased
+                        self._declare_global(aliased)
+                    elif imported_name in module.function_templates:
+                        template = module.function_templates[imported_name]
+                        aliased = FunctionTemplateSymbol(
+                            name=public_name,
+                            span=item.span,
+                            kind=SymbolKind.FUNCTION_TEMPLATE,
+                            type_params=template.type_params,
+                            declaration=template.declaration,
+                            defining_module=template.defining_module,
+                            is_exported=template.is_exported,
+                            c_prefix=template.c_prefix,
+                        )
+                        self.function_templates[public_name] = aliased
+                        self._declare_global(aliased)
                     elif imported_name in module.types:
                         imported_type = module.types[imported_name]
                         if public_name in self.types and self.types[public_name] != imported_type:
@@ -650,7 +735,7 @@ class Checker:
             self._collect_variant_name(declaration)
 
     def _ensure_type_name_available(self, name: str, span: Span, code: str) -> bool:
-        if name not in self.types:
+        if name not in self.types and name not in self.type_templates:
             return True
         self._error(f"type {name!r} is already defined", span, code=code)
         return False
@@ -658,6 +743,21 @@ class Checker:
     def _collect_struct_name(self, declaration: ast.StructDecl) -> None:
         self._validate_decorators(declaration.decorators, declaration.span, allowed=("reflect",))
         if not self._ensure_type_name_available(declaration.name, declaration.span, "C005"):
+            return
+        if declaration.type_params:
+            template = TypeTemplateSymbol(
+                name=declaration.name,
+                span=declaration.span,
+                kind=SymbolKind.TYPE_TEMPLATE,
+                type_params=declaration.type_params,
+                declaration=declaration,
+                template_kind="struct",
+                defining_module=self.module_name if self.module_mode else None,
+                c_prefix=self.c_prefix,
+            )
+            if self._declare_global(template) is not None:
+                return
+            self.type_templates[declaration.name] = template
             return
         c_name = self._c_type_name(declaration.name)
         type_ = StructType(declaration.name, c_name)
@@ -669,6 +769,7 @@ class Checker:
             declaration=declaration,
             c_name=c_name,
             reflected="reflect" in declaration.decorators,
+            defining_module=self.module_name if self.module_mode else None,
         )
         if self._declare_global(symbol) is not None:
             return
@@ -681,6 +782,22 @@ class Checker:
         self._validate_decorators(declaration.decorators, declaration.span, allowed=("reflect",))
         if not self._ensure_type_name_available(declaration.name, declaration.span, "C163"):
             return
+        if declaration.type_params:
+            template = TypeTemplateSymbol(
+                name=declaration.name,
+                span=declaration.span,
+                kind=SymbolKind.TYPE_TEMPLATE,
+                type_params=declaration.type_params,
+                declaration=declaration,
+                template_kind="class",
+                defining_module=self.module_name if self.module_mode else None,
+                is_abstract=declaration.is_abstract,
+                c_prefix=self.c_prefix,
+            )
+            if self._declare_global(template) is not None:
+                return
+            self.type_templates[declaration.name] = template
+            return
         c_name = self._c_type_name(declaration.name)
         type_ = ClassType(declaration.name, c_name)
         symbol = ClassSymbol(
@@ -692,6 +809,7 @@ class Checker:
             c_name=c_name,
             is_abstract=declaration.is_abstract,
             reflected="reflect" in declaration.decorators,
+            defining_module=self.module_name if self.module_mode else None,
         )
         if self._declare_global(symbol) is not None:
             return
@@ -704,6 +822,21 @@ class Checker:
         self._validate_decorators(declaration.decorators, declaration.span, allowed=("reflect",))
         if not self._ensure_type_name_available(declaration.name, declaration.span, "C108"):
             return
+        if declaration.type_params:
+            template = TypeTemplateSymbol(
+                name=declaration.name,
+                span=declaration.span,
+                kind=SymbolKind.TYPE_TEMPLATE,
+                type_params=declaration.type_params,
+                declaration=declaration,
+                template_kind="enum",
+                defining_module=self.module_name if self.module_mode else None,
+                c_prefix=self.c_prefix,
+            )
+            if self._declare_global(template) is not None:
+                return
+            self.type_templates[declaration.name] = template
+            return
         c_name = self._c_type_name(declaration.name)
         type_ = EnumType(declaration.name, c_name)
         symbol = EnumSymbol(
@@ -714,6 +847,7 @@ class Checker:
             declaration=declaration,
             c_name=c_name,
             reflected="reflect" in declaration.decorators,
+            defining_module=self.module_name if self.module_mode else None,
         )
         if self._declare_global(symbol) is not None:
             return
@@ -726,6 +860,21 @@ class Checker:
         self._validate_decorators(declaration.decorators, declaration.span, allowed=("reflect",))
         if not self._ensure_type_name_available(declaration.name, declaration.span, "C109"):
             return
+        if declaration.type_params:
+            template = TypeTemplateSymbol(
+                name=declaration.name,
+                span=declaration.span,
+                kind=SymbolKind.TYPE_TEMPLATE,
+                type_params=declaration.type_params,
+                declaration=declaration,
+                template_kind="union",
+                defining_module=self.module_name if self.module_mode else None,
+                c_prefix=self.c_prefix,
+            )
+            if self._declare_global(template) is not None:
+                return
+            self.type_templates[declaration.name] = template
+            return
         c_name = self._c_type_name(declaration.name)
         type_ = UnionType(declaration.name, c_name)
         symbol = UnionSymbol(
@@ -736,6 +885,7 @@ class Checker:
             declaration=declaration,
             c_name=c_name,
             reflected="reflect" in declaration.decorators,
+            defining_module=self.module_name if self.module_mode else None,
         )
         if self._declare_global(symbol) is not None:
             return
@@ -748,6 +898,21 @@ class Checker:
         self._validate_decorators(declaration.decorators, declaration.span, allowed=("reflect",))
         if not self._ensure_type_name_available(declaration.name, declaration.span, "C110"):
             return
+        if declaration.type_params:
+            template = TypeTemplateSymbol(
+                name=declaration.name,
+                span=declaration.span,
+                kind=SymbolKind.TYPE_TEMPLATE,
+                type_params=declaration.type_params,
+                declaration=declaration,
+                template_kind="variant",
+                defining_module=self.module_name if self.module_mode else None,
+                c_prefix=self.c_prefix,
+            )
+            if self._declare_global(template) is not None:
+                return
+            self.type_templates[declaration.name] = template
+            return
         c_name = self._c_type_name(declaration.name)
         type_ = VariantType(declaration.name, c_name)
         symbol = VariantSymbol(
@@ -758,6 +923,7 @@ class Checker:
             declaration=declaration,
             c_name=c_name,
             reflected="reflect" in declaration.decorators,
+            defining_module=self.module_name if self.module_mode else None,
         )
         if self._declare_global(symbol) is not None:
             return
@@ -1326,6 +1492,29 @@ class Checker:
     def _collect_functions(self) -> None:
         for declaration in self.module.functions:
             self._validate_decorators(declaration.decorators, declaration.span, allowed=("export",))
+            if declaration.type_params:
+                if declaration.is_extern:
+                    self._error(
+                        "external functions cannot be generic",
+                        declaration.span,
+                        code="C350",
+                    )
+                    continue
+                template = FunctionTemplateSymbol(
+                    name=declaration.name,
+                    span=declaration.span,
+                    kind=SymbolKind.FUNCTION_TEMPLATE,
+                    type_params=declaration.type_params,
+                    declaration=declaration,
+                    defining_module=self.module_name if self.module_mode else None,
+                    is_exported=declaration.is_exported,
+                    c_prefix=self.c_prefix,
+                )
+                previous = self._declare_global(template)
+                if previous is not None:
+                    continue
+                self.function_templates[declaration.name] = template
+                continue
             symbol = self._make_function_symbol(declaration, owner=None)
             previous = self._declare_global(symbol)
             if previous is not None:
@@ -2223,16 +2412,24 @@ class Checker:
             self.current_scope = previous_scope
 
     def _check_functions(self) -> None:
-        for struct in self.structs.values():
+        self._checking_functions = True
+        self._pending_specialized_checks = []
+        for struct in list(self.structs.values()):
             for method in struct.methods.values():
                 self._check_function(method, struct)
-        for class_ in self.classes.values():
+        for class_ in list(self.classes.values()):
             for method in class_.methods.values():
                 if not method.is_abstract:
                     self._check_function(method, class_)
-        for function in self.functions.values():
+        for function in list(self.functions.values()):
             if not function.is_extern:
                 self._check_function(function, None)
+        while self._pending_specialized_checks:
+            function, owner = self._pending_specialized_checks.pop(0)
+            if function.is_abstract:
+                continue
+            self._check_function(function, owner)
+        self._checking_functions = False
 
     def _check_function(
         self,
@@ -3401,19 +3598,28 @@ class Checker:
         owner_name = ".".join(pattern.path[:-1])
         owner_type = self.types.get(owner_name)
         if owner_type is None:
+            template = self._lookup_type_template(owner_name)
+            if (
+                template is not None
+                and isinstance(subject_type, (EnumType, VariantType))
+                and subject_type.name == template.name.rsplit(".", 1)[-1]
+                and subject_type.type_args
+            ):
+                return
             self._error(
                 f"unknown pattern owner {owner_name!r}",
                 pattern.span,
                 code="C142",
             )
             return
-        if owner_type != subject_type:
-            self._error(
-                f"pattern owner {owner_name!r} has type {type_name(owner_type)}, "
-                f"not {type_name(subject_type)}",
-                pattern.span,
-                code="C143",
-            )
+        if owner_type == subject_type:
+            return
+        self._error(
+            f"pattern owner {owner_name!r} has type {type_name(owner_type)}, "
+            f"not {type_name(subject_type)}",
+            pattern.span,
+            code="C143",
+        )
 
     def _validate_result_pattern_owner(self, pattern: ast.MatchPattern) -> None:
         if pattern.path is None or len(pattern.path) < 2:
@@ -3452,7 +3658,7 @@ class Checker:
             case ast.BinaryExpr():
                 result = self._check_binary(expression)
             case ast.AttributeExpr():
-                result = self._check_attribute(expression)
+                result = self._check_attribute(expression, expected)
             case ast.IndexExpr():
                 result = self._check_index(expression)
             case ast.SliceExpr():
@@ -3781,8 +3987,63 @@ class Checker:
 
         return ERROR
 
-    def _check_attribute(self, expression: ast.AttributeExpr) -> Type:
+    def _check_attribute(
+        self,
+        expression: ast.AttributeExpr,
+        expected: Type | None = None,
+    ) -> Type:
+        if isinstance(expression.value, ast.NameExpr):
+            template = self._lookup_type_template(expression.value.name)
+            if template is not None:
+                specialized = self._specialize_template_from_expected(
+                    template,
+                    expected,
+                    expression.value.span,
+                )
+                if specialized is None:
+                    self.name_symbols[id(expression.value)] = template
+                    self._error(
+                        f"generic type {template.name!r} requires type arguments",
+                        expression.value.span,
+                        code="C351",
+                        note="annotate the value or write Name[Args].Member",
+                    )
+                    return ERROR
+                self.name_symbols[id(expression.value)] = specialized
+                self.expr_types[id(expression.value)] = specialized.type
+                return self._check_attribute_on_type(expression, specialized.type)
+
         base_type = self._check_expr(expression.value)
+        return self._check_attribute_on_type(expression, base_type)
+
+    def _specialize_template_from_expected(
+        self,
+        template: TypeTemplateSymbol,
+        expected: Type | None,
+        span: Span,
+    ) -> NominalSymbol | None:
+        if expected is None:
+            return None
+        expected_raw = strip_const(expected)
+        if not isinstance(
+            expected_raw,
+            (StructType, ClassType, EnumType, UnionType, VariantType),
+        ):
+            return None
+        if expected_raw.name != template.name.rsplit(".", 1)[-1]:
+            return None
+        if not expected_raw.type_args:
+            return None
+        nominal = self.nominal_symbols.get(expected_raw)
+        if isinstance(nominal, (StructSymbol, ClassSymbol, EnumSymbol, UnionSymbol, VariantSymbol)):
+            return nominal
+        return None
+
+    def _check_attribute_on_type(
+        self,
+        expression: ast.AttributeExpr,
+        base_type: Type,
+    ) -> Type:
         if isinstance(base_type, ModuleType):
             module = self.imported_modules.get(base_type.name)
             if module is None:
@@ -3812,6 +4073,25 @@ class Checker:
                     "module_type", nominal=nominal, owner_type=nominal.type
                 )
                 return nominal.type
+            if expression.name in module.type_templates:
+                template = module.type_templates[expression.name]
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "module_type_template",
+                    compile_value=template,
+                )
+                self._error(
+                    f"generic type {template.name!r} requires type arguments",
+                    expression.span,
+                    code="C351",
+                )
+                return ERROR
+            if expression.name in module.function_templates:
+                template = module.function_templates[expression.name]
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "module_function_template",
+                    compile_value=template,
+                )
+                return FunctionValueType(template.name)
             self._error(
                 f"module {module.module_name!r} has no member {expression.name!r}",
                 expression.span,
@@ -4317,11 +4597,119 @@ class Checker:
                 return self._check_reflection_call(expression, name)
 
             symbol = self.current_scope.lookup(name)
+            if isinstance(symbol, FunctionTemplateSymbol) or (
+                expression.type_arguments and self._lookup_function_template(name) is not None
+            ):
+                template = (
+                    symbol
+                    if isinstance(symbol, FunctionTemplateSymbol)
+                    else self._lookup_function_template(name)
+                )
+                assert template is not None
+                self.name_symbols[id(expression.callee)] = template
+                self.expr_types[id(expression.callee)] = FunctionValueType(template.name)
+                if expression.type_arguments:
+                    specialized = self._instantiate_function_template(
+                        template,
+                        expression.type_arguments,
+                        None,
+                        span=expression.span,
+                    )
+                else:
+                    inferred = self._infer_function_type_args(template, expression)
+                    if inferred is None:
+                        self._error(
+                            f"cannot infer type arguments for generic function {template.name!r}",
+                            expression.span,
+                            code="C357",
+                            note="provide explicit type arguments like name[T](...)",
+                        )
+                        return ERROR
+                    specialized = self._instantiate_function_template(
+                        template,
+                        None,
+                        inferred,
+                        span=expression.span,
+                    )
+                if specialized is None:
+                    return ERROR
+                self.name_symbols[id(expression.callee)] = specialized
+                self._validate_function_call(expression, specialized, skip_parameters=0)
+                return specialized.return_type
             if isinstance(symbol, FunctionSymbol):
+                if expression.type_arguments:
+                    self._error(
+                        f"function {name!r} is not generic",
+                        expression.span,
+                        code="C358",
+                    )
                 self.name_symbols[id(expression.callee)] = symbol
                 self.expr_types[id(expression.callee)] = FunctionValueType(symbol.name)
                 self._validate_function_call(expression, symbol, skip_parameters=0)
                 return symbol.return_type
+            if isinstance(symbol, TypeTemplateSymbol) or (
+                expression.type_arguments and self._lookup_type_template(name) is not None
+            ):
+                template = (
+                    symbol
+                    if isinstance(symbol, TypeTemplateSymbol)
+                    else self._lookup_type_template(name)
+                )
+                assert template is not None
+                if expression.type_arguments:
+                    specialized_type = self._instantiate_type_template(
+                        template,
+                        expression.type_arguments,
+                        span=expression.span,
+                    )
+                elif expected is not None and isinstance(
+                    strip_const(expected),
+                    (StructType, ClassType, UnionType),
+                ):
+                    expected_raw = strip_const(expected)
+                    assert isinstance(
+                        expected_raw, (StructType, ClassType, UnionType)
+                    )
+                    if (
+                        expected_raw.name == template.name.rsplit(".", 1)[-1]
+                        and expected_raw.type_args
+                    ):
+                        specialized_type = expected_raw
+                    else:
+                        self._error(
+                            f"generic type {template.name!r} requires type arguments",
+                            expression.span,
+                            code="C351",
+                        )
+                        return ERROR
+                else:
+                    self._error(
+                        f"generic type {template.name!r} requires type arguments",
+                        expression.span,
+                        code="C351",
+                    )
+                    return ERROR
+                if specialized_type is ERROR:
+                    return ERROR
+                nominal = self.nominal_symbols.get(specialized_type)
+                if isinstance(nominal, StructSymbol):
+                    self.name_symbols[id(expression.callee)] = nominal
+                    self.expr_types[id(expression.callee)] = specialized_type
+                    return self._check_struct_constructor(expression, nominal)
+                if isinstance(nominal, ClassSymbol):
+                    self.name_symbols[id(expression.callee)] = nominal
+                    self.expr_types[id(expression.callee)] = specialized_type
+                    return self._check_class_constructor(expression, nominal)
+                if isinstance(nominal, UnionSymbol):
+                    self.name_symbols[id(expression.callee)] = nominal
+                    self.expr_types[id(expression.callee)] = specialized_type
+                    return self._check_union_constructor(expression, nominal)
+                self._error(
+                    f"type {type_name(specialized_type)} cannot be constructed",
+                    expression.span,
+                    code="C359",
+                )
+                return ERROR
             if isinstance(symbol, StructSymbol):
                 self.name_symbols[id(expression.callee)] = symbol
                 self.expr_types[id(expression.callee)] = symbol.type
@@ -4339,11 +4727,46 @@ class Checker:
             super_method = self._super_method_name(expression.callee)
             if super_method is not None:
                 return self._check_super_call(expression, super_method)
-            self._check_expr(expression.callee)
+            # Pass expected type so generic enum/variant constructors like
+            # Tagged.Some(...) can specialize from context.
+            self._check_expr(expression.callee, expected)
             resolution = self.attribute_resolutions.get(id(expression.callee))
             if resolution is not None and resolution.kind == "module_function" and resolution.function:
                 self._validate_function_call(expression, resolution.function, skip_parameters=0)
                 return resolution.function.return_type
+            if (
+                resolution is not None
+                and resolution.kind == "module_function_template"
+                and isinstance(resolution.compile_value, FunctionTemplateSymbol)
+            ):
+                template = resolution.compile_value
+                if expression.type_arguments:
+                    specialized = self._instantiate_function_template(
+                        template,
+                        expression.type_arguments,
+                        None,
+                        span=expression.span,
+                    )
+                else:
+                    inferred = self._infer_function_type_args(template, expression)
+                    if inferred is None:
+                        self._error(
+                            f"cannot infer type arguments for generic function {template.name!r}",
+                            expression.span,
+                            code="C357",
+                            note="provide explicit type arguments like name[T](...)",
+                        )
+                        return ERROR
+                    specialized = self._instantiate_function_template(
+                        template,
+                        None,
+                        inferred,
+                        span=expression.span,
+                    )
+                if specialized is None:
+                    return ERROR
+                self._validate_function_call(expression, specialized, skip_parameters=0)
+                return specialized.return_type
             if resolution is not None and resolution.kind == "method" and resolution.method:
                 self._validate_method_receiver(expression.callee.value, resolution.method)
                 self._validate_function_call(expression, resolution.method, skip_parameters=1)
@@ -6531,6 +6954,944 @@ class Checker:
                 return True
         return False
 
+    def _lookup_type_template(self, name: str) -> TypeTemplateSymbol | None:
+        template = self.type_templates.get(name)
+        if template is not None:
+            return template
+        symbol = self.global_scope.lookup(name)
+        if isinstance(symbol, TypeTemplateSymbol):
+            return symbol
+        return None
+
+    def _lookup_function_template(self, name: str) -> FunctionTemplateSymbol | None:
+        template = self.function_templates.get(name)
+        if template is not None:
+            return template
+        symbol = self.global_scope.lookup(name)
+        if isinstance(symbol, FunctionTemplateSymbol):
+            return symbol
+        return None
+
+    def _specialize_c_name(
+        self,
+        template_name: str,
+        type_args: tuple[Type, ...],
+        *,
+        c_prefix: str | None = None,
+    ) -> str:
+        bare = template_name.rsplit(".", 1)[-1]
+        prefix = self.c_prefix if c_prefix is None else c_prefix
+        mangled = f"{bare}{specialization_suffix(type_args)}"
+        return f"{prefix}{mangled}" if prefix else mangled
+
+    def _instantiate_type_template(
+        self,
+        template: TypeTemplateSymbol,
+        argument_nodes: list[ast.TypeNode],
+        *,
+        span: Span,
+        allow_opaque: bool = False,
+    ) -> Type:
+        if len(argument_nodes) != len(template.type_params):
+            self._error(
+                f"generic type {template.name!r} expects "
+                f"{len(template.type_params)} type argument(s), "
+                f"got {len(argument_nodes)}",
+                span,
+                code="C352",
+            )
+            for argument in argument_nodes:
+                self._resolve_type(argument, allow_opaque=allow_opaque)
+            return ERROR
+
+        type_args = tuple(
+            self._resolve_type(argument, allow_opaque=allow_opaque)
+            for argument in argument_nodes
+        )
+        if any(argument is ERROR for argument in type_args):
+            return ERROR
+
+        cache_key = (template.template_kind, template.name, type_args)
+        cached = self._type_specializations.get(cache_key)
+        if cached is not None:
+            return cached.type
+
+        mapping = make_type_param_mapping(template.type_params, argument_nodes)
+        specialized_name = template.name.rsplit(".", 1)[-1]
+        mangled_key = f"{specialized_name}{specialization_suffix(type_args)}"
+        c_name = self._specialize_c_name(
+            template.name, type_args, c_prefix=template.c_prefix
+        )
+
+        if template.template_kind == "struct":
+            assert isinstance(template.declaration, ast.StructDecl)
+            specialized_decl = specialize_struct(template.declaration, mapping)
+            type_ = StructType(specialized_name, c_name, type_args)
+            symbol = StructSymbol(
+                name=specialized_name,
+                span=template.span,
+                kind=SymbolKind.STRUCT,
+                type=type_,
+                declaration=specialized_decl,
+                c_name=c_name,
+                reflected="reflect" in specialized_decl.decorators,
+                type_args=type_args,
+                template_name=template.name,
+                defining_module=template.defining_module,
+            )
+            self._type_specializations[cache_key] = symbol
+            self.structs[mangled_key] = symbol
+            self._register_nominal(type_, symbol)
+            self.struct_symbols[id(specialized_decl)] = symbol
+            self._fill_struct_members(symbol, specialized_decl)
+            for method in symbol.methods.values():
+                method.is_module_public = False
+            self._validate_specialized_nominal(symbol)
+            if self._checking_functions:
+                for method in symbol.methods.values():
+                    self._pending_specialized_checks.append((method, symbol))
+            return type_
+
+        if template.template_kind == "class":
+            assert isinstance(template.declaration, ast.ClassDecl)
+            specialized_decl = specialize_class(template.declaration, mapping)
+            type_ = ClassType(specialized_name, c_name, type_args)
+            symbol = ClassSymbol(
+                name=specialized_name,
+                span=template.span,
+                kind=SymbolKind.CLASS,
+                type=type_,
+                declaration=specialized_decl,
+                c_name=c_name,
+                is_abstract=specialized_decl.is_abstract,
+                reflected="reflect" in specialized_decl.decorators,
+                type_args=type_args,
+                template_name=template.name,
+                defining_module=template.defining_module,
+            )
+            self._type_specializations[cache_key] = symbol
+            self.classes[mangled_key] = symbol
+            self._register_nominal(type_, symbol)
+            self.class_symbols[id(specialized_decl)] = symbol
+            self._fill_class_members(symbol, specialized_decl)
+            self._resolve_one_class_hierarchy(symbol)
+            for method in symbol.methods.values():
+                method.is_module_public = False
+            self._validate_specialized_nominal(symbol)
+            if self._checking_functions:
+                for method in symbol.methods.values():
+                    if not method.is_abstract:
+                        self._pending_specialized_checks.append((method, symbol))
+            return type_
+
+        if template.template_kind == "enum":
+            assert isinstance(template.declaration, ast.EnumDecl)
+            specialized_decl = specialize_enum(template.declaration, mapping)
+            type_ = EnumType(specialized_name, c_name, type_args)
+            symbol = EnumSymbol(
+                name=specialized_name,
+                span=template.span,
+                kind=SymbolKind.ENUM,
+                type=type_,
+                declaration=specialized_decl,
+                c_name=c_name,
+                reflected="reflect" in specialized_decl.decorators,
+                type_args=type_args,
+                template_name=template.name,
+                defining_module=template.defining_module,
+            )
+            self._type_specializations[cache_key] = symbol
+            self.enums[mangled_key] = symbol
+            self._register_nominal(type_, symbol)
+            self.enum_symbols[id(specialized_decl)] = symbol
+            self._fill_enum_members(symbol, specialized_decl)
+            return type_
+
+        if template.template_kind == "union":
+            assert isinstance(template.declaration, ast.UnionDecl)
+            specialized_decl = specialize_union(template.declaration, mapping)
+            type_ = UnionType(specialized_name, c_name, type_args)
+            symbol = UnionSymbol(
+                name=specialized_name,
+                span=template.span,
+                kind=SymbolKind.UNION,
+                type=type_,
+                declaration=specialized_decl,
+                c_name=c_name,
+                reflected="reflect" in specialized_decl.decorators,
+                type_args=type_args,
+                template_name=template.name,
+                defining_module=template.defining_module,
+            )
+            self._type_specializations[cache_key] = symbol
+            self.unions[mangled_key] = symbol
+            self._register_nominal(type_, symbol)
+            self.union_symbols[id(specialized_decl)] = symbol
+            self._fill_union_members(symbol, specialized_decl)
+            self._validate_specialized_nominal(symbol)
+            return type_
+
+        if template.template_kind == "variant":
+            assert isinstance(template.declaration, ast.VariantDecl)
+            specialized_decl = specialize_variant(template.declaration, mapping)
+            type_ = VariantType(specialized_name, c_name, type_args)
+            symbol = VariantSymbol(
+                name=specialized_name,
+                span=template.span,
+                kind=SymbolKind.VARIANT,
+                type=type_,
+                declaration=specialized_decl,
+                c_name=c_name,
+                reflected="reflect" in specialized_decl.decorators,
+                type_args=type_args,
+                template_name=template.name,
+                defining_module=template.defining_module,
+            )
+            self._type_specializations[cache_key] = symbol
+            self.variants[mangled_key] = symbol
+            self._register_nominal(type_, symbol)
+            self.variant_symbols[id(specialized_decl)] = symbol
+            self._fill_variant_members(symbol, specialized_decl)
+            self._validate_specialized_nominal(symbol)
+            return type_
+
+        self._error(
+            f"unsupported generic template kind {template.template_kind!r}",
+            span,
+            code="C353",
+        )
+        return ERROR
+
+    def _fill_struct_members(
+        self,
+        struct: StructSymbol,
+        declaration: ast.StructDecl,
+    ) -> None:
+        for field_declaration in declaration.fields:
+            field_type = self._resolve_type(field_declaration.annotation)
+            if is_void(field_type):
+                self._error("struct fields cannot have type void", field_declaration.span, code="C006")
+                field_type = ERROR
+            if field_declaration.name in struct.fields or field_declaration.name in struct.methods:
+                self._error(
+                    f"duplicate member {field_declaration.name!r} in struct {struct.name}",
+                    field_declaration.span,
+                    code="C007",
+                )
+                continue
+            struct.fields[field_declaration.name] = FieldSymbol(
+                field_declaration.name,
+                field_declaration.span,
+                SymbolKind.VARIABLE,
+                field_type,
+                field_declaration.is_private,
+                struct.name,
+            )
+
+        for method_declaration in declaration.methods:
+            self._validate_decorators(method_declaration.decorators, method_declaration.span, allowed=())
+            if method_declaration.name in struct.methods or method_declaration.name in struct.fields:
+                self._error(
+                    f"duplicate member {method_declaration.name!r} in struct {struct.name}",
+                    method_declaration.span,
+                    code="C008",
+                )
+                continue
+            method = self._make_function_symbol(method_declaration, owner=struct)
+            struct.methods[method.name] = method
+            self.function_symbols[id(method_declaration)] = method
+
+    def _fill_class_members(
+        self,
+        class_: ClassSymbol,
+        declaration: ast.ClassDecl,
+    ) -> None:
+        for field_declaration in declaration.fields:
+            field_type = self._resolve_type(field_declaration.annotation)
+            if is_void(field_type) or isinstance(field_type, ReferenceType):
+                self._error(
+                    f"invalid class field type {type_name(field_type)}",
+                    field_declaration.span,
+                    code="C164",
+                )
+                field_type = ERROR
+            if field_declaration.name in class_.fields or field_declaration.name in class_.methods:
+                self._error(
+                    f"duplicate member {field_declaration.name!r} in class {class_.name}",
+                    field_declaration.span,
+                    code="C165",
+                )
+                continue
+            class_.fields[field_declaration.name] = FieldSymbol(
+                field_declaration.name,
+                field_declaration.span,
+                SymbolKind.VARIABLE,
+                field_type,
+                field_declaration.is_private,
+                class_.name,
+            )
+
+        for method_declaration in declaration.methods:
+            allowed = ("abstractmethod", "override")
+            self._validate_decorators(
+                method_declaration.decorators,
+                method_declaration.span,
+                allowed=allowed,
+            )
+            if method_declaration.name in class_.methods or method_declaration.name in class_.fields:
+                self._error(
+                    f"duplicate member {method_declaration.name!r} in class {class_.name}",
+                    method_declaration.span,
+                    code="C166",
+                )
+                continue
+
+            is_abstract = "abstractmethod" in method_declaration.decorators
+            is_override = "override" in method_declaration.decorators
+            if is_abstract and not declaration.is_abstract:
+                self._error(
+                    "@abstractmethod is only valid in an abstract class",
+                    method_declaration.span,
+                    code="C167",
+                )
+            if is_abstract and not self._is_pass_only(method_declaration.body):
+                self._error(
+                    "abstract methods must have a pass-only body",
+                    method_declaration.span,
+                    code="C168",
+                )
+            if method_declaration.name in ("__init__", "__del__") and is_abstract:
+                self._error(
+                    f"{method_declaration.name} cannot be abstract",
+                    method_declaration.span,
+                    code="C169",
+                )
+
+            method = self._make_function_symbol(method_declaration, owner=class_)
+            method.is_abstract = is_abstract
+            method.is_override = is_override
+            method.owner_class = class_
+            if method.is_variadic:
+                self._error(
+                    "class methods cannot be variadic",
+                    method.span,
+                    code="C212",
+                    note="explicit interface-table thunks cannot portably forward C varargs",
+                )
+            if method.parameters:
+                self_type = strip_const(method.parameters[0].type)
+                if method.name in ("__init__", "__del__"):
+                    valid_lifecycle_self = (
+                        isinstance(self_type, ReferenceType)
+                        and not isinstance(self_type.inner, ConstType)
+                        and strip_const(self_type.inner) == class_.type
+                    )
+                    if not valid_lifecycle_self:
+                        self._error(
+                            f"{method.name} requires mutable self: &{class_.name}",
+                            method.parameters[0].span,
+                            code="C213",
+                        )
+                elif isinstance(self_type, ClassType):
+                    self._error(
+                        "class methods cannot receive self by value",
+                        method.parameters[0].span,
+                        code="C214",
+                        note="use self, &Class, &const Class, or &dyn Interface",
+                    )
+            class_.methods[method.name] = method
+            self.function_symbols[id(method_declaration)] = method
+
+            if method.name == "__init__":
+                if class_.constructor is not None:
+                    self._error("class has more than one constructor", method.span, code="C170")
+                class_.constructor = method
+                if not is_void(method.return_type):
+                    self._error("__init__ must return void", method.span, code="C171")
+            elif method.name == "__del__":
+                if class_.destructor is not None:
+                    self._error("class has more than one destructor", method.span, code="C172")
+                class_.destructor = method
+                if not is_void(method.return_type) or len(method.parameters) != 1:
+                    self._error(
+                        "__del__ must take only self and return void",
+                        method.span,
+                        code="C173",
+                    )
+
+    def _resolve_one_class_hierarchy(self, class_: ClassSymbol) -> None:
+        declaration = class_.declaration
+        for base_node in declaration.bases:
+            base_type = self._resolve_type(base_node)
+            base = self.nominal_symbols.get(base_type)
+            if not isinstance(base_type, ClassType) or not isinstance(base, ClassSymbol):
+                self._error(
+                    f"class base must be a class, got {type_name(base_type)}",
+                    base_node.span,
+                    code="C174",
+                )
+                continue
+            if base in class_.bases:
+                self._error(
+                    f"duplicate base class {base.name!r}",
+                    base_node.span,
+                    code="C175",
+                )
+                continue
+            class_.bases.append(base)
+        self._finalize_class_hierarchy(class_)
+
+    def _finalize_class_hierarchy(self, class_: ClassSymbol) -> None:
+        class_.is_interface_only = (
+            class_.is_abstract
+            and not class_.fields
+            and class_.constructor is None
+            and class_.destructor is None
+        )
+
+        layout_bases = [base for base in class_.bases if not base.is_interface_only]
+        if len(layout_bases) > 1:
+            self._error(
+                f"class {class_.name} has multiple implementation bases",
+                class_.span,
+                code="C176",
+                note="Cinder supports one implementation base and any number of abstract interfaces",
+            )
+        if layout_bases:
+            class_.primary_base = layout_bases[0]
+            if class_.bases and class_.bases[0] is not class_.primary_base:
+                self._error(
+                    "the implementation base must be listed first",
+                    class_.span,
+                    code="C177",
+                )
+        class_.interfaces = [base for base in class_.bases if base is not class_.primary_base]
+
+        if class_.primary_base is not None:
+            for field in class_.fields.values():
+                inherited_field = self._lookup_class_field(class_.primary_base, field.name)
+                inherited_method = self._lookup_class_method(
+                    class_.primary_base,
+                    field.name,
+                )
+                if inherited_field is not None or inherited_method is not None:
+                    self._error(
+                        f"member {class_.name}.{field.name} shadows an inherited member",
+                        field.span,
+                        code="C215",
+                    )
+            for method in class_.methods.values():
+                if method.name in ("__init__", "__del__"):
+                    continue
+                inherited_field = self._lookup_class_field(
+                    class_.primary_base,
+                    method.name,
+                )
+                if inherited_field is not None:
+                    self._error(
+                        f"method {class_.name}.{method.name} shadows an inherited field",
+                        method.span,
+                        code="C216",
+                    )
+
+        inherited_methods: OrderedDict[str, FunctionSymbol] = OrderedDict()
+        for base in class_.bases:
+            for name, method in base.interface_methods.items():
+                previous = inherited_methods.get(name)
+                if previous is not None and not self._method_signatures_match(
+                    method,
+                    previous,
+                ):
+                    self._error(
+                        f"base classes provide incompatible signatures for {name!r}",
+                        class_.span,
+                        code="C217",
+                        note=(
+                            f"{previous.owner}.{previous.name} conflicts with "
+                            f"{method.owner}.{method.name}"
+                        ),
+                    )
+                inherited_methods.setdefault(name, method)
+
+        effective_methods: OrderedDict[str, FunctionSymbol] = OrderedDict(inherited_methods)
+        for name, method in class_.methods.items():
+            if name in ("__init__", "__del__"):
+                continue
+            inherited = inherited_methods.get(name)
+            if method.is_override and inherited is None:
+                self._error(
+                    f"method {class_.name}.{name} is marked @override but no base method exists",
+                    method.span,
+                    code="C178",
+                )
+            if inherited is not None and not self._method_signatures_match(method, inherited):
+                self._error(
+                    f"override {class_.name}.{name} does not match the base signature",
+                    method.span,
+                    code="C179",
+                    note=f"base declaration is {inherited.owner}.{inherited.name}",
+                )
+            effective_methods[name] = method
+
+        class_.interface_methods = effective_methods
+        class_.abstract_methods = OrderedDict(
+            (name, method)
+            for name, method in effective_methods.items()
+            if method.is_abstract
+        )
+        if not class_.is_abstract and class_.abstract_methods:
+            missing = ", ".join(class_.abstract_methods)
+            self._error(
+                f"concrete class {class_.name} does not implement: {missing}",
+                class_.span,
+                code="C180",
+            )
+
+        if class_.reflected:
+            for interface in self._implemented_interfaces(class_):
+                if interface.reflected:
+                    continue
+        else:
+            reflected_interfaces = [
+                interface.name
+                for interface in self._implemented_interfaces(class_)
+                if interface.reflected
+            ]
+            if reflected_interfaces:
+                self._error(
+                    f"class {class_.name} must use @reflect because it implements reflected interface(s): "
+                    + ", ".join(reflected_interfaces),
+                    class_.span,
+                    code="C181",
+                )
+
+        self._validate_constructor_chain(class_)
+
+    def _validate_specialized_nominal(self, symbol: NominalSymbol) -> None:
+        if isinstance(symbol, StructSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+            for method in symbol.methods.values():
+                for parameter in method.parameters:
+                    self._validate_list_elements(parameter.type, parameter.span)
+                self._validate_list_elements(method.return_type, method.span)
+            return
+        if isinstance(symbol, ClassSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+            for method in symbol.methods.values():
+                for parameter in method.parameters:
+                    self._validate_list_elements(parameter.type, parameter.span)
+                self._validate_list_elements(method.return_type, method.span)
+            return
+        if isinstance(symbol, UnionSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+                if self._contains_owning_container_value(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} cannot own a collection",
+                        field.span,
+                        code="C247",
+                    )
+                if self._contains_destructible_value(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} contains a class with a destructor",
+                        field.span,
+                        code="C222",
+                    )
+            return
+        if isinstance(symbol, VariantSymbol):
+            for case in symbol.cases.values():
+                for field in case.fields.values():
+                    self._validate_list_elements(field.type, field.span)
+                    if self._contains_owning_container_value(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "cannot own a collection",
+                            field.span,
+                            code="C247",
+                        )
+                    if self._contains_destructible_value(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "contains a class with a destructor",
+                            field.span,
+                            code="C223",
+                        )
+
+    def _fill_enum_members(
+        self,
+        enum: EnumSymbol,
+        declaration: ast.EnumDecl,
+    ) -> None:
+        next_value = 0
+        values: dict[int, EnumMemberSymbol] = {}
+        for member_declaration in declaration.members:
+            if member_declaration.name in enum.members:
+                self._error(
+                    f"duplicate enum member {member_declaration.name!r}",
+                    member_declaration.span,
+                    code="C111",
+                )
+                continue
+            value = next_value if member_declaration.value is None else member_declaration.value
+            next_value = value + 1
+            previous_value = values.get(value)
+            if previous_value is not None:
+                self._error(
+                    f"enum value {value} is already used by {previous_value.name!r}",
+                    member_declaration.span,
+                    code="C112",
+                    note="enum aliases are not supported because match cases must be distinguishable",
+                )
+            member = EnumMemberSymbol(
+                member_declaration.name,
+                value,
+                f"{enum.c_name}_{member_declaration.name}",
+                member_declaration.span,
+            )
+            enum.members[member_declaration.name] = member
+            values.setdefault(value, member)
+
+    def _fill_union_members(
+        self,
+        union: UnionSymbol,
+        declaration: ast.UnionDecl,
+    ) -> None:
+        for field_declaration in declaration.fields:
+            field_type = self._resolve_type(field_declaration.annotation)
+            if is_void(field_type) or isinstance(field_type, ReferenceType):
+                self._error(
+                    f"invalid union field type {type_name(field_type)}",
+                    field_declaration.span,
+                    code="C113",
+                )
+                field_type = ERROR
+            if field_declaration.name in union.fields:
+                self._error(
+                    f"duplicate union field {field_declaration.name!r}",
+                    field_declaration.span,
+                    code="C114",
+                )
+                continue
+            union.fields[field_declaration.name] = FieldSymbol(
+                field_declaration.name,
+                field_declaration.span,
+                SymbolKind.VARIABLE,
+                field_type,
+                field_declaration.is_private,
+                union.name,
+            )
+
+    def _fill_variant_members(
+        self,
+        variant: VariantSymbol,
+        declaration: ast.VariantDecl,
+    ) -> None:
+        for tag_value, case_declaration in enumerate(declaration.cases):
+            if case_declaration.name in variant.cases:
+                self._error(
+                    f"duplicate variant case {case_declaration.name!r}",
+                    case_declaration.span,
+                    code="C115",
+                )
+                continue
+            case = VariantCaseSymbol(
+                case_declaration.name,
+                tag_value,
+                f"{variant.c_name}_Tag_{case_declaration.name}",
+                case_declaration.span,
+            )
+            for field_declaration in case_declaration.fields:
+                field_type = self._resolve_type(field_declaration.annotation)
+                if is_void(field_type) or isinstance(field_type, ReferenceType):
+                    self._error(
+                        f"invalid variant payload type {type_name(field_type)}",
+                        field_declaration.span,
+                        code="C116",
+                    )
+                    field_type = ERROR
+                if field_declaration.name in case.fields:
+                    self._error(
+                        f"duplicate payload field {field_declaration.name!r}",
+                        field_declaration.span,
+                        code="C117",
+                    )
+                    continue
+                case.fields[field_declaration.name] = FieldSymbol(
+                    field_declaration.name,
+                    field_declaration.span,
+                    SymbolKind.VARIABLE,
+                    field_type,
+                    False,
+                    variant.name,
+                )
+            variant.cases[case.name] = case
+
+    def _instantiate_function_template(
+        self,
+        template: FunctionTemplateSymbol,
+        argument_nodes: list[ast.TypeNode] | None,
+        type_args: tuple[Type, ...] | None,
+        *,
+        span: Span,
+    ) -> FunctionSymbol | None:
+        if argument_nodes is not None:
+            if len(argument_nodes) != len(template.type_params):
+                self._error(
+                    f"generic function {template.name!r} expects "
+                    f"{len(template.type_params)} type argument(s), "
+                    f"got {len(argument_nodes)}",
+                    span,
+                    code="C354",
+                )
+                return None
+            type_args = tuple(self._resolve_type(argument) for argument in argument_nodes)
+            mapping = make_type_param_mapping(template.type_params, argument_nodes)
+        elif type_args is not None:
+            if len(type_args) != len(template.type_params):
+                self._error(
+                    f"generic function {template.name!r} expects "
+                    f"{len(template.type_params)} type argument(s), "
+                    f"got {len(type_args)}",
+                    span,
+                    code="C354",
+                )
+                return None
+            # Build type nodes from inferred types for substitution.
+            argument_nodes = []
+            for argument in type_args:
+                node = self._type_to_type_node(argument, span)
+                if node is None:
+                    self._error(
+                        f"cannot infer type argument {type_name(argument)} for {template.name}",
+                        span,
+                        code="C355",
+                    )
+                    return None
+                argument_nodes.append(node)
+            mapping = make_type_param_mapping(template.type_params, argument_nodes)
+        else:
+            self._error(
+                f"generic function {template.name!r} requires type arguments",
+                span,
+                code="C356",
+            )
+            return None
+
+        assert type_args is not None
+        if any(argument is ERROR for argument in type_args):
+            return None
+
+        cache_key = (template.name, type_args)
+        cached = self._function_specializations.get(cache_key)
+        if cached is not None:
+            return cached
+
+        specialized_decl = specialize_function(template.declaration, mapping)
+        symbol = self._make_function_symbol(specialized_decl, owner=None)
+        bare = template.name.rsplit(".", 1)[-1]
+        mangled = f"{bare}{specialization_suffix(type_args)}"
+        prefix = template.c_prefix
+        symbol.c_name = f"{prefix}{mangled}" if prefix else mangled
+        symbol.type_args = type_args
+        symbol.template_name = template.name
+        # Specializations are monomorphized per translation unit with shared
+        # defining-module names; keep them TU-local to avoid link duplicates.
+        symbol.is_module_public = False
+        mangled_key = mangled
+        self._function_specializations[cache_key] = symbol
+        self.functions[mangled_key] = symbol
+        self.function_symbols[id(specialized_decl)] = symbol
+        for parameter in symbol.parameters:
+            self._validate_list_elements(parameter.type, parameter.span)
+        self._validate_list_elements(symbol.return_type, symbol.span)
+        if self._checking_functions:
+            self._pending_specialized_checks.append((symbol, None))
+        return symbol
+
+    def _type_to_type_node(self, type_: Type, span: Span) -> ast.TypeNode | None:
+        match type_:
+            case type_ if type_ is ERROR:
+                return None
+            case PrimitiveType() as primitive:
+                return ast.NamedTypeNode(span, primitive.name)
+            case StructType(name=name, type_args=type_args) | ClassType(name=name, type_args=type_args) | EnumType(name=name, type_args=type_args) | UnionType(name=name, type_args=type_args) | VariantType(name=name, type_args=type_args):
+                base = ast.NamedTypeNode(span, name)
+                if not type_args:
+                    return base
+                arguments = []
+                for argument in type_args:
+                    node = self._type_to_type_node(argument, span)
+                    if node is None:
+                        return None
+                    arguments.append(node)
+                return ast.GenericTypeNode(span, base, arguments)
+            case ResultType(ok=ok, error=error):
+                ok_node = self._type_to_type_node(ok, span)
+                err_node = self._type_to_type_node(error, span)
+                if ok_node is None or err_node is None:
+                    return None
+                return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "Result"), [ok_node, err_node])
+            case OptionType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "Option"), [inner_node])
+            case OwnedType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "Owned"), [inner_node])
+            case ListType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "List"), [inner_node])
+            case SetType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "Set"), [inner_node])
+            case MapType(key=key, value=value):
+                key_node = self._type_to_type_node(key, span)
+                value_node = self._type_to_type_node(value, span)
+                if key_node is None or value_node is None:
+                    return None
+                return ast.GenericTypeNode(
+                    span, ast.NamedTypeNode(span, "Map"), [key_node, value_node]
+                )
+            case TupleType(elements=elements):
+                argument_nodes = []
+                for element in elements:
+                    node = self._type_to_type_node(element, span)
+                    if node is None:
+                        return None
+                    argument_nodes.append(node)
+                return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "Tuple"), argument_nodes)
+            case ConstType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.ConstTypeNode(span, inner_node)
+            case PointerType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.PointerTypeNode(span, inner_node)
+            case ReferenceType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.ReferenceTypeNode(span, inner_node)
+            case SliceType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.SliceTypeNode(span, inner_node)
+            case ArrayType(inner=inner, length=length):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.ArrayTypeNode(span, inner_node, length)
+            case DynType(interface=interface, is_const=is_const):
+                interface_node = self._type_to_type_node(interface, span)
+                if interface_node is None:
+                    return None
+                return ast.DynTypeNode(span, interface_node, is_const)
+            case _:
+                return None
+
+    def _infer_function_type_args(
+        self,
+        template: FunctionTemplateSymbol,
+        call: ast.CallExpr,
+    ) -> tuple[Type, ...] | None:
+        declaration = template.declaration
+        params = [parameter for parameter in declaration.parameters if not parameter.is_variadic]
+        if len(call.arguments) != len(params):
+            # Still try positional alignment for inference of provided args.
+            pass
+
+        inferred: dict[str, Type] = {}
+
+        def unify(param_node: ast.TypeNode | None, actual: Type) -> bool:
+            if param_node is None:
+                return True
+            match param_node:
+                case ast.NamedTypeNode(name=name) if name in template.type_params:
+                    existing = inferred.get(name)
+                    if existing is None:
+                        inferred[name] = strip_const(actual)
+                        return True
+                    return existing == strip_const(actual)
+                case ast.NamedTypeNode():
+                    expected = self._resolve_type(param_node)
+                    return self._can_assign(expected, actual) or expected == strip_const(actual)
+                case ast.GenericTypeNode(base=base, arguments=arguments):
+                    if not isinstance(base, ast.NamedTypeNode):
+                        return False
+                    actual_raw = strip_const(actual)
+                    if base.name in self.type_templates:
+                        if not isinstance(
+                            actual_raw,
+                            (StructType, ClassType, EnumType, UnionType, VariantType),
+                        ):
+                            return False
+                        if actual_raw.name != base.name.rsplit(".", 1)[-1]:
+                            return False
+                        if len(arguments) != len(actual_raw.type_args):
+                            return False
+                        return all(
+                            unify(argument, type_arg)
+                            for argument, type_arg in zip(arguments, actual_raw.type_args, strict=True)
+                        )
+                    # Builtin families
+                    mapping_builtins: dict[str, type] = {
+                        "Option": OptionType,
+                        "Owned": OwnedType,
+                        "List": ListType,
+                        "Set": SetType,
+                    }
+                    if base.name == "Result" and isinstance(actual_raw, ResultType) and len(arguments) == 2:
+                        return unify(arguments[0], actual_raw.ok) and unify(arguments[1], actual_raw.error)
+                    if base.name == "Map" and isinstance(actual_raw, MapType) and len(arguments) == 2:
+                        return unify(arguments[0], actual_raw.key) and unify(arguments[1], actual_raw.value)
+                    if base.name == "Tuple" and isinstance(actual_raw, TupleType):
+                        if len(arguments) != len(actual_raw.elements):
+                            return False
+                        return all(
+                            unify(argument, element)
+                            for argument, element in zip(arguments, actual_raw.elements, strict=True)
+                        )
+                    cls = mapping_builtins.get(base.name)
+                    if cls is not None and isinstance(actual_raw, cls) and len(arguments) == 1:
+                        return unify(arguments[0], actual_raw.inner)  # type: ignore[attr-defined]
+                    return False
+                case ast.ConstTypeNode(inner=inner):
+                    return unify(inner, strip_const(actual))
+                case ast.PointerTypeNode(inner=inner) if isinstance(strip_const(actual), PointerType):
+                    return unify(inner, strip_const(actual).inner)  # type: ignore[union-attr]
+                case ast.ReferenceTypeNode(inner=inner) if isinstance(actual, ReferenceType):
+                    return unify(inner, actual.inner)
+                case ast.SliceTypeNode(inner=inner) if isinstance(strip_const(actual), SliceType):
+                    return unify(inner, strip_const(actual).inner)  # type: ignore[union-attr]
+                case _:
+                    return True
+
+        for argument, parameter in zip(call.arguments, params):
+            actual = self._check_expr(argument.value)
+            if not unify(parameter.annotation, actual):
+                return None
+
+        type_args: list[Type] = []
+        for name in template.type_params:
+            inferred_type = inferred.get(name)
+            if inferred_type is None:
+                return None
+            type_args.append(inferred_type)
+        return tuple(type_args)
+
     def _resolve_type(self, node: ast.TypeNode, *, allow_opaque: bool = False) -> Type:
         cached = self.type_nodes.get(id(node))
         if cached is not None:
@@ -6539,6 +7900,13 @@ class Checker:
         match node:
             case ast.NamedTypeNode(name=name):
                 result = self.types.get(name)
+                if result is None and self._lookup_type_template(name) is not None:
+                    self._error(
+                        f"generic type {name!r} requires type arguments",
+                        node.span,
+                        code="C351",
+                    )
+                    result = ERROR
                 if result is None and allow_opaque:
                     result = OpaqueType(name, name)
                     self.types[name] = result
@@ -6548,7 +7916,7 @@ class Checker:
             case ast.GenericTypeNode(base=base, arguments=arguments):
                 if not isinstance(base, ast.NamedTypeNode):
                     self._error(
-                        "generic type base must be a built-in type name",
+                        "generic type base must be a type name",
                         node.span,
                         code="C155",
                     )
@@ -6747,18 +8115,27 @@ class Checker:
                             )
                     result = TupleType(elements)
                 else:
-                    self._error(
-                        f"unsupported generic type {base.name!r}",
-                        node.span,
-                        code="C155",
-                        note=(
-                            "implemented generic types are Result, Option, Owned, Tuple, "
-                            "List, Map, Set, and Map views"
-                        ),
-                    )
-                    for argument in arguments:
-                        self._resolve_type(argument, allow_opaque=allow_opaque)
-                    result = ERROR
+                    template = self._lookup_type_template(base.name)
+                    if template is not None:
+                        result = self._instantiate_type_template(
+                            template,
+                            arguments,
+                            span=node.span,
+                            allow_opaque=allow_opaque,
+                        )
+                    else:
+                        self._error(
+                            f"unsupported generic type {base.name!r}",
+                            node.span,
+                            code="C155",
+                            note=(
+                                "implemented generic types are Result, Option, Owned, Tuple, "
+                                "List, Map, Set, Map views, and user-defined generic types"
+                            ),
+                        )
+                        for argument in arguments:
+                            self._resolve_type(argument, allow_opaque=allow_opaque)
+                        result = ERROR
             case ast.ConstTypeNode(inner=inner):
                 inner_type = self._resolve_type(inner, allow_opaque=allow_opaque)
                 if is_void(inner_type):

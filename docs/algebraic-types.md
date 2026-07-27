@@ -92,7 +92,7 @@ Matching lowers to a single evaluated subject temporary followed by ordinary tag
 
 ## Results
 
-`Result[T, E]` is a compiler-defined tagged type with `Ok` and `Err` cases. It is the only generic type implemented in 0.3.
+`Result[T, E]` is a compiler-defined tagged type with `Ok` and `Err` cases. It was the first generic type implemented in 0.3; user-defined generic variants and other nominals are now monomorphized similarly.
 
 ```python
 enum ParseError:

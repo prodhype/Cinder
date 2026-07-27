@@ -435,19 +435,18 @@ def print_compile_time_fields() -> void:
 static_assert(field_count(ReflectedRecord) == 1)
 
 
-# WRONG: user-defined generics are not implemented. Compiler-provided families
-# are Result, Option, Tuple, List, Map, and Set.
-# value: Box[i32]
+# WRONG: a generic type requires type arguments at use sites.
+# value: Box
 
-# CORRECT: define a concrete nominal type for each required representation.
-struct I32Box:
-    value: i32
+# CORRECT: apply type arguments; the compiler monomorphizes to readable C.
+struct Box[T]:
+    value: T
 
 
 def main() -> i32:
     point = point_example()
     secret = Secret(5)
-    boxed = I32Box(value=answer)
+    boxed: Box[i32] = Box(value=answer)
 
     if multiline_total() != 3:
         return 1

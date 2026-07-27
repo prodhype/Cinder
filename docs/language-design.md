@@ -1,6 +1,6 @@
 # Cinder language design
 
-> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results and Options, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, compile-time member inspection, and specialized native collections. User-defined generics and the more expansive metaprogramming ideas remain proposals.
+> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results and Options, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, compile-time member inspection, and specialized native collections. User-defined generics are monomorphized into readable specialized C. The more expansive metaprogramming ideas remain proposals.
 
 This is a language that compiles to portable C11, not a modification of the C standard. Trying to make whitespace significant while remaining valid C would create a preprocessing mess and poor tooling compatibility.
 
@@ -740,9 +740,9 @@ cinder emit-project . -o generated
 
 ## Implemented milestones
 
-The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns without introducing user-defined generics.
+The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations.
 
-User-defined generics, function pointer types, copy/move hooks, closures, and broader compile-time execution remain later work.
+Function pointer types, copy/move hooks, closures, and broader compile-time execution remain later work.
 
 The crucial constraint remains this: Cinder must be understandable by reading its
 generated C. Hidden allocation, unpredictable dispatch, exception machinery, or
