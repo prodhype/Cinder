@@ -1,0 +1,88 @@
+import math
+
+
+# Standard gravity near Earth's surface (m/s^2).
+G: f64 = 9.80665
+
+
+def kinetic_energy(mass: f64, speed: f64) -> f64:
+    return 0.5 * mass * speed * speed
+
+
+def potential_energy(mass: f64, height: f64) -> f64:
+    return mass * G * height
+
+
+def momentum(mass: f64, velocity: f64) -> f64:
+    return mass * velocity
+
+
+def force(mass: f64, acceleration: f64) -> f64:
+    return mass * acceleration
+
+
+def displacement(initial_velocity: f64, time: f64, acceleration: f64) -> f64:
+    return initial_velocity * time + 0.5 * acceleration * time * time
+
+
+def final_velocity(initial_velocity: f64, acceleration: f64, time: f64) -> f64:
+    return initial_velocity + acceleration * time
+
+
+def projectile_range(speed: f64, angle_radians: f64) -> f64:
+    return (speed * speed * math.sin(2.0 * angle_radians)) / G
+
+
+def projectile_max_height(speed: f64, angle_radians: f64) -> f64:
+    vertical = speed * math.sin(angle_radians)
+    return (vertical * vertical) / (2.0 * G)
+
+
+def pendulum_period(length: f64) -> f64:
+    return 2.0 * math.pi * math.sqrt(length / G)
+
+
+def centripetal_acceleration(speed: f64, radius: f64) -> f64:
+    return (speed * speed) / radius
+
+
+def degrees_to_radians(degrees: f64) -> f64:
+    return degrees * math.pi / 180.0
+
+
+def main() -> i32:
+    print("Common physics calculations")
+
+    mass: f64 = 2.0
+    speed: f64 = 12.0
+    height: f64 = 5.0
+    print(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J")
+    print(f"potential energy (m={mass:.1f} kg, h={height:.1f} m): {potential_energy(mass, height):.2f} J")
+    print(f"momentum (m={mass:.1f} kg, v={speed:.1f} m/s): {momentum(mass, speed):.2f} kg·m/s")
+
+    acceleration: f64 = 3.5
+    print(f"force (m={mass:.1f} kg, a={acceleration:.1f} m/s^2): {force(mass, acceleration):.2f} N")
+
+    initial_velocity: f64 = 4.0
+    time: f64 = 3.0
+    distance = displacement(initial_velocity, time, acceleration)
+    print(f"kinematic displacement (v0={initial_velocity:.1f} m/s, t={time:.1f} s, a={acceleration:.1f} m/s^2): {distance:.2f} m")
+    ended = final_velocity(initial_velocity, acceleration, time)
+    print(f"final velocity (v0={initial_velocity:.1f} m/s, a={acceleration:.1f} m/s^2, t={time:.1f} s): {ended:.2f} m/s")
+
+    launch_speed: f64 = 40.0
+    launch_angle = degrees_to_radians(35.0)
+    range_m = projectile_range(launch_speed, launch_angle)
+    peak_m = projectile_max_height(launch_speed, launch_angle)
+    print(f"projectile range (v={launch_speed:.1f} m/s, angle=35 deg): {range_m:.2f} m")
+    print(f"projectile max height (v={launch_speed:.1f} m/s, angle=35 deg): {peak_m:.2f} m")
+
+    length: f64 = 1.2
+    print(f"simple pendulum period (L={length:.1f} m): {pendulum_period(length):.3f} s")
+
+    orbit_speed: f64 = 8.0
+    radius: f64 = 2.5
+    centripetal = centripetal_acceleration(orbit_speed, radius)
+    print(f"centripetal acceleration (v={orbit_speed:.1f} m/s, r={radius:.1f} m): {centripetal:.2f} m/s^2")
+
+    return 0

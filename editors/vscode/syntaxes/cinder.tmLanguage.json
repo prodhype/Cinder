@@ -362,7 +362,7 @@
         },
         {
           "name": "keyword.control.flow.cinder",
-          "match": "\\b(?:return|break|continue|pass|defer)\\b"
+          "match": "\\b(?:return|break|continue|pass|defer|with)\\b"
         },
         {
           "name": "storage.type.cinder",

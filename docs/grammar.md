@@ -259,6 +259,7 @@ statement          := variable_decl NEWLINE
                     | "continue" NEWLINE
                     | "pass" NEWLINE
                     | "defer" expression NEWLINE
+                    | with_stmt
                     | if_stmt
                     | while_stmt
                     | foreach_stmt
@@ -274,6 +275,7 @@ if_stmt            := "if" expression ":" suite
                       ("elif" expression ":" suite)*
                       ("else" ":" suite)?
 while_stmt         := "while" expression ":" suite
+with_stmt          := "with" expression "as" NAME ":" suite
 foreach_stmt       := "for" NAME (":" type)? "in" "comptime"? expression ":" suite
 c_for_stmt         := "for" simple_stmt? ";" expression? ";"
                       simple_stmt? ":" suite
@@ -283,6 +285,8 @@ unsafe_stmt        := "unsafe" ":" suite
 An untyped assignment to an unknown local name declares that local and infers its type. Later assignments update the existing symbol. Locals use lexical block scope.
 
 `defer` accepts a call expression. Deferred calls run in reverse declaration order on normal scope exit, `return`, `break`, `continue`, and propagated error returns. Class destructor and owning-collection cleanup use the same control-flow cleanup paths.
+
+`with expression as name:` opens a nested scope, binds `name` to the expression result, runs the suite, and runs ordinary scope cleanup for that binding on every normal exit. There is no `__enter__` / `__exit__` protocol; destructor-bearing and owning values such as `File` close through the same drop path used for locals.
 
 A `comptime` foreach is valid only with `fields_of(...)` or `methods_of(...)`. The loop is unrolled and its binding cannot escape into runtime storage.
 
@@ -442,6 +446,8 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 `print` also accepts Python-style f-strings. Replacement fields use `{expression}` and may include simple format specs such as `{value:d}`, `{value:x}`, `{value:.2f}`, `{text:s}`, and `{letter:c}`. Literal braces are written as `{{` and `}}`. F-strings are currently supported only as `print` arguments.
 
 `input()` is globally available and reads a line from standard input without importing `stdio`. `input(prompt)` writes the `const char*` prompt to standard output without a newline, flushes it, then reads. The returned `const char*` excludes the trailing newline, strips a preceding carriage return for CRLF input, and owns a freshly allocated buffer; release it with `free(cast[void*](line))` when the value is no longer needed. Reaching EOF before any bytes are read panics, since Cinder does not currently have exceptions.
+
+`open(path, mode)` is globally available and returns a move-only `File` without importing `stdio`. A null `fopen` result panics. `File` provides `write(data: []const u8) -> usize`, `flush()`, and `close()`. Scope exit closes any still-open handle. Prefer `with open(...) as file:` to limit the file's lifetime.
 
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
 

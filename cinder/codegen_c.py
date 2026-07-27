@@ -27,6 +27,7 @@ from cinder.types import (
     ERROR,
     F32,
     I64,
+    U8,
     U64,
     ArrayType,
     ClassType,
@@ -35,6 +36,7 @@ from cinder.types import (
     ConstType,
     DynType,
     EnumType,
+    FileType,
     FunctionValueType,
     ListType,
     MapType,
@@ -57,6 +59,7 @@ from cinder.types import (
     UnionType,
     VariantType,
     dyn_c_name,
+    file_c_name,
     interface_vtable_c_name,
     is_c_string,
     is_equatable,
@@ -159,7 +162,7 @@ class _Cleanup:
     expression: ast.Expression | None = None
     variable: VariableSymbol | None = None
     class_: ClassSymbol | None = None
-    container: ListType | MapType | SetType | None = None
+    container: ListType | MapType | SetType | FileType | None = None
     iterator_end: tuple[str, str] | None = None
 
 
@@ -185,10 +188,12 @@ class CGenerator:
         self._emit_enum_definitions()
         self._emit_slice_types()
         self._emit_list_type_definitions()
+        self._emit_file_type_definition()
         self._emit_map_view_types()
         self._emit_type_definitions()
         self._emit_map_set_type_definitions()
         self._emit_list_helpers()
+        self._emit_file_helpers()
         self._emit_map_helpers()
         self._emit_set_helpers()
         self._emit_collection_print_helpers()
@@ -229,10 +234,12 @@ class CGenerator:
         self._emit_enum_definitions()
         self._emit_slice_types()
         self._emit_list_type_definitions()
+        self._emit_file_type_definition()
         self._emit_map_view_types()
         self._emit_type_definitions()
         self._emit_map_set_type_definitions()
         self._emit_list_helpers()
+        self._emit_file_helpers()
         self._emit_map_helpers()
         self._emit_set_helpers()
         self._emit_collection_print_helpers()
@@ -312,6 +319,14 @@ class CGenerator:
             emitted = True
         for list_type in self.ir.list_types:
             name = c_identifier(list_c_name(list_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            self.writer.line("#endif")
+            emitted = True
+        if self.ir.uses_file:
+            name = file_c_name()
             guard = f"CINDER_DECLARED_{name.upper()}"
             self.writer.line(f"#ifndef {guard}")
             self.writer.line(f"#define {guard}")
@@ -476,6 +491,22 @@ class CGenerator:
             self.writer.line("};")
             self.writer.line(f"#endif /* {guard} */")
             self.writer.line()
+
+    def _emit_file_type_definition(self) -> None:
+        if not self.ir.uses_file:
+            return
+        name = file_c_name()
+        guard = f"CINDER_DEFINED_{name.upper()}"
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(f"struct {name}")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("FILE *handle;")
+        self.writer.indent -= 1
+        self.writer.line("};")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
 
     def _emit_map_set_type_definitions(self) -> None:
         for map_type in self.ir.map_types:
@@ -682,6 +713,93 @@ class CGenerator:
             self.writer.line("}")
             self.writer.line(f"#endif /* {guard} */")
             self.writer.line()
+
+    def _emit_file_helpers(self) -> None:
+        if not self.ir.uses_file:
+            return
+        name = file_c_name()
+        guard = f"CINDER_HELPERS_{name.upper()}"
+        slice_name = self._slice_name(SliceType(ConstType(U8)))
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED {name} {name}_open("
+            "const char *path, const char *mode)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{name} result;")
+        self.writer.line("result.handle = fopen(path, mode);")
+        self.writer.line("if (result.handle == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('cinder_panic("could not open file");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("return result;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value->handle != NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("fclose(value->handle);")
+        self.writer.line("value->handle = NULL;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED size_t {name}_write("
+            f"{name} *value, {slice_name} data)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value->handle == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('cinder_panic("write on closed File");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("return fwrite(data.data, 1, data.length, value->handle);")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_flush({name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value->handle == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('cinder_panic("flush on closed File");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("fflush(value->handle);")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_close({name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{name}_drop(value);")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
 
     def _emit_map_helpers(self) -> None:
         for map_type in self.ir.map_types:
@@ -2504,6 +2622,8 @@ class CGenerator:
                     return True
             if isinstance(statement, ast.UnsafeStmt) and self._block_always_exits(statement.body):
                 return True
+            if isinstance(statement, ast.WithStmt) and self._block_always_exits(statement.body):
+                return True
         return False
 
     def _emit_statement(self, statement: ast.Statement) -> None:
@@ -2519,7 +2639,7 @@ class CGenerator:
                 class_ = self._class_symbol_from_storage_type(
                     self.semantic.expression_type(expression)
                 )
-                if isinstance(container_type, (ListType, MapType, SetType)):
+                if isinstance(container_type, (ListType, MapType, SetType, FileType)):
                     temporary = self._new_temp("discarded_collection")
                     self.writer.line(
                         f"{c_decl(container_type, temporary)} = "
@@ -2571,8 +2691,27 @@ class CGenerator:
                 self._emit_block_contents(body, loop_body=False)
                 self.writer.indent -= 1
                 self.writer.line("}")
+            case ast.WithStmt():
+                self._emit_with(statement)
             case _:
                 raise AssertionError(f"unhandled statement: {statement!r}")
+
+    def _emit_with(self, statement: ast.WithStmt) -> None:
+        symbol = self.semantic.with_symbols[id(statement)]
+        self.writer.line("{")
+        self.writer.indent += 1
+        frame = _ScopeFrame()
+        self.scope_frames.append(frame)
+        declaration = c_decl(symbol.type, c_identifier(symbol.name))
+        initializer = self._emit_initializer(statement.context, symbol.type)
+        self.writer.line(f"{declaration} = {initializer};")
+        self._register_owned_cleanup(symbol)
+        self._emit_block_contents(statement.body, loop_body=False)
+        if not self._block_always_exits(statement.body):
+            self._emit_deferred(frame)
+        self.scope_frames.pop()
+        self.writer.indent -= 1
+        self.writer.line("}")
 
     def _emit_var_decl(self, statement: ast.VarDeclStmt) -> None:
         symbol = self.semantic.declaration_symbols[id(statement)]
@@ -2640,7 +2779,7 @@ class CGenerator:
             return
         if (
             statement.operator == "="
-            and isinstance(container_type, (ListType, MapType, SetType))
+            and isinstance(container_type, (ListType, MapType, SetType, FileType))
             and isinstance(statement.target, ast.NameExpr)
         ):
             temporary = self._new_temp("collection_move")
@@ -3104,7 +3243,7 @@ class CGenerator:
         if not self.scope_frames:
             return
         container_type = value_type(symbol.type)
-        if isinstance(container_type, (ListType, MapType, SetType)):
+        if isinstance(container_type, (ListType, MapType, SetType, FileType)):
             self.scope_frames[-1].cleanups.append(
                 _Cleanup(variable=symbol, container=container_type)
             )
@@ -3130,7 +3269,7 @@ class CGenerator:
             return symbol
         return (
             symbol
-            if isinstance(value_type(symbol.type), (ListType, MapType, SetType))
+            if isinstance(value_type(symbol.type), (ListType, MapType, SetType, FileType))
             else None
         )
 
@@ -4036,6 +4175,10 @@ class CGenerator:
             return self._emit_print_call(expression)
         if resolution.kind == "input":
             return self._emit_input_call(expression)
+        if resolution.kind == "open":
+            return self._emit_open_call(expression)
+        if resolution.kind.startswith("file_"):
+            return self._emit_file_method_call(expression, resolution)
         if resolution.kind in {
             "constructor",
             "union_constructor",
@@ -4377,6 +4520,30 @@ class CGenerator:
         prompt = arguments[0] if arguments else "NULL"
         return f"cinder_input({prompt})"
 
+    def _emit_open_call(self, expression: ast.CallExpr) -> str:
+        arguments = self._emit_ordered_call_arguments(
+            expression,
+            self.semantic.call_resolutions[id(expression)],
+        )
+        if len(arguments) != 2:
+            raise AssertionError("open requires path and mode arguments")
+        return f"{file_c_name()}_open({arguments[0]}, {arguments[1]})"
+
+    def _emit_file_method_call(
+        self,
+        expression: ast.CallExpr,
+        resolution: CallResolution,
+    ) -> str:
+        if not isinstance(expression.callee, ast.AttributeExpr):
+            raise AssertionError("File method callee is not an attribute")
+        receiver = self._container_pointer(expression.callee.value)
+        name = file_c_name()
+        if resolution.kind == "file_write":
+            arguments = self._emit_ordered_call_arguments(expression, resolution)
+            return f"{name}_write({receiver}, {', '.join(arguments)})"
+        method = resolution.kind.removeprefix("file_")
+        return f"{name}_{method}({receiver})"
+
     def _collect_print_argument(
         self,
         expression: ast.Expression,
@@ -4703,13 +4870,15 @@ class CGenerator:
 
     @staticmethod
     def _container_drop_name(
-        type_: ListType | MapType | SetType,
+        type_: ListType | MapType | SetType | FileType,
     ) -> str:
         if isinstance(type_, ListType):
             return f"{c_identifier(list_c_name(type_))}_drop"
         if isinstance(type_, MapType):
             return f"{c_identifier(map_c_name(type_))}_drop"
-        return f"{c_identifier(set_c_name(type_))}_drop"
+        if isinstance(type_, SetType):
+            return f"{c_identifier(set_c_name(type_))}_drop"
+        return f"{file_c_name()}_drop"
 
     def _slice_name(self, slice_type: SliceType) -> str:
         return "CinderSlice_" + c_identifier(type_key(slice_type.inner))
@@ -5197,6 +5366,8 @@ def c_decl(type_: Type, name: str) -> str:
         return f"{c_identifier(map_c_name(type_))} {name}".strip()
     if isinstance(type_, SetType):
         return f"{c_identifier(set_c_name(type_))} {name}".strip()
+    if isinstance(type_, FileType):
+        return f"{file_c_name()} {name}".strip()
     if isinstance(type_, MapViewType):
         return f"{c_identifier(map_view_c_name(type_))} {name}".strip()
     if isinstance(type_, ResultType):

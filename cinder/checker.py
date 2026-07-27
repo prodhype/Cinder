@@ -42,11 +42,13 @@ from cinder.types import (
     CHAR,
     ERROR,
     F64,
+    FILE,
     I32,
     I64,
     NULL,
     PRIMITIVES,
     U64,
+    U8,
     USIZE,
     VOID,
     ArrayType,
@@ -56,6 +58,7 @@ from cinder.types import (
     ConstType,
     DynType,
     EnumType,
+    FileType,
     FunctionValueType,
     ListType,
     MapType,
@@ -123,7 +126,7 @@ class _CollectionStorage:
     unknown_runtime_guarded: bool = False
 
 
-type _OwnedContainer = ListType | MapType | SetType
+type _OwnedContainer = ListType | MapType | SetType | FileType
 
 
 @dataclass(slots=True)
@@ -157,6 +160,7 @@ class SemanticModel:
     implicit_declarations: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
     declaration_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
     foreach_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
+    with_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
     comptime_foreach_symbols: dict[int, ComptimeVariableSymbol] = dataclass_field(default_factory=dict)
     function_symbols: dict[int, FunctionSymbol] = dataclass_field(default_factory=dict)
     struct_symbols: dict[int, StructSymbol] = dataclass_field(default_factory=dict)
@@ -228,6 +232,7 @@ class Checker:
         self.diagnostics = DiagnosticBag()
         self.global_scope = Scope()
         self.types: dict[str, Type] = dict(PRIMITIVES)
+        self.types["File"] = FILE
         self.available_modules = builtin_modules(self.path)
         if available_modules is not None:
             self.available_modules.update(available_modules)
@@ -261,6 +266,7 @@ class Checker:
         self.implicit_declarations: dict[int, VariableSymbol] = {}
         self.declaration_symbols: dict[int, VariableSymbol] = {}
         self.foreach_symbols: dict[int, VariableSymbol] = {}
+        self.with_symbols: dict[int, VariableSymbol] = {}
         self.comptime_foreach_symbols: dict[int, ComptimeVariableSymbol] = {}
         self.function_symbols: dict[int, FunctionSymbol] = {}
         self.struct_symbols: dict[int, StructSymbol] = {}
@@ -327,6 +333,7 @@ class Checker:
             implicit_declarations=self.implicit_declarations,
             declaration_symbols=self.declaration_symbols,
             foreach_symbols=self.foreach_symbols,
+            with_symbols=self.with_symbols,
             comptime_foreach_symbols=self.comptime_foreach_symbols,
             function_symbols=self.function_symbols,
             struct_symbols=self.struct_symbols,
@@ -1645,7 +1652,7 @@ class Checker:
 
     def _owned_container(self, type_: Type) -> _OwnedContainer | None:
         raw = strip_const(type_)
-        return raw if isinstance(raw, (ListType, MapType, SetType)) else None
+        return raw if isinstance(raw, (ListType, MapType, SetType, FileType)) else None
 
     def _contains_list_value(self, type_: Type) -> bool:
         raw = strip_const(type_)
@@ -2418,8 +2425,64 @@ class Checker:
                     self._check_block(body, self.current_scope)
                 finally:
                     self.unsafe_depth -= 1
+            case ast.WithStmt():
+                self._check_with(statement)
             case _:
                 raise AssertionError(f"unhandled statement: {statement!r}")
+
+    def _check_with(self, statement: ast.WithStmt) -> None:
+        context_type = self._check_expr(statement.context)
+        owned_container = self._owned_container(context_type)
+        destructible = self._destructible_class(context_type)
+        if owned_container is not None:
+            self._validate_list_elements(owned_container, statement.context.span)
+            if not self._is_owned_container_source(statement.context, owned_container):
+                self._error(
+                    f"cannot copy move-only {type_name(owned_container)} into with binding",
+                    statement.context.span,
+                    code="C320",
+                    note="bind a fresh literal, operation, or returning call",
+                )
+            if isinstance(context_type, ConstType):
+                self._error(
+                    f"{type_name(owned_container)} with bindings cannot be const",
+                    statement.context.span,
+                    code="C323",
+                    note="borrow through a const reference for read-only access",
+                )
+        elif self._contains_owning_container_value(context_type):
+            self._error(
+                f"with binding type {type_name(context_type)} contains an owning collection",
+                statement.context.span,
+                code="C321",
+            )
+        elif destructible is not None:
+            if not self._is_owned_class_source(statement.context, destructible):
+                self._error(
+                    f"cannot copy destructor-bearing class {destructible.name} into with binding",
+                    statement.context.span,
+                    code="C322",
+                    note="construct it or initialize it from a function that returns it by value",
+                )
+
+        binding_scope = Scope(self.current_scope)
+        symbol = VariableSymbol(
+            statement.name,
+            statement.span,
+            SymbolKind.VARIABLE,
+            strip_const(context_type),
+        )
+        previous = binding_scope.declare(symbol)
+        if previous is not None:
+            self._duplicate_symbol(symbol, previous)
+        self.with_symbols[id(statement)] = symbol
+
+        previous_scope = self.current_scope
+        self.current_scope = binding_scope
+        try:
+            self._check_block(statement.body, binding_scope, create_scope=False)
+        finally:
+            self.current_scope = previous_scope
 
     def _check_var_decl(self, statement: ast.VarDeclStmt) -> None:
         declared_type = (
@@ -3484,7 +3547,7 @@ class Checker:
     def _check_name(self, expression: ast.NameExpr) -> Type:
         symbol = self.current_scope.lookup(expression.name)
         if symbol is None:
-            if expression.name in ("range", "len", "sort", "print", "input", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
+            if expression.name in ("range", "len", "sort", "print", "input", "open", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
                 return FunctionValueType(expression.name)
             if expression.name == "super" and isinstance(self.current_owner, ClassSymbol):
                 return FunctionValueType("super")
@@ -3815,6 +3878,21 @@ class Checker:
                 f"type {type_name(base_type)} has no member {expression.name!r}",
                 expression.span,
                 code="C264",
+            )
+            return ERROR
+
+        if isinstance(raw, FileType):
+            if expression.name in {"write", "flush", "close"}:
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "file_method",
+                    owner_type=base_type,
+                    compile_value=expression.name,
+                )
+                return FunctionValueType(f"File.{expression.name}")
+            self._error(
+                f"type {type_name(base_type)} has no member {expression.name!r}",
+                expression.span,
+                code="C324",
             )
             return ERROR
 
@@ -4224,6 +4302,8 @@ class Checker:
                 return self._check_print_call(expression)
             if name == "input":
                 return self._check_input_call(expression)
+            if name == "open":
+                return self._check_open_call(expression)
             if name in ("Ok", "Err"):
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_result_constructor(expression, expected, is_ok=name == "Ok")
@@ -4281,6 +4361,16 @@ class Checker:
                 and isinstance(resolution.compile_value, str)
             ):
                 return self._check_list_method_call(
+                    expression,
+                    expression.callee.value,
+                    resolution.compile_value,
+                )
+            if (
+                resolution is not None
+                and resolution.kind == "file_method"
+                and isinstance(resolution.compile_value, str)
+            ):
+                return self._check_file_method_call(
                     expression,
                     expression.callee.value,
                     resolution.compile_value,
@@ -4421,6 +4511,78 @@ class Checker:
             compile_value=receiver_type,
         )
         return receiver_type.inner if method == "pop" else VOID
+
+    def _check_file_method_call(
+        self,
+        call: ast.CallExpr,
+        receiver: ast.Expression,
+        method: str,
+    ) -> Type:
+        receiver_storage = strip_const(self.expr_types.get(id(receiver), ERROR))
+        if isinstance(receiver_storage, (PointerType, ReferenceType)):
+            receiver_type = strip_const(receiver_storage.inner)
+        else:
+            receiver_type = value_type(receiver_storage)
+        if not isinstance(receiver_type, FileType):
+            self._error(
+                f"{method} requires a File receiver",
+                receiver.span,
+                code="C325",
+            )
+            return ERROR
+
+        if not self._is_addressable(receiver):
+            self._error(
+                f"File.{method} requires an addressable File",
+                receiver.span,
+                code="C326",
+            )
+        if self._lvalue_is_const(receiver):
+            self._error(
+                f"cannot call mutating method {method!r} on a const File",
+                receiver.span,
+                code="C327",
+            )
+        if any(argument.name is not None for argument in call.arguments):
+            self._error(
+                f"File.{method} does not accept named arguments",
+                call.span,
+                code="C328",
+            )
+
+        if method == "write":
+            if len(call.arguments) != 1:
+                self._error(
+                    f"File.write expects one argument, got {len(call.arguments)}",
+                    call.span,
+                    code="C329",
+                )
+            expected = SliceType(ConstType(U8))
+            expected_types: list[Type | None] = []
+            for argument in call.arguments:
+                actual = self._check_expr(argument.value, expected=expected)
+                if self._is_list_slice_argument(expected, actual):
+                    self._validate_list_slice_argument(argument.value, expected, actual)
+                elif not self._can_assign(expected, actual):
+                    self._type_mismatch(expected, actual, argument.value.span)
+                expected_types.append(expected)
+            self.call_resolutions[id(call)] = CallResolution(
+                "file_write",
+                argument_order=tuple(range(len(call.arguments))),
+                expected_types=tuple(expected_types),
+            )
+            return USIZE
+
+        if call.arguments:
+            self._error(
+                f"File.{method} expects no arguments, got {len(call.arguments)}",
+                call.span,
+                code="C330",
+            )
+            for argument in call.arguments:
+                self._check_expr(argument.value)
+        self.call_resolutions[id(call)] = CallResolution(f"file_{method}")
+        return VOID
 
     def _check_map_method_call(
         self,
@@ -5544,6 +5706,34 @@ class Checker:
         )
         return string_type()
 
+    def _check_open_call(self, call: ast.CallExpr) -> Type:
+        self.expr_types[id(call.callee)] = FunctionValueType("open")
+        if "<stdio.h>" not in self.includes:
+            self.includes.append("<stdio.h>")
+        if len(call.arguments) != 2:
+            self._error(
+                f"open expects two positional arguments, got {len(call.arguments)}",
+                call.span,
+                code="C331",
+            )
+        expected_types: list[Type | None] = []
+        argument_order: list[int] = []
+        for index, argument in enumerate(call.arguments):
+            if argument.name is not None:
+                self._error("open does not accept named arguments", argument.span, code="C332")
+            expected = string_type()
+            actual = self._check_expr(argument.value, expected=expected)
+            if index < 2 and not self._can_assign(expected, actual):
+                self._type_mismatch(expected, actual, argument.value.span)
+            argument_order.append(index)
+            expected_types.append(expected if index < 2 else None)
+        self.call_resolutions[id(call)] = CallResolution(
+            "open",
+            argument_order=tuple(argument_order),
+            expected_types=tuple(expected_types),
+        )
+        return FILE
+
     def _check_print_argument(self, expression: ast.Expression) -> None:
         if isinstance(expression, ast.FStringExpr):
             self._check_fstring_parts(expression)
@@ -6194,6 +6384,8 @@ class Checker:
                 ):
                     return True
             if isinstance(statement, ast.UnsafeStmt) and self._block_always_returns(statement.body):
+                return True
+            if isinstance(statement, ast.WithStmt) and self._block_always_returns(statement.body):
                 return True
         return False
 
