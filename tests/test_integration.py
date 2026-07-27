@@ -344,6 +344,31 @@ def test_native_aggregate_ownership_drops_nested_lists(tmp_path: Path) -> None:
     assert result.stdout == "5\n"
 
 
+def test_native_list_pop_move_out_runs_each_destructor_once(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        "        print(f\"drop {self.label}\")\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[Resource] = []\n"
+        "    values.append(Resource(1))\n"
+        "    values.append(Resource(2))\n"
+        "    values.pop()\n"
+        "    values.append(Resource(3))\n"
+        "    print(f\"len={len(values)}\")\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "drop 2\nlen=2\ndrop 1\ndrop 3\n"
+
+
 def test_native_multiple_abstract_interfaces(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

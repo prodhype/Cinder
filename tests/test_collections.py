@@ -138,6 +138,37 @@ def test_list_of_destructor_class_is_allowed() -> None:
     assert "CinderList_" in generated
 
 
+def test_list_pop_zeros_moved_owning_slot() -> None:
+    generated = compile_source(
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        "        pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[Resource] = []\n"
+        "    values.append(Resource(1))\n"
+        "    values.append(Resource(2))\n"
+        "    popped = values.pop()\n"
+        "    values.append(Resource(3))\n"
+        "    return popped.label\n"
+    )
+    assert "value->length -= 1;" in generated
+    assert "memset(&value->data[value->length], 0, sizeof(*value->data));" in generated
+    # Trivial element pops move out without zeroing capacity slots.
+    trivial = compile_source(
+        "def main() -> i32:\n"
+        "    values = [1, 2]\n"
+        "    return values.pop()\n"
+    )
+    assert "result = value->data[value->length];" in trivial
+    assert "memset(&value->data[value->length]" not in trivial
+
+
 def test_result_list_parameter_is_allowed() -> None:
     generated = compile_source(
         "def consume(result: Result[List[i32], i32]) -> i32:\n"

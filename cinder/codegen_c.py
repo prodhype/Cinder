@@ -729,7 +729,16 @@ class CGenerator:
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line("value->length -= 1;")
-            self.writer.line("return value->data[value->length];")
+            self.writer.line(
+                f"{c_decl(element, 'result')} = value->data[value->length];"
+            )
+            if self._type_needs_drop(element):
+                # Move out: invalidate the capacity slot so it is not a second
+                # owner. Append may reuse the slot without drop glue.
+                self.writer.line(
+                    "memset(&value->data[value->length], 0, sizeof(*value->data));"
+                )
+            self.writer.line("return result;")
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line()
