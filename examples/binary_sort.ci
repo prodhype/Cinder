@@ -22,9 +22,8 @@ def binary_sort(values: []i32) -> void:
 
 
 def main() -> i32:
-    values: i32[8] = [29, 10, 14, 37, 13, 5, 42, 3]
+    values = [29, 10, 14, 37, 13, 5, 42, 3]
+    defer values.clear()
     binary_sort(values)
-
-    for value in values:
-        print(value)
+    print(values)
     return 0

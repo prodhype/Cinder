@@ -22,5 +22,17 @@ def main() -> i32:
     print(f"expressions: count + 1={count + 1:d} nested={f'{name:s} #{count:d}'}")
     print(f"escaped braces {{like this}} and a literal percent 100%")
 
+    values = [1, 2, 3]
+    defer values.clear()
+    scores = {"Ada": 1, "Grace": 2}
+    defer scores.clear()
+    primes = {2, 3, 5}
+    defer primes.clear()
+    print(values)
+    print(scores)
+    print(primes)
+    print((1, "ready"))
+    print(f"values={values}")
+
     # Binary literals are supported, but there is currently no :b format specifier.
     return 0

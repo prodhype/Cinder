@@ -40,6 +40,8 @@ def main() -> i32:
     combined = primes | odd
     defer combined.clear()
     print(primes)
+    print(odd)
+    print(combined)
     print(f"unique values={len(combined)}")
 
     return 0

@@ -1,5 +1,5 @@
 def main() -> i32:
-    values: const char*[8] = [
+    values = [
         "a lighthouse keeper recorded every passing storm in a weathered journal by the window",
         "the observatory remained open long after midnight while the final measurements were checked",
         "careful preparation turns a complicated journey into a sequence of manageable small decisions",
@@ -9,9 +9,8 @@ def main() -> i32:
         "scientists compared decades of field notes before announcing the unexpected migration pattern",
         "when the workshop doors opened the newly restored clock began marking time across the square",
     ]
+    defer values.clear()
 
     sort(values)
-
-    for value in values:
-        print(value)
+    print(values)
     return 0

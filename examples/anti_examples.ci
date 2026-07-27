@@ -61,7 +61,8 @@ def clamped_example() -> i32:
 # values: i32[3] = [1, 2, 3]
 # values = [4, 5, 6]
 
-# CORRECT: mutate elements, and borrow arrays as slices at call boundaries.
+# CORRECT: mutate fixed-array elements, and borrow arrays as slices at call
+# boundaries. Prefer a List when the binding itself needs to be replaced.
 def sum_values(values: []const i32) -> i32:
     total: i32 = 0
     for value in values:
@@ -73,6 +74,20 @@ def array_example() -> i32:
     values: i32[3] = [1, 2, 3]
     values[0] = 4
     return sum_values(values)
+
+
+def list_example() -> i32:
+    values = [1, 2, 3]
+    defer values.clear()
+    values = [4, 5, 6]
+    return sum_values(values)
+
+
+# WRONG: owning collections cannot nest, and cannot be stored in fields or
+# globals yet.
+# nested = [[1, 2], [3, 4]]
+# struct Bag:
+#     values: List[i32]
 
 
 # WRONG: integer-to-pointer and unrelated pointer casts require `unsafe`.
@@ -397,7 +412,8 @@ def print_compile_time_fields() -> void:
 static_assert(field_count(ReflectedRecord) == 1)
 
 
-# WRONG: Result is the only generic type implemented in Cinder 0.5.
+# WRONG: user-defined generics are not implemented. Compiler-provided families
+# are Result, Option, Tuple, List, Map, and Set.
 # value: Box[i32]
 
 # CORRECT: define a concrete nominal type for each required representation.
@@ -418,6 +434,8 @@ def main() -> i32:
         return 3
     if array_example() != 9:
         return 4
+    if list_example() != 15:
+        return 15
     if range_total() != 6:
         return 5
     if allocation_example() != 7:
