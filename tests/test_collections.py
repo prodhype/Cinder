@@ -55,6 +55,12 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
             "cannot infer the element type of an empty list literal",
         ),
         (
+            "def main() -> i32:\n"
+            "    [{1: 2}]\n"
+            "    return 0\n",
+            "cannot infer a List element type from Map[i32, i32]",
+        ),
+        (
             "def consume(values: List[i32]) -> void:\n"
             "    pass\n",
             "cannot own a List by value",

@@ -5924,6 +5924,7 @@ class Checker:
         if inferred != ERROR and (
             not self._is_collection_runtime_type(inferred)
             or isinstance(inferred, (ReferenceType, ArrayType, ListType))
+            or self._contains_owning_container_value(inferred)
             or self._contains_destructible_value(inferred)
         ):
             self._error(
