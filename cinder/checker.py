@@ -4734,6 +4734,39 @@ class Checker:
             if resolution is not None and resolution.kind == "module_function" and resolution.function:
                 self._validate_function_call(expression, resolution.function, skip_parameters=0)
                 return resolution.function.return_type
+            if (
+                resolution is not None
+                and resolution.kind == "module_function_template"
+                and isinstance(resolution.compile_value, FunctionTemplateSymbol)
+            ):
+                template = resolution.compile_value
+                if expression.type_arguments:
+                    specialized = self._instantiate_function_template(
+                        template,
+                        expression.type_arguments,
+                        None,
+                        span=expression.span,
+                    )
+                else:
+                    inferred = self._infer_function_type_args(template, expression)
+                    if inferred is None:
+                        self._error(
+                            f"cannot infer type arguments for generic function {template.name!r}",
+                            expression.span,
+                            code="C357",
+                            note="provide explicit type arguments like name[T](...)",
+                        )
+                        return ERROR
+                    specialized = self._instantiate_function_template(
+                        template,
+                        None,
+                        inferred,
+                        span=expression.span,
+                    )
+                if specialized is None:
+                    return ERROR
+                self._validate_function_call(expression, specialized, skip_parameters=0)
+                return specialized.return_type
             if resolution is not None and resolution.kind == "method" and resolution.method:
                 self._validate_method_receiver(expression.callee.value, resolution.method)
                 self._validate_function_call(expression, resolution.method, skip_parameters=1)
@@ -7011,6 +7044,8 @@ class Checker:
             self._register_nominal(type_, symbol)
             self.struct_symbols[id(specialized_decl)] = symbol
             self._fill_struct_members(symbol, specialized_decl)
+            for method in symbol.methods.values():
+                method.is_module_public = False
             self._validate_specialized_nominal(symbol)
             if self._checking_functions:
                 for method in symbol.methods.values():
@@ -7040,6 +7075,8 @@ class Checker:
             self.class_symbols[id(specialized_decl)] = symbol
             self._fill_class_members(symbol, specialized_decl)
             self._resolve_one_class_hierarchy(symbol)
+            for method in symbol.methods.values():
+                method.is_module_public = False
             self._validate_specialized_nominal(symbol)
             if self._checking_functions:
                 for method in symbol.methods.values():
@@ -7659,6 +7696,9 @@ class Checker:
         symbol.c_name = f"{prefix}{mangled}" if prefix else mangled
         symbol.type_args = type_args
         symbol.template_name = template.name
+        # Specializations are monomorphized per translation unit with shared
+        # defining-module names; keep them TU-local to avoid link duplicates.
+        symbol.is_module_public = False
         mangled_key = mangled
         self._function_specializations[cache_key] = symbol
         self.functions[mangled_key] = symbol

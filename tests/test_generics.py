@@ -241,3 +241,177 @@ def test_generics_end_to_end(tmp_path: Path) -> None:
         capture_output=True,
     )
     assert result.returncode == 42, result.stderr
+
+
+def _write_generic_project(tmp_path: Path, *, util_source: str, main_source: str) -> Path:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"generic_modules\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "util.ci").write_text(util_source, encoding="utf-8")
+    (source_root / "main.ci").write_text(main_source, encoding="utf-8")
+    return tmp_path
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_qualified_imported_generic_function_call(tmp_path: Path) -> None:
+    project = _write_generic_project(
+        tmp_path,
+        util_source=(
+            "def identity[T](value: T) -> T:\n"
+            "    return value\n"
+        ),
+        main_source=(
+            "import util\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return util.identity(42)\n"
+        ),
+    )
+    executable = tmp_path / (
+        "generic_modules.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "generic_modules"
+    )
+    artifact = Compiler().build(
+        project,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 42, result.stderr
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_from_import_generic_function_still_works(tmp_path: Path) -> None:
+    project = _write_generic_project(
+        tmp_path,
+        util_source=(
+            "def identity[T](value: T) -> T:\n"
+            "    return value\n"
+        ),
+        main_source=(
+            "from util import identity\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return identity(42)\n"
+        ),
+    )
+    executable = tmp_path / (
+        "generic_modules.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "generic_modules"
+    )
+    artifact = Compiler().build(
+        project,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 42, result.stderr
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_duplicate_generic_specializations_link_across_modules(tmp_path: Path) -> None:
+    project = _write_generic_project(
+        tmp_path,
+        util_source=(
+            "struct Box[T]:\n"
+            "    value: T\n"
+            "    def get(self: &const Box[T]) -> T:\n"
+            "        return self.value\n"
+            "\n"
+            "def identity[T](value: T) -> T:\n"
+            "    return value\n"
+            "\n"
+            "def make_box() -> Box[i32]:\n"
+            "    return Box(value=identity(40))\n"
+        ),
+        main_source=(
+            "import util\n"
+            "from util import Box, identity\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    local: Box[i32] = Box(value=identity(1))\n"
+            "    imported = util.make_box()\n"
+            "    return local.get() + imported.get() + util.identity(1)\n"
+        ),
+    )
+    executable = tmp_path / (
+        "generic_modules.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "generic_modules"
+    )
+    artifact = Compiler().build(
+        project,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 42, result.stderr
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_consumer_only_generic_instantiation_builds(tmp_path: Path) -> None:
+    project = _write_generic_project(
+        tmp_path,
+        util_source=(
+            "def identity[T](value: T) -> T:\n"
+            "    return value\n"
+        ),
+        main_source=(
+            "from util import identity\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return identity(42)\n"
+        ),
+    )
+    executable = tmp_path / (
+        "generic_modules.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "generic_modules"
+    )
+    artifact = Compiler().build(
+        project,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 42, result.stderr
