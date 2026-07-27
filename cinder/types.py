@@ -63,6 +63,11 @@ class ResultType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class OptionType(Type):
+    inner: Type
+
+
+@dataclass(frozen=True, slots=True)
 class TupleType(Type):
     elements: tuple[Type, ...]
 
@@ -70,6 +75,23 @@ class TupleType(Type):
 @dataclass(frozen=True, slots=True)
 class ListType(Type):
     inner: Type
+
+
+@dataclass(frozen=True, slots=True)
+class MapType(Type):
+    key: Type
+    value: Type
+
+
+@dataclass(frozen=True, slots=True)
+class SetType(Type):
+    inner: Type
+
+
+@dataclass(frozen=True, slots=True)
+class MapViewType(Type):
+    map_type: MapType
+    kind: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +243,10 @@ def result_c_name(type_: ResultType) -> str:
     return f"CinderResult_{type_key(type_.ok)}_{type_key(type_.error)}"
 
 
+def option_c_name(type_: OptionType) -> str:
+    return f"CinderOption_{type_key(type_.inner)}"
+
+
 def tuple_c_name(type_: TupleType) -> str:
     suffix = "_".join(type_key(element) for element in type_.elements)
     return f"CinderTuple_{len(type_.elements)}" + (f"_{suffix}" if suffix else "")
@@ -228,6 +254,26 @@ def tuple_c_name(type_: TupleType) -> str:
 
 def list_c_name(type_: ListType) -> str:
     return f"CinderList_{type_key(type_.inner)}"
+
+
+def map_c_name(type_: MapType) -> str:
+    return f"CinderMap_{type_key(type_.key)}_{type_key(type_.value)}"
+
+
+def set_c_name(type_: SetType) -> str:
+    return f"CinderSet_{type_key(type_.inner)}"
+
+
+def map_view_c_name(type_: MapViewType) -> str:
+    prefix = {
+        "keys": "CinderMapKeys",
+        "values": "CinderMapValues",
+        "items": "CinderMapItems",
+    }[type_.kind]
+    return (
+        f"{prefix}_{type_key(type_.map_type.key)}_"
+        f"{type_key(type_.map_type.value)}"
+    )
 
 
 def type_name(type_: Type) -> str:
@@ -238,10 +284,26 @@ def type_name(type_: Type) -> str:
             return name
         case ResultType(ok=ok, error=error):
             return f"Result[{type_name(ok)}, {type_name(error)}]"
+        case OptionType(inner=inner):
+            return f"Option[{type_name(inner)}]"
         case TupleType(elements=elements):
             return "Tuple[" + ", ".join(type_name(element) for element in elements) + "]"
         case ListType(inner=inner):
             return f"List[{type_name(inner)}]"
+        case MapType(key=key, value=value):
+            return f"Map[{type_name(key)}, {type_name(value)}]"
+        case SetType(inner=inner):
+            return f"Set[{type_name(inner)}]"
+        case MapViewType(map_type=map_type, kind=kind):
+            view_name = {
+                "keys": "MapKeys",
+                "values": "MapValues",
+                "items": "MapItems",
+            }[kind]
+            return (
+                f"{view_name}[{type_name(map_type.key)}, "
+                f"{type_name(map_type.value)}]"
+            )
         case OpaqueType(name=name):
             return name
         case ConstType(inner=inner):
@@ -315,6 +377,38 @@ def is_pointer_like(type_: Type) -> bool:
     return isinstance(strip_const(type_), (PointerType, ReferenceType))
 
 
+def is_c_string(type_: Type) -> bool:
+    raw = strip_const(type_)
+    return (
+        isinstance(raw, PointerType)
+        and isinstance(raw.inner, ConstType)
+        and strip_const(raw.inner) == CHAR
+    )
+
+
+def is_hashable(type_: Type) -> bool:
+    raw = strip_const(type_)
+    return (
+        raw == BOOL
+        or is_integer(raw)
+        or isinstance(raw, EnumType)
+        or is_c_string(raw)
+    )
+
+
+def is_equatable(type_: Type) -> bool:
+    raw = strip_const(type_)
+    return (
+        is_numeric(raw)
+        or raw == BOOL
+        or isinstance(raw, (EnumType, PointerType, ReferenceType))
+    )
+
+
+def is_owning_container(type_: Type) -> bool:
+    return isinstance(strip_const(type_), (ListType, MapType, SetType))
+
+
 def is_scalar(type_: Type) -> bool:
     type_ = strip_const(type_)
     return (
@@ -334,6 +428,16 @@ def element_type(type_: Type) -> Type | None:
     type_ = strip_const(type_)
     if isinstance(type_, (ArrayType, SliceType, ListType, PointerType, ReferenceType)):
         return type_.inner
+    if isinstance(type_, SetType):
+        return type_.inner
+    if isinstance(type_, MapType):
+        return type_.key
+    if isinstance(type_, MapViewType):
+        if type_.kind == "keys":
+            return type_.map_type.key
+        if type_.kind == "values":
+            return type_.map_type.value
+        return TupleType((type_.map_type.key, type_.map_type.value))
     return None
 
 
@@ -464,6 +568,18 @@ def can_assign(target: Type, source: Type) -> bool:
     if isinstance(target, ListType) and isinstance(source, ListType):
         return target == source
 
+    if isinstance(target, OptionType) and isinstance(source, OptionType):
+        return target == source
+
+    if isinstance(target, MapType) and isinstance(source, MapType):
+        return target == source
+
+    if isinstance(target, SetType) and isinstance(source, SetType):
+        return target == source
+
+    if isinstance(target, MapViewType) and isinstance(source, MapViewType):
+        return target == source
+
     return False
 
 
@@ -491,11 +607,22 @@ def type_key(type_: Type) -> str:
             return _sanitize_key(nominal_c_name(type_))
         case ResultType(ok=ok, error=error):
             return f"result_{type_key(ok)}_{type_key(error)}"
+        case OptionType(inner=inner):
+            return f"option_{type_key(inner)}"
         case TupleType(elements=elements):
             suffix = "_".join(type_key(element) for element in elements)
             return f"tuple_{len(elements)}" + (f"_{suffix}" if suffix else "")
         case ListType(inner=inner):
             return f"list_{type_key(inner)}"
+        case MapType(key=key, value=value):
+            return f"map_{type_key(key)}_{type_key(value)}"
+        case SetType(inner=inner):
+            return f"set_{type_key(inner)}"
+        case MapViewType(map_type=map_type, kind=kind):
+            return (
+                f"map_{_sanitize_key(kind)}_{type_key(map_type.key)}_"
+                f"{type_key(map_type.value)}"
+            )
         case OpaqueType(c_name=c_name):
             return _sanitize_key(c_name)
         case ConstType(inner=inner):

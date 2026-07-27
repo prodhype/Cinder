@@ -101,18 +101,6 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
         ),
         (
             "def main() -> i32:\n"
-            "    values: Map[i32, i32]\n"
-            "    return 0\n",
-            "unsupported generic type 'Map'",
-        ),
-        (
-            "def main() -> i32:\n"
-            "    values: Set[i32]\n"
-            "    return 0\n",
-            "unsupported generic type 'Set'",
-        ),
-        (
-            "def main() -> i32:\n"
             "    values = [1, 2]\n"
             "    for value in values:\n"
             "        values.append(value)\n"

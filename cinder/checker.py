@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, field
-from typing import Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 
 from cinder import ast
 from cinder.diagnostics import CompilationFailed, DiagnosticBag, Span
 from cinder.stdlib import builtin_global_functions, builtin_modules
 from cinder.symbols import (
     AttributeResolution,
+    BinaryResolution,
     CallResolution,
     ClassSymbol,
     ComptimeVariableSymbol,
@@ -17,6 +19,7 @@ from cinder.symbols import (
     EnumSymbol,
     FieldSymbol,
     FunctionSymbol,
+    IndexResolution,
     MatchCaseResolution,
     MatchResolution,
     ModuleSymbol,
@@ -35,46 +38,54 @@ from cinder.symbols import (
     VariantSymbol,
 )
 from cinder.types import (
-    ArrayType,
     BOOL,
     CHAR,
+    ERROR,
+    F64,
+    I32,
+    I64,
+    NULL,
+    PRIMITIVES,
+    U64,
+    USIZE,
+    VOID,
+    ArrayType,
     ClassType,
     ComptimeCollectionType,
     ComptimeItemType,
     ConstType,
     DynType,
     EnumType,
-    ERROR,
-    F64,
     FunctionValueType,
-    I32,
-    I64,
     ListType,
+    MapType,
+    MapViewType,
     ModuleType,
-    NULL,
     OpaqueType,
+    OptionType,
     PointerType,
-    PRIMITIVES,
     RangeType,
     ReferenceType,
     ResultType,
+    SetType,
     SliceType,
     StructType,
+    TupleType,
     Type,
     TypeValueType,
-    TupleType,
-    U64,
     UnionType,
-    USIZE,
     VariantType,
-    VOID,
-    can_borrow_elements,
     can_assign,
+    can_borrow_elements,
     common_type,
+    is_c_string,
     is_condition_type,
+    is_equatable,
     is_float,
+    is_hashable,
     is_integer,
     is_numeric,
+    is_owning_container,
     is_pointer_like,
     is_scalar,
     is_void,
@@ -84,7 +95,6 @@ from cinder.types import (
     type_name,
     value_type,
 )
-
 
 _REFLECTION_BUILTINS = frozenset(
     {
@@ -107,6 +117,8 @@ _REFLECTION_BUILTINS = frozenset(
 
 
 type _ListStorage = tuple[VariableSymbol | None, bool]
+type _CollectionStorage = tuple[VariableSymbol | None, bool]
+type _OwnedContainer = ListType | MapType | SetType
 
 
 @dataclass(slots=True)
@@ -127,27 +139,29 @@ class SemanticModel:
     globals: OrderedDict[str, VariableSymbol]
     includes: list[str]
     libraries: list[str]
-    expr_types: dict[int, Type] = field(default_factory=dict)
-    type_nodes: dict[int, Type] = field(default_factory=dict)
-    name_symbols: dict[int, Symbol] = field(default_factory=dict)
-    attribute_resolutions: dict[int, AttributeResolution] = field(default_factory=dict)
-    call_resolutions: dict[int, CallResolution] = field(default_factory=dict)
-    range_resolutions: dict[int, RangeResolution] = field(default_factory=dict)
-    match_resolutions: dict[int, MatchResolution] = field(default_factory=dict)
-    propagate_resolutions: dict[int, PropagateResolution] = field(default_factory=dict)
-    implicit_declarations: dict[int, VariableSymbol] = field(default_factory=dict)
-    declaration_symbols: dict[int, VariableSymbol] = field(default_factory=dict)
-    foreach_symbols: dict[int, VariableSymbol] = field(default_factory=dict)
-    comptime_foreach_symbols: dict[int, ComptimeVariableSymbol] = field(default_factory=dict)
-    function_symbols: dict[int, FunctionSymbol] = field(default_factory=dict)
-    struct_symbols: dict[int, StructSymbol] = field(default_factory=dict)
-    class_symbols: dict[int, ClassSymbol] = field(default_factory=dict)
-    enum_symbols: dict[int, EnumSymbol] = field(default_factory=dict)
-    union_symbols: dict[int, UnionSymbol] = field(default_factory=dict)
-    variant_symbols: dict[int, VariantSymbol] = field(default_factory=dict)
-    global_symbols: dict[int, VariableSymbol] = field(default_factory=dict)
-    nominal_symbols: dict[Type, NominalSymbol] = field(default_factory=dict)
-    static_assert_values: dict[int, bool | None] = field(default_factory=dict)
+    expr_types: dict[int, Type] = dataclass_field(default_factory=dict)
+    type_nodes: dict[int, Type] = dataclass_field(default_factory=dict)
+    name_symbols: dict[int, Symbol] = dataclass_field(default_factory=dict)
+    attribute_resolutions: dict[int, AttributeResolution] = dataclass_field(default_factory=dict)
+    call_resolutions: dict[int, CallResolution] = dataclass_field(default_factory=dict)
+    index_resolutions: dict[int, IndexResolution] = dataclass_field(default_factory=dict)
+    binary_resolutions: dict[int, BinaryResolution] = dataclass_field(default_factory=dict)
+    range_resolutions: dict[int, RangeResolution] = dataclass_field(default_factory=dict)
+    match_resolutions: dict[int, MatchResolution] = dataclass_field(default_factory=dict)
+    propagate_resolutions: dict[int, PropagateResolution] = dataclass_field(default_factory=dict)
+    implicit_declarations: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
+    declaration_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
+    foreach_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
+    comptime_foreach_symbols: dict[int, ComptimeVariableSymbol] = dataclass_field(default_factory=dict)
+    function_symbols: dict[int, FunctionSymbol] = dataclass_field(default_factory=dict)
+    struct_symbols: dict[int, StructSymbol] = dataclass_field(default_factory=dict)
+    class_symbols: dict[int, ClassSymbol] = dataclass_field(default_factory=dict)
+    enum_symbols: dict[int, EnumSymbol] = dataclass_field(default_factory=dict)
+    union_symbols: dict[int, UnionSymbol] = dataclass_field(default_factory=dict)
+    variant_symbols: dict[int, VariantSymbol] = dataclass_field(default_factory=dict)
+    global_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
+    nominal_symbols: dict[Type, NominalSymbol] = dataclass_field(default_factory=dict)
+    static_assert_values: dict[int, bool | None] = dataclass_field(default_factory=dict)
 
     def expression_type(self, expression: ast.Expression) -> Type:
         return self.expr_types.get(id(expression), ERROR)
@@ -234,6 +248,8 @@ class Checker:
         self.name_symbols: dict[int, Symbol] = {}
         self.attribute_resolutions: dict[int, AttributeResolution] = {}
         self.call_resolutions: dict[int, CallResolution] = {}
+        self.index_resolutions: dict[int, IndexResolution] = {}
+        self.binary_resolutions: dict[int, BinaryResolution] = {}
         self.range_resolutions: dict[int, RangeResolution] = {}
         self.match_resolutions: dict[int, MatchResolution] = {}
         self.propagate_resolutions: dict[int, PropagateResolution] = {}
@@ -255,7 +271,8 @@ class Checker:
         self.current_owner: StructSymbol | ClassSymbol | None = None
         self.loop_depth = 0
         self.unsafe_depth = 0
-        self.active_list_iterators: list[_ListStorage] = []
+        self.active_collection_iterators: list[_CollectionStorage] = []
+        self.map_view_storages: dict[int, _CollectionStorage] = {}
 
     def check(self) -> SemanticModel:
         self._install_builtins()
@@ -297,6 +314,8 @@ class Checker:
             name_symbols=self.name_symbols,
             attribute_resolutions=self.attribute_resolutions,
             call_resolutions=self.call_resolutions,
+            index_resolutions=self.index_resolutions,
+            binary_resolutions=self.binary_resolutions,
             range_resolutions=self.range_resolutions,
             match_resolutions=self.match_resolutions,
             propagate_resolutions=self.propagate_resolutions,
@@ -1333,12 +1352,12 @@ class Checker:
         for struct in self.structs.values():
             for field in struct.fields.values():
                 self._validate_list_elements(field.type, field.span)
-                if self._contains_list_value(field.type):
+                if self._contains_owning_container_value(field.type):
                     self._error(
-                        f"field {struct.name}.{field.name} cannot own a List",
+                        f"field {struct.name}.{field.name} cannot own a collection",
                         field.span,
                         code="C247",
-                        note="store a pointer or reference; aggregate List ownership is not implemented",
+                        note="store a pointer or reference; aggregate collection ownership is not implemented",
                     )
                 if self._contains_destructible_value(field.type):
                     self._error(
@@ -1351,12 +1370,12 @@ class Checker:
         for class_ in self.classes.values():
             for field in class_.fields.values():
                 self._validate_list_elements(field.type, field.span)
-                if self._contains_list_value(field.type):
+                if self._contains_owning_container_value(field.type):
                     self._error(
-                        f"field {class_.name}.{field.name} cannot own a List",
+                        f"field {class_.name}.{field.name} cannot own a collection",
                         field.span,
                         code="C247",
-                        note="store a pointer or reference; aggregate List ownership is not implemented",
+                        note="store a pointer or reference; aggregate collection ownership is not implemented",
                     )
                 if self._contains_destructible_value(field.type):
                     self._error(
@@ -1369,9 +1388,9 @@ class Checker:
         for union in self.unions.values():
             for field in union.fields.values():
                 self._validate_list_elements(field.type, field.span)
-                if self._contains_list_value(field.type):
+                if self._contains_owning_container_value(field.type):
                     self._error(
-                        f"union field {union.name}.{field.name} cannot own a List",
+                        f"union field {union.name}.{field.name} cannot own a collection",
                         field.span,
                         code="C247",
                     )
@@ -1386,10 +1405,10 @@ class Checker:
             for case in variant.cases.values():
                 for field in case.fields.values():
                     self._validate_list_elements(field.type, field.span)
-                    if self._contains_list_value(field.type):
+                    if self._contains_owning_container_value(field.type):
                         self._error(
                             f"variant payload {variant.name}.{case.name}.{field.name} "
-                            "cannot own a List",
+                            "cannot own a collection",
                             field.span,
                             code="C247",
                         )
@@ -1403,9 +1422,9 @@ class Checker:
 
         for global_ in self.globals.values():
             self._validate_list_elements(global_.type, global_.span)
-            if self._contains_list_value(global_.type):
+            if self._contains_owning_container_value(global_.type):
                 self._error(
-                    f"global {global_.name!r} cannot own a List",
+                    f"global {global_.name!r} cannot own a collection",
                     global_.span,
                     code="C248",
                     note="portable C11 has no automatic global destruction phase",
@@ -1427,20 +1446,29 @@ class Checker:
         for function in functions:
             for parameter in function.parameters:
                 self._validate_list_elements(parameter.type, parameter.span)
-                if self._owned_list(parameter.type) is not None:
+                parameter_container = self._owned_container(parameter.type)
+                if parameter_container is not None:
+                    family = type_name(parameter_container).split("[", 1)[0]
                     self._error(
-                        f"parameter {function.name}.{parameter.name} cannot own a List by value",
+                        f"parameter {function.name}.{parameter.name} cannot own "
+                        f"a {family} by value",
                         parameter.span,
                         code="C249",
-                        note="pass List values by reference or pointer",
+                        note="pass owning collections by reference or pointer",
                     )
-                elif self._contains_list_value(parameter.type):
+                elif self._contains_owning_container_value(parameter.type):
+                    contained = (
+                        "List"
+                        if self._contains_list_value(parameter.type)
+                        else "collection"
+                    )
                     self._error(
-                        f"parameter {function.name}.{parameter.name} contains an owning List",
+                        f"parameter {function.name}.{parameter.name} contains an owning "
+                        f"{contained}",
                         parameter.span,
                         code="C290",
                         note=(
-                            "aggregate List ownership is not implemented; "
+                            "aggregate collection ownership is not implemented; "
                             "pass the value by reference or pointer"
                         ),
                     )
@@ -1461,15 +1489,15 @@ class Checker:
                         note="aggregate ownership of destructor-bearing classes is not implemented",
                     )
             self._validate_list_elements(function.return_type, function.span)
-            return_list = self._owned_list(function.return_type)
-            if return_list is None and self._contains_list_value(
+            return_container = self._owned_container(function.return_type)
+            if return_container is None and self._contains_owning_container_value(
                 function.return_type
             ):
                 self._error(
-                    f"return type {type_name(function.return_type)} contains an owning List",
+                    f"return type {type_name(function.return_type)} contains an owning collection",
                     function.span,
                     code="C250",
-                    note="only a direct List return currently transfers ownership",
+                    note="only a direct collection return currently transfers ownership",
                 )
             return_class = self._destructible_class(function.return_type)
             if (
@@ -1517,6 +1545,29 @@ class Checker:
         if isinstance(raw, ResultType):
             self._validate_list_elements(raw.ok, span)
             self._validate_list_elements(raw.error, span)
+            return
+        if isinstance(raw, OptionType):
+            self._validate_list_elements(raw.inner, span)
+            return
+        if isinstance(raw, MapType):
+            self._validate_list_elements(raw.key, span)
+            self._validate_list_elements(raw.value, span)
+            return
+        if isinstance(raw, SetType):
+            self._validate_list_elements(raw.inner, span)
+
+    def _is_valid_container_element(self, type_: Type) -> bool:
+        raw = strip_const(type_)
+        if raw == ERROR:
+            return True
+        return not (
+            is_void(raw)
+            or isinstance(raw, (ConstType, ReferenceType, ArrayType))
+            or is_owning_container(raw)
+            or self._contains_owning_container_value(raw)
+            or self._contains_destructible_value(raw)
+            or not self._is_collection_runtime_type(raw)
+        )
 
     def _destructible_class(self, type_: Type) -> ClassSymbol | None:
         raw = strip_const(type_)
@@ -1541,6 +1592,15 @@ class Checker:
             return self._contains_destructible_value(raw.inner, seen)
         if isinstance(raw, ListType):
             return self._contains_destructible_value(raw.inner, seen)
+        if isinstance(raw, MapType):
+            return self._contains_destructible_value(
+                raw.key,
+                seen,
+            ) or self._contains_destructible_value(raw.value, seen)
+        if isinstance(raw, SetType):
+            return self._contains_destructible_value(raw.inner, seen)
+        if isinstance(raw, OptionType):
+            return self._contains_destructible_value(raw.inner, seen)
         if isinstance(raw, TupleType):
             return any(
                 self._contains_destructible_value(element, seen)
@@ -1553,9 +1613,34 @@ class Checker:
             ) or self._contains_destructible_value(raw.error, seen)
         return False
 
+    def _contains_owning_container_value(self, type_: Type) -> bool:
+        raw = strip_const(type_)
+        if isinstance(raw, (PointerType, ReferenceType, SliceType, DynType, MapViewType)):
+            return False
+        if is_owning_container(raw):
+            return True
+        if isinstance(raw, ArrayType):
+            return self._contains_owning_container_value(raw.inner)
+        if isinstance(raw, TupleType):
+            return any(
+                self._contains_owning_container_value(element)
+                for element in raw.elements
+            )
+        if isinstance(raw, ResultType):
+            return self._contains_owning_container_value(
+                raw.ok
+            ) or self._contains_owning_container_value(raw.error)
+        if isinstance(raw, OptionType):
+            return self._contains_owning_container_value(raw.inner)
+        return False
+
     def _owned_list(self, type_: Type) -> ListType | None:
         raw = strip_const(type_)
         return raw if isinstance(raw, ListType) else None
+
+    def _owned_container(self, type_: Type) -> _OwnedContainer | None:
+        raw = strip_const(type_)
+        return raw if isinstance(raw, (ListType, MapType, SetType)) else None
 
     def _contains_list_value(self, type_: Type) -> bool:
         raw = strip_const(type_)
@@ -1571,6 +1656,8 @@ class Checker:
             return self._contains_list_value(raw.ok) or self._contains_list_value(
                 raw.error
             )
+        if isinstance(raw, OptionType):
+            return self._contains_list_value(raw.inner)
         return False
 
     def _is_owned_class_source(
@@ -1590,6 +1677,23 @@ class Checker:
         return expression_type == list_type and isinstance(
             expression,
             (ast.ListLiteralExpr, ast.CallExpr),
+        )
+
+    def _is_owned_container_source(
+        self,
+        expression: ast.Expression,
+        container_type: _OwnedContainer,
+    ) -> bool:
+        expression_type = value_type(self.expr_types.get(id(expression), ERROR))
+        return expression_type == container_type and isinstance(
+            expression,
+            (
+                ast.ListLiteralExpr,
+                ast.MapLiteralExpr,
+                ast.SetLiteralExpr,
+                ast.CallExpr,
+                ast.BinaryExpr,
+            ),
         )
 
     def _is_transferable_local(
@@ -1617,6 +1721,20 @@ class Checker:
         if not isinstance(symbol, VariableSymbol) or symbol.is_parameter:
             return False
         if value_type(symbol.type) != list_type:
+            return False
+        return not any(symbol is global_ for global_ in self.globals.values())
+
+    def _is_transferable_container_local(
+        self,
+        expression: ast.Expression,
+        container_type: _OwnedContainer,
+    ) -> bool:
+        if not isinstance(expression, ast.NameExpr):
+            return False
+        symbol = self.name_symbols.get(id(expression))
+        if not isinstance(symbol, VariableSymbol) or symbol.is_parameter:
+            return False
+        if value_type(symbol.type) != container_type:
             return False
         return not any(symbol is global_ for global_ in self.globals.values())
 
@@ -1963,6 +2081,8 @@ class Checker:
                 *self._by_value_aggregate_types(type_.ok),
                 *self._by_value_aggregate_types(type_.error),
             }
+        if isinstance(type_, OptionType):
+            return self._by_value_aggregate_types(type_.inner)
         return set()
 
     def _check_global_initializers(self) -> None:
@@ -2273,9 +2393,9 @@ class Checker:
                 deferred_type = self._check_expr(expression)
                 if not isinstance(expression, ast.CallExpr):
                     self._error("defer currently requires a function or method call", expression.span, code="C028")
-                if isinstance(value_type(deferred_type), ListType):
+                if is_owning_container(value_type(deferred_type)):
                     self._error(
-                        "cannot defer a call that returns an owning List",
+                        "cannot defer a call that returns an owning collection",
                         expression.span,
                         code="C280",
                         note="bind the result to a local so deterministic cleanup can run",
@@ -2332,34 +2452,37 @@ class Checker:
         if statement.is_const and statement.initializer is None:
             self._error("constants require an initializer", statement.span, code="C033")
 
-        owned_list = self._owned_list(declared_type)
+        owned_container = self._owned_container(declared_type)
         destructible = self._destructible_class(declared_type)
-        if owned_list is not None:
-            self._validate_list_elements(owned_list, statement.span)
+        if owned_container is not None:
+            self._validate_list_elements(owned_container, statement.span)
             if statement.initializer is None:
                 self._error(
-                    f"{type_name(owned_list)} requires an owning initializer",
+                    f"{type_name(owned_container)} requires an owning initializer",
                     statement.span,
                     code="C253",
-                    note="initialize it with a list literal, including [] for an empty list",
+                    note="initialize it with a fresh collection literal or constructor",
                 )
-            elif not self._is_owned_list_source(statement.initializer, owned_list):
+            elif not self._is_owned_container_source(
+                statement.initializer,
+                owned_container,
+            ):
                 self._error(
-                    f"cannot copy move-only {type_name(owned_list)}",
+                    f"cannot copy move-only {type_name(owned_container)}",
                     statement.initializer.span,
                     code="C254",
-                    note="initialize from a list literal or a List-returning call",
+                    note="initialize from a fresh literal, operation, or returning call",
                 )
             if statement.is_const or isinstance(declared_type, ConstType):
                 self._error(
-                    "List locals cannot be const",
+                    f"{type_name(owned_container)} locals cannot be const",
                     statement.span,
                     code="C255",
-                    note="borrow a List through &const List[T] for read-only access",
+                    note="borrow the collection through a const reference for read-only access",
                 )
-        elif self._contains_list_value(declared_type):
+        elif self._contains_owning_container_value(declared_type):
             self._error(
-                f"local type {type_name(declared_type)} contains an owning List",
+                f"local type {type_name(declared_type)} contains an owning collection",
                 statement.span,
                 code="C256",
             )
@@ -2411,6 +2534,13 @@ class Checker:
         if previous is not None:
             self._duplicate_symbol(symbol, previous)
         self.declaration_symbols[id(statement)] = symbol
+        if (
+            isinstance(value_type(symbol.type), MapViewType)
+            and statement.initializer is not None
+        ):
+            self.map_view_storages[id(symbol)] = self._collection_storage(
+                statement.initializer
+            )
 
     def _inferred_storage_type(self, type_: Type, span: Span) -> Type:
         if isinstance(type_, ReferenceType):
@@ -2455,19 +2585,26 @@ class Checker:
             self.name_symbols[id(statement.target)] = symbol
             self.expr_types[id(statement.target)] = symbol.type
             self.implicit_declarations[id(statement)] = symbol
-            owned_list = self._owned_list(inferred)
+            if isinstance(value_type(symbol.type), MapViewType):
+                self.map_view_storages[id(symbol)] = self._collection_storage(
+                    statement.value
+                )
+            owned_container = self._owned_container(inferred)
             destructible = self._destructible_class(inferred)
-            if owned_list is not None:
-                self._validate_list_elements(owned_list, statement.value.span)
-                if not self._is_owned_list_source(statement.value, owned_list):
+            if owned_container is not None:
+                self._validate_list_elements(owned_container, statement.value.span)
+                if not self._is_owned_container_source(
+                    statement.value,
+                    owned_container,
+                ):
                     self._error(
-                        f"cannot copy move-only {type_name(owned_list)}",
+                        f"cannot copy move-only {type_name(owned_container)}",
                         statement.value.span,
                         code="C257",
                     )
-            elif self._contains_list_value(inferred):
+            elif self._contains_owning_container_value(inferred):
                 self._error(
-                    f"inferred type {type_name(inferred)} contains an owning List",
+                    f"inferred type {type_name(inferred)} contains an owning collection",
                     statement.value.span,
                     code="C258",
                 )
@@ -2498,37 +2635,109 @@ class Checker:
             self._error("cannot assign to a constant value", statement.target.span, code="C036")
 
         effective_target = strip_reference(target_type)
-        owned_list = self._owned_list(effective_target)
-        destructible = self._destructible_class(effective_target)
-        if owned_list is not None:
-            if self._list_storage_is_active(statement.target):
+        effective_value = value_type(value_type_)
+        if isinstance(value_type(effective_target), SetType) and statement.operator in {
+            "|=",
+            "&=",
+            "-=",
+            "^=",
+        }:
+            target_set = value_type(effective_target)
+            if self._collection_storage_is_active(statement.target):
                 self._error(
-                    "cannot replace a List while iterating over it",
+                    "cannot mutate a Set while iterating over it",
+                    statement.target.span,
+                    code="C339",
+                )
+            if effective_value != target_set:
+                self._type_mismatch(target_set, effective_value, statement.value.span)
+            return
+
+        if isinstance(statement.target, ast.IndexExpr):
+            map_type = value_type(
+                self.expr_types.get(id(statement.target.value), ERROR)
+            )
+            if isinstance(map_type, MapType):
+                if (
+                    statement.operator == "="
+                    and self._collection_storage_is_active(statement.target.value)
+                ):
+                    self._error(
+                        "cannot insert into a Map while iterating over it",
+                        statement.target.span,
+                        code="C340",
+                    )
+                self.index_resolutions[id(statement.target)] = IndexResolution(
+                    "map_upsert" if statement.operator == "=" else "map_lookup",
+                    map_type,
+                )
+                if statement.operator == "=":
+                    if not self._can_assign(effective_target, value_type_):
+                        self._type_mismatch(
+                            effective_target,
+                            value_type_,
+                            statement.value.span,
+                        )
+                    return
+                operator = statement.operator[:-1]
+                if operator in ("+", "-", "*", "/", "%"):
+                    if not (
+                        is_numeric(value_type(effective_target))
+                        and is_numeric(value_type(value_type_))
+                    ):
+                        self._error(
+                            f"operator {statement.operator!r} requires numeric operands",
+                            statement.span,
+                            code="C331",
+                        )
+                elif not (
+                    is_integer(value_type(effective_target))
+                    and is_integer(value_type(value_type_))
+                ):
+                    self._error(
+                        f"operator {statement.operator!r} requires integer operands",
+                        statement.span,
+                        code="C332",
+                    )
+                return
+
+        owned_container = self._owned_container(effective_target)
+        destructible = self._destructible_class(effective_target)
+        if owned_container is not None:
+            if self._collection_storage_is_active(
+                statement.target
+            ):
+                family = type_name(owned_container).split("[", 1)[0]
+                self._error(
+                    f"cannot replace a {family} while iterating over it",
                     statement.target.span,
                     code="C284",
                 )
             if statement.operator != "=":
                 self._error(
-                    f"compound assignment is invalid for {type_name(owned_list)}",
+                    f"compound assignment is invalid for {type_name(owned_container)}",
                     statement.span,
                     code="C259",
                 )
             if not isinstance(statement.target, ast.NameExpr):
                 self._error(
-                    "List assignment requires a direct local variable",
+                    "owning collection assignment requires a direct local variable",
                     statement.target.span,
                     code="C260",
                 )
-            if not self._is_owned_list_source(statement.value, owned_list):
+            if not self._is_owned_container_source(
+                statement.value,
+                owned_container,
+            ):
                 self._error(
-                    f"cannot copy move-only {type_name(owned_list)}",
+                    f"cannot copy move-only {type_name(owned_container)}",
                     statement.value.span,
                     code="C261",
-                    note="assign a fresh list literal or a List-returning call",
+                    note="assign a fresh collection value or a returning call",
                 )
-        elif self._contains_list_value(effective_target):
+        elif self._contains_owning_container_value(effective_target):
             self._error(
-                f"assignment target {type_name(effective_target)} contains an owning List",
+                f"assignment target {type_name(effective_target)} contains an owning collection",
                 statement.target.span,
                 code="C262",
             )
@@ -2574,17 +2783,19 @@ class Checker:
 
         operator = statement.operator[:-1]
         if operator in ("+", "-", "*", "/", "%"):
-            if not (is_numeric(value_type(effective_target)) and is_numeric(value_type(value_type_))):
-                if not (
-                    operator in ("+", "-")
-                    and isinstance(strip_const(effective_target), PointerType)
-                    and is_integer(value_type(value_type_))
-                ):
-                    self._error(
-                        f"operator {statement.operator!r} requires numeric operands",
-                        statement.span,
-                        code="C039",
-                    )
+            if not (
+                is_numeric(value_type(effective_target))
+                and is_numeric(value_type(value_type_))
+            ) and not (
+                operator in ("+", "-")
+                and isinstance(strip_const(effective_target), PointerType)
+                and is_integer(value_type(value_type_))
+            ):
+                self._error(
+                    f"operator {statement.operator!r} requires numeric operands",
+                    statement.span,
+                    code="C039",
+                )
         else:
             if not (is_integer(value_type(effective_target)) and is_integer(value_type(value_type_))):
                 self._error(
@@ -2655,6 +2866,8 @@ class Checker:
             base_type = value_type(self.expr_types.get(id(expression.value), ERROR))
             if isinstance(base_type, (ArrayType, ListType)):
                 return isinstance(base_type.inner, ConstType) or self._lvalue_is_const(expression.value)
+            if isinstance(base_type, MapType):
+                return self._lvalue_is_const(expression.value)
             if isinstance(base_type, (SliceType, PointerType)):
                 return isinstance(base_type.inner, ConstType)
             return isinstance(base_type, TupleType)
@@ -2687,16 +2900,16 @@ class Checker:
         elif not self._can_assign(expected, actual):
             self._type_mismatch(expected, actual, value.span)
         destructible = self._destructible_class(expected)
-        owned_list = self._owned_list(expected)
-        if owned_list is not None and not (
-            self._is_owned_list_source(value, owned_list)
-            or self._is_transferable_list_local(value, owned_list)
+        owned_container = self._owned_container(expected)
+        if owned_container is not None and not (
+            self._is_owned_container_source(value, owned_container)
+            or self._is_transferable_container_local(value, owned_container)
         ):
             self._error(
-                f"returning {type_name(owned_list)} would copy a move-only value",
+                f"returning {type_name(owned_container)} would copy a move-only value",
                 value.span,
                 code="C263",
-                note="return a fresh list, a List-returning call, or a direct local",
+                note="return a fresh collection, a returning call, or a direct local",
             )
         elif destructible is not None and not (
             self._is_owned_class_source(value, destructible)
@@ -2745,19 +2958,31 @@ class Checker:
             return
 
         iterable_value = value_type(iterable_type)
-        if isinstance(iterable_value, ListType) and not self._is_addressable(
+        if isinstance(iterable_value, (ListType, MapType, SetType)) and not self._is_addressable(
             statement.iterable
         ):
             self._error(
-                "List iteration requires an addressable List",
+                f"{type_name(iterable_value)} iteration requires an addressable collection",
                 statement.iterable.span,
                 code="C277",
-                note="bind the List to a local before iterating",
+                note="bind the owning collection to a local before iterating",
             )
-        if isinstance(iterable_value, RangeType):
+        if isinstance(
+            iterable_value,
+            (RangeType, ArrayType, SliceType, ListType, SetType),
+        ):
             item_type = iterable_value.inner
-        elif isinstance(iterable_value, (ArrayType, SliceType, ListType)):
-            item_type = iterable_value.inner
+        elif isinstance(iterable_value, MapType):
+            item_type = iterable_value.key
+        elif isinstance(iterable_value, MapViewType):
+            if iterable_value.kind == "keys":
+                item_type = iterable_value.map_type.key
+            elif iterable_value.kind == "values":
+                item_type = iterable_value.map_type.value
+            else:
+                item_type = TupleType(
+                    (iterable_value.map_type.key, iterable_value.map_type.value)
+                )
         else:
             self._error(
                 f"cannot iterate over {type_name(iterable_type)}",
@@ -2785,19 +3010,22 @@ class Checker:
         loop_scope.declare(symbol)
         self.foreach_symbols[id(statement)] = symbol
         iterator_storage = (
-            self._list_storage(statement.iterable)
-            if isinstance(iterable_value, ListType)
+            self._collection_storage(statement.iterable)
+            if isinstance(
+                iterable_value,
+                (ListType, MapType, SetType, MapViewType),
+            )
             else None
         )
         if iterator_storage is not None:
-            self.active_list_iterators.append(iterator_storage)
+            self.active_collection_iterators.append(iterator_storage)
         self.loop_depth += 1
         try:
             self._check_block(statement.body, loop_scope, create_scope=True)
         finally:
             self.loop_depth -= 1
             if iterator_storage is not None:
-                popped = self.active_list_iterators.pop()
+                popped = self.active_collection_iterators.pop()
                 assert popped[0] is iterator_storage[0] and popped[1] == iterator_storage[1]
 
     def _check_for_c(self, statement: ast.ForCStmt) -> None:
@@ -2862,16 +3090,16 @@ class Checker:
     def _for_clause_owns_list(self, statement: ast.Statement) -> bool:
         if isinstance(statement, ast.VarDeclStmt):
             symbol = self.declaration_symbols.get(id(statement))
-            return symbol is not None and self._owned_list(symbol.type) is not None
+            return symbol is not None and self._owned_container(symbol.type) is not None
         if isinstance(statement, ast.AssignStmt):
             implicit = self.implicit_declarations.get(id(statement))
             if implicit is not None:
-                return self._owned_list(implicit.type) is not None
+                return self._owned_container(implicit.type) is not None
             target_type = self.expr_types.get(id(statement.target), ERROR)
-            return self._owned_list(strip_reference(target_type)) is not None
+            return self._owned_container(strip_reference(target_type)) is not None
         if isinstance(statement, ast.ExpressionStmt):
             expression_type = self.expr_types.get(id(statement.expression), ERROR)
-            return self._owned_list(expression_type) is not None
+            return self._owned_container(expression_type) is not None
         return False
 
     def _check_match(self, statement: ast.MatchStmt) -> None:
@@ -2880,10 +3108,11 @@ class Checker:
         enum = nominal if isinstance(nominal, EnumSymbol) else None
         variant = nominal if isinstance(nominal, VariantSymbol) else None
         is_result = isinstance(subject_type, ResultType)
+        is_option = isinstance(subject_type, OptionType)
 
-        if enum is None and variant is None and not is_result:
+        if enum is None and variant is None and not is_result and not is_option:
             self._error(
-                f"match requires an enum, variant, or Result value, got {type_name(subject_type)}",
+                f"match requires an enum, variant, Result, or Option value, got {type_name(subject_type)}",
                 statement.value.span,
                 code="C119",
             )
@@ -2894,6 +3123,8 @@ class Checker:
             required = set(variant.cases)
         elif is_result:
             required = {"Ok", "Err"}
+        elif is_option:
+            required = {"Some", "None"}
         else:
             required = set()
 
@@ -3022,6 +3253,47 @@ class Checker:
                             bindings=tuple(bindings),
                         )
                     )
+            elif isinstance(subject_type, OptionType):
+                self._validate_option_pattern_owner(pattern)
+                if pattern_name not in {"Some", "None"}:
+                    self._error(
+                        "Option match cases must be Some or None",
+                        pattern.span,
+                        code="C313",
+                    )
+                    case_resolutions.append(MatchCaseResolution("invalid"))
+                else:
+                    is_some = pattern_name == "Some"
+                    expected_bindings = 1 if is_some else 0
+                    if len(pattern.bindings) != expected_bindings:
+                        self._error(
+                            f"{pattern_name} expects {expected_bindings} bindings, "
+                            f"got {len(pattern.bindings)}",
+                            pattern.span,
+                            code="C314",
+                        )
+                    if is_some and pattern.bindings:
+                        binding_name = pattern.bindings[0]
+                        symbol = VariableSymbol(
+                            binding_name,
+                            pattern.span,
+                            SymbolKind.VARIABLE,
+                            subject_type.inner,
+                            True,
+                            False,
+                            binding_name,
+                        )
+                        previous = case_scope.declare(symbol)
+                        if previous is not None:
+                            self._duplicate_symbol(symbol, previous)
+                        bindings.append(PatternBinding(symbol, "value"))
+                    case_resolutions.append(
+                        MatchCaseResolution(
+                            "option",
+                            option_is_some=is_some,
+                            bindings=tuple(bindings),
+                        )
+                    )
             else:
                 case_resolutions.append(MatchCaseResolution("invalid"))
 
@@ -3076,10 +3348,23 @@ class Checker:
                 code="C142",
             )
 
+    def _validate_option_pattern_owner(self, pattern: ast.MatchPattern) -> None:
+        if pattern.path is None or len(pattern.path) < 2:
+            return
+        owner_name = ".".join(pattern.path[:-1])
+        if owner_name != "Option":
+            self._error(
+                f"Option pattern owner must be 'Option', not {owner_name!r}",
+                pattern.span,
+                code="C315",
+            )
+
     def _check_expr(self, expression: ast.Expression, expected: Type | None = None) -> Type:
         match expression:
             case ast.LiteralExpr():
                 result = self._check_literal(expression, expected)
+            case ast.NoneExpr():
+                result = self._check_none(expression, expected)
             case ast.FStringExpr():
                 result = self._check_fstring_outside_print(expression)
             case ast.NameExpr():
@@ -3100,6 +3385,10 @@ class Checker:
                 result = self._check_propagate(expression)
             case ast.ListLiteralExpr():
                 result = self._check_list_literal(expression, expected)
+            case ast.MapLiteralExpr():
+                result = self._check_map_literal(expression, expected)
+            case ast.SetLiteralExpr():
+                result = self._check_set_literal(expression, expected)
             case ast.TupleLiteralExpr():
                 result = self._check_tuple_literal(expression, expected)
             case ast.CastExpr():
@@ -3240,6 +3529,91 @@ class Checker:
         right_value = value_type(right)
         operator = expression.operator
 
+        if operator in {"in", "not in"}:
+            expected_item: Type | None = None
+            resolution_kind: str | None = None
+            if isinstance(right_value, MapType):
+                expected_item = right_value.key
+                resolution_kind = "map_contains"
+            elif isinstance(right_value, SetType):
+                expected_item = right_value.inner
+                resolution_kind = "set_contains"
+            elif isinstance(right_value, MapViewType):
+                if right_value.kind == "keys":
+                    expected_item = right_value.map_type.key
+                elif right_value.kind == "values":
+                    expected_item = right_value.map_type.value
+                    if not is_equatable(expected_item):
+                        self._error(
+                            f"membership is not supported for values of type "
+                            f"{type_name(expected_item)}",
+                            expression.span,
+                            code="C333",
+                        )
+                else:
+                    expected_item = TupleType(
+                        (right_value.map_type.key, right_value.map_type.value)
+                    )
+                    if not is_equatable(right_value.map_type.value):
+                        self._error(
+                            f"membership is not supported for Map items with "
+                            f"value type {type_name(right_value.map_type.value)}",
+                            expression.span,
+                            code="C333",
+                        )
+                resolution_kind = "map_view_contains"
+            if expected_item is None or resolution_kind is None:
+                self._error(
+                    f"right operand of {operator!r} must be a Map, Set, or Map view",
+                    expression.right.span,
+                    code="C334",
+                )
+                return BOOL
+            if not self._can_assign(expected_item, left_value):
+                self._type_mismatch(expected_item, left_value, expression.left.span)
+            self.binary_resolutions[id(expression)] = BinaryResolution(
+                resolution_kind,
+                right_value,
+            )
+            return BOOL
+
+        if isinstance(left_value, SetType) or isinstance(right_value, SetType):
+            if not (
+                isinstance(left_value, SetType)
+                and isinstance(right_value, SetType)
+                and left_value == right_value
+            ):
+                self._error(
+                    f"Set operands must have the same type, got "
+                    f"{type_name(left_value)} and {type_name(right_value)}",
+                    expression.span,
+                    code="C335",
+                )
+                return ERROR
+            if operator in {"|", "&", "-", "^"}:
+                self.binary_resolutions[id(expression)] = BinaryResolution(
+                    {
+                        "|": "set_union",
+                        "&": "set_intersection",
+                        "-": "set_difference",
+                        "^": "set_symmetric_difference",
+                    }[operator],
+                    left_value,
+                )
+                return left_value
+            if operator in {"==", "!=", "<", "<=", ">", ">="}:
+                self.binary_resolutions[id(expression)] = BinaryResolution(
+                    "set_compare",
+                    left_value,
+                )
+                return BOOL
+            self._error(
+                f"operator {operator!r} is not supported for Set values",
+                expression.span,
+                code="C336",
+            )
+            return ERROR
+
         if operator in ("and", "or"):
             if not is_condition_type(left_value) or not is_condition_type(right_value):
                 self._error(f"operator {operator!r} requires scalar operands", expression.span, code="C055")
@@ -3253,10 +3627,18 @@ class Checker:
             return BOOL
 
         if operator in ("==", "!="):
+            if is_c_string(left_value) and is_c_string(right_value):
+                self.binary_resolutions[id(expression)] = BinaryResolution(
+                    "string_equal",
+                )
+                return BOOL
             if isinstance(
                 left_value,
-                (TupleType, ListType),
-            ) or isinstance(right_value, (TupleType, ListType)):
+                (TupleType, ListType, MapType, OptionType, MapViewType),
+            ) or isinstance(
+                right_value,
+                (TupleType, ListType, MapType, OptionType, MapViewType),
+            ):
                 self._error(
                     f"operator {operator!r} is not implemented for "
                     f"{type_name(left_value)} and {type_name(right_value)}",
@@ -3413,6 +3795,55 @@ class Checker:
                 f"type {type_name(base_type)} has no member {expression.name!r}",
                 expression.span,
                 code="C264",
+            )
+            return ERROR
+
+        if isinstance(raw, MapType):
+            if expression.name in {
+                "get",
+                "pop",
+                "keys",
+                "values",
+                "items",
+                "clear",
+                "update",
+            }:
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "map_method",
+                    owner_type=base_type,
+                    compile_value=expression.name,
+                )
+                return FunctionValueType(f"Map.{expression.name}")
+            self._error(
+                f"type {type_name(base_type)} has no member {expression.name!r}",
+                expression.span,
+                code="C316",
+            )
+            return ERROR
+
+        if isinstance(raw, SetType):
+            if expression.name in {
+                "add",
+                "discard",
+                "remove",
+                "pop",
+                "clear",
+                "update",
+                "union",
+                "intersection",
+                "difference",
+                "symmetric_difference",
+            }:
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "set_method",
+                    owner_type=base_type,
+                    compile_value=expression.name,
+                )
+                return FunctionValueType(f"Set.{expression.name}")
+            self._error(
+                f"type {type_name(base_type)} has no member {expression.name!r}",
+                expression.span,
+                code="C317",
             )
             return ERROR
 
@@ -3577,6 +4008,27 @@ class Checker:
                 )
                 return raw.error
 
+        if isinstance(raw, OptionType):
+            if expression.name in {"is_some", "is_none"}:
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    f"option_{expression.name}",
+                    owner_type=base_type,
+                )
+                return BOOL
+            if expression.name == "value":
+                if not self._is_addressable(expression.value):
+                    self._error(
+                        "Option.value requires an addressable Option",
+                        expression.value.span,
+                        code="C341",
+                        note="bind the Option to a local before reading its value",
+                    )
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "option_value",
+                    owner_type=base_type,
+                )
+                return raw.inner
+
         if isinstance(raw, SliceType):
             if expression.name == "data":
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
@@ -3657,10 +4109,27 @@ class Checker:
 
     def _check_index(self, expression: ast.IndexExpr) -> Type:
         base = self._check_expr(expression.value)
+        raw = value_type(base)
+        if isinstance(raw, MapType):
+            index = self._check_expr(expression.index, expected=raw.key)
+            if not self._can_assign(raw.key, index):
+                self._type_mismatch(raw.key, index, expression.index.span)
+            if not self._is_addressable(expression.value):
+                self._error(
+                    "Map indexing requires an addressable Map",
+                    expression.value.span,
+                    code="C330",
+                    note="bind the Map to a local before indexing",
+                )
+            self.index_resolutions[id(expression)] = IndexResolution(
+                "map_lookup",
+                raw,
+            )
+            return raw.value
+
         index = self._check_expr(expression.index, expected=USIZE)
         if not is_integer(value_type(index)):
             self._error("index must be an integer", expression.index.span, code="C068")
-        raw = value_type(base)
         if isinstance(raw, TupleType):
             if not (
                 isinstance(expression.index, ast.LiteralExpr)
@@ -3719,6 +4188,12 @@ class Checker:
     def _check_call(self, expression: ast.CallExpr, expected: Type | None = None) -> Type:
         if isinstance(expression.callee, ast.NameExpr):
             name = expression.callee.name
+            if name == "Some":
+                self.expr_types[id(expression.callee)] = FunctionValueType(name)
+                return self._check_option_constructor(expression, expected)
+            if name == "set":
+                self.expr_types[id(expression.callee)] = FunctionValueType(name)
+                return self._check_empty_set_call(expression, expected)
             if name == "range":
                 return self._check_range_call(expression)
             if name == "len":
@@ -3786,6 +4261,26 @@ class Checker:
                 and isinstance(resolution.compile_value, str)
             ):
                 return self._check_list_method_call(
+                    expression,
+                    expression.callee.value,
+                    resolution.compile_value,
+                )
+            if (
+                resolution is not None
+                and resolution.kind == "map_method"
+                and isinstance(resolution.compile_value, str)
+            ):
+                return self._check_map_method_call(
+                    expression,
+                    expression.callee.value,
+                    resolution.compile_value,
+                )
+            if (
+                resolution is not None
+                and resolution.kind == "set_method"
+                and isinstance(resolution.compile_value, str)
+            ):
+                return self._check_set_method_call(
                     expression,
                     expression.callee.value,
                     resolution.compile_value,
@@ -3907,17 +4402,207 @@ class Checker:
         )
         return receiver_type.inner if method == "pop" else VOID
 
-    def _list_storage(
+    def _check_map_method_call(
+        self,
+        call: ast.CallExpr,
+        receiver: ast.Expression,
+        method: str,
+    ) -> Type:
+        receiver_storage = strip_const(self.expr_types.get(id(receiver), ERROR))
+        if isinstance(receiver_storage, (PointerType, ReferenceType)):
+            receiver_type = strip_const(receiver_storage.inner)
+        else:
+            receiver_type = value_type(receiver_storage)
+        if not isinstance(receiver_type, MapType):
+            self._error(
+                f"{method} requires a Map receiver",
+                receiver.span,
+                code="C318",
+            )
+            return ERROR
+
+        mutating = method in {"pop", "clear", "update"}
+        if mutating and self._collection_storage_is_active(receiver):
+            self._error(
+                f"cannot call Map.{method} while iterating over that Map",
+                receiver.span,
+                code="C337",
+            )
+        if not self._is_addressable(receiver):
+            self._error(
+                f"Map.{method} requires an addressable Map",
+                receiver.span,
+                code="C319",
+            )
+        if mutating and self._lvalue_is_const(receiver):
+            self._error(
+                f"cannot call mutating method {method!r} on a const Map",
+                receiver.span,
+                code="C320",
+            )
+        if any(argument.name is not None for argument in call.arguments):
+            self._error(
+                f"Map.{method} does not accept named arguments",
+                call.span,
+                code="C321",
+            )
+
+        expected_types: list[Type | None] = []
+        if method in {"get", "pop"}:
+            expected_count = 1
+            argument_type: Type = receiver_type.key
+        elif method == "update":
+            expected_count = 1
+            argument_type = receiver_type
+        else:
+            expected_count = 0
+            argument_type = ERROR
+        if len(call.arguments) != expected_count:
+            self._error(
+                f"Map.{method} expects {expected_count} arguments, "
+                f"got {len(call.arguments)}",
+                call.span,
+                code="C322",
+            )
+        for argument in call.arguments:
+            actual = self._check_expr(
+                argument.value,
+                expected=argument_type if argument_type != ERROR else None,
+            )
+            if argument_type != ERROR and not self._can_assign(argument_type, actual):
+                self._type_mismatch(argument_type, actual, argument.value.span)
+            expected_types.append(
+                argument_type if argument_type != ERROR else None
+            )
+
+        self.call_resolutions[id(call)] = CallResolution(
+            f"map_{method}",
+            argument_order=tuple(range(len(call.arguments))),
+            expected_types=tuple(expected_types),
+            compile_value=receiver_type,
+        )
+        if method in {"get", "pop"}:
+            return OptionType(receiver_type.value)
+        if method in {"keys", "values", "items"}:
+            return MapViewType(receiver_type, method)
+        return VOID
+
+    def _check_set_method_call(
+        self,
+        call: ast.CallExpr,
+        receiver: ast.Expression,
+        method: str,
+    ) -> Type:
+        receiver_storage = strip_const(self.expr_types.get(id(receiver), ERROR))
+        if isinstance(receiver_storage, (PointerType, ReferenceType)):
+            receiver_type = strip_const(receiver_storage.inner)
+        else:
+            receiver_type = value_type(receiver_storage)
+        if not isinstance(receiver_type, SetType):
+            self._error(
+                f"{method} requires a Set receiver",
+                receiver.span,
+                code="C324",
+            )
+            return ERROR
+
+        algebra = {
+            "union",
+            "intersection",
+            "difference",
+            "symmetric_difference",
+        }
+        mutating = method in {
+            "add",
+            "discard",
+            "remove",
+            "pop",
+            "clear",
+            "update",
+        }
+        if mutating and self._collection_storage_is_active(receiver):
+            self._error(
+                f"cannot call Set.{method} while iterating over that Set",
+                receiver.span,
+                code="C338",
+            )
+        if not self._is_addressable(receiver):
+            self._error(
+                f"Set.{method} requires an addressable Set",
+                receiver.span,
+                code="C325",
+            )
+        if mutating and self._lvalue_is_const(receiver):
+            self._error(
+                f"cannot call mutating method {method!r} on a const Set",
+                receiver.span,
+                code="C326",
+            )
+        if any(argument.name is not None for argument in call.arguments):
+            self._error(
+                f"Set.{method} does not accept named arguments",
+                call.span,
+                code="C327",
+            )
+
+        if method in {"add", "discard", "remove"}:
+            expected_count = 1
+            argument_type: Type = receiver_type.inner
+        elif method == "update" or method in algebra:
+            expected_count = 1
+            argument_type = receiver_type
+        else:
+            expected_count = 0
+            argument_type = ERROR
+        if len(call.arguments) != expected_count:
+            self._error(
+                f"Set.{method} expects {expected_count} arguments, "
+                f"got {len(call.arguments)}",
+                call.span,
+                code="C328",
+            )
+        expected_types: list[Type | None] = []
+        for argument in call.arguments:
+            actual = self._check_expr(
+                argument.value,
+                expected=argument_type if argument_type != ERROR else None,
+            )
+            if argument_type != ERROR and not self._can_assign(argument_type, actual):
+                self._type_mismatch(argument_type, actual, argument.value.span)
+            expected_types.append(
+                argument_type if argument_type != ERROR else None
+            )
+
+        self.call_resolutions[id(call)] = CallResolution(
+            f"set_{method}",
+            argument_order=tuple(range(len(call.arguments))),
+            expected_types=tuple(expected_types),
+            compile_value=receiver_type,
+        )
+        if method == "pop":
+            return OptionType(receiver_type.inner)
+        if method in algebra:
+            return receiver_type
+        return VOID
+
+    def _collection_storage(
         self,
         expression: ast.Expression,
-    ) -> _ListStorage:
+    ) -> _CollectionStorage:
         if (
             isinstance(expression, ast.UnaryExpr)
             and expression.operator == "*"
             and isinstance(expression.operand, ast.UnaryExpr)
             and expression.operand.operator == "&"
         ):
-            return self._list_storage(expression.operand.operand)
+            return self._collection_storage(expression.operand.operand)
+
+        if (
+            isinstance(expression, ast.CallExpr)
+            and isinstance(expression.callee, ast.AttributeExpr)
+            and expression.callee.name in {"keys", "values", "items"}
+        ):
+            return self._collection_storage(expression.callee.value)
 
         if isinstance(expression, ast.NameExpr):
             symbol = self.name_symbols.get(id(expression))
@@ -3925,15 +4610,23 @@ class Checker:
                 symbol = self.current_scope.lookup(expression.name)
             if isinstance(symbol, VariableSymbol):
                 storage_type = strip_const(symbol.type)
-                if isinstance(storage_type, ListType):
+                if isinstance(storage_type, (ListType, MapType, SetType)):
                     return symbol, False
+                if isinstance(storage_type, MapViewType):
+                    return self.map_view_storages.get(id(symbol), (None, True))
                 if isinstance(storage_type, (PointerType, ReferenceType)) and isinstance(
                     strip_const(storage_type.inner),
-                    ListType,
+                    (ListType, MapType, SetType),
                 ):
                     return symbol, True
 
         return None, True
+
+    def _list_storage(
+        self,
+        expression: ast.Expression,
+    ) -> _ListStorage:
+        return self._collection_storage(expression)
 
     @staticmethod
     def _list_storages_may_alias(
@@ -3947,10 +4640,13 @@ class Checker:
         return left_may_alias or right_may_alias
 
     def _list_storage_is_active(self, expression: ast.Expression) -> bool:
-        storage = self._list_storage(expression)
+        return self._collection_storage_is_active(expression)
+
+    def _collection_storage_is_active(self, expression: ast.Expression) -> bool:
+        storage = self._collection_storage(expression)
         return any(
             self._list_storages_may_alias(storage, active)
-            for active in self.active_list_iterators
+            for active in self.active_collection_iterators
         )
 
     def _check_class_constructor(self, call: ast.CallExpr, class_: ClassSymbol) -> Type:
@@ -4167,12 +4863,12 @@ class Checker:
             inspected = subject_type.value
         else:
             inspected = value_type(subject_type)
-        if isinstance(inspected, ListType) and not self._is_addressable(argument):
+        if is_owning_container(inspected) and not self._is_addressable(argument):
             self._error(
-                f"{name} requires an addressable List value",
+                f"{name} requires an addressable owning collection",
                 argument.span,
                 code="C281",
-                note="bind the List to a local before inspecting its type",
+                note="bind the collection to a local before inspecting its type",
             )
         nominal = self.nominal_symbols.get(inspected)
 
@@ -4290,6 +4986,97 @@ class Checker:
         if isinstance(nominal, StructSymbol):
             return list(nominal.methods.values())
         return []
+
+    def _check_option_constructor(
+        self,
+        call: ast.CallExpr,
+        expected: Type | None,
+    ) -> Type:
+        if len(call.arguments) != 1:
+            self._error(
+                f"Some expects one argument, got {len(call.arguments)}",
+                call.span,
+                code="C308",
+            )
+
+        expected_option = value_type(expected) if expected is not None else None
+        payload_expected = (
+            expected_option.inner
+            if isinstance(expected_option, OptionType)
+            else None
+        )
+        payload_type: Type = ERROR
+        expected_types: list[Type | None] = []
+        for argument in call.arguments:
+            if argument.name not in (None, "value"):
+                self._error(
+                    f"unexpected named argument {argument.name!r}; expected 'value'",
+                    argument.span,
+                    code="C309",
+                )
+            actual = self._check_expr(argument.value, expected=payload_expected)
+            if payload_expected is not None:
+                if not self._can_assign(payload_expected, actual):
+                    self._type_mismatch(
+                        payload_expected,
+                        actual,
+                        argument.value.span,
+                    )
+                payload_type = payload_expected
+            else:
+                payload_type = strip_const(value_type(actual))
+            expected_types.append(payload_expected)
+
+        if isinstance(expected_option, OptionType):
+            result = expected_option
+        else:
+            if payload_type != ERROR and (
+                not self._is_collection_runtime_type(payload_type)
+                or not self._is_valid_container_element(payload_type)
+            ):
+                self._error(
+                    f"cannot infer an Option payload from {type_name(payload_type)}",
+                    call.span,
+                    code="C310",
+                )
+                payload_type = ERROR
+            result = OptionType(payload_type)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            "option_some",
+            argument_order=tuple(range(len(call.arguments))),
+            expected_types=tuple(expected_types),
+            compile_value=result,
+        )
+        return result
+
+    def _check_empty_set_call(
+        self,
+        call: ast.CallExpr,
+        expected: Type | None,
+    ) -> Type:
+        if call.arguments:
+            self._error(
+                f"set expects no arguments, got {len(call.arguments)}",
+                call.span,
+                code="C311",
+            )
+            for argument in call.arguments:
+                self._check_expr(argument.value)
+        expected_set = value_type(expected) if expected is not None else None
+        if not isinstance(expected_set, SetType):
+            self._error(
+                "empty set() requires a contextual Set[T] type",
+                call.span,
+                code="C312",
+                note="add a Set[T] annotation",
+            )
+            return ERROR
+        self.call_resolutions[id(call)] = CallResolution(
+            "set_empty",
+            compile_value=expected_set,
+        )
+        return expected_set
 
     def _check_result_constructor(
         self,
@@ -4810,21 +5597,29 @@ class Checker:
         argument_type = value_type(self._check_expr(call.arguments[0].value))
         if not isinstance(
             argument_type,
-            (ArrayType, SliceType, ListType, TupleType),
+            (
+                ArrayType,
+                SliceType,
+                ListType,
+                TupleType,
+                MapType,
+                SetType,
+                MapViewType,
+            ),
         ) and argument_type != string_type():
             self._error(
                 f"len does not support {type_name(argument_type)}",
                 call.arguments[0].value.span,
                 code="C092",
             )
-        if isinstance(argument_type, ListType) and not self._is_addressable(
+        if isinstance(argument_type, (ListType, MapType, SetType)) and not self._is_addressable(
             call.arguments[0].value
         ):
             self._error(
-                "len requires an addressable List",
+                f"len requires an addressable {type_name(argument_type)}",
                 call.arguments[0].value.span,
                 code="C279",
-                note="bind the List to a local before calling len",
+                note="bind the owning collection to a local before calling len",
             )
         self.call_resolutions[id(call)] = CallResolution(
             "len", argument_order=(0,), expected_types=(None,)
@@ -4893,6 +5688,128 @@ class Checker:
         if is_numeric(raw) or raw == BOOL or isinstance(raw, EnumType):
             return True
         return isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR
+
+    def _check_none(
+        self,
+        expression: ast.NoneExpr,
+        expected: Type | None,
+    ) -> Type:
+        expected_value = value_type(expected) if expected is not None else None
+        if isinstance(expected_value, OptionType):
+            return expected_value
+        self._error(
+            "None requires a contextual Option[T] type",
+            expression.span,
+            code="C302",
+            note="add an Option[T] annotation or return it from an Option function",
+        )
+        return ERROR
+
+    def _check_map_literal(
+        self,
+        expression: ast.MapLiteralExpr,
+        expected: Type | None,
+    ) -> Type:
+        expected_value = value_type(expected) if expected is not None else None
+        if isinstance(expected_value, MapType):
+            for entry in expression.entries:
+                key_type = self._check_expr(entry.key, expected=expected_value.key)
+                value_type_ = self._check_expr(
+                    entry.value,
+                    expected=expected_value.value,
+                )
+                if not self._can_assign(expected_value.key, key_type):
+                    self._type_mismatch(expected_value.key, key_type, entry.key.span)
+                if not self._can_assign(expected_value.value, value_type_):
+                    self._type_mismatch(
+                        expected_value.value,
+                        value_type_,
+                        entry.value.span,
+                    )
+            return expected_value
+
+        if not expression.entries:
+            self._error(
+                "cannot infer key and value types of an empty map literal",
+                expression.span,
+                code="C303",
+                note="add a Map[K, V] annotation",
+            )
+            return ERROR
+
+        first = expression.entries[0]
+        key_type = value_type(self._check_expr(first.key))
+        value_type_ = value_type(self._check_expr(first.value))
+        for entry in expression.entries[1:]:
+            current_key = value_type(self._check_expr(entry.key, expected=key_type))
+            current_value = value_type(
+                self._check_expr(entry.value, expected=value_type_)
+            )
+            key_type = common_type(key_type, current_key)
+            value_type_ = common_type(value_type_, current_value)
+            if key_type == ERROR:
+                self._error(
+                    "map keys do not have a common type",
+                    entry.key.span,
+                    code="C304",
+                )
+            if value_type_ == ERROR:
+                self._error(
+                    "map values do not have a common type",
+                    entry.value.span,
+                    code="C305",
+                )
+
+        key_type = strip_const(key_type)
+        value_type_ = strip_const(value_type_)
+        if key_type != ERROR and not is_hashable(key_type):
+            self._error(
+                f"Map key type {type_name(key_type)} is not hashable",
+                expression.span,
+                code="C297",
+            )
+            key_type = ERROR
+        if value_type_ != ERROR and not self._is_valid_container_element(value_type_):
+            self._error(
+                f"cannot infer a Map value type from {type_name(value_type_)}",
+                expression.span,
+                code="C306",
+            )
+            value_type_ = ERROR
+        return MapType(key_type, value_type_)
+
+    def _check_set_literal(
+        self,
+        expression: ast.SetLiteralExpr,
+        expected: Type | None,
+    ) -> Type:
+        expected_value = value_type(expected) if expected is not None else None
+        if isinstance(expected_value, SetType):
+            for element in expression.elements:
+                actual = self._check_expr(element, expected=expected_value.inner)
+                if not self._can_assign(expected_value.inner, actual):
+                    self._type_mismatch(expected_value.inner, actual, element.span)
+            return expected_value
+
+        inferred = value_type(self._check_expr(expression.elements[0]))
+        for element in expression.elements[1:]:
+            current = value_type(self._check_expr(element, expected=inferred))
+            inferred = common_type(inferred, current)
+            if inferred == ERROR:
+                self._error(
+                    "set elements do not have a common type",
+                    element.span,
+                    code="C307",
+                )
+        inferred = strip_const(inferred)
+        if inferred != ERROR and not is_hashable(inferred):
+            self._error(
+                f"Set element type {type_name(inferred)} is not hashable",
+                expression.span,
+                code="C300",
+            )
+            inferred = ERROR
+        return SetType(inferred)
 
     def _check_list_literal(
         self,
@@ -5054,8 +5971,21 @@ class Checker:
         source_value = value_type(source)
         if isinstance(
             target,
-            (ArrayType, SliceType, ReferenceType, TupleType, ListType),
-        ) or isinstance(source_value, (TupleType, ListType)) or is_void(target):
+            (
+                ArrayType,
+                SliceType,
+                ReferenceType,
+                TupleType,
+                ListType,
+                MapType,
+                SetType,
+                MapViewType,
+                OptionType,
+            ),
+        ) or isinstance(
+            source_value,
+            (TupleType, ListType, MapType, SetType, MapViewType, OptionType),
+        ) or is_void(target):
             self._error(
                 f"cannot cast from {type_name(source_value)} to {type_name(target)}",
                 expression.target_type.span,
@@ -5063,16 +5993,12 @@ class Checker:
             )
             return ERROR
         safe = False
-        if is_numeric(target) and is_numeric(source_value):
-            safe = True
-        elif isinstance(target, EnumType) and is_integer(source_value):
-            safe = True
-        elif is_integer(target) and isinstance(source_value, EnumType):
+        if is_numeric(target) and is_numeric(source_value) or isinstance(target, EnumType) and is_integer(source_value) or is_integer(target) and isinstance(source_value, EnumType):
             safe = True
         elif isinstance(target, PointerType) and isinstance(source_value, PointerType):
             target_inner = strip_const(target.inner)
             source_inner = strip_const(source_value.inner)
-            safe = target_inner == VOID or source_inner == VOID or target_inner == source_inner
+            safe = target_inner in (VOID, source_inner) or source_inner == VOID
         elif target == BOOL and is_scalar(source_value):
             safe = True
         if not safe and self.unsafe_depth == 0:
@@ -5087,7 +6013,7 @@ class Checker:
         element = self._resolve_type(expression.element_type)
         if is_void(element) or isinstance(
             element,
-            (ReferenceType, SliceType, ArrayType, ListType),
+            (ReferenceType, SliceType, ArrayType, ListType, MapType, SetType),
         ):
             self._error(
                 f"cannot allocate elements of type {type_name(element)}",
@@ -5106,16 +6032,19 @@ class Checker:
             symbol = self.name_symbols.get(id(expression)) or self.current_scope.lookup(expression.name)
             return isinstance(symbol, VariableSymbol)
         if isinstance(expression, ast.AttributeExpr):
-            return True
+            resolution = self.attribute_resolutions.get(id(expression))
+            if resolution is not None and resolution.kind == "module_global":
+                return True
+            return self._is_addressable(expression.value)
         if isinstance(expression, ast.IndexExpr):
             base_type = value_type(
                 self.expr_types.get(id(expression.value), ERROR)
             )
-            return not isinstance(base_type, TupleType)
+            return not isinstance(base_type, (TupleType, MapType))
         return isinstance(expression, ast.UnaryExpr) and expression.operator == "*"
 
     def _is_constant_expression(self, expression: ast.Expression) -> bool:
-        if isinstance(expression, ast.LiteralExpr):
+        if isinstance(expression, (ast.LiteralExpr, ast.NoneExpr)):
             return True
         if isinstance(expression, ast.UnaryExpr):
             return self._is_constant_expression(expression.operand)
@@ -5141,6 +6070,7 @@ class Checker:
                 "union_constructor",
                 "variant_constructor",
                 "result_constructor",
+                "option_some",
             } and all(self._is_constant_expression(argument.value) for argument in expression.arguments)
         if isinstance(expression, ast.CastExpr):
             return self._is_constant_expression(expression.value)
@@ -5156,11 +6086,16 @@ class Checker:
         for statement in block.statements:
             if isinstance(statement, ast.ReturnStmt):
                 return True
-            if isinstance(statement, ast.IfStmt):
-                if statement.else_body is not None and all(
-                    self._block_always_returns(branch.body) for branch in statement.branches
-                ) and self._block_always_returns(statement.else_body):
-                    return True
+            if (
+                isinstance(statement, ast.IfStmt)
+                and statement.else_body is not None
+                and all(
+                    self._block_always_returns(branch.body)
+                    for branch in statement.branches
+                )
+                and self._block_always_returns(statement.else_body)
+            ):
+                return True
             if isinstance(statement, ast.MatchStmt):
                 resolution = self.match_resolutions.get(id(statement))
                 if resolution is not None and resolution.exhaustive and all(
@@ -5205,6 +6140,128 @@ class Checker:
                         self._resolve_type(arguments[0], allow_opaque=allow_opaque),
                         self._resolve_type(arguments[1], allow_opaque=allow_opaque),
                     )
+                elif base.name == "Option" and len(arguments) != 1:
+                    self._error("Option requires exactly one type argument", node.span, code="C294")
+                    for argument in arguments:
+                        self._resolve_type(argument, allow_opaque=allow_opaque)
+                    result = ERROR
+                elif base.name == "Option":
+                    inner_type = self._resolve_type(
+                        arguments[0],
+                        allow_opaque=allow_opaque,
+                    )
+                    if (
+                        is_void(inner_type)
+                        or isinstance(
+                            inner_type,
+                            (ConstType, ReferenceType, ArrayType),
+                        )
+                        or is_owning_container(inner_type)
+                        or self._contains_owning_container_value(inner_type)
+                        or self._contains_destructible_value(inner_type)
+                    ):
+                        self._error(
+                            f"invalid Option payload type {type_name(inner_type)}",
+                            arguments[0].span,
+                            code="C295",
+                            note="Option payloads must be trivially copyable non-owning values",
+                        )
+                        inner_type = ERROR
+                    result = OptionType(inner_type)
+                elif base.name == "Map" and len(arguments) != 2:
+                    self._error("Map requires exactly two type arguments", node.span, code="C296")
+                    for argument in arguments:
+                        self._resolve_type(argument, allow_opaque=allow_opaque)
+                    result = ERROR
+                elif base.name == "Map":
+                    key_type = self._resolve_type(
+                        arguments[0],
+                        allow_opaque=allow_opaque,
+                    )
+                    value_type_ = self._resolve_type(
+                        arguments[1],
+                        allow_opaque=allow_opaque,
+                    )
+                    if isinstance(key_type, ConstType) or not is_hashable(key_type):
+                        self._error(
+                            f"Map key type {type_name(key_type)} is not hashable",
+                            arguments[0].span,
+                            code="C297",
+                            note=(
+                                "Map keys must be integers, bool, char, enums, "
+                                "or const char*"
+                            ),
+                        )
+                        key_type = ERROR
+                    if not self._is_valid_container_element(value_type_):
+                        self._error(
+                            f"invalid Map value type {type_name(value_type_)}",
+                            arguments[1].span,
+                            code="C298",
+                            note="Map values must be trivially copyable non-owning values",
+                        )
+                        value_type_ = ERROR
+                    result = MapType(key_type, value_type_)
+                elif base.name == "Set" and len(arguments) != 1:
+                    self._error("Set requires exactly one type argument", node.span, code="C299")
+                    for argument in arguments:
+                        self._resolve_type(argument, allow_opaque=allow_opaque)
+                    result = ERROR
+                elif base.name == "Set":
+                    inner_type = self._resolve_type(
+                        arguments[0],
+                        allow_opaque=allow_opaque,
+                    )
+                    if isinstance(inner_type, ConstType) or not is_hashable(inner_type):
+                        self._error(
+                            f"Set element type {type_name(inner_type)} is not hashable",
+                            arguments[0].span,
+                            code="C300",
+                            note=(
+                                "Set elements must be integers, bool, char, enums, "
+                                "or const char*"
+                            ),
+                        )
+                        inner_type = ERROR
+                    result = SetType(inner_type)
+                elif base.name in {"MapKeys", "MapValues", "MapItems"} and len(arguments) != 2:
+                    self._error(
+                        f"{base.name} requires exactly two type arguments",
+                        node.span,
+                        code="C301",
+                    )
+                    for argument in arguments:
+                        self._resolve_type(argument, allow_opaque=allow_opaque)
+                    result = ERROR
+                elif base.name in {"MapKeys", "MapValues", "MapItems"}:
+                    key_type = self._resolve_type(
+                        arguments[0],
+                        allow_opaque=allow_opaque,
+                    )
+                    value_type_ = self._resolve_type(
+                        arguments[1],
+                        allow_opaque=allow_opaque,
+                    )
+                    if isinstance(key_type, ConstType) or not is_hashable(key_type):
+                        self._error(
+                            f"Map key type {type_name(key_type)} is not hashable",
+                            arguments[0].span,
+                            code="C297",
+                        )
+                        key_type = ERROR
+                    if not self._is_valid_container_element(value_type_):
+                        self._error(
+                            f"invalid Map value type {type_name(value_type_)}",
+                            arguments[1].span,
+                            code="C298",
+                        )
+                        value_type_ = ERROR
+                    kind = {
+                        "MapKeys": "keys",
+                        "MapValues": "values",
+                        "MapItems": "items",
+                    }[base.name]
+                    result = MapViewType(MapType(key_type, value_type_), kind)
                 elif base.name == "List" and len(arguments) != 1:
                     self._error("List requires exactly one type argument", node.span, code="C244")
                     for argument in arguments:
@@ -5219,8 +6276,9 @@ class Checker:
                         is_void(inner_type)
                         or isinstance(
                             inner_type,
-                            (ConstType, ReferenceType, ArrayType, ListType),
+                            (ConstType, ReferenceType, ArrayType),
                         )
+                        or is_owning_container(inner_type)
                     ):
                         self._error(
                             f"invalid List element type {type_name(inner_type)}",
@@ -5245,7 +6303,7 @@ class Checker:
                                 element,
                                 (ConstType, ReferenceType, ArrayType),
                             )
-                            or self._contains_list_value(element)
+                            or self._contains_owning_container_value(element)
                         ):
                             self._error(
                                 f"invalid Tuple element type {type_name(element)}",
@@ -5262,7 +6320,10 @@ class Checker:
                         f"unsupported generic type {base.name!r}",
                         node.span,
                         code="C155",
-                        note="implemented generic types are Result, Tuple, and List",
+                        note=(
+                            "implemented generic types are Result, Option, Tuple, "
+                            "List, Map, Set, and Map views"
+                        ),
                     )
                     for argument in arguments:
                         self._resolve_type(argument, allow_opaque=allow_opaque)
@@ -5284,7 +6345,7 @@ class Checker:
                 if (
                     is_void(inner_type)
                     or isinstance(inner_type, ReferenceType)
-                    or self._contains_list_value(inner_type)
+                    or self._contains_owning_container_value(inner_type)
                 ):
                     self._error(
                         f"invalid array element type {type_name(inner_type)}",
@@ -5297,7 +6358,7 @@ class Checker:
                 if (
                     is_void(inner_type)
                     or isinstance(inner_type, ReferenceType)
-                    or self._contains_list_value(inner_type)
+                    or self._contains_owning_container_value(inner_type)
                 ):
                     self._error(
                         f"invalid slice element type {type_name(inner_type)}",
@@ -5420,8 +6481,14 @@ def _contains_propagate(expression: ast.Expression) -> bool:
             )
         case ast.ListLiteralExpr(elements=elements) | ast.TupleLiteralExpr(
             elements=elements
-        ):
+        ) | ast.SetLiteralExpr(elements=elements):
             return any(_contains_propagate(element) for element in elements)
+        case ast.MapLiteralExpr(entries=entries):
+            return any(
+                _contains_propagate(entry.key)
+                or _contains_propagate(entry.value)
+                for entry in entries
+            )
         case ast.CastExpr(value=value):
             return _contains_propagate(value)
         case ast.AllocExpr(count=count):
@@ -5432,7 +6499,7 @@ def _contains_propagate(expression: ast.Expression) -> bool:
                 and _contains_propagate(part.expression)
                 for part in parts
             )
-        case ast.NameExpr() | ast.LiteralExpr():
+        case ast.NameExpr() | ast.LiteralExpr() | ast.NoneExpr():
             return False
     raise AssertionError(f"unhandled expression: {expression!r}")
 

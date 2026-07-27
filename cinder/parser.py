@@ -35,6 +35,7 @@ _BINARY_PRECEDENCE: dict[TokenKind, tuple[int, str]] = {
     TokenKind.LESS_EQUAL: (6, "<="),
     TokenKind.GREATER: (6, ">"),
     TokenKind.GREATER_EQUAL: (6, ">="),
+    TokenKind.IN: (6, "in"),
     TokenKind.SHIFT_LEFT: (7, "<<"),
     TokenKind.SHIFT_RIGHT: (7, ">>"),
     TokenKind.PLUS: (8, "+"),
@@ -393,7 +394,6 @@ class Parser:
                 continue
             member = self.expect(TokenKind.NAME, "expected enum member", code="P087")
             value: int | None = None
-            end_span = member.span
             if self.match(TokenKind.ASSIGN):
                 sign = -1 if self.match(TokenKind.MINUS) else 1
                 literal = self.expect(
@@ -403,7 +403,6 @@ class Parser:
                 )
                 assert isinstance(literal.value, int)
                 value = sign * literal.value
-                end_span = literal.span
             end = self.expect(TokenKind.NEWLINE, "expected newline after enum member", code="P089")
             members.append(ast.EnumMemberDecl(member.span.merge(end.span), member.lexeme, value))
 
@@ -450,7 +449,6 @@ class Parser:
                 continue
             case_name = self.expect(TokenKind.NAME, "expected variant case", code="P105")
             fields: list[ast.FieldDecl] = []
-            end_span = case_name.span
             if self.match(TokenKind.LEFT_PAREN):
                 if not self.at(TokenKind.RIGHT_PAREN):
                     while True:
@@ -473,8 +471,7 @@ class Parser:
                             break
                         if self.at(TokenKind.RIGHT_PAREN):
                             break
-                close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after variant payload", code="P108")
-                end_span = close.span
+                self.expect(TokenKind.RIGHT_PAREN, "expected ')' after variant payload", code="P108")
             end = self.expect(TokenKind.NEWLINE, "expected newline after variant case", code="P109")
             cases.append(ast.VariantCaseDecl(case_name.span.merge(end.span), case_name.lexeme, fields))
 
@@ -598,7 +595,7 @@ class Parser:
                 code="P138",
             )
             message = _decode_string(message_token)
-        close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after static_assert", code="P139")
+        self.expect(TokenKind.RIGHT_PAREN, "expected ')' after static_assert", code="P139")
         end = self.expect(TokenKind.NEWLINE, "expected newline after static_assert", code="P140")
         return ast.StaticAssertDecl(start.merge(end.span), condition, message)
 
@@ -796,7 +793,10 @@ class Parser:
                 wildcard = self.advance()
                 pattern = ast.MatchPattern(wildcard.span, None, [], True)
             else:
-                parts = [self.expect(TokenKind.NAME, "expected match pattern", code="P116").lexeme]
+                pattern_token = self.match(TokenKind.NAME, TokenKind.NONE)
+                if pattern_token is None:
+                    self.error("expected match pattern", self.current.span, code="P116")
+                parts = [pattern_token.lexeme]
                 while self.match(TokenKind.DOT):
                     parts.append(
                         self.expect(TokenKind.NAME, "expected pattern name after '.'", code="P117").lexeme
@@ -922,13 +922,19 @@ class Parser:
     def parse_expression(self, minimum_precedence: int = 0) -> ast.Expression:
         left = self.parse_unary()
         while True:
-            binary = _BINARY_PRECEDENCE.get(self.current.kind)
+            is_not_in = (
+                self.current.kind is TokenKind.NOT
+                and self.peek().kind is TokenKind.IN
+            )
+            binary = (6, "not in") if is_not_in else _BINARY_PRECEDENCE.get(self.current.kind)
             if binary is None:
                 break
             precedence, operator = binary
             if precedence < minimum_precedence:
                 break
             self.advance()
+            if is_not_in:
+                self.advance()
             right = self.parse_expression(precedence + 1)
             left = ast.BinaryExpr(left.span.merge(right.span), left, operator, right)
         return left
@@ -974,7 +980,13 @@ class Parser:
                 continue
 
             if self.match(TokenKind.DOT):
-                name = self.expect(TokenKind.NAME, "expected member name after '.'", code="P072")
+                name = self.match(TokenKind.NAME, TokenKind.UNION)
+                if name is None:
+                    self.error(
+                        "expected member name after '.'",
+                        self.current.span,
+                        code="P072",
+                    )
                 expression = ast.AttributeExpr(expression.span.merge(name.span), expression, name.lexeme)
                 continue
 
@@ -1027,6 +1039,8 @@ class Parser:
             return ast.LiteralExpr(token.span, False, "bool", token.lexeme)
         if self.match(TokenKind.NULL):
             return ast.LiteralExpr(token.span, None, "null", token.lexeme)
+        if self.match(TokenKind.NONE):
+            return ast.NoneExpr(token.span)
 
         if self.at(TokenKind.NAME) and token.lexeme in ("cast", "alloc") and self.peek().kind is TokenKind.LEFT_BRACKET:
             builtin = self.advance()
@@ -1075,6 +1089,61 @@ class Parser:
                         break
             close = self.expect(TokenKind.RIGHT_BRACKET, "expected ']' after list literal", code="P081")
             return ast.ListLiteralExpr(token.span.merge(close.span), elements)
+
+        if self.match(TokenKind.LEFT_BRACE):
+            if self.match(TokenKind.RIGHT_BRACE):
+                return ast.MapLiteralExpr(
+                    token.span.merge(self.tokens[self.index - 1].span),
+                    [],
+                )
+
+            first = self.parse_expression()
+            if self.match(TokenKind.COLON):
+                value = self.parse_expression()
+                entries = [ast.MapEntry(first.span.merge(value.span), first, value)]
+                while self.match(TokenKind.COMMA):
+                    if self.at(TokenKind.RIGHT_BRACE):
+                        break
+                    key = self.parse_expression()
+                    if not self.match(TokenKind.COLON):
+                        self.error(
+                            "map literal entries require ':' between key and value",
+                            key.span,
+                            code="P144",
+                        )
+                    entry_value = self.parse_expression()
+                    entries.append(
+                        ast.MapEntry(
+                            key.span.merge(entry_value.span),
+                            key,
+                            entry_value,
+                        )
+                    )
+                close = self.expect(
+                    TokenKind.RIGHT_BRACE,
+                    "expected '}' after map literal",
+                    code="P145",
+                )
+                return ast.MapLiteralExpr(token.span.merge(close.span), entries)
+
+            elements = [first]
+            while self.match(TokenKind.COMMA):
+                if self.at(TokenKind.RIGHT_BRACE):
+                    break
+                element = self.parse_expression()
+                if self.at(TokenKind.COLON):
+                    self.error(
+                        "cannot mix set elements and map entries in one literal",
+                        element.span.merge(self.current.span),
+                        code="P146",
+                    )
+                elements.append(element)
+            close = self.expect(
+                TokenKind.RIGHT_BRACE,
+                "expected '}' after set literal",
+                code="P147",
+            )
+            return ast.SetLiteralExpr(token.span.merge(close.span), elements)
 
         self.error("expected an expression", token.span, code="P082")
 
@@ -1144,33 +1213,40 @@ class Parser:
         token: Token,
     ) -> tuple[int, str | None, int]:
         index = start
-        depth = 0
+        brackets: list[str] = []
         format_start: int | None = None
         while index < len(content):
             character = content[index]
             if character in ('"', "'"):
                 index = _skip_quoted_text(content, index)
                 continue
-            if character in "([":
-                depth += 1
+            if character in "([{":
+                if format_start is not None and not brackets:
+                    self.error(
+                        "nested replacement fields are not supported in f-string format specs",
+                        token.span,
+                        code="P086",
+                    )
+                brackets.append({"(": ")", "[": "]", "{": "}"}[character])
                 index += 1
                 continue
-            if character in ")]":
-                if depth > 0:
-                    depth -= 1
+            if character in ")]}":
+                if brackets:
+                    if character == brackets[-1]:
+                        brackets.pop()
+                    index += 1
+                    continue
+                if character == "}":
+                    if format_start is None:
+                        return index, None, index
+                    spec = content[format_start + 1 : index].strip()
+                    return format_start, spec, index
                 index += 1
                 continue
-            if character == ":" and depth == 0 and format_start is None:
+            if character == ":" and not brackets and format_start is None:
                 format_start = index
                 index += 1
                 continue
-            if character == "}" and depth == 0:
-                if format_start is None:
-                    return index, None, index
-                spec = content[format_start + 1 : index].strip()
-                return format_start, spec, index
-            if character == "{" and format_start is not None:
-                self.error("nested replacement fields are not supported in f-string format specs", token.span, code="P086")
             index += 1
         self.error("unterminated f-string expression", token.span, code="P087")
 
@@ -1239,6 +1315,14 @@ class Parser:
             case ast.ListLiteralExpr(elements=elements) | ast.TupleLiteralExpr(elements=elements):
                 for element in elements:
                     self._offset_expression_spans(element, line, column)
+            case ast.SetLiteralExpr(elements=elements):
+                for element in elements:
+                    self._offset_expression_spans(element, line, column)
+            case ast.MapLiteralExpr(entries=entries):
+                for entry in entries:
+                    entry.span = _offset_span(entry.span, line, column)
+                    self._offset_expression_spans(entry.key, line, column)
+                    self._offset_expression_spans(entry.value, line, column)
             case ast.CastExpr(target_type=target_type, value=value):
                 target_type.span = _offset_span(target_type.span, line, column)
                 self._offset_expression_spans(value, line, column)

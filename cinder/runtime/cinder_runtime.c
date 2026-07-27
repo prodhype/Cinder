@@ -73,6 +73,55 @@ void *cinder_grow_array(
     return grown;
 }
 
+uint64_t cinder_hash_u64(uint64_t value)
+{
+    value += UINT64_C(0x9e3779b97f4a7c15);
+    value = (value ^ (value >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+    value = (value ^ (value >> 27)) * UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31);
+}
+
+uint64_t cinder_hash_string(const char *text)
+{
+    if (text == NULL) {
+        return cinder_hash_u64(UINT64_C(0x6e756c6c));
+    }
+
+    uint64_t hash = UINT64_C(14695981039346656037);
+    const unsigned char *cursor = (const unsigned char *)text;
+    while (*cursor != 0) {
+        hash ^= (uint64_t)*cursor;
+        hash *= UINT64_C(1099511628211);
+        cursor += 1;
+    }
+    return cinder_hash_u64(hash);
+}
+
+bool cinder_string_equal(const char *left, const char *right)
+{
+    if (left == right) {
+        return true;
+    }
+    if (left == NULL || right == NULL) {
+        return false;
+    }
+    return strcmp(left, right) == 0;
+}
+
+char *cinder_clone_string(const char *text)
+{
+    if (text == NULL) {
+        return NULL;
+    }
+    const size_t length = strlen(text);
+    if (length == SIZE_MAX) {
+        cinder_panic("string length overflow");
+    }
+    char *copy = cinder_alloc(length + 1, sizeof(char));
+    (void)memcpy(copy, text, length + 1);
+    return copy;
+}
+
 char *cinder_input(const char *prompt)
 {
     if (prompt != NULL) {
