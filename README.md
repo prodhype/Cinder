@@ -10,7 +10,7 @@ Cinder 0.5.0 completes the first five language milestones.
 
 The procedural core includes indentation-aware parsing, primitive and C ABI types, typed globals, inferred locals, functions, named arguments, native control flow, structs and methods, pointers and references, fixed arrays, slices, explicit allocation, scoped `defer`, C imports, exported C functions, and readable C11 generation.
 
-Native collection support includes heterogeneous value tuples and specialized owning Lists, Maps, and Sets. Maps preserve insertion order and expose live views; Sets support hash membership and algebra. Optional lookup uses tagged `Option[T]` values.
+Native collection support includes heterogeneous value tuples and specialized owning Lists, Maps, and Sets. Maps preserve insertion order and expose live views; Sets support hash membership and algebra. Optional lookup uses tagged `Option[T]` values. `Owned[T]` provides Box-style heap ownership with deterministic drop.
 
 The project system includes deterministic `cinder.toml` manifests, local imports, dotted module paths, dependency ordering, cycle diagnostics, one generated header and translation unit per module, deterministic internal symbols, content-stable generated files, and optional amalgamated output.
 
@@ -325,7 +325,7 @@ Patterns do not yet support guards, alternatives, literals, or nested destructur
 
 ## Typed Results, Options, and propagation
 
-`Result[T, E]`, `Option[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, and `Set[T]` are compiler-provided generic families. User-defined generic declarations are not implemented.
+`Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, and `Set[T]` are compiler-provided generic families. User-defined generic declarations are not implemented.
 
 ```python
 def parse(value: i32) -> Result[i32, ParseError]:
@@ -344,6 +344,8 @@ def increment(value: i32) -> Result[i32, ParseError]:
 To preserve straightforward C evaluation order, `?` is not accepted in `while` conditions, `elif` conditions, C-style loop conditions or updates, the right side of `and` or `or`, or deferred calls.
 
 `Option[T]` represents an optional value without using pointer nullability. `Some(value)` infers its payload when possible, bare `None` requires an Option context, and matches must cover both cases. `.is_some`, `.is_none`, and checked `.value` access are available; postfix `?` remains Result-only.
+
+`Owned[T]` is a move-only heap owner. `Owned(value)` allocates and moves a value onto the heap; unary `*` yields an addressable payload; drop frees after dropping `T`. Recursive layouts such as `Option[Owned[Node]]` are supported.
 
 ## Types
 

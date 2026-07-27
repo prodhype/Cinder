@@ -28,7 +28,7 @@ Concrete calls use static dispatch. Dynamic dispatch appears only through `&dyn 
 
 Generated module headers expose class layouts, interface value and table types, constructors, drop functions, and table instances. The test suite covers layout, receiver adjustment, dynamic and static calls, multiple interfaces, cleanup on all control-flow exits, destructor order, cross-module linking, and C++ header consumption.
 
-The current ownership model is deliberately narrow. Destructor-bearing classes are move-only locals and return values. Aggregate ownership, copy constructors, move hooks, and automatic heap ownership are later work.
+The current ownership model is deliberately narrow. Destructor-bearing classes and owning collections are move-only. Aggregate ownership for fields and nested owners is implemented. Copy constructors, move hooks, and drop glue for unions/globals remain later work.
 
 ## 0.5: Reflection and compile-time facilities - complete
 
@@ -48,7 +48,7 @@ Collection ownership is explicit and move-only. Owning collections and destructo
 
 The next useful compiler milestone should focus on build and ABI maturity rather than expanding the surface language indiscriminately. Candidate work includes separate object compilation, dependency-aware object caching, parallel builds, depfiles, richer package configuration, stable exported-name controls, and ABI conformance fixtures for supported compilers.
 
-Ownership work should remain explicit. Viable additions include opt-in copy operations, user-defined move hooks, owned pointer wrappers, and drop glue for unions/variants and globals. A full borrow checker or inferred ownership system is not currently planned.
+Ownership work should remain explicit. Viable additions include opt-in copy operations, user-defined move hooks, and drop glue for unions/variants and globals. `Owned[T]` heap wrappers are implemented. A full borrow checker or inferred ownership system is not currently planned.
 
 Compile-time work may grow toward user-defined constant functions and serializer generation, but it should not become unrestricted AST macros. Runtime reflection may add field-value visitors only if the access rules, alignment requirements, and generated C remain straightforward.
 

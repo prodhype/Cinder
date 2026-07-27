@@ -496,6 +496,13 @@ def process_values(count: usize) -> Result[void, ProcessError]:
 Class values with `__del__` use compiler-managed scope cleanup instead. `defer` is
 for resources that are not already owned by such a class.
 
+`Owned[T]` is an explicit heap owner for a single value. `Owned(value)` allocates,
+moves `value` onto the heap, and returns a move-only handle. Unary `*` yields an
+addressable `T` lvalue. Drop frees the allocation after dropping `T` when needed.
+Recursive layouts such as `Option[Owned[Node]]` are supported because `Owned`
+stores a pointer. Raw `*T` from `alloc` remains manual; `Owned` does not wrap an
+existing pointer.
+
 ## Error handling
 
 Cinder does not implement native exceptions. Supporting them would require hidden
@@ -735,7 +742,7 @@ cinder emit-project . -o generated
 
 The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns without introducing user-defined generics.
 
-User-defined generics, function pointer types, richer ownership abstractions, closures, and broader compile-time execution remain later work.
+User-defined generics, function pointer types, copy/move hooks, closures, and broader compile-time execution remain later work.
 
 The crucial constraint remains this: Cinder must be understandable by reading its
 generated C. Hidden allocation, unpredictable dispatch, exception machinery, or

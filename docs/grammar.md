@@ -216,6 +216,7 @@ i32[16]
 Result[i32, ParseError]
 Result[void, Error]
 Option[i32]
+Owned[i32]
 Tuple[i32, const char*]
 List[i32]
 Map[const char*, i32]
@@ -225,7 +226,7 @@ geometry.Vec2
 &dyn geometry.Shape
 ```
 
-`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Option[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families; user-defined generics are not implemented.
+`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families; user-defined generics are not implemented.
 
 References, dynamic references, slices, fixed arrays, class values, and plain `void` have placement restrictions that follow their generated C representations and lifetime rules.
 
@@ -379,6 +380,10 @@ Maps and Sets use the same move-only direct-local/direct-return restrictions as 
 ## Options
 
 `Option[T]` is constructed with `Some(value)` or contextual bare `None`. `Some` infers its payload without a context when possible; `None` does not. Option matches must cover `Some` and `None`. `.is_some` and `.is_none` inspect the tag. `.value` requires an addressable Option and panics on `None`. Postfix `?` remains specific to `Result`.
+
+## Owned heap values
+
+`Owned[T]` is a move-only heap owner. `Owned(value)` allocates storage for `T`, moves `value` onto the heap, and returns a non-null owning handle. Unary `*` yields an addressable `T` lvalue for reads, writes, and borrowing as `&T` via `&*owned`. Scope exit, return transfer, and reassignment drop the inner value when needed and then free the allocation. Payloads cannot be void, const, references, arrays, pointers, slices, dyn, or map views. Owning globals and union/variant payloads remain rejected. `Owned` does not wrap an existing raw `*T`; use `alloc`/`free`/`defer` for that.
 
 ## Result construction and propagation
 

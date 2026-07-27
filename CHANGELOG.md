@@ -12,6 +12,8 @@ The release also adds general `Option[T]` values with `Some`, contextual `None`,
 
 Aggregate ownership is now first-class for `List`/`Map`/`Set`/`File` and destructor-bearing classes: struct/class by-value owning fields, nested owning collections and owning elements, by-value owning parameters with use-after-move diagnostics, and `Option`/`Result`/`Tuple`(/array) drop glue. Owning globals and unions/user variants with owning members remain rejected.
 
+`Owned[T]` adds Box-style heap ownership: `Owned(value)` allocates and moves a value onto the heap, unary `*` yields an addressable payload, and drop frees after dropping `T`. Values are move-only, nest in aggregates and `Option`/`List`, and support recursive layouts such as `Option[Owned[Node]]`.
+
 ## 0.5.0
 
 Cinder 0.5.0 adds opt-in runtime reflection and compile-time type inspection.
