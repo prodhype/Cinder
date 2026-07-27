@@ -240,7 +240,7 @@ for value in range(0, 20):
 last = values.pop()
 ```
 
-List ownership follows the existing explicit move-only direction. A direct local owns its buffer, a direct return transfers it, replacement drops the previous buffer, and all normal scope exits free it. Generic element-processing functions can accept `[]T` or `[]const T`; addressable Lists, fixed arrays, and slices all pass to those parameters without copying. List-to-slice coercion is call-only so a borrowed view cannot be stored or returned implicitly. Mutable slices can update elements, while structural operations use `&List[T]`. Nested lists, aggregate list fields, globals, by-value parameters, and destructor-bearing elements wait for a broader aggregate ownership model.
+List ownership follows the existing explicit move-only direction. A value owns its buffer; return and by-value parameter passing transfer ownership and mark the source moved; replacement drops the previous buffer; and all normal scope exits free it. Nested lists, owning struct/class fields, and destructor-bearing elements are supported with generated drop glue. Generic element-processing functions can accept `[]T` or `[]const T`; addressable Lists, fixed arrays, and slices all pass to those parameters without copying. List-to-slice coercion is call-only so a borrowed view cannot be stored or returned implicitly. Mutable slices can update elements, while structural operations use `&List[T]`. Owning globals and owning union/variant payloads remain rejected.
 
 Square-bracket literals infer lists in untyped contexts. An explicit array type still selects fixed C storage, so `values: i32[3] = [1, 2, 3]` remains an array declaration.
 
@@ -250,7 +250,7 @@ Maps support key membership, indexed lookup/upsert, optional `get`/`pop`, live `
 
 Hashable values are integer primitives, `bool`, `char`, enums, and `const char*`. C strings use null-safe byte-content equality, and Map/Set insertion clones string keys so hash stability does not depend on the caller's buffer. Removing a string with `Set.pop()` transfers that buffer to the caller.
 
-All three owning homogeneous collections remain move-only direct locals and return values. Nested owning collections, aggregate/global ownership, by-value parameters, and destructor-bearing stored values wait for broader aggregate ownership. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
+All three owning homogeneous collections remain move-only. Nested owning collections, struct/class fields, by-value parameters/returns, and destructor-bearing stored values are supported. Owning globals and union/variant payloads remain rejected. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
 
 ## Structs
 
@@ -319,9 +319,11 @@ class File:
 The illustrative user-written class above remains valid for wrapping raw `stdio.FILE`
 handles when a custom type is preferable to the builtin `File`. For a local destructor-bearing value, the compiler calls `__del__` on every normal
 scope exit, including early returns and Result propagation. Such classes are
-move-only in 0.5: implicit copies, by-value parameters, globals, arrays, variants,
-Results, and other owning aggregates are rejected. `__del__` cannot be called
-directly.
+move-only: implicit copies are rejected, while return and by-value parameter
+passing transfer ownership and mark the source moved. Struct/class fields,
+nested collections, and `Option`/`Result`/`Tuple` wrappers may own them.
+Owning globals and owning union/variant payloads remain rejected. `__del__`
+cannot be called directly.
 
 Cinder supports one implementation base. A stateful abstract base counts as that
 base; additional abstract bases must be interface-only, with no fields, constructor,

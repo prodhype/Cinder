@@ -42,13 +42,13 @@ Runtime metadata is inspectable in `cinder_runtime.h`, has no startup registrati
 
 Cinder implements specialized heterogeneous `Tuple[...]` values and homogeneous owning `List[T]`, `Map[K, V]`, and `Set[T]` collections. Maps preserve insertion order and expose live non-owning views; Sets provide membership and algebra. Optional collection lookups use the general tagged `Option[T]` family.
 
-Collection ownership deliberately remains narrow. Owning collections are move-only direct locals and return values. Nested owning collections, aggregate fields, globals, by-value parameters, and destructor-bearing elements are rejected. Hashable keys are integers, booleans, characters, enums, and copied `const char*` strings with content equality.
+Collection ownership is explicit and move-only. Owning collections and destructor-bearing classes may nest, live in struct/class fields, and pass by value with use-after-move checking. Owning globals and union/variant payloads remain rejected. Hashable keys are integers, booleans, characters, enums, and copied `const char*` strings with content equality.
 
 ## 0.6 candidates
 
 The next useful compiler milestone should focus on build and ABI maturity rather than expanding the surface language indiscriminately. Candidate work includes separate object compilation, dependency-aware object caching, parallel builds, depfiles, richer package configuration, stable exported-name controls, and ABI conformance fixtures for supported compilers.
 
-Ownership work should remain explicit. Viable additions include opt-in copy operations, user-defined move hooks, owned pointer wrappers, and broader aggregate ownership building on List cleanup. A full borrow checker or inferred ownership system is not currently planned.
+Ownership work should remain explicit. Viable additions include opt-in copy operations, user-defined move hooks, owned pointer wrappers, and drop glue for unions/variants and globals. A full borrow checker or inferred ownership system is not currently planned.
 
 Compile-time work may grow toward user-defined constant functions and serializer generation, but it should not become unrestricted AST macros. Runtime reflection may add field-value visitors only if the access rules, alignment requirements, and generated C remain straightforward.
 

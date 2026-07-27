@@ -46,15 +46,22 @@ def test_open_outside_with_still_registers_drop() -> None:
     [
         (
             "def consume(file: File) -> void:\n"
-            "    pass\n",
-            "cannot own a File by value",
+            "    pass\n"
+            "\n"
+            "def main() -> i32:\n"
+            '    file = open("out.bin", "wb")\n'
+            "    consume(file)\n"
+            "    file.close()\n"
+            "    return 0\n",
+            "use of moved value file",
         ),
         (
             "def main() -> i32:\n"
             '    file = open("out.bin", "wb")\n'
             "    copied = file\n"
+            "    file.close()\n"
             "    return 0\n",
-            "cannot copy move-only File",
+            "use of moved value file",
         ),
         (
             "def main() -> i32:\n"

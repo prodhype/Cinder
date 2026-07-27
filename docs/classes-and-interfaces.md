@@ -146,16 +146,17 @@ Dynamic interface values are non-owning. They cannot be returned by value or sto
 
 Local class values are destroyed in reverse declaration order. A derived destructor runs before the implementation-base destructor. Active `defer` calls and class drops share the same lexical cleanup path.
 
-Destructor-bearing classes are move-only in 0.5. The checker accepts ownership from a constructor or a function returning the class, but rejects implicit copies:
+Destructor-bearing classes are move-only in 0.5. The checker accepts ownership from a constructor, a function returning the class, or a transferable local/parameter, but rejects implicit copies and diagnoses use-after-move:
 
 ```python
 first = Resource()
-second = first  # error: would copy one owned lifetime
+second = first
+second = first  # error: use of moved value first
 ```
 
 Returning an owned local transfers its lifetime to the caller. Reassigning an owned local evaluates the replacement first, drops the old value, and then transfers the replacement. A discarded class-returning call is materialized and immediately dropped.
 
-To keep generated cleanup direct and auditable, 0.5 rejects destructor-bearing classes inside globals, arrays, variants, Results, or other owning aggregates, and rejects by-value parameter passing for them. Use references for borrowed parameters and explicit pointer-based containers when aggregate ownership is needed.
+Aggregate ownership is supported for struct/class fields, nested collections, `Option`/`Result`/`Tuple` wrappers, and by-value parameters. Owning globals and union/variant payloads remain rejected because portable C11 has no automatic global destruction phase and tagged-union drop glue is not implemented yet.
 
 `__del__` cannot be called directly. It is compiler-managed cleanup. There is no exception unwinding, reference counting, hidden heap ownership, or ownership inference.
 

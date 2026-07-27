@@ -56,12 +56,6 @@ def test_option_construction_access_and_match_codegen() -> None:
         ),
         (
             "def main() -> i32:\n"
-            "    value: Option[List[i32]] = None\n"
-            "    return 0\n",
-            "invalid Option payload type List[i32]",
-        ),
-        (
-            "def main() -> i32:\n"
             "    value = Some(1)\n"
             "    match value:\n"
             "        case Some(number):\n"

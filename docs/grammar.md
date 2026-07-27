@@ -130,7 +130,7 @@ An unannotated class `self` is inferred as `&Owner`. `self: &const Owner` declar
 
 `__del__` is deterministic compiler-managed cleanup. It cannot be called directly. A derived destructor runs before the implementation-base destructor.
 
-Destructor-bearing classes are move-only. They may be initialized from constructors or class-returning calls, transferred by return, and replaced by move-style reassignment. Implicit copies and by-value parameters are rejected. Aggregate ownership of destructor-bearing classes is not implemented in 0.5.
+Destructor-bearing classes and other types that need drop are move-only. They may be initialized from constructors or class-returning calls, transferred by return or by-value parameter passing, stored in struct/class fields, and replaced by move-style reassignment. Implicit copies are rejected; use-after-move is diagnosed. Owning globals and owning union/variant payloads remain unsupported.
 
 Calls on concrete class types use static dispatch. Dynamic dispatch requires an explicit dynamic-reference type.
 
@@ -364,11 +364,11 @@ sort(values)
 last = values.pop()
 ```
 
-An empty list needs a contextual `List[T]` type. List values are move-only: direct local variables and direct function returns own their buffers, replacement drops the previous buffer, and scope exit frees the active buffer. An addressable `List[T]` may be passed without copying to a `[]T` or `[]const T` function parameter; this call-only coercion does not permit storing or returning a List-backed slice. Mutable slices may update elements, while structural operations still require `&List[T]`. By-value List parameters, globals, nested owning lists, aggregate List fields, and destructor-bearing list elements are not implemented. Bind a returned or literal List to a local before indexing, iterating, sorting, calling `len`, or borrowing it as a slice.
+An empty list needs a contextual `List[T]` type. List values are move-only owners of their buffers: locals, fields, by-value parameters, and returns transfer ownership; replacement drops the previous buffer; and scope exit frees the active buffer. Nested lists and destructor-bearing elements are allowed. An addressable `List[T]` may be passed without copying to a `[]T` or `[]const T` function parameter; this call-only coercion does not permit storing or returning a List-backed slice. Mutable slices may update elements, while structural operations still require `&List[T]`. Owning List globals remain unsupported. Bind a returned or literal List to a local before indexing, iterating, sorting, calling `len`, or borrowing it as a slice.
 
 List indexing follows the current array/slice model and does not insert bounds checks. `pop` does check for an empty list and panics. While a `for` loop iterates a List, the same storage cannot be structurally modified, replaced, sorted, or borrowed as mutable `[]T`, including through recognized aliases. Read-only `[]const T` helpers and provably unrelated Lists remain available.
 
-Maps are insertion-ordered owning hash tables. `map[key]` panics when the key is absent; direct assignment inserts or replaces. `get(key)` and `pop(key)` return `Option[V]`. Default iteration yields keys, and `keys()`, `values()`, and `items()` return live first-class `MapKeys[K,V]`, `MapValues[K,V]`, and `MapItems[K,V]` views. Items iterate as `Tuple[K,V]`. Maps also provide `clear()` and `update(other)`.
+Maps are insertion-ordered owning hash tables. `map[key]` panics when the key is absent; direct assignment inserts or replaces. `get(key)` and `pop(key)` return `Option[V]`. Default iteration yields keys, and `keys()`, `values()`, and `items()` return live first-class `MapKeys[K,V]`, `MapValues[K,V]`, and `MapItems[K,V]` views. Items iterate as `Tuple[K,V]`. Maps also provide `clear()` and `update(other)`; `update` is rejected when `V` needs drop because it would copy owned values.
 
 Sets are unordered owning hash tables. They provide `add`, `discard`, missing-element-panicking `remove`, optional `pop`, `clear`, and `update`. `union`, `intersection`, `difference`, and `symmetric_difference` return fresh Sets; `|`, `&`, `-`, `^`, their compound forms, equality, and subset/superset comparisons provide the operator forms.
 
@@ -457,4 +457,4 @@ Option values expose `.is_some`, `.is_none`, and checked `.value`.
 
 ## Deliberate omissions
 
-The 0.5 grammar and checker do not implement user-defined generics, multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, aggregate ownership for owning collections or destructor-bearing classes, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, or multi-root package dependency graphs.
+The 0.5 grammar and checker do not implement user-defined generics, multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, or multi-root package dependency graphs. Owning globals and owning union/variant payloads remain intentionally rejected.

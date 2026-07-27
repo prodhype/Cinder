@@ -314,6 +314,36 @@ def test_native_classes_dyn_reflection_and_destructor_order(tmp_path: Path) -> N
     assert result.stdout == "12 21\n"
 
 
+def test_native_aggregate_ownership_drops_nested_lists(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "import stdio\n"
+        "\n"
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "\n"
+        "class Holder:\n"
+        "    items: List[i32]\n"
+        "\n"
+        "    def __init__(self, items: List[i32]):\n"
+        "        self.items = items\n"
+        "\n"
+        "def consume(values: List[i32]) -> i32:\n"
+        "    return cast[i32](len(values))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    nested: List[List[i32]] = [[1, 2], [3]]\n"
+        "    bundle = Bundle(items=[4, 5, 6])\n"
+        "    holder = Holder([7])\n"
+        "    total = consume(nested.pop()) + cast[i32](len(bundle.items)) "
+        "+ cast[i32](len(holder.items))\n"
+        "    stdio.printf(\"%d\\n\", total)\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "5\n"
+
+
 def test_native_multiple_abstract_interfaces(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

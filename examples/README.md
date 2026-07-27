@@ -12,6 +12,8 @@
 
 `collections.ci` demonstrates heterogeneous tuples; inferred owning Lists, Maps, and Sets; `Option` lookup; live Map views; Set algebra; deterministic cleanup; sorting; iteration; zero-copy List-to-slice arguments; and Python-like `print` of whole collections.
 
+`aggregate_ownership.ci` demonstrates aggregate ownership: struct/class fields owning Lists/Maps/Sets/Files and destructor-bearing classes; nested collections and owning elements; by-value parameters and returns; `Option`/`Result`/`Tuple`/array wrappers; field reassignment; and local moves.
+
 `pointers.ci` demonstrates address-of, raw pointers, transparent references, and pointer indexing.
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.

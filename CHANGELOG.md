@@ -8,9 +8,9 @@ Lists provide deterministic move-only ownership, direct return transfer, indexin
 
 Maps and Sets extend the native collection phase with specialized deterministic hash tables, brace literals, membership, insertion-ordered Map iteration, live `keys`/`values`/`items` views, optional lookup/removal, and Set algebra. Integer, boolean, character, enum, and `const char*` keys are hashable. String keys use content equality and are copied into the owning collection.
 
-The release also adds general `Option[T]` values with `Some`, contextual `None`, exhaustive matching, state attributes, and checked payload access. Maps and Sets follow Lists' narrow move-only ownership model, including direct return transfer, cleanup on all exits, and mutation guards during active iteration.
+The release also adds general `Option[T]` values with `Some`, contextual `None`, exhaustive matching, state attributes, and checked payload access. Maps and Sets follow Lists' move-only ownership model, including direct return transfer, cleanup on all exits, and mutation guards during active iteration.
 
-Owning collections still reject nesting, aggregate/global ownership, by-value parameters, and destructor-bearing elements. First-class Map views are non-owning and follow the same explicit lifetime responsibility as slices.
+Aggregate ownership is now first-class for `List`/`Map`/`Set`/`File` and destructor-bearing classes: struct/class by-value owning fields, nested owning collections and owning elements, by-value owning parameters with use-after-move diagnostics, and `Option`/`Result`/`Tuple`(/array) drop glue. Owning globals and unions/user variants with owning members remain rejected.
 
 ## 0.5.0
 

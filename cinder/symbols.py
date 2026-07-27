@@ -232,6 +232,7 @@ class CallResolution:
     interface: ClassSymbol | None = None
     super_class: ClassSymbol | None = None
     compile_value: object | None = None
+    moved_variables: tuple[VariableSymbol, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
