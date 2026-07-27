@@ -56,26 +56,10 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
         ),
         (
             "def main() -> i32:\n"
-            "    [{1: 2}]\n"
-            "    return 0\n",
-            "cannot infer a List element type from Map[i32, i32]",
-        ),
-        (
-            "def consume(values: List[i32]) -> void:\n"
-            "    pass\n",
-            "cannot own a List by value",
-        ),
-        (
-            "def consume(result: Result[List[i32], i32]) -> void:\n"
-            "    pass\n",
-            "parameter consume.result contains an owning List",
-        ),
-        (
-            "def main() -> i32:\n"
             "    values = [1]\n"
             "    copied = values\n"
-            "    return 0\n",
-            "cannot copy move-only List[i32]",
+            "    return values[0]\n",
+            "use of moved value values",
         ),
         (
             "def main(index: i32, argv: **char) -> i32:\n"
@@ -91,33 +75,30 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
         ),
         (
             "def main() -> i32:\n"
-            "    nested: List[List[i32]] = []\n"
-            "    return 0\n",
-            "invalid List element type List[i32]",
-        ),
-        (
-            "def main() -> i32:\n"
-            "    nested: List[Result[Map[i32, i32], i32]] = []\n"
-            "    return 0\n",
-            "invalid List element type Result[Map[i32, i32], i32]",
-        ),
-        (
-            "class Resource:\n"
-            "    def __del__(self):\n"
-            "        pass\n"
-            "\n"
-            "def main() -> i32:\n"
-            "    values: List[Resource] = []\n"
-            "    return 0\n",
-            "List element type Resource contains a class with a destructor",
-        ),
-        (
-            "def main() -> i32:\n"
             "    values = [1, 2]\n"
             "    for value in values:\n"
             "        values.append(value)\n"
             "    return 0\n",
             "cannot call List.append while iterating over that List",
+        ),
+        (
+            "def consume(values: List[i32]) -> void:\n"
+            "    pass\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    consume(values)\n"
+            "    return values[0]\n",
+            "use of moved value values",
+        ),
+        (
+            "values: List[i32] = []\n",
+            "global 'values' cannot own a collection",
+        ),
+        (
+            "union Box:\n"
+            "    items: List[i32]\n",
+            "union field Box.items cannot own a collection",
         ),
     ],
 )
@@ -125,6 +106,118 @@ def test_collection_diagnostics(source: str, message: str) -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(source)
     assert message in str(captured.value)
+
+
+def test_by_value_list_parameter_and_nested_lists_are_allowed() -> None:
+    generated = compile_source(
+        "def consume(values: List[i32]) -> i32:\n"
+        "    return cast[i32](len(values))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    nested: List[List[i32]] = [[1, 2], [3]]\n"
+        "    return consume(nested.pop())\n"
+    )
+    assert "consume(CinderList_i32 values)" in generated
+    assert "CinderList_list_i32" in generated
+    assert "CinderList_i32_drop" in generated
+    assert "CinderList_list_i32_drop" in generated
+
+
+def test_list_of_destructor_class_is_allowed() -> None:
+    generated = compile_source(
+        "class Resource:\n"
+        "    def __del__(self):\n"
+        "        pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[Resource] = []\n"
+        "    values.append(Resource())\n"
+        "    return cast[i32](len(values))\n"
+    )
+    assert "Resource__drop" in generated
+    assert "CinderList_" in generated
+
+
+def test_list_pop_zeros_moved_owning_slot() -> None:
+    generated = compile_source(
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        "        pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[Resource] = []\n"
+        "    values.append(Resource(1))\n"
+        "    values.append(Resource(2))\n"
+        "    popped = values.pop()\n"
+        "    values.append(Resource(3))\n"
+        "    return popped.label\n"
+    )
+    assert "value->length -= 1;" in generated
+    assert "memset(&value->data[value->length], 0, sizeof(*value->data));" in generated
+    # Trivial element pops move out without zeroing capacity slots.
+    trivial = compile_source(
+        "def main() -> i32:\n"
+        "    values = [1, 2]\n"
+        "    return values.pop()\n"
+    )
+    assert "result = value->data[value->length];" in trivial
+    assert "memset(&value->data[value->length]" not in trivial
+
+
+def test_result_list_parameter_is_allowed() -> None:
+    generated = compile_source(
+        "def consume(result: Result[List[i32], i32]) -> i32:\n"
+        "    return 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n"
+    )
+    assert "consume(" in generated
+    assert "_drop" in generated
+
+
+def test_struct_and_class_owning_fields_emit_drop() -> None:
+    generated = compile_source(
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "\n"
+        "class Holder:\n"
+        "    items: List[i32]\n"
+        "\n"
+        "    def __init__(self, items: List[i32]):\n"
+        "        self.items = items\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    bundle = Bundle(items=[1, 2])\n"
+        "    holder = Holder([3])\n"
+        "    return cast[i32](len(bundle.items) + len(holder.items))\n"
+    )
+    assert "Bundle__drop" in generated
+    assert "Holder__drop" in generated
+
+
+def test_class_constructor_move_excludes_source_cleanup() -> None:
+    generated = compile_source(
+        "class Holder:\n"
+        "    items: List[i32]\n"
+        "\n"
+        "    def __init__(self, items: List[i32]):\n"
+        "        self.items = items\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values = [1, 2, 3]\n"
+        "    holder = Holder(values)\n"
+        "    return cast[i32](len(holder.items))\n"
+    )
+    assert "Holder__new(values)" in generated
+    assert "CinderList_i32_drop(&values);" not in generated
+    assert "Holder__drop(&holder);" in generated
+
 
 
 def test_const_list_reference_rejects_mutation() -> None:

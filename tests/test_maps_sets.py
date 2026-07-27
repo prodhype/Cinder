@@ -146,13 +146,27 @@ def test_brace_literals_inside_fstrings_track_nested_colons_and_quotes() -> None
             "def main() -> i32:\n"
             "    value = {1: 2}\n"
             "    copied = value\n"
+            "    copied = value\n"
             "    return 0\n",
-            "cannot copy move-only Map[i32, i32]",
+            "use of moved value value",
+        ),
+        (
+            "def main() -> i32:\n"
+            "    left: Map[i32, List[i32]] = {1: [10]}\n"
+            "    right: Map[i32, List[i32]] = {2: [20]}\n"
+            "    left.update(right)\n"
+            "    return 0\n",
+            "Map.update is unavailable for move-only value type List[i32]",
         ),
         (
             "def consume(value: Set[i32]) -> void:\n"
-            "    pass\n",
-            "cannot own a Set by value",
+            "    pass\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    values = {1, 2}\n"
+            "    consume(values)\n"
+            "    return cast[i32](len(values))\n",
+            "use of moved value values",
         ),
         (
             "def main() -> i32:\n"

@@ -174,8 +174,9 @@ def test_destructor_bearing_classes_cannot_be_copied() -> None:
         "def main() -> i32:\n"
         "    original = Resource()\n"
         "    copy = original\n"
+        "    copy = original\n"
         "    return 0\n",
-        "cannot copy destructor-bearing class Resource",
+        "use of moved value original",
     )
 
 

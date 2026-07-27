@@ -7,6 +7,11 @@ from dataclasses import field as dataclass_field
 
 from cinder import ast
 from cinder.diagnostics import CompilationFailed, DiagnosticBag, Span
+from cinder.ownership import (
+    class_needs_drop as ownership_class_needs_drop,
+    struct_needs_drop as ownership_struct_needs_drop,
+    type_needs_drop as ownership_type_needs_drop,
+)
 from cinder.stdlib import builtin_global_functions, builtin_modules
 from cinder.symbols import (
     AttributeResolution,
@@ -284,6 +289,7 @@ class Checker:
         self.unsafe_depth = 0
         self.active_collection_iterators: list[_CollectionStorage] = []
         self.map_view_storages: dict[int, _CollectionStorage] = {}
+        self.moved_variables: set[int] = set()
 
     def check(self) -> SemanticModel:
         self._install_builtins()
@@ -1364,38 +1370,10 @@ class Checker:
         for struct in self.structs.values():
             for field in struct.fields.values():
                 self._validate_list_elements(field.type, field.span)
-                if self._contains_owning_container_value(field.type):
-                    self._error(
-                        f"field {struct.name}.{field.name} cannot own a collection",
-                        field.span,
-                        code="C247",
-                        note="store a pointer or reference; aggregate collection ownership is not implemented",
-                    )
-                if self._contains_destructible_value(field.type):
-                    self._error(
-                        f"field {struct.name}.{field.name} contains a class with a destructor",
-                        field.span,
-                        code="C220",
-                        note="destructor-bearing classes may currently be owned only by direct local variables",
-                    )
 
         for class_ in self.classes.values():
             for field in class_.fields.values():
                 self._validate_list_elements(field.type, field.span)
-                if self._contains_owning_container_value(field.type):
-                    self._error(
-                        f"field {class_.name}.{field.name} cannot own a collection",
-                        field.span,
-                        code="C247",
-                        note="store a pointer or reference; aggregate collection ownership is not implemented",
-                    )
-                if self._contains_destructible_value(field.type):
-                    self._error(
-                        f"field {class_.name}.{field.name} contains a class with a destructor",
-                        field.span,
-                        code="C221",
-                        note="use a pointer/reference field or manage the nested lifetime explicitly",
-                    )
 
         for union in self.unions.values():
             for field in union.fields.values():
@@ -1458,71 +1436,7 @@ class Checker:
         for function in functions:
             for parameter in function.parameters:
                 self._validate_list_elements(parameter.type, parameter.span)
-                parameter_container = self._owned_container(parameter.type)
-                if parameter_container is not None:
-                    family = type_name(parameter_container).split("[", 1)[0]
-                    self._error(
-                        f"parameter {function.name}.{parameter.name} cannot own "
-                        f"a {family} by value",
-                        parameter.span,
-                        code="C249",
-                        note="pass owning collections by reference or pointer",
-                    )
-                elif self._contains_owning_container_value(parameter.type):
-                    contained = (
-                        "List"
-                        if self._contains_list_value(parameter.type)
-                        else "collection"
-                    )
-                    self._error(
-                        f"parameter {function.name}.{parameter.name} contains an owning "
-                        f"{contained}",
-                        parameter.span,
-                        code="C290",
-                        note=(
-                            "aggregate collection ownership is not implemented; "
-                            "pass the value by reference or pointer"
-                        ),
-                    )
-                if self._destructible_class(parameter.type) is not None:
-                    self._error(
-                        f"parameter {function.name}.{parameter.name} cannot own a "
-                        "destructor-bearing class by value",
-                        parameter.span,
-                        code="C225",
-                        note="pass the class by reference, pointer, or &dyn interface",
-                    )
-                elif self._contains_destructible_value(parameter.type):
-                    self._error(
-                        f"parameter {function.name}.{parameter.name} contains a "
-                        "class with a destructor",
-                        parameter.span,
-                        code="C225",
-                        note="aggregate ownership of destructor-bearing classes is not implemented",
-                    )
             self._validate_list_elements(function.return_type, function.span)
-            return_container = self._owned_container(function.return_type)
-            if return_container is None and self._contains_owning_container_value(
-                function.return_type
-            ):
-                self._error(
-                    f"return type {type_name(function.return_type)} contains an owning collection",
-                    function.span,
-                    code="C250",
-                    note="only a direct collection return currently transfers ownership",
-                )
-            return_class = self._destructible_class(function.return_type)
-            if (
-                return_class is None
-                and self._contains_destructible_value(function.return_type)
-            ):
-                self._error(
-                    f"return type {type_name(function.return_type)} contains a class "
-                    "with a destructor",
-                    function.span,
-                    code="C226",
-                    note="only a direct class return currently transfers ownership",
-                )
 
     def _validate_list_elements(self, type_: Type, span: Span) -> None:
         raw = strip_const(type_)
@@ -1532,20 +1446,6 @@ class Checker:
         if isinstance(raw, DynType):
             return
         if isinstance(raw, ListType):
-            if self._contains_owning_container_value(raw.inner):
-                self._error(
-                    f"List element type {type_name(raw.inner)} contains an owning collection",
-                    span,
-                    code="C251",
-                    note="nested owning containers are not implemented",
-                )
-            if self._contains_destructible_value(raw.inner):
-                self._error(
-                    f"List element type {type_name(raw.inner)} contains a class with a destructor",
-                    span,
-                    code="C252",
-                    note="List currently supports only trivially copyable element values",
-                )
             return
         if isinstance(raw, ArrayType):
             self._validate_list_elements(raw.inner, span)
@@ -1575,10 +1475,39 @@ class Checker:
         return not (
             is_void(raw)
             or isinstance(raw, (ConstType, ReferenceType, ArrayType))
-            or is_owning_container(raw)
-            or self._contains_owning_container_value(raw)
-            or self._contains_destructible_value(raw)
             or not self._is_collection_runtime_type(raw)
+        )
+
+    def type_needs_drop(self, type_: Type, seen: frozenset[Type] | None = None) -> bool:
+        return ownership_type_needs_drop(
+            type_,
+            classes=self.classes_by_type,
+            structs=self.structs_by_type,
+            seen=seen,
+        )
+
+    def class_needs_drop(
+        self,
+        class_: ClassSymbol,
+        seen: frozenset[Type] | None = None,
+    ) -> bool:
+        return ownership_class_needs_drop(
+            class_,
+            classes=self.classes_by_type,
+            structs=self.structs_by_type,
+            seen=seen,
+        )
+
+    def struct_needs_drop(
+        self,
+        struct_: StructSymbol,
+        seen: frozenset[Type] | None = None,
+    ) -> bool:
+        return ownership_struct_needs_drop(
+            struct_,
+            classes=self.classes_by_type,
+            structs=self.structs_by_type,
+            seen=seen,
         )
 
     def _destructible_class(self, type_: Type) -> ClassSymbol | None:
@@ -1596,10 +1525,36 @@ class Checker:
         seen: set[Type] | None = None,
     ) -> bool:
         raw = strip_const(type_)
-        if isinstance(raw, (PointerType, ReferenceType, SliceType, DynType)):
+        if isinstance(raw, (PointerType, ReferenceType, SliceType, DynType, MapViewType)):
             return False
+        if seen is None:
+            seen = set()
+        if isinstance(raw, (ClassType, StructType)):
+            if raw in seen:
+                return False
+            seen.add(raw)
         if self._destructible_class(raw) is not None:
             return True
+        if isinstance(raw, ClassType):
+            class_ = self.classes_by_type.get(raw)
+            if class_ is None:
+                return False
+            if any(
+                self._contains_destructible_value(field.type, seen)
+                for field in class_.fields.values()
+            ):
+                return True
+            if class_.primary_base is not None:
+                return self._contains_destructible_value(class_.primary_base.type, seen)
+            return False
+        if isinstance(raw, StructType):
+            struct_ = self.structs_by_type.get(raw)
+            if struct_ is None:
+                return False
+            return any(
+                self._contains_destructible_value(field.type, seen)
+                for field in struct_.fields.values()
+            )
         if isinstance(raw, ArrayType):
             return self._contains_destructible_value(raw.inner, seen)
         if isinstance(raw, ListType):
@@ -1625,25 +1580,68 @@ class Checker:
             ) or self._contains_destructible_value(raw.error, seen)
         return False
 
-    def _contains_owning_container_value(self, type_: Type) -> bool:
+    def _contains_owning_container_value(
+        self,
+        type_: Type,
+        seen: set[Type] | None = None,
+    ) -> bool:
         raw = strip_const(type_)
         if isinstance(raw, (PointerType, ReferenceType, SliceType, DynType, MapViewType)):
             return False
         if is_owning_container(raw):
             return True
+        if seen is None:
+            seen = set()
+        if isinstance(raw, (ClassType, StructType)):
+            if raw in seen:
+                return False
+            seen.add(raw)
+        if isinstance(raw, ClassType):
+            class_ = self.classes_by_type.get(raw)
+            if class_ is None:
+                return False
+            if any(
+                self._contains_owning_container_value(field.type, seen)
+                for field in class_.fields.values()
+            ):
+                return True
+            if class_.primary_base is not None:
+                return self._contains_owning_container_value(
+                    class_.primary_base.type,
+                    seen,
+                )
+            return False
+        if isinstance(raw, StructType):
+            struct_ = self.structs_by_type.get(raw)
+            if struct_ is None:
+                return False
+            return any(
+                self._contains_owning_container_value(field.type, seen)
+                for field in struct_.fields.values()
+            )
         if isinstance(raw, ArrayType):
-            return self._contains_owning_container_value(raw.inner)
+            return self._contains_owning_container_value(raw.inner, seen)
         if isinstance(raw, TupleType):
             return any(
-                self._contains_owning_container_value(element)
+                self._contains_owning_container_value(element, seen)
                 for element in raw.elements
             )
         if isinstance(raw, ResultType):
             return self._contains_owning_container_value(
-                raw.ok
-            ) or self._contains_owning_container_value(raw.error)
+                raw.ok,
+                seen,
+            ) or self._contains_owning_container_value(raw.error, seen)
         if isinstance(raw, OptionType):
-            return self._contains_owning_container_value(raw.inner)
+            return self._contains_owning_container_value(raw.inner, seen)
+        if isinstance(raw, ListType):
+            return self._contains_owning_container_value(raw.inner, seen)
+        if isinstance(raw, MapType):
+            return self._contains_owning_container_value(
+                raw.key,
+                seen,
+            ) or self._contains_owning_container_value(raw.value, seen)
+        if isinstance(raw, SetType):
+            return self._contains_owning_container_value(raw.inner, seen)
         return False
 
     def _owned_list(self, type_: Type) -> ListType | None:
@@ -1708,47 +1706,141 @@ class Checker:
             ),
         )
 
+    def _is_owned_drop_source(self, expression: ast.Expression, type_: Type) -> bool:
+        expected = strip_const(type_)
+        expression_type = value_type(self.expr_types.get(id(expression), ERROR))
+        if expression_type != expected and not (
+            expected == ERROR or expression_type == ERROR
+        ):
+            # Allow None for Option types.
+            if not (
+                isinstance(expected, OptionType)
+                and isinstance(expression, ast.NoneExpr)
+            ):
+                return False
+        if isinstance(expected, (ListType, MapType, SetType, FileType)):
+            return self._is_owned_container_source(expression, expected)
+        if isinstance(expected, ClassType):
+            class_ = self.classes_by_type.get(expected)
+            return class_ is not None and self._is_owned_class_source(expression, class_)
+        if isinstance(expected, StructType):
+            return isinstance(expression, ast.CallExpr)
+        if isinstance(expected, OptionType):
+            return isinstance(expression, (ast.CallExpr, ast.NoneExpr))
+        if isinstance(expected, ResultType):
+            return isinstance(expression, ast.CallExpr)
+        if isinstance(expected, TupleType):
+            return isinstance(expression, ast.TupleLiteralExpr)
+        if isinstance(expected, ArrayType):
+            return isinstance(expression, ast.ListLiteralExpr)
+        return isinstance(expression, ast.CallExpr)
+
     def _is_transferable_local(
         self,
         expression: ast.Expression,
         class_: ClassSymbol,
     ) -> bool:
-        if not isinstance(expression, ast.NameExpr):
-            return False
-        symbol = self.name_symbols.get(id(expression))
-        if not isinstance(symbol, VariableSymbol) or symbol.is_parameter:
-            return False
-        if value_type(symbol.type) != class_.type:
-            return False
-        return not any(symbol is global_ for global_ in self.globals.values())
+        return self._is_transferable_drop_local(expression, class_.type)
 
     def _is_transferable_list_local(
         self,
         expression: ast.Expression,
         list_type: ListType,
     ) -> bool:
-        if not isinstance(expression, ast.NameExpr):
-            return False
-        symbol = self.name_symbols.get(id(expression))
-        if not isinstance(symbol, VariableSymbol) or symbol.is_parameter:
-            return False
-        if value_type(symbol.type) != list_type:
-            return False
-        return not any(symbol is global_ for global_ in self.globals.values())
+        return self._is_transferable_drop_local(expression, list_type)
 
     def _is_transferable_container_local(
         self,
         expression: ast.Expression,
         container_type: _OwnedContainer,
     ) -> bool:
+        return self._is_transferable_drop_local(expression, container_type)
+
+    def _is_transferable_drop_local(
+        self,
+        expression: ast.Expression,
+        type_: Type,
+    ) -> bool:
         if not isinstance(expression, ast.NameExpr):
             return False
         symbol = self.name_symbols.get(id(expression))
-        if not isinstance(symbol, VariableSymbol) or symbol.is_parameter:
+        if not isinstance(symbol, VariableSymbol):
             return False
-        if value_type(symbol.type) != container_type:
+        if value_type(symbol.type) != strip_const(type_):
             return False
-        return not any(symbol is global_ for global_ in self.globals.values())
+        if any(symbol is global_ for global_ in self.globals.values()):
+            return False
+        if symbol.is_parameter and isinstance(
+            strip_const(symbol.type),
+            (ReferenceType, PointerType, SliceType, DynType, MapViewType),
+        ):
+            return False
+        if id(symbol) in self.moved_variables:
+            return False
+        return True
+
+    def _mark_moved_from(self, expression: ast.Expression) -> VariableSymbol | None:
+        if not isinstance(expression, ast.NameExpr):
+            return None
+        symbol = self.name_symbols.get(id(expression))
+        if not isinstance(symbol, VariableSymbol):
+            return None
+        if not self.type_needs_drop(symbol.type):
+            return None
+        self.moved_variables.add(id(symbol))
+        return symbol
+
+    def _clear_moved(self, symbol: VariableSymbol) -> None:
+        self.moved_variables.discard(id(symbol))
+
+    def _check_not_moved(self, expression: ast.Expression) -> None:
+        if not isinstance(expression, ast.NameExpr):
+            return
+        symbol = self.name_symbols.get(id(expression))
+        if isinstance(symbol, VariableSymbol) and id(symbol) in self.moved_variables:
+            self._error(
+                f"use of moved value {symbol.name}",
+                expression.span,
+                code="C341",
+            )
+
+    def _validate_move_only_source(
+        self,
+        expression: ast.Expression,
+        type_: Type,
+        *,
+        allow_transfer: bool = True,
+    ) -> VariableSymbol | None:
+        if not self.type_needs_drop(type_):
+            return None
+        if self._is_owned_drop_source(expression, type_):
+            return None
+        if allow_transfer and self._is_transferable_drop_local(expression, type_):
+            return self._mark_moved_from(expression)
+        owned_container = self._owned_container(type_)
+        destructible = self._destructible_class(type_)
+        if owned_container is not None:
+            self._error(
+                f"cannot copy move-only {type_name(owned_container)}",
+                expression.span,
+                code="C254",
+                note="initialize from a fresh literal, operation, returning call, or transferable local",
+            )
+        elif destructible is not None:
+            self._error(
+                f"cannot copy destructor-bearing class {destructible.name}",
+                expression.span,
+                code="C228",
+                note="destructor-bearing class values are move-only",
+            )
+        else:
+            self._error(
+                f"cannot copy move-only value of type {type_name(type_)}",
+                expression.span,
+                code="C254",
+                note="use a fresh construction or transferable local",
+            )
+        return None
 
     def _validate_borrow_source(
         self,
@@ -2141,10 +2233,12 @@ class Checker:
         previous_scope = self.current_scope
         previous_function = self.current_function
         previous_owner = self.current_owner
+        previous_moved = self.moved_variables
         scope = Scope(self.global_scope)
         self.current_scope = scope
         self.current_function = function
         self.current_owner = owner
+        self.moved_variables = set()
         try:
             for parameter in function.parameters:
                 symbol = VariableSymbol(
@@ -2174,6 +2268,7 @@ class Checker:
             self.current_scope = previous_scope
             self.current_function = previous_function
             self.current_owner = previous_owner
+            self.moved_variables = previous_moved
 
     def _check_main(self) -> None:
         main = self.functions.get("main")
@@ -2432,38 +2527,15 @@ class Checker:
 
     def _check_with(self, statement: ast.WithStmt) -> None:
         context_type = self._check_expr(statement.context)
-        owned_container = self._owned_container(context_type)
-        destructible = self._destructible_class(context_type)
-        if owned_container is not None:
-            self._validate_list_elements(owned_container, statement.context.span)
-            if not self._is_owned_container_source(statement.context, owned_container):
-                self._error(
-                    f"cannot copy move-only {type_name(owned_container)} into with binding",
-                    statement.context.span,
-                    code="C320",
-                    note="bind a fresh literal, operation, or returning call",
-                )
+        if self.type_needs_drop(context_type):
             if isinstance(context_type, ConstType):
                 self._error(
-                    f"{type_name(owned_container)} with bindings cannot be const",
+                    f"{type_name(strip_const(context_type))} with bindings cannot be const",
                     statement.context.span,
                     code="C323",
                     note="borrow through a const reference for read-only access",
                 )
-        elif self._contains_owning_container_value(context_type):
-            self._error(
-                f"with binding type {type_name(context_type)} contains an owning collection",
-                statement.context.span,
-                code="C321",
-            )
-        elif destructible is not None:
-            if not self._is_owned_class_source(statement.context, destructible):
-                self._error(
-                    f"cannot copy destructor-bearing class {destructible.name} into with binding",
-                    statement.context.span,
-                    code="C322",
-                    note="construct it or initialize it from a function that returns it by value",
-                )
+            self._validate_move_only_source(statement.context, strip_const(context_type))
 
         binding_scope = Scope(self.current_scope)
         symbol = VariableSymbol(
@@ -2520,67 +2592,37 @@ class Checker:
         if statement.is_const and statement.initializer is None:
             self._error("constants require an initializer", statement.span, code="C033")
 
-        owned_container = self._owned_container(declared_type)
-        destructible = self._destructible_class(declared_type)
-        if owned_container is not None:
-            self._validate_list_elements(owned_container, statement.span)
+        if self.type_needs_drop(declared_type):
+            owned_container = self._owned_container(declared_type)
             if statement.initializer is None:
-                self._error(
-                    f"{type_name(owned_container)} requires an owning initializer",
-                    statement.span,
-                    code="C253",
-                    note="initialize it with a fresh collection literal or constructor",
+                label = (
+                    type_name(owned_container)
+                    if owned_container is not None
+                    else type_name(strip_const(declared_type))
                 )
-            elif not self._is_owned_container_source(
-                statement.initializer,
-                owned_container,
-            ):
                 self._error(
-                    f"cannot copy move-only {type_name(owned_container)}",
-                    statement.initializer.span,
-                    code="C254",
-                    note="initialize from a fresh literal, operation, or returning call",
+                    f"{label} requires an owning initializer",
+                    statement.span,
+                    code="C253" if owned_container is not None else "C227",
+                    note="initialize it with a fresh value or transferable local",
+                )
+            else:
+                self._validate_move_only_source(
+                    statement.initializer,
+                    strip_const(declared_type),
                 )
             if statement.is_const or isinstance(declared_type, ConstType):
+                label = (
+                    type_name(owned_container)
+                    if owned_container is not None
+                    else type_name(strip_const(declared_type))
+                )
                 self._error(
-                    f"{type_name(owned_container)} locals cannot be const",
+                    f"{label} locals cannot be const",
                     statement.span,
-                    code="C255",
-                    note="borrow the collection through a const reference for read-only access",
+                    code="C255" if owned_container is not None else "C229",
+                    note="borrow through a const reference for read-only access",
                 )
-        elif self._contains_owning_container_value(declared_type):
-            self._error(
-                f"local type {type_name(declared_type)} contains an owning collection",
-                statement.span,
-                code="C256",
-            )
-        elif destructible is not None:
-            if statement.initializer is None:
-                self._error(
-                    f"{destructible.name} requires an owning initializer",
-                    statement.span,
-                    code="C227",
-                    note="construct it or initialize it from a function that returns it by value",
-                )
-            elif not self._is_owned_class_source(statement.initializer, destructible):
-                self._error(
-                    f"cannot copy destructor-bearing class {destructible.name}",
-                    statement.initializer.span,
-                    code="C228",
-                    note="destructor-bearing class values are move-only",
-                )
-            if statement.is_const:
-                self._error(
-                    "destructor-bearing class locals cannot be const",
-                    statement.span,
-                    code="C229",
-                )
-        elif self._contains_destructible_value(declared_type):
-            self._error(
-                f"local type {type_name(declared_type)} contains a class with a destructor",
-                statement.span,
-                code="C230",
-            )
 
         if statement.initializer is not None and initializer_type is not None:
             self._validate_borrow_source(
@@ -2602,6 +2644,7 @@ class Checker:
         if previous is not None:
             self._duplicate_symbol(symbol, previous)
         self.declaration_symbols[id(statement)] = symbol
+        self._clear_moved(symbol)
         if (
             isinstance(value_type(symbol.type), MapViewType)
             and statement.initializer is not None
@@ -2657,42 +2700,9 @@ class Checker:
                 self.map_view_storages[id(symbol)] = self._collection_storage(
                     statement.value
                 )
-            owned_container = self._owned_container(inferred)
-            destructible = self._destructible_class(inferred)
-            if owned_container is not None:
-                self._validate_list_elements(owned_container, statement.value.span)
-                if not self._is_owned_container_source(
-                    statement.value,
-                    owned_container,
-                ):
-                    self._error(
-                        f"cannot copy move-only {type_name(owned_container)}",
-                        statement.value.span,
-                        code="C257",
-                    )
-            elif self._contains_owning_container_value(inferred):
-                self._error(
-                    f"inferred type {type_name(inferred)} contains an owning collection",
-                    statement.value.span,
-                    code="C258",
-                )
-            elif destructible is not None:
-                if not self._is_owned_class_source(
-                    statement.value,
-                    destructible,
-                ):
-                    self._error(
-                        f"cannot copy destructor-bearing class {destructible.name}",
-                        statement.value.span,
-                        code="C231",
-                        note="initialize from a constructor or class-returning call",
-                    )
-            elif self._contains_destructible_value(inferred):
-                self._error(
-                    f"inferred type {type_name(inferred)} contains a class with a destructor",
-                    statement.value.span,
-                    code="C232",
-                )
+            if self.type_needs_drop(inferred):
+                self._validate_move_only_source(statement.value, inferred)
+            self._clear_moved(symbol)
             return
 
         target_type, assignable, is_const_target = self._check_lvalue(statement.target)
@@ -2752,6 +2762,11 @@ class Checker:
                             value_type_,
                             statement.value.span,
                         )
+                    if self.type_needs_drop(effective_target):
+                        self._validate_move_only_source(
+                            statement.value,
+                            strip_const(effective_target),
+                        )
                     return
                 operator = statement.operator[:-1]
                 if operator in ("+", "-", "*", "/", "%"):
@@ -2775,10 +2790,9 @@ class Checker:
                     )
                 return
 
-        owned_container = self._owned_container(effective_target)
-        destructible = self._destructible_class(effective_target)
-        if owned_container is not None:
-            if self._collection_storage_is_active(
+        if self.type_needs_drop(effective_target):
+            owned_container = self._owned_container(effective_target)
+            if owned_container is not None and self._collection_storage_is_active(
                 statement.target
             ):
                 family = type_name(owned_container).split("[", 1)[0]
@@ -2789,57 +2803,19 @@ class Checker:
                 )
             if statement.operator != "=":
                 self._error(
-                    f"compound assignment is invalid for {type_name(owned_container)}",
+                    f"compound assignment is invalid for {type_name(strip_const(effective_target))}",
                     statement.span,
-                    code="C259",
+                    code="C259" if owned_container is not None else "C233",
                 )
-            if not isinstance(statement.target, ast.NameExpr):
+            if not isinstance(statement.target, (ast.NameExpr, ast.AttributeExpr)):
                 self._error(
-                    "owning collection assignment requires a direct local variable",
+                    "move-only assignment requires a local variable or field",
                     statement.target.span,
-                    code="C260",
+                    code="C260" if owned_container is not None else "C234",
                 )
-            if not self._is_owned_container_source(
+            self._validate_move_only_source(
                 statement.value,
-                owned_container,
-            ):
-                self._error(
-                    f"cannot copy move-only {type_name(owned_container)}",
-                    statement.value.span,
-                    code="C261",
-                    note="assign a fresh collection value or a returning call",
-                )
-        elif self._contains_owning_container_value(effective_target):
-            self._error(
-                f"assignment target {type_name(effective_target)} contains an owning collection",
-                statement.target.span,
-                code="C262",
-            )
-        elif destructible is not None:
-            if statement.operator != "=":
-                self._error(
-                    f"compound assignment is invalid for class {destructible.name}",
-                    statement.span,
-                    code="C233",
-                )
-            if not isinstance(statement.target, ast.NameExpr):
-                self._error(
-                    "destructor-bearing class assignment requires a direct local variable",
-                    statement.target.span,
-                    code="C234",
-                )
-            if not self._is_owned_class_source(statement.value, destructible):
-                self._error(
-                    f"cannot copy destructor-bearing class {destructible.name}",
-                    statement.value.span,
-                    code="C235",
-                    note="assign a fresh value returned by a constructor or function",
-                )
-        elif self._contains_destructible_value(effective_target):
-            self._error(
-                f"assignment target {type_name(effective_target)} contains a class with a destructor",
-                statement.target.span,
-                code="C236",
+                strip_const(effective_target),
             )
         if isinstance(strip_const(effective_target), ArrayType):
             self._error("fixed arrays cannot be assigned after declaration", statement.target.span, code="C037")
@@ -2853,13 +2829,12 @@ class Checker:
             )
             if isinstance(statement.target, ast.NameExpr):
                 target_symbol = self.name_symbols.get(id(statement.target))
-                if isinstance(target_symbol, VariableSymbol) and isinstance(
-                    value_type(target_symbol.type),
-                    MapViewType,
-                ):
-                    self.map_view_storages[id(target_symbol)] = (
-                        self._collection_storage(statement.value)
-                    )
+                if isinstance(target_symbol, VariableSymbol):
+                    self._clear_moved(target_symbol)
+                    if isinstance(value_type(target_symbol.type), MapViewType):
+                        self.map_view_storages[id(target_symbol)] = (
+                            self._collection_storage(statement.value)
+                        )
             if isinstance(effective_target, ReferenceType) and value_type_ == NULL:
                 self._error("references cannot be assigned null", statement.value.span, code="C038")
             return
@@ -2888,12 +2863,19 @@ class Checker:
                 )
 
     def _check_lvalue(self, expression: ast.Expression) -> tuple[Type, bool, bool]:
-        type_ = self._check_expr(expression)
         if isinstance(expression, ast.NameExpr):
-            symbol = self.name_symbols.get(id(expression))
+            symbol = self.current_scope.lookup(expression.name)
+            if symbol is None:
+                self._error(f"unknown name {expression.name!r}", expression.span, code="C048")
+                self.expr_types[id(expression)] = ERROR
+                return ERROR, False, False
+            self.name_symbols[id(expression)] = symbol
             if isinstance(symbol, VariableSymbol):
+                self.expr_types[id(expression)] = symbol.type
                 return symbol.type, True, self._lvalue_is_const(expression)
-            return type_, False, False
+            self.expr_types[id(expression)] = ERROR
+            return ERROR, False, False
+        type_ = self._check_expr(expression)
         if isinstance(expression, ast.AttributeExpr):
             resolution = self.attribute_resolutions.get(id(expression))
             if resolution and resolution.kind in (
@@ -2982,28 +2964,28 @@ class Checker:
             self._error("void function cannot return a value", value.span, code="C043")
         elif not self._can_assign(expected, actual):
             self._type_mismatch(expected, actual, value.span)
-        destructible = self._destructible_class(expected)
-        owned_container = self._owned_container(expected)
-        if owned_container is not None and not (
-            self._is_owned_container_source(value, owned_container)
-            or self._is_transferable_container_local(value, owned_container)
-        ):
-            self._error(
-                f"returning {type_name(owned_container)} would copy a move-only value",
-                value.span,
-                code="C263",
-                note="return a fresh collection, a returning call, or a direct local",
-            )
-        elif destructible is not None and not (
-            self._is_owned_class_source(value, destructible)
-            or self._is_transferable_local(value, destructible)
-        ):
-            self._error(
-                f"returning {destructible.name} would copy a move-only class value",
-                value.span,
-                code="C237",
-                note="return a freshly constructed value, a class-returning call, or a direct local",
-            )
+        if self.type_needs_drop(expected):
+            owned_container = self._owned_container(expected)
+            if not (
+                self._is_owned_drop_source(value, strip_const(expected))
+                or self._is_transferable_drop_local(value, strip_const(expected))
+            ):
+                if owned_container is not None:
+                    self._error(
+                        f"returning {type_name(owned_container)} would copy a move-only value",
+                        value.span,
+                        code="C263",
+                        note="return a fresh collection, a returning call, or a direct local",
+                    )
+                else:
+                    self._error(
+                        f"returning {type_name(strip_const(expected))} would copy a move-only value",
+                        value.span,
+                        code="C237",
+                        note="return a freshly constructed value, a returning call, or a direct local",
+                    )
+            else:
+                self._mark_moved_from(value)
 
     def _check_for_each(self, statement: ast.ForEachStmt) -> None:
         iterable_type = self._check_expr(statement.iterable)
@@ -3555,6 +3537,7 @@ class Checker:
             return ERROR
         self.name_symbols[id(expression)] = symbol
         if isinstance(symbol, VariableSymbol):
+            self._check_not_moved(expression)
             return symbol.type
         if isinstance(symbol, ComptimeVariableSymbol):
             return symbol.type
@@ -4478,6 +4461,7 @@ class Checker:
                     code="C269",
                 )
             expected_types: list[Type | None] = []
+            moved_variables: list[VariableSymbol] = []
             for argument in call.arguments:
                 actual = self._check_expr(
                     argument.value,
@@ -4489,12 +4473,20 @@ class Checker:
                         actual,
                         argument.value.span,
                     )
+                if self.type_needs_drop(receiver_type.inner):
+                    moved = self._validate_move_only_source(
+                        argument.value,
+                        strip_const(receiver_type.inner),
+                    )
+                    if moved is not None:
+                        moved_variables.append(moved)
                 expected_types.append(receiver_type.inner)
             self.call_resolutions[id(call)] = CallResolution(
                 "list_append",
                 argument_order=tuple(range(len(call.arguments))),
                 expected_types=tuple(expected_types),
                 compile_value=receiver_type,
+                moved_variables=tuple(moved_variables),
             )
             return VOID
 
@@ -4627,6 +4619,14 @@ class Checker:
                 f"Map.{method} does not accept named arguments",
                 call.span,
                 code="C321",
+            )
+        if method == "update" and self.type_needs_drop(receiver_type.value):
+            self._error(
+                f"Map.update is unavailable for move-only value type "
+                f"{type_name(receiver_type.value)}",
+                call.span,
+                code="C342",
+                note="update would copy owned values; assign entries individually",
             )
 
         expected_types: list[Type | None] = []
@@ -4888,6 +4888,7 @@ class Checker:
             class_=class_,
             argument_order=checked.argument_order,
             expected_types=checked.expected_types,
+            moved_variables=checked.moved_variables,
         )
         return class_.type
 
@@ -5214,6 +5215,7 @@ class Checker:
         )
         payload_type: Type = ERROR
         expected_types: list[Type | None] = []
+        moved_variables: list[VariableSymbol] = []
         for argument in call.arguments:
             if argument.name not in (None, "value"):
                 self._error(
@@ -5233,6 +5235,10 @@ class Checker:
             else:
                 payload_type = strip_const(value_type(actual))
             expected_types.append(payload_expected)
+            if self.type_needs_drop(payload_type):
+                moved = self._validate_move_only_source(argument.value, payload_type)
+                if moved is not None:
+                    moved_variables.append(moved)
 
         if isinstance(expected_option, OptionType):
             result = expected_option
@@ -5254,6 +5260,7 @@ class Checker:
             argument_order=tuple(range(len(call.arguments))),
             expected_types=tuple(expected_types),
             compile_value=result,
+            moved_variables=tuple(moved_variables),
         )
         return result
 
@@ -5314,6 +5321,7 @@ class Checker:
             )
         order: list[int] = []
         expected_types: list[Type | None] = []
+        moved_variables: list[VariableSymbol] = []
         for index, argument in enumerate(call.arguments):
             allowed_name = "value" if is_ok else "error"
             if argument.name is not None and argument.name != allowed_name:
@@ -5325,6 +5333,13 @@ class Checker:
             actual = self._check_expr(argument.value, expected=payload)
             if not is_void(payload) and not self._can_assign(payload, actual):
                 self._type_mismatch(payload, actual, argument.value.span)
+            if not is_void(payload) and self.type_needs_drop(payload):
+                moved = self._validate_move_only_source(
+                    argument.value,
+                    strip_const(payload),
+                )
+                if moved is not None:
+                    moved_variables.append(moved)
             order.append(index)
             expected_types.append(payload if not is_void(payload) else None)
         self.call_resolutions[id(call)] = CallResolution(
@@ -5333,6 +5348,7 @@ class Checker:
             result_is_ok=is_ok,
             argument_order=tuple(order),
             expected_types=tuple(expected_types),
+            moved_variables=tuple(moved_variables),
         )
         return result
 
@@ -5553,6 +5569,7 @@ class Checker:
 
         order: list[int] = []
         expected_types: list[Type | None] = []
+        moved_variables: list[VariableSymbol] = []
         for parameter_index, argument_index in enumerate(assigned):
             if argument_index is None:
                 continue
@@ -5576,6 +5593,13 @@ class Checker:
                         argument.value.span,
                         code="C080",
                     )
+            elif self.type_needs_drop(expected):
+                moved = self._validate_move_only_source(
+                    argument.value,
+                    strip_const(expected),
+                )
+                if moved is not None:
+                    moved_variables.append(moved)
 
         for argument_index in variadic_indices:
             argument = call.arguments[argument_index]
@@ -5594,6 +5618,7 @@ class Checker:
             function=function,
             argument_order=tuple(order),
             expected_types=tuple(expected_types),
+            moved_variables=tuple(moved_variables),
         )
 
     def _check_struct_constructor(self, call: ast.CallExpr, struct: StructSymbol) -> Type:
@@ -5646,6 +5671,7 @@ class Checker:
         order: list[int] = []
         expected_types: list[Type | None] = []
         field_order: list[str] = []
+        moved_variables: list[VariableSymbol] = []
         for field_index, argument_index in enumerate(assigned):
             if argument_index is None:
                 continue
@@ -5660,6 +5686,13 @@ class Checker:
             actual = self._check_expr(argument.value, expected=field.type)
             if not self._can_assign(field.type, actual):
                 self._type_mismatch(field.type, actual, argument.value.span)
+            if self.type_needs_drop(field.type):
+                moved = self._validate_move_only_source(
+                    argument.value,
+                    strip_const(field.type),
+                )
+                if moved is not None:
+                    moved_variables.append(moved)
             order.append(argument_index)
             expected_types.append(field.type)
             field_order.append(field.name)
@@ -5670,6 +5703,7 @@ class Checker:
             argument_order=tuple(order),
             expected_types=tuple(expected_types),
             field_order=tuple(field_order),
+            moved_variables=tuple(moved_variables),
         )
         return struct.type
 
@@ -6138,6 +6172,11 @@ class Checker:
                         actual,
                         element.span,
                     )
+                if self.type_needs_drop(expected_value.inner):
+                    self._validate_move_only_source(
+                        element,
+                        strip_const(expected_value.inner),
+                    )
             return expected_value
 
         if not expression.elements:
@@ -6158,9 +6197,8 @@ class Checker:
         inferred = strip_const(inferred)
         if inferred != ERROR and (
             not self._is_collection_runtime_type(inferred)
-            or isinstance(inferred, (ReferenceType, ArrayType, ListType))
-            or self._contains_owning_container_value(inferred)
-            or self._contains_destructible_value(inferred)
+            or isinstance(inferred, (ReferenceType, ArrayType))
+            or not self._is_valid_container_element(inferred)
         ):
             self._error(
                 f"cannot infer a List element type from {type_name(inferred)}",
@@ -6168,6 +6206,9 @@ class Checker:
                 code="C287",
             )
             inferred = ERROR
+        if inferred != ERROR and self.type_needs_drop(inferred):
+            for element in expression.elements:
+                self._validate_move_only_source(element, inferred)
         return ListType(inferred)
 
     def _check_tuple_literal(
@@ -6213,22 +6254,15 @@ class Checker:
                         code="C288",
                     )
                     element_type = ERROR
-                elif self._contains_destructible_value(element_type):
-                    self._error(
-                        f"tuple literal cannot own destructor-bearing "
-                        f"{type_name(element_type)}",
-                        element.span,
-                        code="C289",
-                    )
-                    element_type = ERROR
-                elif isinstance(element_type, (ArrayType, ListType)):
+                elif not self._is_valid_container_element(element_type):
                     self._error(
                         f"tuple literal cannot own {type_name(element_type)}",
                         element.span,
                         code="C275",
-                        note="tuple aggregate ownership for arrays and lists is not implemented",
                     )
                     element_type = ERROR
+                elif self.type_needs_drop(element_type):
+                    self._validate_move_only_source(element, element_type)
             elements.append(strip_const(element_type))
         return TupleType(tuple(elements))
 
@@ -6433,21 +6467,14 @@ class Checker:
                         arguments[0],
                         allow_opaque=allow_opaque,
                     )
-                    if (
-                        is_void(inner_type)
-                        or isinstance(
-                            inner_type,
-                            (ConstType, ReferenceType, ArrayType),
-                        )
-                        or is_owning_container(inner_type)
-                        or self._contains_owning_container_value(inner_type)
-                        or self._contains_destructible_value(inner_type)
+                    if is_void(inner_type) or isinstance(
+                        inner_type,
+                        (ConstType, ReferenceType, ArrayType),
                     ):
                         self._error(
                             f"invalid Option payload type {type_name(inner_type)}",
                             arguments[0].span,
                             code="C295",
-                            note="Option payloads must be trivially copyable non-owning values",
                         )
                         inner_type = ERROR
                     result = OptionType(inner_type)
@@ -6555,21 +6582,16 @@ class Checker:
                         arguments[0],
                         allow_opaque=allow_opaque,
                     )
-                    if (
-                        is_void(inner_type)
-                        or isinstance(
-                            inner_type,
-                            (ConstType, ReferenceType, ArrayType),
-                        )
-                        or self._contains_owning_container_value(inner_type)
+                    if is_void(inner_type) or isinstance(
+                        inner_type,
+                        (ConstType, ReferenceType, ArrayType),
                     ):
                         self._error(
                             f"invalid List element type {type_name(inner_type)}",
                             arguments[0].span,
                             code="C245",
                             note=(
-                                "list elements must be mutable, directly assignable values; "
-                                "nested owning containers are not implemented"
+                                "list elements must be mutable, directly assignable values"
                             ),
                         )
                         inner_type = ERROR
@@ -6580,13 +6602,9 @@ class Checker:
                         for argument in arguments
                     )
                     for argument, element in zip(arguments, elements, strict=True):
-                        if (
-                            is_void(element)
-                            or isinstance(
-                                element,
-                                (ConstType, ReferenceType, ArrayType),
-                            )
-                            or self._contains_owning_container_value(element)
+                        if is_void(element) or isinstance(
+                            element,
+                            (ConstType, ReferenceType, ArrayType),
                         ):
                             self._error(
                                 f"invalid Tuple element type {type_name(element)}",
@@ -6594,7 +6612,7 @@ class Checker:
                                 code="C246",
                                 note=(
                                     "tuple elements cannot be directly const, void, "
-                                    "references, arrays, or owning lists in this release"
+                                    "references, or arrays"
                                 ),
                             )
                     result = TupleType(elements)
@@ -6625,11 +6643,7 @@ class Checker:
                 result = ReferenceType(inner_type)
             case ast.ArrayTypeNode(inner=inner, length=length):
                 inner_type = self._resolve_type(inner, allow_opaque=allow_opaque)
-                if (
-                    is_void(inner_type)
-                    or isinstance(inner_type, ReferenceType)
-                    or self._contains_owning_container_value(inner_type)
-                ):
+                if is_void(inner_type) or isinstance(inner_type, ReferenceType):
                     self._error(
                         f"invalid array element type {type_name(inner_type)}",
                         node.span,

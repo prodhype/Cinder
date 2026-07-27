@@ -6,6 +6,12 @@ from textwrap import dedent
 
 from cinder import ast
 from cinder.ir import IRModule
+from cinder.ownership import (
+    class_needs_drop as ownership_class_needs_drop,
+    drop_fields,
+    struct_needs_drop as ownership_struct_needs_drop,
+    type_needs_drop as ownership_type_needs_drop,
+)
 from cinder.symbols import (
     CallResolution,
     ClassSymbol,
@@ -17,6 +23,7 @@ from cinder.symbols import (
     ModuleSymbol,
     NominalSymbol,
     StructSymbol,
+    SymbolKind,
     UnionSymbol,
     VariableSymbol,
     VariantSymbol,
@@ -163,6 +170,7 @@ class _Cleanup:
     variable: VariableSymbol | None = None
     class_: ClassSymbol | None = None
     container: ListType | MapType | SetType | FileType | None = None
+    drop_type: Type | None = None
     iterator_end: tuple[str, str] | None = None
 
 
@@ -181,6 +189,12 @@ class CGenerator:
         self.temp_counter = 0
         self.current_function: FunctionSymbol | None = None
         self.comptime_members: dict[int, object] = {}
+        self._classes_by_type = {
+            class_.type: class_ for class_ in self.semantic.classes.values()
+        }
+        self._structs_by_type = {
+            struct.type: struct for struct in self.semantic.structs.values()
+        }
 
     def generate(self) -> str:
         self._emit_preamble()
@@ -190,18 +204,20 @@ class CGenerator:
         self._emit_list_type_definitions()
         self._emit_file_type_definition()
         self._emit_map_view_types()
-        self._emit_type_definitions()
         self._emit_map_set_type_definitions()
+        self._emit_type_definitions()
+        self._emit_interface_definitions()
+        self._emit_class_support_declarations()
+        self._emit_ownership_drop_prototypes()
+        self._emit_aggregate_drop_helpers()
         self._emit_list_helpers()
         self._emit_file_helpers()
         self._emit_map_helpers()
         self._emit_set_helpers()
         self._emit_collection_print_helpers()
         self._emit_sort_helpers()
-        self._emit_interface_definitions()
         self._emit_reflection_declarations()
         self._emit_function_prototypes()
-        self._emit_class_support_declarations()
         self._emit_static_asserts()
         self._emit_globals()
         self._emit_reflection_definitions()
@@ -236,21 +252,23 @@ class CGenerator:
         self._emit_list_type_definitions()
         self._emit_file_type_definition()
         self._emit_map_view_types()
-        self._emit_type_definitions()
         self._emit_map_set_type_definitions()
-        self._emit_list_helpers()
-        self._emit_file_helpers()
-        self._emit_map_helpers()
-        self._emit_set_helpers()
-        self._emit_collection_print_helpers()
+        self._emit_type_definitions()
         self._emit_interface_definitions()
         self.writer.line("#ifdef __cplusplus")
         self.writer.line('extern "C" {')
         self.writer.line("#endif")
         self.writer.line()
+        self._emit_class_support_declarations()
+        self._emit_ownership_drop_prototypes()
+        self._emit_aggregate_drop_helpers()
+        self._emit_list_helpers()
+        self._emit_file_helpers()
+        self._emit_map_helpers()
+        self._emit_set_helpers()
+        self._emit_collection_print_helpers()
         self._emit_reflection_declarations()
         self._emit_function_prototypes()
-        self._emit_class_support_declarations()
         self._emit_global_declarations()
         self._emit_static_asserts()
         self.writer.line("#ifdef __cplusplus")
@@ -648,6 +666,19 @@ class CGenerator:
             )
             self.writer.line("{")
             self.writer.indent += 1
+            self.writer.line("if (value == NULL)")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line("return;")
+            self.writer.indent -= 1
+            self.writer.line("}")
+            if self._type_needs_drop(element):
+                self.writer.line("for (size_t index = 0; index < value->length; ++index)")
+                self.writer.line("{")
+                self.writer.indent += 1
+                self.writer.line(self._drop_expression(element, "value->data[index]"))
+                self.writer.indent -= 1
+                self.writer.line("}")
             self.writer.line("free(value->data);")
             self.writer.line("value->data = NULL;")
             self.writer.line("value->length = 0;")
@@ -698,7 +729,16 @@ class CGenerator:
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line("value->length -= 1;")
-            self.writer.line("return value->data[value->length];")
+            self.writer.line(
+                f"{c_decl(element, 'result')} = value->data[value->length];"
+            )
+            if self._type_needs_drop(element):
+                # Move out: invalidate the capacity slot so it is not a second
+                # owner. Append may reuse the slot without drop glue.
+                self.writer.line(
+                    "memset(&value->data[value->length], 0, sizeof(*value->data));"
+                )
+            self.writer.line("return result;")
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line()
@@ -708,6 +748,19 @@ class CGenerator:
             )
             self.writer.line("{")
             self.writer.indent += 1
+            self.writer.line("if (value == NULL)")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line("return;")
+            self.writer.indent -= 1
+            self.writer.line("}")
+            if self._type_needs_drop(element):
+                self.writer.line("for (size_t index = 0; index < value->length; ++index)")
+                self.writer.line("{")
+                self.writer.indent += 1
+                self.writer.line(self._drop_expression(element, "value->data[index]"))
+                self.writer.indent -= 1
+                self.writer.line("}")
             self.writer.line("value->length = 0;")
             self.writer.indent -= 1
             self.writer.line("}")
@@ -821,6 +874,11 @@ class CGenerator:
         )
         clone_key = self._clone_expression(map_type.key, "key")
         drop_key = self._drop_expression(map_type.key, "entry->key")
+        drop_value = self._drop_expression(map_type.value, "entry->value")
+        drop_old_value = self._drop_expression(
+            map_type.value,
+            "value->entries[value->buckets[bucket]].value",
+        )
         keys_view = c_identifier(
             map_view_c_name(MapViewType(map_type, "keys"))
         )
@@ -1113,12 +1171,14 @@ class CGenerator:
                 bool found = false;
                 size_t bucket = {name}_find_bucket(value, key, hash, &found);
                 if (found) {{
+                    {drop_old_value}
                     value->entries[value->buckets[bucket]].value = item_value;
                     return;
                 }}
                 {name}_ensure_capacity(value);
                 bucket = {name}_find_bucket(value, key, hash, &found);
                 if (found) {{
+                    {drop_old_value}
                     value->entries[value->buckets[bucket]].value = item_value;
                     return;
                 }}
@@ -1208,6 +1268,7 @@ class CGenerator:
                         continue;
                     }}
                     {drop_key}
+                    {drop_value}
                 }}
                 free(value->entries);
                 free(value->buckets);
@@ -1761,11 +1822,85 @@ class CGenerator:
             return f"cinder_clone_string({value})"
         return value
 
-    @staticmethod
-    def _drop_expression(type_: Type, value: str) -> str:
+    def _drop_expression(self, type_: Type, value: str) -> str:
         if is_c_string(type_):
             return f"free((void *)({value}));"
+        if self._type_needs_drop(type_):
+            return self._drop_glue_call(type_, f"&({value})")
         return "(void)0;"
+
+    def _type_needs_drop(self, type_: Type) -> bool:
+        return ownership_type_needs_drop(
+            type_,
+            classes=self._classes_by_type,
+            structs=self._structs_by_type,
+        )
+
+    def _class_needs_drop(self, class_: ClassSymbol) -> bool:
+        return ownership_class_needs_drop(
+            class_,
+            classes=self._classes_by_type,
+            structs=self._structs_by_type,
+        )
+
+    def _struct_needs_drop(self, struct_: StructSymbol) -> bool:
+        return ownership_struct_needs_drop(
+            struct_,
+            classes=self._classes_by_type,
+            structs=self._structs_by_type,
+        )
+
+    def _drop_glue_call(self, type_: Type, pointer_expr: str) -> str:
+        raw = strip_const(type_)
+        if isinstance(raw, (ListType, MapType, SetType, FileType)):
+            return f"{self._container_drop_name(raw)}({pointer_expr});"
+        if isinstance(raw, ClassType):
+            class_ = self._classes_by_type.get(raw)
+            if class_ is None:
+                raise AssertionError(f"missing class for drop: {raw!r}")
+            return f"{self._class_drop_name(class_)}({pointer_expr});"
+        if isinstance(raw, StructType):
+            struct_ = self._structs_by_type.get(raw)
+            if struct_ is None:
+                raise AssertionError(f"missing struct for drop: {raw!r}")
+            return f"{self._struct_drop_name(struct_)}({pointer_expr});"
+        if isinstance(raw, OptionType):
+            name = c_identifier(option_c_name(raw))
+            return f"{name}_drop({pointer_expr});"
+        if isinstance(raw, ResultType):
+            name = c_identifier(result_c_name(raw))
+            return f"{name}_drop({pointer_expr});"
+        if isinstance(raw, TupleType):
+            name = c_identifier(tuple_c_name(raw))
+            return f"{name}_drop({pointer_expr});"
+        if isinstance(raw, ArrayType):
+            return self._array_drop_statements(raw, pointer_expr)
+        raise AssertionError(f"no drop glue for {type_name(raw)}")
+
+    def _array_drop_statements(self, array_type: ArrayType, pointer_expr: str) -> str:
+        if not self._type_needs_drop(array_type.inner):
+            return "(void)0;"
+        element_drop = self._drop_expression(
+            array_type.inner,
+            f"(*({pointer_expr}))[_cinder_i]",
+        )
+        lines = [
+            "{",
+            f"    for (size_t _cinder_i = {array_type.length}; _cinder_i-- > 0;)",
+            "    {",
+            f"        {element_drop}",
+            "    }",
+            "}",
+        ]
+        return "\n".join(lines)
+
+    def _emit_drop_glue(self, type_: Type, pointer_expr: str) -> None:
+        statement = self._drop_glue_call(type_, pointer_expr)
+        if "\n" in statement:
+            for line in statement.splitlines():
+                self.writer.line(line)
+        else:
+            self.writer.line(statement)
 
     def _emit_tuple_definition(self, tuple_type: TupleType) -> None:
         name = c_identifier(tuple_c_name(tuple_type))
@@ -2303,7 +2438,7 @@ class CGenerator:
             class_ = class_ir.symbol
             self.writer.line(self._class_new_signature(class_, definition=False) + ";")
             emitted = True
-            if self._class_has_destructor(class_):
+            if self._class_needs_drop(class_):
                 self.writer.line(self._class_drop_signature(class_, definition=False) + ";")
             if class_.is_abstract:
                 continue
@@ -2312,8 +2447,149 @@ class CGenerator:
                     f"extern const {c_identifier(interface_vtable_c_name(interface.type))} "
                     f"{self._vtable_instance_name(class_, interface)};"
                 )
+        for struct in self.semantic.structs.values():
+            if self._struct_needs_drop(struct):
+                self.writer.line(self._struct_drop_signature(struct, definition=False) + ";")
+                emitted = True
         if emitted:
             self.writer.line()
+
+    def _emit_ownership_drop_prototypes(self) -> None:
+        emitted = False
+        for list_type in self.ir.list_types:
+            name = c_identifier(list_c_name(list_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+            )
+            emitted = True
+        if self.ir.uses_file:
+            name = file_c_name()
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+            )
+            emitted = True
+        for map_type in self.ir.map_types:
+            name = c_identifier(map_c_name(map_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+            )
+            emitted = True
+        for set_type in self.ir.set_types:
+            name = c_identifier(set_c_name(set_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+            )
+            emitted = True
+        for option_type in self.ir.option_types:
+            if self._type_needs_drop(option_type):
+                name = c_identifier(option_c_name(option_type))
+                self.writer.line(
+                    f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+                )
+                emitted = True
+        for result_type in self.ir.result_types:
+            if self._type_needs_drop(result_type):
+                name = c_identifier(result_c_name(result_type))
+                self.writer.line(
+                    f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+                )
+                emitted = True
+        for tuple_type in self.ir.tuple_types:
+            if self._type_needs_drop(tuple_type):
+                name = c_identifier(tuple_c_name(tuple_type))
+                self.writer.line(
+                    f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+                )
+                emitted = True
+        if emitted:
+            self.writer.line()
+
+    def _emit_aggregate_drop_helpers(self) -> None:
+        for option_type in self.ir.option_types:
+            if self._type_needs_drop(option_type):
+                self._emit_option_drop(option_type)
+        for result_type in self.ir.result_types:
+            if self._type_needs_drop(result_type):
+                self._emit_result_drop(result_type)
+        for tuple_type in self.ir.tuple_types:
+            if self._type_needs_drop(tuple_type):
+                self._emit_tuple_drop(tuple_type)
+
+    def _emit_option_drop(self, type_: OptionType) -> None:
+        name = c_identifier(option_c_name(type_))
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("return;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"if (value->tag == {name}_Tag_Some)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        if self._type_needs_drop(type_.inner):
+            self.writer.line(self._drop_expression(type_.inner, "value->data.value"))
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+    def _emit_result_drop(self, type_: ResultType) -> None:
+        name = c_identifier(result_c_name(type_))
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("return;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"if (value->tag == {name}_Tag_Ok)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        if not is_void(type_.ok) and self._type_needs_drop(type_.ok):
+            self.writer.line(self._drop_expression(type_.ok, "value->data.ok"))
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"else if (value->tag == {name}_Tag_Err)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        if not is_void(type_.error) and self._type_needs_drop(type_.error):
+            self.writer.line(self._drop_expression(type_.error, "value->data.err"))
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+    def _emit_tuple_drop(self, tuple_type: TupleType) -> None:
+        name = c_identifier(tuple_c_name(tuple_type))
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("return;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        for index in range(len(tuple_type.elements) - 1, -1, -1):
+            element = tuple_type.elements[index]
+            if self._type_needs_drop(element):
+                self.writer.line(self._drop_expression(element, f"value->item_{index}"))
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
 
     def _emit_static_asserts(self) -> None:
         for declaration in self.semantic.module.static_asserts:
@@ -2398,12 +2674,15 @@ class CGenerator:
         for class_ir in self.ir.classes:
             class_ = class_ir.symbol
             self._emit_class_new_definition(class_)
-            if self._class_has_destructor(class_):
+            if self._class_needs_drop(class_):
                 self._emit_class_drop_definition(class_)
             if class_.is_abstract:
                 continue
             for interface in self._implemented_interfaces(class_):
                 self._emit_interface_implementation(class_, interface)
+        for struct in self.semantic.structs.values():
+            if self._struct_needs_drop(struct):
+                self._emit_struct_drop_definition(struct)
 
     def _emit_class_new_definition(self, class_: ClassSymbol) -> None:
         self.writer.line(self._class_new_signature(class_, definition=True))
@@ -2453,13 +2732,53 @@ class CGenerator:
         self.writer.line("}")
         if class_.destructor is not None:
             self.writer.line(f"{c_identifier(class_.destructor.c_name)}(self);")
-        if class_.primary_base is not None and self._class_has_destructor(class_.primary_base):
+        for field_name, field_type in reversed(drop_fields(class_)):
+            if self._type_needs_drop(field_type):
+                self.writer.line(
+                    self._drop_expression(
+                        field_type,
+                        f"self->{c_identifier(field_name)}",
+                    )
+                )
+        if class_.primary_base is not None and self._class_needs_drop(class_.primary_base):
             self.writer.line(
                 f"{self._class_drop_name(class_.primary_base)}(&self->_base);"
             )
         self.writer.indent -= 1
         self.writer.line("}")
         self.writer.line()
+
+    def _emit_struct_drop_definition(self, struct_: StructSymbol) -> None:
+        self.writer.line(self._struct_drop_signature(struct_, definition=True))
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (self == NULL) {")
+        self.writer.indent += 1
+        self.writer.line("return;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        for field_name, field_type in reversed(drop_fields(struct_)):
+            if self._type_needs_drop(field_type):
+                self.writer.line(
+                    self._drop_expression(
+                        field_type,
+                        f"self->{c_identifier(field_name)}",
+                    )
+                )
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+    @staticmethod
+    def _struct_drop_name(struct_: StructSymbol) -> str:
+        return c_identifier(f"{struct_.c_name}__drop")
+
+    def _struct_drop_signature(self, struct_: StructSymbol, *, definition: bool) -> str:
+        del definition
+        return (
+            f"{self._class_support_linkage()}void {self._struct_drop_name(struct_)}"
+            f"({c_identifier(struct_.c_name)} *self)"
+        )
 
     def _emit_interface_implementation(
         self,
@@ -2594,6 +2913,23 @@ class CGenerator:
     def _emit_block_contents(self, block: ast.Block, *, loop_body: bool) -> None:
         frame = _ScopeFrame(loop_body=loop_body)
         self.scope_frames.append(frame)
+        if (
+            not loop_body
+            and self.current_function is not None
+            and len(self.scope_frames) == 1
+        ):
+            for parameter in self.current_function.parameters:
+                if self._type_needs_drop(parameter.type):
+                    symbol = VariableSymbol(
+                        parameter.name,
+                        parameter.span,
+                        SymbolKind.VARIABLE,
+                        parameter.type,
+                        False,
+                        True,
+                        parameter.name,
+                    )
+                    self._register_owned_cleanup(symbol)
         for statement in block.statements:
             self._emit_statement(statement)
         if not self._block_always_exits(block):
@@ -2633,28 +2969,14 @@ class CGenerator:
             case ast.AssignStmt():
                 self._emit_assignment(statement)
             case ast.ExpressionStmt(expression=expression):
-                container_type = value_type(
-                    self.semantic.expression_type(expression)
-                )
-                class_ = self._class_symbol_from_storage_type(
-                    self.semantic.expression_type(expression)
-                )
-                if isinstance(container_type, (ListType, MapType, SetType, FileType)):
-                    temporary = self._new_temp("discarded_collection")
-                    self.writer.line(
-                        f"{c_decl(container_type, temporary)} = "
-                        f"{self._emit_expr(expression)};"
-                    )
-                    self.writer.line(
-                        f"{self._container_drop_name(container_type)}"
-                        f"(&{temporary});"
-                    )
-                elif class_ is not None and self._class_has_destructor(class_):
+                expr_type = self.semantic.expression_type(expression)
+                if self._type_needs_drop(expr_type):
                     temporary = self._new_temp("discarded")
                     self.writer.line(
-                        f"{c_decl(class_.type, temporary)} = {self._emit_expr(expression)};"
+                        f"{c_decl(strip_const(expr_type), temporary)} = "
+                        f"{self._emit_expr(expression)};"
                     )
-                    self.writer.line(f"{self._class_drop_name(class_)}(&{temporary});")
+                    self._emit_drop_glue(strip_const(expr_type), f"&{temporary}")
                 else:
                     self.writer.line(self._emit_expr(expression) + ";")
             case ast.ReturnStmt():
@@ -2723,6 +3045,7 @@ class CGenerator:
         initializer = self._emit_initializer(statement.initializer, symbol.type)
         self.writer.line(f"{declaration} = {initializer};")
         self._register_owned_cleanup(symbol)
+        self._exclude_moved_from_expression(statement.initializer)
 
     def _emit_assignment(self, statement: ast.AssignStmt) -> None:
         implicit = self.semantic.implicit_declarations.get(id(statement))
@@ -2731,6 +3054,7 @@ class CGenerator:
             initializer = self._emit_initializer(statement.value, implicit.type)
             self.writer.line(f"{declaration} = {initializer};")
             self._register_owned_cleanup(implicit)
+            self._exclude_moved_from_expression(statement.value)
             return
         expected = strip_reference(self.semantic.expression_type(statement.target))
         if isinstance(statement.target, ast.IndexExpr):
@@ -2743,7 +3067,6 @@ class CGenerator:
 
         target = self._emit_lvalue(statement.target)
         value = self._emit_with_expected(statement.value, expected)
-        class_ = self._class_symbol_from_storage_type(expected)
         container_type = value_type(expected)
         if isinstance(container_type, SetType) and statement.operator in {
             "|=",
@@ -2779,28 +3102,16 @@ class CGenerator:
             return
         if (
             statement.operator == "="
-            and isinstance(container_type, (ListType, MapType, SetType, FileType))
-            and isinstance(statement.target, ast.NameExpr)
-        ):
-            temporary = self._new_temp("collection_move")
-            self.writer.line(
-                f"{c_decl(container_type, temporary)} = {value};"
-            )
-            self.writer.line(
-                f"{self._container_drop_name(container_type)}(&{target});"
-            )
-            self.writer.line(f"{target} = {temporary};")
-            return
-        if (
-            statement.operator == "="
-            and class_ is not None
-            and self._class_has_destructor(class_)
-            and isinstance(statement.target, ast.NameExpr)
+            and self._type_needs_drop(expected)
+            and isinstance(statement.target, (ast.NameExpr, ast.AttributeExpr))
         ):
             temporary = self._new_temp("move")
-            self.writer.line(f"{c_decl(class_.type, temporary)} = {value};")
-            self.writer.line(f"{self._class_drop_name(class_)}(&{target});")
+            self.writer.line(
+                f"{c_decl(strip_const(expected), temporary)} = {value};"
+            )
+            self._emit_drop_glue(strip_const(expected), f"&({target})")
             self.writer.line(f"{target} = {temporary};")
+            self._exclude_moved_from_expression(statement.value)
             return
         self.writer.line(f"{target} {statement.operator} {value};")
 
@@ -3230,7 +3541,9 @@ class CGenerator:
             if cleanup.variable is exclude_variable:
                 continue
             name = c_identifier(cleanup.variable.c_name or cleanup.variable.name)
-            if cleanup.class_ is not None:
+            if cleanup.drop_type is not None:
+                self._emit_drop_glue(cleanup.drop_type, f"&{name}")
+            elif cleanup.class_ is not None:
                 self.writer.line(f"{self._class_drop_name(cleanup.class_)}(&{name});")
             elif cleanup.container is not None:
                 self.writer.line(
@@ -3242,18 +3555,44 @@ class CGenerator:
     def _register_owned_cleanup(self, symbol: VariableSymbol) -> None:
         if not self.scope_frames:
             return
-        container_type = value_type(symbol.type)
-        if isinstance(container_type, (ListType, MapType, SetType, FileType)):
-            self.scope_frames[-1].cleanups.append(
-                _Cleanup(variable=symbol, container=container_type)
-            )
-            return
-        class_ = self._class_symbol_from_storage_type(symbol.type)
-        if class_ is None or not self._class_has_destructor(class_):
+        if not self._type_needs_drop(symbol.type):
             return
         self.scope_frames[-1].cleanups.append(
-            _Cleanup(variable=symbol, class_=class_)
+            _Cleanup(variable=symbol, drop_type=strip_const(symbol.type))
         )
+
+    def _exclude_moved_variables(
+        self,
+        moved_variables: tuple[VariableSymbol, ...],
+    ) -> None:
+        if not moved_variables:
+            return
+        moved_ids = {id(symbol) for symbol in moved_variables}
+        moved_param_names = {
+            symbol.name for symbol in moved_variables if symbol.is_parameter
+        }
+
+        def keep(cleanup: _Cleanup) -> bool:
+            if cleanup.variable is None:
+                return True
+            if id(cleanup.variable) in moved_ids:
+                return False
+            if (
+                cleanup.variable.is_parameter
+                and cleanup.variable.name in moved_param_names
+            ):
+                return False
+            return True
+
+        for frame in self.scope_frames:
+            frame.cleanups = [cleanup for cleanup in frame.cleanups if keep(cleanup)]
+
+    def _exclude_moved_from_expression(self, expression: ast.Expression) -> None:
+        if not isinstance(expression, ast.NameExpr):
+            return
+        symbol = self.semantic.name_symbols.get(id(expression))
+        if isinstance(symbol, VariableSymbol) and self._type_needs_drop(symbol.type):
+            self._exclude_moved_variables((symbol,))
 
     def _returned_local_symbol(
         self,
@@ -3264,14 +3603,9 @@ class CGenerator:
         symbol = self.semantic.name_symbols.get(id(expression))
         if not isinstance(symbol, VariableSymbol):
             return None
-        class_ = self._class_symbol_from_storage_type(symbol.type)
-        if class_ is not None and self._class_has_destructor(class_):
+        if self._type_needs_drop(symbol.type):
             return symbol
-        return (
-            symbol
-            if isinstance(value_type(symbol.type), (ListType, MapType, SetType, FileType))
-            else None
-        )
+        return None
 
     def _emit_initializer(self, expression: ast.Expression, expected: Type) -> str:
         expected_value = strip_const(expected)
@@ -3306,6 +3640,7 @@ class CGenerator:
                 "result_constructor",
                 "option_some",
             }:
+                self._exclude_moved_variables(resolution.moved_variables)
                 return self._constructor_initializer(expression, resolution)
 
         return self._emit_with_expected(expression, expected)
@@ -4125,6 +4460,8 @@ class CGenerator:
             self.writer.line(
                 f"{name}_set({map_pointer}, {key_name}, {value_name});"
             )
+            if self._type_needs_drop(map_type.value):
+                self._exclude_moved_from_expression(statement.value)
             return
         target_pointer = self._new_temp("map_slot")
         self.writer.line(
@@ -4171,6 +4508,7 @@ class CGenerator:
 
     def _emit_call(self, expression: ast.CallExpr) -> str:
         resolution = self.semantic.call_resolutions[id(expression)]
+        self._exclude_moved_variables(resolution.moved_variables)
         if resolution.kind == "print":
             return self._emit_print_call(expression)
         if resolution.kind == "input":

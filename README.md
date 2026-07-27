@@ -20,7 +20,7 @@ Cinder 0.4 adds classes, constructors, destructors, private fields, one implemen
 
 Cinder 0.5 adds opt-in `@reflect` metadata, runtime type/field/method inspection, dynamic runtime type names, compile-time type and member queries, top-level `static_assert`, and unrolled `comptime` field and method loops.
 
-The implementation remains alpha software. User-defined generics, function pointer types, closures, exceptions, aggregate ownership for owning collections or destructor-bearing classes, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
+The implementation remains alpha software. User-defined generics, function pointer types, closures, exceptions, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
 
 ## Installation
 
@@ -184,7 +184,7 @@ def make() -> Resource:
     return resource
 ```
 
-Aggregate ownership of destructor-bearing classes is deliberately not implemented yet. Store borrowed references or explicit pointers when building ownership containers.
+Destructor-bearing classes may be nested in struct/class fields, collections, and `Option`/`Result`/`Tuple` wrappers, and may be passed by value with use-after-move checking. Owning globals and owning union/variant payloads remain unsupported.
 
 ## Reflection
 
@@ -405,7 +405,7 @@ sort(values)
 last = values.pop()
 ```
 
-Lists are move-only direct locals and return values, and are freed deterministically on every normal cleanup path. Addressable Lists may be passed without copying to `[]T` and `[]const T` parameters, letting one element-processing function accept Lists, fixed arrays, and slices. This coercion is call-only; structural operations still use `&List[T]`. Nested lists, list fields/globals, by-value list parameters, and destructor-bearing elements are intentionally deferred with broader aggregate ownership work.
+Lists are move-only owners of their buffers and are freed deterministically on every normal cleanup path. They may be nested, stored in struct/class fields, passed and returned by value, and hold other owning values; transfers mark the source as moved. Addressable Lists may also be passed without copying to `[]T` and `[]const T` parameters. This coercion is call-only; structural operations still use `&List[T]`. Owning globals remain unsupported.
 
 Maps use `{key: value}` literals and preserve insertion order. Sets use `{value, ...}`; an empty Set uses contextual `set()`. Empty `{}` requires a `Map[K, V]` context.
 
@@ -428,7 +428,7 @@ small = primes | {1, 2}
 
 Hashable types are integers, `bool`, `char`, enums, and `const char*`. String keys use null-safe content equality and are copied into the collection. A string removed by `Set[const char*].pop()` transfers its allocation to the caller, who must release it with `free(cast[void*](text))`.
 
-Maps and Sets use the same move-only direct-local/direct-return ownership envelope as Lists. Nested owning collections, aggregate fields, globals, by-value parameters, and destructor-bearing elements remain unsupported. Map views are borrowed values with slice-like lifetime responsibility; structural mutation is rejected or guarded while an iterator is active.
+Maps and Sets use the same move-only ownership model as Lists, including nested/aggregate ownership and by-value parameters. Owning globals and union/variant payloads remain unsupported. Map views are borrowed values with slice-like lifetime responsibility; structural mutation is rejected or guarded while an iterator is active.
 
 ## Structs and methods
 

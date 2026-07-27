@@ -83,11 +83,34 @@ def list_example() -> i32:
     return sum_values(values)
 
 
-# WRONG: owning collections cannot nest, and cannot be stored in fields or
-# globals yet.
-# nested = [[1, 2], [3, 4]]
-# struct Bag:
-#     values: List[i32]
+# WRONG: owning collections and destructor-bearing classes cannot be globals,
+# union fields, or user variant payloads (no portable C11 destruction phase /
+# tagged-union drop glue yet).
+# values: List[i32] = []
+# union Box:
+#     items: List[i32]
+
+# CORRECT: nest owning collections, store them in struct/class fields, and
+# consume them by value with move semantics.
+struct Bag:
+    values: List[i32]
+
+
+def take_list(values: List[i32]) -> i32:
+    return cast[i32](len(values))
+
+
+def nested_list_example() -> i32:
+    nested: List[List[i32]] = [[1, 2], [3]]
+    bag = Bag(values=[4, 5])
+    total = cast[i32](len(bag.values)) + take_list(nested.pop())
+    return total
+
+
+# WRONG: using a value after it was moved.
+# values = [1, 2]
+# take_list(values)
+# return values[0]
 
 
 # WRONG: integer-to-pointer and unrelated pointer casts require `unsafe`.
