@@ -5550,6 +5550,7 @@ class Checker:
             self.expr_types[id(expression)] = string_type()
             return
         actual = self._check_expr(expression)
+        self._require_printable_collection_addressable(expression, actual)
         self._validate_printable_type(actual, None, expression.span)
 
     def _check_fstring_parts(self, expression: ast.FStringExpr) -> None:
@@ -5563,7 +5564,24 @@ class Checker:
                 self.expr_types[id(part.expression)] = actual
             else:
                 actual = self._check_expr(part.expression)
+                self._require_printable_collection_addressable(part.expression, actual)
             self._validate_printable_type(actual, part.format_spec, part.span)
+
+    def _require_printable_collection_addressable(
+        self,
+        expression: ast.Expression,
+        type_: Type,
+    ) -> None:
+        raw = value_type(type_)
+        if isinstance(raw, (ListType, MapType, SetType)) and not self._is_addressable(
+            expression
+        ):
+            self._error(
+                f"print requires an addressable {type_name(raw)}",
+                expression.span,
+                code="C279",
+                note="bind the owning collection to a local before printing it",
+            )
 
     def _validate_printable_type(
         self,
@@ -5598,6 +5616,25 @@ class Checker:
             if conversion is None or conversion in "diuoxX":
                 return
             self._error(f"integer print values do not support :{conversion}", span, code="C227")
+            return
+        if isinstance(raw, (ListType, MapType, SetType, TupleType)):
+            if conversion is not None:
+                self._error(
+                    f"{type_name(raw)} print values support only the default format",
+                    span,
+                    code="C222",
+                )
+                return
+            if isinstance(raw, ListType):
+                self._validate_printable_type(raw.inner, None, span)
+            elif isinstance(raw, MapType):
+                self._validate_printable_type(raw.key, None, span)
+                self._validate_printable_type(raw.value, None, span)
+            elif isinstance(raw, SetType):
+                self._validate_printable_type(raw.inner, None, span)
+            else:
+                for element in raw.elements:
+                    self._validate_printable_type(element, None, span)
             return
 
         self._error(f"type {type_name(type_)} cannot be printed", span, code="C228")

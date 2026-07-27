@@ -523,10 +523,12 @@ For common console output, `print(...)` is available without an import:
 ```python
 name = "Ada"
 score: i32 = 42
+values = [1, 2, 3]
 print(f"{name}: {score:x}")
+print(values)
 ```
 
-`print` separates multiple arguments with spaces, appends a newline, and supports f-string replacement fields with simple format specs. F-strings are currently limited to `print` arguments.
+`print` separates multiple arguments with spaces, appends a newline, and supports f-string replacement fields with simple format specs. Lists, Maps, Sets, and Tuples print with Python-like collection syntax when their nested element types are printable. F-strings are currently limited to `print` arguments.
 
 For console input, `input()` is also available without an import. `input(prompt)` writes the prompt without a newline, reads one line, and returns it without the trailing newline:
 

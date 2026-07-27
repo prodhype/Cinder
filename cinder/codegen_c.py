@@ -191,6 +191,7 @@ class CGenerator:
         self._emit_list_helpers()
         self._emit_map_helpers()
         self._emit_set_helpers()
+        self._emit_collection_print_helpers()
         self._emit_sort_helpers()
         self._emit_interface_definitions()
         self._emit_reflection_declarations()
@@ -234,6 +235,7 @@ class CGenerator:
         self._emit_list_helpers()
         self._emit_map_helpers()
         self._emit_set_helpers()
+        self._emit_collection_print_helpers()
         self._emit_interface_definitions()
         self.writer.line("#ifdef __cplusplus")
         self.writer.line('extern "C" {')
@@ -1661,6 +1663,276 @@ class CGenerator:
             self.writer.line(c_decl(element, f"item_{index}") + ";")
         self.writer.indent -= 1
         self.writer.line("};")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
+
+    def _emit_collection_print_helpers(self) -> None:
+        printable_tuples = [
+            tuple_type
+            for tuple_type in self.ir.tuple_types
+            if self._is_printable_runtime_type(tuple_type)
+        ]
+        printable_lists = [
+            list_type
+            for list_type in self.ir.list_types
+            if self._is_printable_runtime_type(list_type)
+        ]
+        printable_maps = [
+            map_type
+            for map_type in self.ir.map_types
+            if self._is_printable_runtime_type(map_type)
+        ]
+        printable_sets = [
+            set_type
+            for set_type in self.ir.set_types
+            if self._is_printable_runtime_type(set_type)
+        ]
+        if not (printable_tuples or printable_lists or printable_maps or printable_sets):
+            return
+
+        self.writer.line("#include <stdio.h>")
+        self.writer.line()
+
+        for tuple_type in printable_tuples:
+            name = c_identifier(tuple_c_name(tuple_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+                f"const {name} *value);"
+            )
+        for list_type in printable_lists:
+            name = c_identifier(list_c_name(list_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+                f"const {name} *value);"
+            )
+        for map_type in printable_maps:
+            name = c_identifier(map_c_name(map_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+                f"const {name} *value);"
+            )
+        for set_type in printable_sets:
+            name = c_identifier(set_c_name(set_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+                f"const {name} *value);"
+            )
+        self.writer.line()
+
+        for tuple_type in printable_tuples:
+            self._emit_tuple_print_helper(tuple_type)
+        for list_type in printable_lists:
+            self._emit_list_print_helper(list_type)
+        for map_type in printable_maps:
+            self._emit_map_print_helper(map_type)
+        for set_type in printable_sets:
+            self._emit_set_print_helper(set_type)
+
+    @staticmethod
+    def _is_printable_runtime_type(type_: Type) -> bool:
+        raw = strip_const(type_)
+        if raw in (BOOL, CHAR):
+            return True
+        if _is_printf_string_type(raw):
+            return True
+        if isinstance(raw, PrimitiveType) and raw.category in {"float", "integer"}:
+            return True
+        if isinstance(raw, TupleType):
+            return all(
+                CGenerator._is_printable_runtime_type(element)
+                for element in raw.elements
+            )
+        if isinstance(raw, ListType):
+            return CGenerator._is_printable_runtime_type(raw.inner)
+        if isinstance(raw, MapType):
+            return (
+                CGenerator._is_printable_runtime_type(raw.key)
+                and CGenerator._is_printable_runtime_type(raw.value)
+            )
+        if isinstance(raw, SetType):
+            return CGenerator._is_printable_runtime_type(raw.inner)
+        return False
+
+    def _emit_print_helper_value(self, type_: Type, c_value: str) -> None:
+        raw = strip_const(type_)
+        if raw == BOOL:
+            self.writer.line(f'printf("%s", ({c_value}) ? "true" : "false");')
+            return
+        if raw == CHAR:
+            self.writer.line(f"cinder_print_repr_char({c_value});")
+            return
+        if _is_printf_string_type(raw):
+            self.writer.line(f"cinder_print_repr_string({c_value});")
+            return
+        if isinstance(raw, PrimitiveType) and raw.category == "float":
+            value = f"((double)({c_value}))" if raw == F32 else c_value
+            self.writer.line(f'printf("%g", {value});')
+            return
+        if isinstance(raw, PrimitiveType) and raw.category == "integer":
+            if raw.signed is False:
+                self.writer.line(
+                    f'printf("%llu", (unsigned long long)({c_value}));'
+                )
+            else:
+                self.writer.line(f'printf("%lld", (long long)({c_value}));')
+            return
+        if isinstance(raw, TupleType):
+            name = c_identifier(tuple_c_name(raw))
+            self.writer.line(f"{name}_print(&({c_value}));")
+            return
+        if isinstance(raw, ListType):
+            name = c_identifier(list_c_name(raw))
+            self.writer.line(f"{name}_print(&({c_value}));")
+            return
+        if isinstance(raw, MapType):
+            name = c_identifier(map_c_name(raw))
+            self.writer.line(f"{name}_print(&({c_value}));")
+            return
+        if isinstance(raw, SetType):
+            name = c_identifier(set_c_name(raw))
+            self.writer.line(f"{name}_print(&({c_value}));")
+            return
+        raise AssertionError(f"type {type_name(type_)} cannot be printed")
+
+    def _emit_tuple_print_helper(self, tuple_type: TupleType) -> None:
+        name = c_identifier(tuple_c_name(tuple_type))
+        guard = f"CINDER_PRINT_{name.upper()}"
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+            f"const {name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('printf("(");')
+        if len(tuple_type.elements) == 1:
+            self._emit_print_helper_value(tuple_type.elements[0], "value->item_0")
+            self.writer.line('printf(",");')
+        else:
+            for index, element in enumerate(tuple_type.elements):
+                if index:
+                    self.writer.line('printf(", ");')
+                self._emit_print_helper_value(element, f"value->item_{index}")
+        self.writer.line('printf(")");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
+
+    def _emit_list_print_helper(self, list_type: ListType) -> None:
+        name = c_identifier(list_c_name(list_type))
+        guard = f"CINDER_PRINT_{name.upper()}"
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+            f"const {name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('printf("[");')
+        self.writer.line("for (size_t index = 0; index < value->length; ++index)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('if (index) printf(", ");')
+        self._emit_print_helper_value(list_type.inner, "value->data[index]")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line('printf("]");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
+
+    def _emit_map_print_helper(self, map_type: MapType) -> None:
+        name = c_identifier(map_c_name(map_type))
+        entry_name = f"{name}_Entry"
+        guard = f"CINDER_PRINT_{name.upper()}"
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+            f"const {name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('printf("{");')
+        self.writer.line("bool first = true;")
+        self.writer.line(
+            "for (size_t index = 0; index < value->entries_length; ++index)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"const {entry_name} *entry = &value->entries[index];")
+        self.writer.line("if (!entry->occupied)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("continue;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("if (!first)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('printf(", ");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("first = false;")
+        self._emit_print_helper_value(map_type.key, "entry->key")
+        self.writer.line('printf(": ");')
+        self._emit_print_helper_value(map_type.value, "entry->value")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line('printf("}");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
+
+    def _emit_set_print_helper(self, set_type: SetType) -> None:
+        name = c_identifier(set_c_name(set_type))
+        entry_name = f"{name}_Entry"
+        guard = f"CINDER_PRINT_{name.upper()}"
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
+            f"const {name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value->length == 0)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('printf("set()");')
+        self.writer.line("return;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line('printf("{");')
+        self.writer.line("bool first = true;")
+        self.writer.line("for (size_t index = 0; index < value->capacity; ++index)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"const {entry_name} *entry = &value->entries[index];")
+        self.writer.line("if (entry->state != 1)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("continue;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("if (!first)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('printf(", ");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("first = false;")
+        self._emit_print_helper_value(set_type.inner, "entry->value")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line('printf("}");')
+        self.writer.indent -= 1
+        self.writer.line("}")
         self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
@@ -3967,17 +4239,135 @@ class CGenerator:
         return f"{c_identifier(function.c_name)}({', '.join(arguments)})"
 
     def _emit_print_call(self, expression: ast.CallExpr) -> str:
-        format_parts: list[str] = []
-        arguments: list[str] = []
+        if not any(
+            self._print_argument_needs_helpers(argument.value)
+            for argument in expression.arguments
+        ):
+            format_parts: list[str] = []
+            arguments: list[str] = []
+            for index, argument in enumerate(expression.arguments):
+                if index:
+                    format_parts.append(" ")
+                self._collect_print_argument(argument.value, format_parts, arguments)
+            format_parts.append("\n")
+            format_string = "".join(format_parts)
+            if not arguments:
+                return f"printf({c_string(format_string)})"
+            return f"printf({c_string(format_string)}, {', '.join(arguments)})"
+
         for index, argument in enumerate(expression.arguments):
             if index:
-                format_parts.append(" ")
-            self._collect_print_argument(argument.value, format_parts, arguments)
-        format_parts.append("\n")
+                self.writer.line('printf(" ");')
+            self._emit_print_argument_statements(argument.value)
+        self.writer.line('printf("\\n");')
+        return "(void)0"
+
+    def _print_argument_needs_helpers(self, expression: ast.Expression) -> bool:
+        if isinstance(expression, ast.FStringExpr):
+            for part in expression.parts:
+                if isinstance(part, ast.FStringText):
+                    continue
+                if self._print_argument_needs_helpers(part.expression):
+                    return True
+            return False
+        type_ = value_type(self.semantic.expression_type(expression))
+        return isinstance(type_, (ListType, MapType, SetType, TupleType))
+
+    def _emit_print_argument_statements(self, expression: ast.Expression) -> None:
+        if isinstance(expression, ast.FStringExpr):
+            self._emit_print_fstring_statements(expression)
+            return
+        type_ = value_type(self.semantic.expression_type(expression))
+        if isinstance(type_, (ListType, MapType, SetType, TupleType)):
+            self._emit_collection_print_call(expression, type_)
+            return
+        specifier, value_arguments = self._printf_value(expression, None)
+        self._emit_printf_segment([specifier], list(value_arguments))
+
+    def _emit_print_fstring_statements(self, expression: ast.FStringExpr) -> None:
+        format_parts: list[str] = []
+        arguments: list[str] = []
+
+        def flush() -> None:
+            nonlocal format_parts, arguments
+            if not format_parts and not arguments:
+                return
+            self._emit_printf_segment(format_parts, arguments)
+            format_parts = []
+            arguments = []
+
+        for part in expression.parts:
+            if isinstance(part, ast.FStringText):
+                format_parts.append(_printf_literal(part.value))
+                continue
+            if isinstance(part.expression, ast.FStringExpr):
+                flush()
+                self._emit_print_fstring_statements(part.expression)
+                continue
+            part_type = value_type(self.semantic.expression_type(part.expression))
+            if isinstance(part_type, (ListType, MapType, SetType, TupleType)):
+                flush()
+                self._emit_collection_print_call(part.expression, part_type)
+                continue
+            specifier, value_arguments = self._printf_value(
+                part.expression,
+                part.format_spec,
+            )
+            format_parts.append(specifier)
+            arguments.extend(value_arguments)
+        flush()
+
+    def _emit_printf_segment(
+        self,
+        format_parts: list[str],
+        arguments: list[str],
+    ) -> None:
+        if not format_parts and not arguments:
+            return
         format_string = "".join(format_parts)
         if not arguments:
-            return f"printf({c_string(format_string)})"
-        return f"printf({c_string(format_string)}, {', '.join(arguments)})"
+            self.writer.line(f"printf({c_string(format_string)});")
+            return
+        self.writer.line(
+            f"printf({c_string(format_string)}, {', '.join(arguments)});"
+        )
+
+    def _emit_collection_print_call(
+        self,
+        expression: ast.Expression,
+        type_: ListType | MapType | SetType | TupleType,
+    ) -> None:
+        if isinstance(type_, TupleType):
+            pointer = self._tuple_print_pointer(expression, type_)
+            name = c_identifier(tuple_c_name(type_))
+        else:
+            pointer = self._container_pointer(expression)
+            if isinstance(type_, ListType):
+                name = c_identifier(list_c_name(type_))
+            elif isinstance(type_, MapType):
+                name = c_identifier(map_c_name(type_))
+            else:
+                name = c_identifier(set_c_name(type_))
+        self.writer.line(f"{name}_print({pointer});")
+
+    def _tuple_print_pointer(
+        self,
+        expression: ast.Expression,
+        tuple_type: TupleType,
+    ) -> str:
+        if isinstance(
+            expression,
+            (ast.NameExpr, ast.AttributeExpr),
+        ) or (
+            isinstance(expression, ast.UnaryExpr)
+            and expression.operator == "*"
+        ):
+            return self._emit_address(expression)
+        temporary = self._new_temp("print_tuple")
+        self.writer.line(
+            f"{c_decl(tuple_type, temporary)} = {self._emit_expr(expression)};"
+        )
+        return f"&{temporary}"
 
     def _emit_input_call(self, expression: ast.CallExpr) -> str:
         arguments = self._emit_ordered_call_arguments(

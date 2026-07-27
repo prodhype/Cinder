@@ -87,6 +87,8 @@ uint64_t cinder_hash_string(const char *text);
 bool cinder_string_equal(const char *left, const char *right);
 char *cinder_clone_string(const char *text);
 char *cinder_input(const char *prompt);
+void cinder_print_repr_char(char value);
+void cinder_print_repr_string(const char *text);
 double cinder_wall_time(void);
 void cinder_sort(
     void *base,
