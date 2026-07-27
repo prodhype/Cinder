@@ -14,6 +14,8 @@
 
 `aggregate_ownership.ci` demonstrates aggregate ownership: struct/class fields owning Lists/Maps/Sets/Files and destructor-bearing classes; nested collections and owning elements; by-value parameters and returns; `Option`/`Result`/`Tuple`/array wrappers; field reassignment; and local moves.
 
+`owned.ci` demonstrates `Owned[T]` heap ownership: construct with `Owned(value)`, mutate through `*`, borrow with `&*`, nest `Option[Owned[Node]]`, move-only transfer, and deterministic drop of destructor-bearing payloads.
+
 `pointers.ci` demonstrates address-of, raw pointers, transparent references, and pointer indexing.
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.

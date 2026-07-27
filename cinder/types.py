@@ -68,6 +68,11 @@ class OptionType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class OwnedType(Type):
+    inner: Type
+
+
+@dataclass(frozen=True, slots=True)
 class TupleType(Type):
     elements: tuple[Type, ...]
 
@@ -253,6 +258,10 @@ def option_c_name(type_: OptionType) -> str:
     return f"CinderOption_{type_key(type_.inner)}"
 
 
+def owned_c_name(type_: OwnedType) -> str:
+    return f"CinderOwned_{type_key(type_.inner)}"
+
+
 def tuple_c_name(type_: TupleType) -> str:
     suffix = "_".join(type_key(element) for element in type_.elements)
     return f"CinderTuple_{len(type_.elements)}" + (f"_{suffix}" if suffix else "")
@@ -296,6 +305,8 @@ def type_name(type_: Type) -> str:
             return f"Result[{type_name(ok)}, {type_name(error)}]"
         case OptionType(inner=inner):
             return f"Option[{type_name(inner)}]"
+        case OwnedType(inner=inner):
+            return f"Owned[{type_name(inner)}]"
         case TupleType(elements=elements):
             return "Tuple[" + ", ".join(type_name(element) for element in elements) + "]"
         case ListType(inner=inner):
@@ -419,7 +430,10 @@ def is_equatable(type_: Type) -> bool:
 
 
 def is_owning_container(type_: Type) -> bool:
-    return isinstance(strip_const(type_), (ListType, MapType, SetType, FileType))
+    return isinstance(
+        strip_const(type_),
+        (ListType, MapType, SetType, FileType, OwnedType),
+    )
 
 
 def is_scalar(type_: Type) -> bool:
@@ -584,6 +598,9 @@ def can_assign(target: Type, source: Type) -> bool:
     if isinstance(target, OptionType) and isinstance(source, OptionType):
         return target == source
 
+    if isinstance(target, OwnedType) and isinstance(source, OwnedType):
+        return target == source
+
     if isinstance(target, MapType) and isinstance(source, MapType):
         return target == source
 
@@ -625,6 +642,8 @@ def type_key(type_: Type) -> str:
             return f"result_{type_key(ok)}_{type_key(error)}"
         case OptionType(inner=inner):
             return f"option_{type_key(inner)}"
+        case OwnedType(inner=inner):
+            return f"owned_{type_key(inner)}"
         case TupleType(elements=elements):
             suffix = "_".join(type_key(element) for element in elements)
             return f"tuple_{len(elements)}" + (f"_{suffix}" if suffix else "")

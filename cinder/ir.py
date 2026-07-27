@@ -25,6 +25,7 @@ from cinder.types import (
     MapType,
     MapViewType,
     OptionType,
+    OwnedType,
     PointerType,
     ReferenceType,
     ResultType,
@@ -103,6 +104,7 @@ class IRModule:
     sort_types: tuple[Type, ...]
     result_types: tuple[ResultType, ...]
     option_types: tuple[OptionType, ...]
+    owned_types: tuple[OwnedType, ...]
     uses_file: bool
     definition_order: tuple[Type, ...]
 
@@ -179,6 +181,7 @@ class Lowerer:
         option_values.update(OptionType(map_type.value) for map_type in maps)
         option_values.update(OptionType(set_type.inner) for set_type in sets)
         options = tuple(sorted(option_values, key=type_key))
+        owneds = tuple(sorted(self._collect_owned(), key=type_key))
         definition_order = tuple(self._definition_order(results, options, tuples))
         return IRModule(
             semantic=self.semantic,
@@ -198,6 +201,7 @@ class Lowerer:
             sort_types=sort_types,
             result_types=results,
             option_types=options,
+            owned_types=owneds,
             uses_file=uses_file,
             definition_order=definition_order,
         )
@@ -251,6 +255,8 @@ class Lowerer:
                 collect(raw.error)
             elif isinstance(raw, OptionType):
                 collect(raw.inner)
+            elif isinstance(raw, OwnedType):
+                collect(raw.inner)
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
@@ -279,7 +285,10 @@ class Lowerer:
                 result.add(raw)
                 for element in raw.elements:
                     collect(element)
-            elif isinstance(raw, (PointerType, ReferenceType, ArrayType, SliceType, ListType)):
+            elif isinstance(
+                raw,
+                (PointerType, ReferenceType, ArrayType, SliceType, ListType, OwnedType),
+            ):
                 collect(raw.inner)
             elif isinstance(raw, DynType):
                 collect(raw.interface)
@@ -310,7 +319,10 @@ class Lowerer:
                     return
                 result.add(raw)
                 collect(raw.inner)
-            elif isinstance(raw, (PointerType, ReferenceType, ArrayType, SliceType)):
+            elif isinstance(
+                raw,
+                (PointerType, ReferenceType, ArrayType, SliceType, OwnedType),
+            ):
                 collect(raw.inner)
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
@@ -347,7 +359,15 @@ class Lowerer:
                 collect(raw.value)
             elif isinstance(
                 raw,
-                (PointerType, ReferenceType, ArrayType, SliceType, ListType, SetType),
+                (
+                    PointerType,
+                    ReferenceType,
+                    ArrayType,
+                    SliceType,
+                    ListType,
+                    SetType,
+                    OwnedType,
+                ),
             ):
                 collect(raw.inner)
             elif isinstance(raw, TupleType):
@@ -377,7 +397,14 @@ class Lowerer:
                 collect(raw.inner)
             elif isinstance(
                 raw,
-                (PointerType, ReferenceType, ArrayType, SliceType, ListType),
+                (
+                    PointerType,
+                    ReferenceType,
+                    ArrayType,
+                    SliceType,
+                    ListType,
+                    OwnedType,
+                ),
             ):
                 collect(raw.inner)
             elif isinstance(raw, MapType):
@@ -416,6 +443,7 @@ class Lowerer:
                     ListType,
                     SetType,
                     OptionType,
+                    OwnedType,
                 ),
             ):
                 collect(raw.inner)
@@ -452,6 +480,46 @@ class Lowerer:
                     SliceType,
                     ListType,
                     SetType,
+                    OwnedType,
+                ),
+            ):
+                collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_owned(self) -> set[OwnedType]:
+        result: set[OwnedType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, OwnedType):
+                if raw in result:
+                    return
+                result.add(raw)
+                collect(raw.inner)
+            elif isinstance(
+                raw,
+                (
+                    PointerType,
+                    ReferenceType,
+                    ArrayType,
+                    SliceType,
+                    ListType,
+                    SetType,
+                    OptionType,
                 ),
             ):
                 collect(raw.inner)
@@ -492,7 +560,10 @@ class Lowerer:
                 result.add(raw)
                 collect(raw.ok)
                 collect(raw.error)
-            elif isinstance(raw, (PointerType, ReferenceType, ArrayType, SliceType)):
+            elif isinstance(
+                raw,
+                (PointerType, ReferenceType, ArrayType, SliceType, OwnedType),
+            ):
                 collect(raw.inner)
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
@@ -611,6 +682,7 @@ class Lowerer:
                 MapType,
                 SetType,
                 MapViewType,
+                OwnedType,
                 EnumType,
             ),
         ):

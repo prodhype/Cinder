@@ -156,9 +156,9 @@ second = first  # error: use of moved value first
 
 Returning an owned local transfers its lifetime to the caller. Reassigning an owned local evaluates the replacement first, drops the old value, and then transfers the replacement. A discarded class-returning call is materialized and immediately dropped.
 
-Aggregate ownership is supported for struct/class fields, nested collections, `Option`/`Result`/`Tuple` wrappers, and by-value parameters. Owning globals and union/variant payloads remain rejected because portable C11 has no automatic global destruction phase and tagged-union drop glue is not implemented yet.
+Aggregate ownership is supported for struct/class fields, nested collections, `Owned[T]`, `Option`/`Result`/`Tuple` wrappers, and by-value parameters. Owning globals and union/variant payloads remain rejected because portable C11 has no automatic global destruction phase and tagged-union drop glue is not implemented yet.
 
-`__del__` cannot be called directly. It is compiler-managed cleanup. There is no exception unwinding, reference counting, hidden heap ownership, or ownership inference.
+`__del__` cannot be called directly. It is compiler-managed cleanup. There is no exception unwinding, reference counting, or ownership inference. Explicit heap ownership uses `Owned[T]` or manual `alloc`/`free`.
 
 ## Cross-module ABI
 
@@ -168,4 +168,4 @@ All internal names receive deterministic project-and-module prefixes. Generated 
 
 ## Deliberate limits
 
-Cinder 0.5 does not implement multiple implementation inheritance, downcasting, runtime interface queries, class templates, automatic heap ownership, copy constructors, user-defined move hooks, exceptions, or a stable long-term binary ABI guarantee. The generated C representation is documented and tested, but the compiler remains alpha software and may revise mangled names before 1.0.
+Cinder 0.5 does not implement multiple implementation inheritance, downcasting, runtime interface queries, class templates, copy constructors, user-defined move hooks, exceptions, or a stable long-term binary ABI guarantee. The generated C representation is documented and tested, but the compiler remains alpha software and may revise mangled names before 1.0.

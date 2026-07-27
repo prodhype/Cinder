@@ -14,6 +14,7 @@ from cinder.types import (
     MapType,
     MapViewType,
     OptionType,
+    OwnedType,
     PointerType,
     ReferenceType,
     ResultType,
@@ -39,7 +40,7 @@ def type_needs_drop(
         return False
     if isinstance(raw, (PointerType, ReferenceType, SliceType, DynType, MapViewType)):
         return False
-    if isinstance(raw, (FileType, ListType, MapType, SetType)):
+    if isinstance(raw, (FileType, ListType, MapType, SetType, OwnedType)):
         return True
     if isinstance(raw, ConstType):
         return type_needs_drop(

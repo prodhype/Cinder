@@ -52,6 +52,7 @@ from cinder.types import (
     NullType,
     OpaqueType,
     OptionType,
+    OwnedType,
     PointerType,
     PrimitiveType,
     RangeType,
@@ -76,6 +77,7 @@ from cinder.types import (
     map_view_c_name,
     nominal_c_name,
     option_c_name,
+    owned_c_name,
     result_c_name,
     set_c_name,
     strip_const,
@@ -205,11 +207,13 @@ class CGenerator:
         self._emit_file_type_definition()
         self._emit_map_view_types()
         self._emit_map_set_type_definitions()
+        self._emit_owned_type_definitions()
         self._emit_type_definitions()
         self._emit_interface_definitions()
         self._emit_class_support_declarations()
         self._emit_ownership_drop_prototypes()
         self._emit_aggregate_drop_helpers()
+        self._emit_owned_helpers()
         self._emit_list_helpers()
         self._emit_file_helpers()
         self._emit_map_helpers()
@@ -253,6 +257,7 @@ class CGenerator:
         self._emit_file_type_definition()
         self._emit_map_view_types()
         self._emit_map_set_type_definitions()
+        self._emit_owned_type_definitions()
         self._emit_type_definitions()
         self._emit_interface_definitions()
         self.writer.line("#ifdef __cplusplus")
@@ -262,6 +267,7 @@ class CGenerator:
         self._emit_class_support_declarations()
         self._emit_ownership_drop_prototypes()
         self._emit_aggregate_drop_helpers()
+        self._emit_owned_helpers()
         self._emit_list_helpers()
         self._emit_file_helpers()
         self._emit_map_helpers()
@@ -385,6 +391,14 @@ class CGenerator:
             emitted = True
         for option_type in self.ir.option_types:
             name = c_identifier(option_c_name(option_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            self.writer.line("#endif")
+            emitted = True
+        for owned_type in self.ir.owned_types:
+            name = c_identifier(owned_c_name(owned_type))
             guard = f"CINDER_DECLARED_{name.upper()}"
             self.writer.line(f"#ifndef {guard}")
             self.writer.line(f"#define {guard}")
@@ -600,6 +614,65 @@ class CGenerator:
             self.writer.line(f"const {map_name} *map;")
             self.writer.indent -= 1
             self.writer.line("};")
+            self.writer.line(f"#endif /* {guard} */")
+            self.writer.line()
+
+    def _emit_owned_type_definitions(self) -> None:
+        for owned_type in self.ir.owned_types:
+            name = c_identifier(owned_c_name(owned_type))
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"struct {name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(c_decl(PointerType(owned_type.inner), "ptr") + ";")
+            self.writer.indent -= 1
+            self.writer.line("};")
+            self.writer.line(f"#endif /* {guard} */")
+            self.writer.line()
+
+    def _emit_owned_helpers(self) -> None:
+        for owned_type in self.ir.owned_types:
+            name = c_identifier(owned_c_name(owned_type))
+            guard = f"CINDER_HELPERS_{name.upper()}"
+            inner = owned_type.inner
+            inner_c_type = c_type_expression(inner)
+            pointer_c_type = c_type_expression(PointerType(inner))
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED {name} {name}_new("
+                f"{c_decl(inner, 'value')})"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(
+                f"{pointer_c_type} ptr = ({pointer_c_type})"
+                f"cinder_alloc(1, sizeof({inner_c_type}));"
+            )
+            self.writer.line("*ptr = value;")
+            self.writer.line(f"return ({name}){{ .ptr = ptr }};")
+            self.writer.indent -= 1
+            self.writer.line("}")
+            self.writer.line()
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *owned)"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line("if (owned == NULL || owned->ptr == NULL)")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line("return;")
+            self.writer.indent -= 1
+            self.writer.line("}")
+            if self._type_needs_drop(inner):
+                self.writer.line(self._drop_expression(inner, "(*owned->ptr)"))
+            self.writer.line("free(owned->ptr);")
+            self.writer.line("owned->ptr = NULL;")
+            self.writer.indent -= 1
+            self.writer.line("}")
             self.writer.line(f"#endif /* {guard} */")
             self.writer.line()
 
@@ -1852,7 +1925,7 @@ class CGenerator:
 
     def _drop_glue_call(self, type_: Type, pointer_expr: str) -> str:
         raw = strip_const(type_)
-        if isinstance(raw, (ListType, MapType, SetType, FileType)):
+        if isinstance(raw, (ListType, MapType, SetType, FileType, OwnedType)):
             return f"{self._container_drop_name(raw)}({pointer_expr});"
         if isinstance(raw, ClassType):
             class_ = self._classes_by_type.get(raw)
@@ -2487,6 +2560,12 @@ class CGenerator:
                     f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
                 )
                 emitted = True
+        for owned_type in self.ir.owned_types:
+            name = c_identifier(owned_c_name(owned_type))
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+            )
+            emitted = True
         for result_type in self.ir.result_types:
             if self._type_needs_drop(result_type):
                 name = c_identifier(result_c_name(result_type))
@@ -3792,6 +3871,12 @@ class CGenerator:
                     return self._emit_address(operand)
                 if operator == "not":
                     return f"(!{self._emit_condition(operand)})"
+                if operator == "*":
+                    operand_type = strip_const(
+                        self.semantic.expression_type(operand)
+                    )
+                    if isinstance(operand_type, OwnedType):
+                        return f"(*({self._emit_expr(operand)}).ptr)"
                 c_operator = "!" if operator == "not" else operator
                 return f"({c_operator}{self._emit_expr(operand)})"
             case ast.BinaryExpr(left=left, operator=operator, right=right):
@@ -4546,6 +4631,18 @@ class CGenerator:
             if not isinstance(resolution.compile_value, SetType):
                 raise AssertionError("set() has no Set type")
             return f"(({c_type_expression(resolution.compile_value)}){{ 0 }})"
+        if resolution.kind == "owned_new":
+            owned_type = resolution.compile_value
+            if not isinstance(owned_type, OwnedType):
+                raise AssertionError("Owned constructor has no Owned type")
+            name = c_identifier(owned_c_name(owned_type))
+            if not expression.arguments:
+                raise AssertionError("Owned constructor missing value argument")
+            value = self._emit_with_expected(
+                expression.arguments[0].value,
+                owned_type.inner,
+            )
+            return f"{name}_new({value})"
         if resolution.kind == "class_constructor":
             if resolution.class_ is None:
                 raise AssertionError("class constructor has no class symbol")
@@ -5171,6 +5268,11 @@ class CGenerator:
         if isinstance(actual, ReferenceType):
             return self._emit_expr(expression, mode="raw")
         if isinstance(expression, ast.UnaryExpr) and expression.operator == "*":
+            operand_type = strip_const(
+                self.semantic.expression_type(expression.operand)
+            )
+            if isinstance(operand_type, OwnedType):
+                return f"(({self._emit_expr(expression.operand)}).ptr)"
             return self._emit_expr(expression.operand)
         return f"(&({self._emit_lvalue(expression)}))"
 
@@ -5208,7 +5310,7 @@ class CGenerator:
 
     @staticmethod
     def _container_drop_name(
-        type_: ListType | MapType | SetType | FileType,
+        type_: ListType | MapType | SetType | FileType | OwnedType,
     ) -> str:
         if isinstance(type_, ListType):
             return f"{c_identifier(list_c_name(type_))}_drop"
@@ -5216,6 +5318,8 @@ class CGenerator:
             return f"{c_identifier(map_c_name(type_))}_drop"
         if isinstance(type_, SetType):
             return f"{c_identifier(set_c_name(type_))}_drop"
+        if isinstance(type_, OwnedType):
+            return f"{c_identifier(owned_c_name(type_))}_drop"
         return f"{file_c_name()}_drop"
 
     def _slice_name(self, slice_type: SliceType) -> str:
@@ -5712,6 +5816,8 @@ def c_decl(type_: Type, name: str) -> str:
         return f"{c_identifier(result_c_name(type_))} {name}".strip()
     if isinstance(type_, OptionType):
         return f"{c_identifier(option_c_name(type_))} {name}".strip()
+    if isinstance(type_, OwnedType):
+        return f"{c_identifier(owned_c_name(type_))} {name}".strip()
     if isinstance(type_, OpaqueType):
         return f"{type_.c_name} {name}".strip()
     if isinstance(type_, NullType):

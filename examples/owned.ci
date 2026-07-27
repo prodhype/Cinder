@@ -1,0 +1,37 @@
+# Owned[T]: heap ownership with deterministic drop.
+
+class Resource:
+    label: i32
+
+    def __init__(self, label: i32):
+        self.label = label
+
+    def __del__(self):
+        print("drop", self.label)
+
+
+struct Node:
+    value: i32
+    next: Option[Owned[Node]]
+
+
+def bump(node: &Node) -> void:
+    node.value = node.value + 1
+
+
+def main() -> i32:
+    number: Owned[i32] = Owned(40)
+    *number = *number + 2
+    print(*number)
+
+    resource: Owned[Resource] = Owned(Resource(1))
+    print((*resource).label)
+
+    leaf: Owned[Node] = Owned(Node(value=10, next=None))
+    root: Owned[Node] = Owned(Node(value=20, next=Some(leaf)))
+    bump(&*root)
+    print((*root).value)
+
+    moved = root
+    print((*moved).value)
+    return *number

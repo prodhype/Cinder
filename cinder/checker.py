@@ -71,6 +71,7 @@ from cinder.types import (
     ModuleType,
     OpaqueType,
     OptionType,
+    OwnedType,
     PointerType,
     RangeType,
     ReferenceType,
@@ -1461,6 +1462,9 @@ class Checker:
         if isinstance(raw, OptionType):
             self._validate_list_elements(raw.inner, span)
             return
+        if isinstance(raw, OwnedType):
+            self._validate_list_elements(raw.inner, span)
+            return
         if isinstance(raw, MapType):
             self._validate_list_elements(raw.key, span)
             self._validate_list_elements(raw.value, span)
@@ -1568,6 +1572,8 @@ class Checker:
             return self._contains_destructible_value(raw.inner, seen)
         if isinstance(raw, OptionType):
             return self._contains_destructible_value(raw.inner, seen)
+        if isinstance(raw, OwnedType):
+            return self._contains_destructible_value(raw.inner, seen)
         if isinstance(raw, TupleType):
             return any(
                 self._contains_destructible_value(element, seen)
@@ -1633,6 +1639,8 @@ class Checker:
             ) or self._contains_owning_container_value(raw.error, seen)
         if isinstance(raw, OptionType):
             return self._contains_owning_container_value(raw.inner, seen)
+        if isinstance(raw, OwnedType):
+            return True
         if isinstance(raw, ListType):
             return self._contains_owning_container_value(raw.inner, seen)
         if isinstance(raw, MapType):
@@ -1727,6 +1735,8 @@ class Checker:
             return isinstance(expression, ast.CallExpr)
         if isinstance(expected, OptionType):
             return isinstance(expression, (ast.CallExpr, ast.NoneExpr))
+        if isinstance(expected, OwnedType):
+            return isinstance(expression, ast.CallExpr)
         if isinstance(expected, ResultType):
             return isinstance(expression, ast.CallExpr)
         if isinstance(expected, TupleType):
@@ -2187,6 +2197,9 @@ class Checker:
             }
         if isinstance(type_, OptionType):
             return self._by_value_aggregate_types(type_.inner)
+        if isinstance(type_, OwnedType):
+            # Owned stores T behind a pointer, so it breaks by-value aggregate cycles.
+            return set()
         return set()
 
     def _check_global_initializers(self) -> None:
@@ -3584,7 +3597,13 @@ class Checker:
             raw = strip_const(operand_type)
             if isinstance(raw, (PointerType, ReferenceType)):
                 return raw.inner
-            self._error("dereference requires a pointer or reference", expression.span, code="C054")
+            if isinstance(raw, OwnedType):
+                return raw.inner
+            self._error(
+                "dereference requires a pointer, reference, or Owned value",
+                expression.span,
+                code="C054",
+            )
             return ERROR
         return ERROR
 
@@ -4272,6 +4291,9 @@ class Checker:
             if name == "Some":
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_option_constructor(expression, expected)
+            if name == "Owned":
+                self.expr_types[id(expression.callee)] = FunctionValueType(name)
+                return self._check_owned_constructor(expression, expected)
             if name == "set":
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_empty_set_call(expression, expected)
@@ -5263,6 +5285,91 @@ class Checker:
             moved_variables=tuple(moved_variables),
         )
         return result
+
+    def _check_owned_constructor(
+        self,
+        call: ast.CallExpr,
+        expected: Type | None,
+    ) -> Type:
+        if len(call.arguments) != 1:
+            self._error(
+                f"Owned expects one argument, got {len(call.arguments)}",
+                call.span,
+                code="C342",
+            )
+
+        expected_owned = value_type(expected) if expected is not None else None
+        payload_expected = (
+            expected_owned.inner
+            if isinstance(expected_owned, OwnedType)
+            else None
+        )
+        payload_type: Type = ERROR
+        expected_types: list[Type | None] = []
+        moved_variables: list[VariableSymbol] = []
+        for argument in call.arguments:
+            if argument.name not in (None, "value"):
+                self._error(
+                    f"unexpected named argument {argument.name!r}; expected 'value'",
+                    argument.span,
+                    code="C343",
+                )
+            actual = self._check_expr(argument.value, expected=payload_expected)
+            if payload_expected is not None:
+                if not self._can_assign(payload_expected, actual):
+                    self._type_mismatch(
+                        payload_expected,
+                        actual,
+                        argument.value.span,
+                    )
+                payload_type = payload_expected
+            else:
+                payload_type = strip_const(value_type(actual))
+            expected_types.append(payload_expected)
+            if self.type_needs_drop(payload_type):
+                moved = self._validate_move_only_source(argument.value, payload_type)
+                if moved is not None:
+                    moved_variables.append(moved)
+
+        if isinstance(expected_owned, OwnedType):
+            result = expected_owned
+        else:
+            if payload_type != ERROR and not self._is_valid_owned_payload(payload_type):
+                self._error(
+                    f"cannot infer an Owned payload from {type_name(payload_type)}",
+                    call.span,
+                    code="C344",
+                )
+                payload_type = ERROR
+            result = OwnedType(payload_type)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            "owned_new",
+            argument_order=tuple(range(len(call.arguments))),
+            expected_types=tuple(expected_types),
+            compile_value=result,
+            moved_variables=tuple(moved_variables),
+        )
+        return result
+
+    def _is_valid_owned_payload(self, type_: Type) -> bool:
+        raw = strip_const(type_)
+        if raw == ERROR:
+            return True
+        if is_void(raw) or isinstance(
+            raw,
+            (
+                ConstType,
+                ReferenceType,
+                ArrayType,
+                PointerType,
+                SliceType,
+                DynType,
+                MapViewType,
+            ),
+        ):
+            return False
+        return self._is_collection_runtime_type(raw)
 
     def _check_empty_set_call(
         self,
@@ -6296,10 +6403,11 @@ class Checker:
                 SetType,
                 MapViewType,
                 OptionType,
+                OwnedType,
             ),
         ) or isinstance(
             source_value,
-            (TupleType, ListType, MapType, SetType, MapViewType, OptionType),
+            (TupleType, ListType, MapType, SetType, MapViewType, OptionType, OwnedType),
         ) or is_void(target):
             self._error(
                 f"cannot cast from {type_name(source_value)} to {type_name(target)}",
@@ -6478,6 +6586,28 @@ class Checker:
                         )
                         inner_type = ERROR
                     result = OptionType(inner_type)
+                elif base.name == "Owned" and len(arguments) != 1:
+                    self._error("Owned requires exactly one type argument", node.span, code="C345")
+                    for argument in arguments:
+                        self._resolve_type(argument, allow_opaque=allow_opaque)
+                    result = ERROR
+                elif base.name == "Owned":
+                    inner_type = self._resolve_type(
+                        arguments[0],
+                        allow_opaque=allow_opaque,
+                    )
+                    if not self._is_valid_owned_payload(inner_type):
+                        self._error(
+                            f"invalid Owned payload type {type_name(inner_type)}",
+                            arguments[0].span,
+                            code="C346",
+                            note=(
+                                "Owned payloads cannot be void, const, references, "
+                                "arrays, pointers, slices, dyn, or map views"
+                            ),
+                        )
+                        inner_type = ERROR
+                    result = OwnedType(inner_type)
                 elif base.name == "Map" and len(arguments) != 2:
                     self._error("Map requires exactly two type arguments", node.span, code="C296")
                     for argument in arguments:
@@ -6622,7 +6752,7 @@ class Checker:
                         node.span,
                         code="C155",
                         note=(
-                            "implemented generic types are Result, Option, Tuple, "
+                            "implemented generic types are Result, Option, Owned, Tuple, "
                             "List, Map, Set, and Map views"
                         ),
                     )
