@@ -134,6 +134,15 @@ def test_brace_literals_inside_fstrings_track_nested_colons_and_quotes() -> None
         ),
         (
             "def main() -> i32:\n"
+            "    values = {1: 2}\n"
+            "    keys = values.keys()\n"
+            "    for key in keys:\n"
+            "        values[3] = key\n"
+            "    return 0\n",
+            "cannot insert into a Map while iterating over it",
+        ),
+        (
+            "def main() -> i32:\n"
             "    values = {1, 2}\n"
             "    for value in values:\n"
             "        values.add(value)\n"
@@ -161,6 +170,24 @@ def test_map_view_reassignment_tracks_latest_backing_map() -> None:
     )
 
     assert "CinderMapKeys_i32_i32" in generated
+
+
+def test_untracked_map_view_allows_unrelated_direct_map_set_mutation() -> None:
+    generated = compile_source(
+        "struct ViewBox:\n"
+        "    keys: MapKeys[i32, i32]\n"
+        "\n"
+        "def inspect(box: ViewBox) -> i32:\n"
+        "    other = {10: 20}\n"
+        "    seen = {1}\n"
+        "    for key in box.keys:\n"
+        "        other[30] = key\n"
+        "        seen.add(key)\n"
+        "    return cast[i32](len(other) + len(seen))\n"
+    )
+
+    assert "CinderMap_i32_i32_set(__cinder_map_" in generated
+    assert "CinderSet_i32_add((&(seen)), key);" in generated
 
 
 @pytest.mark.skipif(

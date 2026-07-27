@@ -90,6 +90,12 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
             "invalid List element type List[i32]",
         ),
         (
+            "def main() -> i32:\n"
+            "    nested: List[Result[Map[i32, i32], i32]] = []\n"
+            "    return 0\n",
+            "invalid List element type Result[Map[i32, i32], i32]",
+        ),
+        (
             "class Resource:\n"
             "    def __del__(self):\n"
             "        pass\n"

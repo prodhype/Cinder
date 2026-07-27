@@ -116,8 +116,13 @@ _REFLECTION_BUILTINS = frozenset(
 )
 
 
-type _ListStorage = tuple[VariableSymbol | None, bool]
-type _CollectionStorage = tuple[VariableSymbol | None, bool]
+@dataclass(frozen=True, slots=True)
+class _CollectionStorage:
+    symbol: VariableSymbol | None
+    may_alias: bool
+    unknown_runtime_guarded: bool = False
+
+
 type _OwnedContainer = ListType | MapType | SetType
 
 
@@ -1520,9 +1525,9 @@ class Checker:
         if isinstance(raw, DynType):
             return
         if isinstance(raw, ListType):
-            if self._contains_list_value(raw.inner):
+            if self._contains_owning_container_value(raw.inner):
                 self._error(
-                    f"List element type {type_name(raw.inner)} owns another List",
+                    f"List element type {type_name(raw.inner)} contains an owning collection",
                     span,
                     code="C251",
                     note="nested owning containers are not implemented",
@@ -3041,7 +3046,7 @@ class Checker:
             self.loop_depth -= 1
             if iterator_storage is not None:
                 popped = self.active_collection_iterators.pop()
-                assert popped[0] is iterator_storage[0] and popped[1] == iterator_storage[1]
+                assert popped == iterator_storage
 
     def _check_for_c(self, statement: ast.ForCStmt) -> None:
         loop_scope = Scope(self.current_scope)
@@ -4626,33 +4631,58 @@ class Checker:
             if isinstance(symbol, VariableSymbol):
                 storage_type = strip_const(symbol.type)
                 if isinstance(storage_type, (ListType, MapType, SetType)):
-                    return symbol, False
+                    return _CollectionStorage(symbol, False)
                 if isinstance(storage_type, MapViewType):
-                    return self.map_view_storages.get(id(symbol), (None, True))
+                    return self.map_view_storages.get(
+                        id(symbol),
+                        _CollectionStorage(
+                            None,
+                            True,
+                            unknown_runtime_guarded=True,
+                        ),
+                    )
                 if isinstance(storage_type, (PointerType, ReferenceType)) and isinstance(
                     strip_const(storage_type.inner),
                     (ListType, MapType, SetType),
                 ):
-                    return symbol, True
+                    return _CollectionStorage(symbol, True)
 
-        return None, True
+        expression_type = value_type(self.expr_types.get(id(expression), ERROR))
+        if isinstance(
+            expression_type,
+            MapViewType,
+        ) or (
+            isinstance(expression, ast.AttributeExpr)
+            and isinstance(expression_type, (MapType, SetType))
+        ):
+            return _CollectionStorage(
+                None,
+                True,
+                unknown_runtime_guarded=True,
+            )
 
-    def _list_storage(
-        self,
-        expression: ast.Expression,
-    ) -> _ListStorage:
-        return self._collection_storage(expression)
+        return _CollectionStorage(None, True)
 
     @staticmethod
-    def _list_storages_may_alias(
-        left: _ListStorage,
-        right: _ListStorage,
+    def _collection_storages_may_alias(
+        left: _CollectionStorage,
+        right: _CollectionStorage,
     ) -> bool:
-        left_symbol, left_may_alias = left
-        right_symbol, right_may_alias = right
-        if left_symbol is not None and left_symbol is right_symbol:
+        if left.symbol is not None and left.symbol is right.symbol:
             return True
-        return left_may_alias or right_may_alias
+        if (
+            left.symbol is not None
+            and not left.may_alias
+            and right.unknown_runtime_guarded
+        ):
+            return False
+        if (
+            right.symbol is not None
+            and not right.may_alias
+            and left.unknown_runtime_guarded
+        ):
+            return False
+        return left.may_alias or right.may_alias
 
     def _list_storage_is_active(self, expression: ast.Expression) -> bool:
         return self._collection_storage_is_active(expression)
@@ -4660,7 +4690,7 @@ class Checker:
     def _collection_storage_is_active(self, expression: ast.Expression) -> bool:
         storage = self._collection_storage(expression)
         return any(
-            self._list_storages_may_alias(storage, active)
+            self._collection_storages_may_alias(storage, active)
             for active in self.active_collection_iterators
         )
 
@@ -6293,7 +6323,7 @@ class Checker:
                             inner_type,
                             (ConstType, ReferenceType, ArrayType),
                         )
-                        or is_owning_container(inner_type)
+                        or self._contains_owning_container_value(inner_type)
                     ):
                         self._error(
                             f"invalid List element type {type_name(inner_type)}",
@@ -6301,7 +6331,7 @@ class Checker:
                             code="C245",
                             note=(
                                 "list elements must be mutable, directly assignable values; "
-                                "nested owning lists are not implemented"
+                                "nested owning containers are not implemented"
                             ),
                         )
                         inner_type = ERROR
