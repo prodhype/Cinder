@@ -76,6 +76,7 @@ from cinder.types import (
     DynType,
     EnumType,
     FileType,
+    FunctionPointerType,
     FunctionValueType,
     ListType,
     MapType,
@@ -3761,6 +3762,11 @@ class Checker:
         if isinstance(symbol, ComptimeVariableSymbol):
             return symbol.type
         if isinstance(symbol, FunctionSymbol):
+            pointer = self._function_pointer_from_symbol(symbol)
+            if pointer is not None:
+                return pointer
+            return FunctionValueType(symbol.name)
+        if isinstance(symbol, FunctionTemplateSymbol):
             return FunctionValueType(symbol.name)
         if isinstance(symbol, (StructSymbol, ClassSymbol, EnumSymbol, UnionSymbol, VariantSymbol)):
             return symbol.type
@@ -4054,6 +4060,9 @@ class Checker:
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
                     "module_function", function=function
                 )
+                pointer = self._function_pointer_from_symbol(function)
+                if pointer is not None:
+                    return pointer
                 return FunctionValueType(function.name)
             if expression.name in module.constants:
                 constant = module.constants[expression.name]
@@ -4843,11 +4852,22 @@ class Checker:
                 )
 
         callee_type = self._check_expr(expression.callee)
-        self._error(
-            f"value of type {type_name(callee_type)} is not callable",
-            expression.callee.span,
-            code="C072",
-        )
+        callee_value = value_type(callee_type)
+        if isinstance(callee_value, FunctionPointerType):
+            return self._check_function_pointer_call(expression, callee_value)
+        if isinstance(callee_value, FunctionValueType):
+            self._error(
+                f"cannot call {type_name(callee_value)} as a function pointer value",
+                expression.callee.span,
+                code="C072",
+                note="only free functions can be stored and called through def(...) types",
+            )
+        else:
+            self._error(
+                f"value of type {type_name(callee_type)} is not callable",
+                expression.callee.span,
+                code="C072",
+            )
         for argument in expression.arguments:
             self._check_expr(argument.value)
         return ERROR
@@ -6150,6 +6170,89 @@ class Checker:
             expected_types=tuple(expected_types),
             moved_variables=tuple(moved_variables),
         )
+
+    def _function_pointer_from_symbol(
+        self,
+        function: FunctionSymbol,
+    ) -> FunctionPointerType | None:
+        if function.owner is not None or function.is_variadic:
+            return None
+        return FunctionPointerType(
+            tuple(parameter.type for parameter in function.parameters),
+            function.return_type,
+        )
+
+    def _check_function_pointer_call(
+        self,
+        call: ast.CallExpr,
+        callee_type: FunctionPointerType,
+    ) -> Type:
+        if call.type_arguments:
+            self._error(
+                "function pointer calls cannot take type arguments",
+                call.span,
+                code="C358",
+            )
+
+        param_types = callee_type.param_types
+        if len(call.arguments) != len(param_types):
+            self._error(
+                f"expected {len(param_types)} argument"
+                f"{'' if len(param_types) == 1 else 's'} for function pointer call, "
+                f"got {len(call.arguments)}",
+                call.span,
+                code="C077" if len(call.arguments) > len(param_types) else "C078",
+            )
+
+        order: list[int] = []
+        expected_types: list[Type | None] = []
+        moved_variables: list[VariableSymbol] = []
+        for argument_index, argument in enumerate(call.arguments):
+            if argument.name is not None:
+                self._error(
+                    "function pointer calls do not support named arguments",
+                    argument.span,
+                    code="C076",
+                )
+            if argument_index >= len(param_types):
+                self._check_expr(argument.value)
+                continue
+            expected = param_types[argument_index]
+            order.append(argument_index)
+            expected_types.append(expected)
+            actual = self._check_expr(argument.value, expected=expected)
+            list_slice_argument = self._is_list_slice_argument(expected, actual)
+            if not self._can_assign(expected, actual) and not list_slice_argument:
+                self._type_mismatch(expected, actual, argument.value.span)
+            if list_slice_argument:
+                self._validate_list_slice_argument(expected, argument.value)
+            self._validate_borrow_source(expected, actual, argument.value)
+            if isinstance(expected, ReferenceType):
+                if actual == NULL:
+                    self._error("references cannot receive null", argument.value.span, code="C079")
+                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
+                    argument.value
+                ):
+                    self._error(
+                        "reference argument must be addressable",
+                        argument.value.span,
+                        code="C080",
+                    )
+            elif self.type_needs_drop(expected):
+                moved = self._validate_move_only_source(
+                    argument.value,
+                    strip_const(expected),
+                )
+                if moved is not None:
+                    moved_variables.append(moved)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            "function_pointer",
+            argument_order=tuple(order),
+            expected_types=tuple(expected_types),
+            moved_variables=tuple(moved_variables),
+        )
+        return callee_type.return_type
 
     def _check_struct_constructor(self, call: ast.CallExpr, struct: StructSymbol) -> Type:
         fields = list(struct.fields.values())
@@ -8191,6 +8294,32 @@ class Checker:
                     result = ERROR
                 else:
                     result = DynType(interface_type, is_const)
+            case ast.FunctionTypeNode(parameters=parameters, return_type=return_type):
+                param_types: list[Type] = []
+                for parameter in parameters:
+                    param_type = self._resolve_type(parameter, allow_opaque=allow_opaque)
+                    if is_void(param_type):
+                        self._error(
+                            "function pointer parameters cannot have type void",
+                            parameter.span,
+                            code="C013",
+                        )
+                        param_type = ERROR
+                    param_types.append(param_type)
+                resolved_return = (
+                    VOID
+                    if return_type is None
+                    else self._resolve_type(return_type, allow_opaque=allow_opaque)
+                )
+                if isinstance(resolved_return, (ArrayType, ReferenceType, DynType)):
+                    self._error(
+                        f"functions cannot return {type_name(resolved_return)}",
+                        return_type.span if return_type is not None else node.span,
+                        code="C016",
+                        note="return a pointer, slice, result, or owned nominal value instead",
+                    )
+                    resolved_return = ERROR
+                result = FunctionPointerType(tuple(param_types), resolved_return)
             case _:
                 raise AssertionError(f"unhandled type node: {node!r}")
         self.type_nodes[id(node)] = result

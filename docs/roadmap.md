@@ -54,7 +54,7 @@ Compile-time work may grow toward user-defined constant functions and serializer
 
 ## Later language work
 
-Other plausible additions include function pointer types, closures with explicit environment structs, richer match patterns, package dependencies, interface bounds on type parameters, and a documented stable C ABI for selected exported declarations.
+Other plausible additions include closures with explicit environment structs, richer match patterns, package dependencies, interface bounds on type parameters, and a documented stable C ABI for selected exported declarations.
 
 ## Non-goals
 

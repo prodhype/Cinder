@@ -90,6 +90,15 @@ def substitute_type_node(
                 substitute_type_node(interface, mapping),  # type: ignore[arg-type]
                 is_const,
             )
+        case ast.FunctionTypeNode(parameters=parameters, return_type=return_type):
+            return ast.FunctionTypeNode(
+                node.span,
+                [
+                    substitute_type_node(parameter, mapping)  # type: ignore[misc]
+                    for parameter in parameters
+                ],
+                substitute_type_node(return_type, mapping),
+            )
     raise AssertionError(f"unhandled type node: {node!r}")
 
 

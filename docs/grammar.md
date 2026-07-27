@@ -199,10 +199,11 @@ The compiler emits an explicit tag enum, payload union, and enclosing struct. Co
 
 ```text
 type               := dyn_type
-                    | prefix* "const"? dotted_name generic_args? postfix*
+                    | prefix* "const"? (function_type | dotted_name generic_args? postfix*)
 prefix             := "*" | "&" | "[]"
 generic_args       := "[" (type ("," type)* ","?)? "]"
 postfix            := "*" | "[" INTEGER "]"
+function_type      := "def" "(" (type ("," type)* ","?)? ")" ("->" type)?
 ```
 
 Examples:
@@ -225,9 +226,12 @@ Set[i32]
 MapKeys[const char*, i32]
 geometry.Vec2
 &dyn geometry.Shape
+def(i32) -> i32
+def(i32, i32) -> i32
+*def(i32) -> void
 ```
 
-`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families. User-defined generics use the same `Name[Args…]` application syntax and are monomorphized into readable specialized C types and functions.
+`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `def(T…) -> R` is a non-null function pointer type represented as a C function pointer; omit `-> R` to default the return type to `void`. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families. User-defined generics use the same `Name[Args…]` application syntax and are monomorphized into readable specialized C types and functions.
 
 References, dynamic references, slices, fixed arrays, class values, and plain `void` have placement restrictions that follow their generated C representations and lifetime rules.
 
@@ -466,4 +470,4 @@ Option values expose `.is_some`, `.is_none`, and checked `.value`.
 
 ## Deliberate omissions
 
-The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Owning globals and owning union/variant payloads remain intentionally rejected.
+The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Owning globals and owning union/variant payloads remain intentionally rejected.

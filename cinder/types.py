@@ -170,6 +170,12 @@ class FunctionValueType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class FunctionPointerType(Type):
+    param_types: tuple[Type, ...]
+    return_type: Type
+
+
+@dataclass(frozen=True, slots=True)
 class ModuleType(Type):
     name: str
 
@@ -361,6 +367,9 @@ def type_name(type_: Type) -> str:
             return f"comptime {kind[:-1] if kind.endswith('s') else kind}[{type_name(owner)}]"
         case FunctionValueType(name=name):
             return f"function {name}"
+        case FunctionPointerType(param_types=param_types, return_type=return_type):
+            params = ", ".join(type_name(param) for param in param_types)
+            return f"def({params}) -> {type_name(return_type)}"
         case ModuleType(name=name):
             return f"module {name}"
         case RangeType(inner=inner):
@@ -624,6 +633,18 @@ def can_assign(target: Type, source: Type) -> bool:
     if isinstance(target, MapViewType) and isinstance(source, MapViewType):
         return target == source
 
+    if isinstance(target, FunctionPointerType) and isinstance(source, FunctionPointerType):
+        if len(target.param_types) != len(source.param_types):
+            return False
+        if target.return_type != source.return_type:
+            return False
+        return all(
+            target_param == source_param
+            for target_param, source_param in zip(
+                target.param_types, source.param_types, strict=True
+            )
+        )
+
     return False
 
 
@@ -694,6 +715,10 @@ def type_key(type_: Type) -> str:
             return f"comptime_item_{_sanitize_key(kind)}_{type_key(owner)}"
         case FunctionValueType(name=name):
             return f"fn_{_sanitize_key(name)}"
+        case FunctionPointerType(param_types=param_types, return_type=return_type):
+            params = "_".join(type_key(param) for param in param_types)
+            suffix = f"_{params}" if params else ""
+            return f"fnptr{suffix}_ret_{type_key(return_type)}"
         case ModuleType(name=name):
             return f"module_{_sanitize_key(name)}"
         case RangeType(inner=inner):

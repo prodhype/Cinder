@@ -20,6 +20,8 @@
 
 `pointers.ci` demonstrates address-of, raw pointers, transparent references, and pointer indexing.
 
+`function_pointers.ci` demonstrates transparent function pointer types: annotate with `def(T…) -> R`, pass a named function by name, store it, and call through the value.
+
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
 `binary_sort.ci` implements stable binary insertion sort on a numeric List, then prints the sorted collection.
