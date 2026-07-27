@@ -20,6 +20,8 @@ class SymbolKind(StrEnum):
     MODULE = "module"
     TYPE = "type"
     CONSTANT = "constant"
+    TYPE_TEMPLATE = "type_template"
+    FUNCTION_TEMPLATE = "function_template"
 
 
 @dataclass(slots=True)
@@ -76,6 +78,9 @@ class FunctionSymbol(Symbol):
     is_abstract: bool = False
     is_override: bool = False
     owner_class: ClassSymbol | None = None
+    type_params: tuple[str, ...] = ()
+    type_args: tuple[Type, ...] = ()
+    template_name: str | None = None
 
 
 @dataclass(slots=True)
@@ -86,6 +91,10 @@ class StructSymbol(Symbol):
     fields: OrderedDict[str, FieldSymbol] = field(default_factory=OrderedDict)
     methods: OrderedDict[str, FunctionSymbol] = field(default_factory=OrderedDict)
     reflected: bool = False
+    type_params: tuple[str, ...] = ()
+    type_args: tuple[Type, ...] = ()
+    template_name: str | None = None
+    defining_module: str | None = None
 
 
 @dataclass(slots=True)
@@ -105,6 +114,10 @@ class ClassSymbol(Symbol):
     interface_methods: OrderedDict[str, FunctionSymbol] = field(default_factory=OrderedDict)
     constructor: FunctionSymbol | None = None
     destructor: FunctionSymbol | None = None
+    type_params: tuple[str, ...] = ()
+    type_args: tuple[Type, ...] = ()
+    template_name: str | None = None
+    defining_module: str | None = None
 
 
 @dataclass(slots=True)
@@ -122,6 +135,10 @@ class EnumSymbol(Symbol):
     c_name: str
     members: OrderedDict[str, EnumMemberSymbol] = field(default_factory=OrderedDict)
     reflected: bool = False
+    type_params: tuple[str, ...] = ()
+    type_args: tuple[Type, ...] = ()
+    template_name: str | None = None
+    defining_module: str | None = None
 
 
 @dataclass(slots=True)
@@ -131,6 +148,10 @@ class UnionSymbol(Symbol):
     c_name: str
     fields: OrderedDict[str, FieldSymbol] = field(default_factory=OrderedDict)
     reflected: bool = False
+    type_params: tuple[str, ...] = ()
+    type_args: tuple[Type, ...] = ()
+    template_name: str | None = None
+    defining_module: str | None = None
 
 
 @dataclass(slots=True)
@@ -149,6 +170,31 @@ class VariantSymbol(Symbol):
     c_name: str
     cases: OrderedDict[str, VariantCaseSymbol] = field(default_factory=OrderedDict)
     reflected: bool = False
+    type_params: tuple[str, ...] = ()
+    type_args: tuple[Type, ...] = ()
+    template_name: str | None = None
+    defining_module: str | None = None
+
+
+@dataclass(slots=True)
+class TypeTemplateSymbol(Symbol):
+    type_params: tuple[str, ...]
+    declaration: (
+        ast.StructDecl | ast.ClassDecl | ast.EnumDecl | ast.UnionDecl | ast.VariantDecl
+    )
+    template_kind: str
+    defining_module: str | None = None
+    is_abstract: bool = False
+    c_prefix: str = ""
+
+
+@dataclass(slots=True)
+class FunctionTemplateSymbol(Symbol):
+    type_params: tuple[str, ...]
+    declaration: ast.FunctionDecl
+    defining_module: str | None = None
+    is_exported: bool = False
+    c_prefix: str = ""
 
 
 NominalSymbol = StructSymbol | ClassSymbol | EnumSymbol | UnionSymbol | VariantSymbol
@@ -168,6 +214,8 @@ class ModuleSymbol(Symbol):
     globals: dict[str, VariableSymbol] = field(default_factory=dict)
     types: dict[str, Type] = field(default_factory=dict)
     type_symbols: dict[str, NominalSymbol] = field(default_factory=dict)
+    type_templates: dict[str, TypeTemplateSymbol] = field(default_factory=dict)
+    function_templates: dict[str, FunctionTemplateSymbol] = field(default_factory=dict)
     includes: tuple[str, ...] = ()
     libraries: tuple[str, ...] = ()
     generated_header: str | None = None

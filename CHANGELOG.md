@@ -14,6 +14,8 @@ Aggregate ownership is now first-class for `List`/`Map`/`Set`/`File` and destruc
 
 `Owned[T]` adds Box-style heap ownership: `Owned(value)` allocates and moves a value onto the heap, unary `*` yields an addressable payload, and drop frees after dropping `T`. Values are move-only, nest in aggregates and `Option`/`List`, and support recursive layouts such as `Option[Owned[Node]]`.
 
+User-defined generics are monomorphized into readable specialized C. Type parameters may appear on `struct`, `class`, `enum`, `union`, `variant`, and free `def`. Instantiations such as `Box[i32]` and `identity[i32]` become named C artifacts (`Box_i32`, `identity_i32`) with ordinary concrete checking after substitution. Type parameters are unconstrained; bodies may use `static_assert` / comptime checks per specialization.
+
 ## 0.5.0
 
 Cinder 0.5.0 adds opt-in runtime reflection and compile-time type inspection.

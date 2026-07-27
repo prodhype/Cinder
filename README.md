@@ -20,7 +20,7 @@ Cinder 0.4 adds classes, constructors, destructors, private fields, one implemen
 
 Cinder 0.5 adds opt-in `@reflect` metadata, runtime type/field/method inspection, dynamic runtime type names, compile-time type and member queries, top-level `static_assert`, and unrolled `comptime` field and method loops.
 
-The implementation remains alpha software. User-defined generics, function pointer types, closures, exceptions, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
+The implementation remains alpha software. Function pointer types, closures, exceptions, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
 
 ## Installation
 
@@ -325,7 +325,7 @@ Patterns do not yet support guards, alternatives, literals, or nested destructur
 
 ## Typed Results, Options, and propagation
 
-`Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, and `Set[T]` are compiler-provided generic families. User-defined generic declarations are not implemented.
+`Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, and `Set[T]` are compiler-provided generic families. User-defined generics on structs, classes, enums, unions, variants, and free functions are monomorphized into readable specialized C.
 
 ```python
 def parse(value: i32) -> Result[i32, ParseError]:

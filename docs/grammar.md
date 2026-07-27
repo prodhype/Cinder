@@ -63,14 +63,15 @@ Unknown decorators and decorators in an invalid position are source errors. Deco
 
 ```text
 global_decl        := "const"? NAME (":" type)? ("=" expression)? NEWLINE
-function_decl      := decorator* "def" NAME parameters ("->" type)? ":" suite
-struct_decl        := decorator* "struct" NAME ":" struct_suite
-class_decl         := decorator* "abstract"? "class" NAME class_bases? ":" class_suite
-enum_decl          := decorator* "enum" NAME ":" enum_suite
-union_decl         := decorator* "union" NAME ":" union_suite
-variant_decl       := decorator* "variant" NAME ":" variant_suite
+function_decl      := decorator* "def" NAME type_params? parameters ("->" type)? ":" suite
+struct_decl        := decorator* "struct" NAME type_params? ":" struct_suite
+class_decl         := decorator* "abstract"? "class" NAME type_params? class_bases? ":" class_suite
+enum_decl          := decorator* "enum" NAME type_params? ":" enum_suite
+union_decl         := decorator* "union" NAME type_params? ":" union_suite
+variant_decl       := decorator* "variant" NAME type_params? ":" variant_suite
 static_assert_decl := "static_assert" "(" expression ("," STRING)? ")" NEWLINE
 
+type_params        := "[" NAME ("," NAME)* ","? "]"
 class_bases        := "(" type ("," type)* ","? ")"
 ```
 
@@ -226,7 +227,7 @@ geometry.Vec2
 &dyn geometry.Shape
 ```
 
-`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families; user-defined generics are not implemented.
+`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families. User-defined generics use the same `Name[Args…]` application syntax and are monomorphized into readable specialized C types and functions.
 
 References, dynamic references, slices, fixed arrays, class values, and plain `void` have placement restrictions that follow their generated C representations and lifetime rules.
 
@@ -336,7 +337,10 @@ Special typed expressions are:
 cast[TargetType](value)
 alloc[ElementType]()
 alloc[ElementType](count)
+generic_function[TypeArgs...](arguments)
 ```
+
+User generic functions may also omit explicit type arguments when every type parameter is uniquely inferred from the call arguments.
 
 List literals use square brackets. In an untyped local, `[1, 2]` infers `List[i32]`; an explicit fixed-array context such as `values: i32[2] = [1, 2]` retains C array storage. Slice expressions support `value[:]`, `value[start:]`, and `value[start:stop]`. Slice steps are not implemented.
 
@@ -462,4 +466,4 @@ Option values expose `.is_some`, `.is_none`, and checked `.value`.
 
 ## Deliberate omissions
 
-The 0.5 grammar and checker do not implement user-defined generics, multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, or multi-root package dependency graphs. Owning globals and owning union/variant payloads remain intentionally rejected.
+The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Owning globals and owning union/variant payloads remain intentionally rejected.

@@ -250,9 +250,55 @@ class Parser:
             parts.append(self.expect(TokenKind.NAME, "expected name after '.'", code="P023").lexeme)
         return ".".join(parts)
 
+    def parse_type_params(self) -> tuple[str, ...]:
+        if not self.match(TokenKind.LEFT_BRACKET):
+            return ()
+        names: list[str] = []
+        if not self.at(TokenKind.RIGHT_BRACKET):
+            while True:
+                name = self.expect(TokenKind.NAME, "expected type parameter name", code="P141")
+                if name.lexeme in names:
+                    self.error(
+                        f"duplicate type parameter {name.lexeme!r}",
+                        name.span,
+                        code="P142",
+                    )
+                names.append(name.lexeme)
+                if not self.match(TokenKind.COMMA):
+                    break
+                if self.at(TokenKind.RIGHT_BRACKET):
+                    break
+        self.expect(TokenKind.RIGHT_BRACKET, "expected ']' after type parameters", code="P143")
+        if not names:
+            self.error("type parameter list cannot be empty", self.tokens[self.index - 1].span, code="P144")
+        return tuple(names)
+
+    def _looks_like_generic_call(self) -> bool:
+        """True when the next tokens are `[...](` with balanced brackets."""
+        if not self.at(TokenKind.NAME) or self.peek().kind is not TokenKind.LEFT_BRACKET:
+            return False
+        depth = 0
+        index = self.index + 1
+        while index < len(self.tokens):
+            kind = self.tokens[index].kind
+            if kind is TokenKind.LEFT_BRACKET:
+                depth += 1
+            elif kind is TokenKind.RIGHT_BRACKET:
+                depth -= 1
+                if depth == 0:
+                    return (
+                        index + 1 < len(self.tokens)
+                        and self.tokens[index + 1].kind is TokenKind.LEFT_PAREN
+                    )
+            elif kind in (TokenKind.NEWLINE, TokenKind.EOF, TokenKind.DEDENT, TokenKind.INDENT):
+                return False
+            index += 1
+        return False
+
     def parse_struct(self, decorators: tuple[str, ...]) -> ast.StructDecl:
         start = self.expect(TokenKind.STRUCT).span
         name_token = self.expect(TokenKind.NAME, "expected struct name", code="P024")
+        type_params = self.parse_type_params()
         self.expect(TokenKind.COLON, "expected ':' after struct name", code="P025")
         self.expect(TokenKind.NEWLINE, "expected newline after struct declaration", code="P026")
         self.expect(TokenKind.INDENT, "expected an indented struct body", code="P027")
@@ -302,6 +348,7 @@ class Parser:
             fields,
             methods,
             decorators,
+            type_params,
         )
 
     def parse_class(self, decorators: tuple[str, ...]) -> ast.ClassDecl:
@@ -309,6 +356,7 @@ class Parser:
         start = self.tokens[self.index - 1].span if is_abstract else self.current.span
         self.expect(TokenKind.CLASS, "expected 'class' after 'abstract'", code="P124")
         name_token = self.expect(TokenKind.NAME, "expected class name", code="P125")
+        type_params = self.parse_type_params()
 
         bases: list[ast.TypeNode] = []
         if self.match(TokenKind.LEFT_PAREN):
@@ -378,12 +426,14 @@ class Parser:
             methods,
             decorators,
             is_abstract,
+            type_params,
         )
 
 
     def parse_enum(self, decorators: tuple[str, ...]) -> ast.EnumDecl:
         start = self.expect(TokenKind.ENUM).span
         name_token = self.expect(TokenKind.NAME, "expected enum name", code="P083")
+        type_params = self.parse_type_params()
         self.expect(TokenKind.COLON, "expected ':' after enum name", code="P084")
         self.expect(TokenKind.NEWLINE, "expected newline after enum declaration", code="P085")
         self.expect(TokenKind.INDENT, "expected an indented enum body", code="P086")
@@ -409,11 +459,12 @@ class Parser:
         end = self.expect(TokenKind.DEDENT, "expected end of enum body", code="P090").span
         if not members:
             self.error("enum body cannot be empty", start.merge(end), code="P091")
-        return ast.EnumDecl(start.merge(end), name_token.lexeme, members, decorators)
+        return ast.EnumDecl(start.merge(end), name_token.lexeme, members, decorators, type_params)
 
     def parse_union(self, decorators: tuple[str, ...]) -> ast.UnionDecl:
         start = self.expect(TokenKind.UNION).span
         name_token = self.expect(TokenKind.NAME, "expected union name", code="P092")
+        type_params = self.parse_type_params()
         self.expect(TokenKind.COLON, "expected ':' after union name", code="P093")
         self.expect(TokenKind.NEWLINE, "expected newline after union declaration", code="P094")
         self.expect(TokenKind.INDENT, "expected an indented union body", code="P095")
@@ -434,11 +485,12 @@ class Parser:
         end = self.expect(TokenKind.DEDENT, "expected end of union body", code="P099").span
         if not fields:
             self.error("union body cannot be empty", start.merge(end), code="P100")
-        return ast.UnionDecl(start.merge(end), name_token.lexeme, fields, decorators)
+        return ast.UnionDecl(start.merge(end), name_token.lexeme, fields, decorators, type_params)
 
     def parse_variant(self, decorators: tuple[str, ...]) -> ast.VariantDecl:
         start = self.expect(TokenKind.VARIANT).span
         name_token = self.expect(TokenKind.NAME, "expected variant name", code="P101")
+        type_params = self.parse_type_params()
         self.expect(TokenKind.COLON, "expected ':' after variant name", code="P102")
         self.expect(TokenKind.NEWLINE, "expected newline after variant declaration", code="P103")
         self.expect(TokenKind.INDENT, "expected an indented variant body", code="P104")
@@ -478,7 +530,7 @@ class Parser:
         end = self.expect(TokenKind.DEDENT, "expected end of variant body", code="P110").span
         if not cases:
             self.error("variant body cannot be empty", start.merge(end), code="P111")
-        return ast.VariantDecl(start.merge(end), name_token.lexeme, cases, decorators)
+        return ast.VariantDecl(start.merge(end), name_token.lexeme, cases, decorators, type_params)
 
     def parse_function(
         self,
@@ -489,6 +541,7 @@ class Parser:
     ) -> ast.FunctionDecl:
         start = self.expect(TokenKind.DEF).span
         name = self.expect(TokenKind.NAME, "expected function name", code="P034")
+        type_params = () if owner is not None or is_extern else self.parse_type_params()
         self.expect(TokenKind.LEFT_PAREN, "expected '(' after function name", code="P035")
         parameters: list[ast.Parameter] = []
         saw_variadic = False
@@ -557,6 +610,7 @@ class Parser:
             decorators,
             is_extern,
             owner,
+            type_params,
         )
 
     def parse_global(self) -> ast.GlobalDecl:
@@ -987,7 +1041,11 @@ class Parser:
                         if self.at(TokenKind.RIGHT_PAREN):
                             break
                 close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after arguments", code="P071")
-                expression = ast.CallExpr(expression.span.merge(close.span), expression, arguments)
+                expression = ast.CallExpr(
+                    expression.span.merge(close.span),
+                    expression,
+                    arguments,
+                )
                 continue
 
             if self.match(TokenKind.DOT):
@@ -1067,6 +1125,43 @@ class Parser:
             count = None if self.at(TokenKind.RIGHT_PAREN) else self.parse_expression()
             close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after allocation", code="P079")
             return ast.AllocExpr(builtin.span.merge(close.span), target_type, count)
+
+        if self._looks_like_generic_call():
+            name_token = self.advance()
+            self.expect(TokenKind.LEFT_BRACKET)
+            type_arguments: list[ast.TypeNode] = []
+            if not self.at(TokenKind.RIGHT_BRACKET):
+                while True:
+                    type_arguments.append(self.parse_type())
+                    if not self.match(TokenKind.COMMA):
+                        break
+                    if self.at(TokenKind.RIGHT_BRACKET):
+                        break
+            self.expect(TokenKind.RIGHT_BRACKET, "expected ']' after type arguments", code="P145")
+            self.expect(TokenKind.LEFT_PAREN, "expected '(' after type arguments", code="P146")
+            arguments: list[ast.CallArgument] = []
+            if not self.at(TokenKind.RIGHT_PAREN):
+                while True:
+                    argument_start = self.current.span
+                    argument_name: str | None = None
+                    if self.at(TokenKind.NAME) and self.peek().kind is TokenKind.ASSIGN:
+                        argument_name = self.advance().lexeme
+                        self.advance()
+                    value = self.parse_expression()
+                    arguments.append(
+                        ast.CallArgument(argument_start.merge(value.span), value, argument_name)
+                    )
+                    if not self.match(TokenKind.COMMA):
+                        break
+                    if self.at(TokenKind.RIGHT_PAREN):
+                        break
+            close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after arguments", code="P071")
+            return ast.CallExpr(
+                name_token.span.merge(close.span),
+                ast.NameExpr(name_token.span, name_token.lexeme),
+                arguments,
+                type_arguments,
+            )
 
         if self.match(TokenKind.NAME):
             return ast.NameExpr(token.span, token.lexeme)

@@ -16,6 +16,8 @@
 
 `owned.ci` demonstrates `Owned[T]` heap ownership: construct with `Owned(value)`, mutate through `*`, borrow with `&*`, nest `Option[Owned[Node]]`, move-only transfer, and deterministic drop of destructor-bearing payloads.
 
+`generics.ci` demonstrates user-defined generics: monomorphized `struct Box[T]`, `def identity[T]`, `variant Tagged[T]`, and `abstract class Writer[T]` specialized to readable C names such as `Box_i32`.
+
 `pointers.ci` demonstrates address-of, raw pointers, transparent references, and pointer indexing.
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.

@@ -110,6 +110,7 @@ class FunctionDecl(TopLevel):
     decorators: tuple[str, ...] = ()
     is_extern: bool = False
     owner: str | None = None
+    type_params: tuple[str, ...] = ()
 
     @property
     def is_exported(self) -> bool:
@@ -122,6 +123,7 @@ class StructDecl(TopLevel):
     fields: list[FieldDecl]
     methods: list[FunctionDecl]
     decorators: tuple[str, ...] = ()
+    type_params: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -132,6 +134,7 @@ class ClassDecl(TopLevel):
     methods: list[FunctionDecl]
     decorators: tuple[str, ...] = ()
     is_abstract: bool = False
+    type_params: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -145,6 +148,7 @@ class EnumDecl(TopLevel):
     name: str
     members: list[EnumMemberDecl]
     decorators: tuple[str, ...] = ()
+    type_params: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -152,6 +156,7 @@ class UnionDecl(TopLevel):
     name: str
     fields: list[FieldDecl]
     decorators: tuple[str, ...] = ()
+    type_params: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -165,6 +170,7 @@ class VariantDecl(TopLevel):
     name: str
     cases: list[VariantCaseDecl]
     decorators: tuple[str, ...] = ()
+    type_params: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -430,6 +436,7 @@ class CallArgument(Node):
 class CallExpr(Expression):
     callee: Expression
     arguments: list[CallArgument]
+    type_arguments: list[TypeNode] = field(default_factory=list)
 
 
 @dataclass(slots=True)

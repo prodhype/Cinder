@@ -1,0 +1,39 @@
+# User-defined generics are monomorphized into readable specialized C types.
+
+struct Box[T]:
+    value: T
+
+    def get(self: &const Box[T]) -> T:
+        return self.value
+
+
+def identity[T](value: T) -> T:
+    return value
+
+
+variant Tagged[T]:
+    Empty
+    Present(value: T)
+
+
+abstract class Writer[T]:
+    @abstractmethod
+    def write(self, item: T) -> void:
+        pass
+
+
+class IntWriter(Writer[i32]):
+    def write(self, item: i32) -> void:
+        print(item)
+
+
+def main() -> i32:
+    boxed: Box[i32] = Box(value=40)
+    tagged: Tagged[i32] = Tagged.Present(value=identity(boxed.get()))
+    writer = IntWriter()
+    match tagged:
+        case Tagged.Empty:
+            return 1
+        case Tagged.Present(value):
+            writer.write(value)
+            return value + 2
