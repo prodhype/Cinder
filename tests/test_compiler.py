@@ -136,6 +136,47 @@ def test_print_rejects_incompatible_fstring_format() -> None:
     assert "integer print values do not support :s" in str(captured.value)
 
 
+def test_print_collections_generate_helpers() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    values = [1, 2]\n"
+        "    print(values)\n"
+        "    print((3, 4))\n"
+        "    return 0\n"
+    )
+    assert "CinderList_i32_print((&(values)));" in generated
+    assert "CinderTuple_2_i32_i32_print(&" in generated
+    assert 'printf("\\n");' in generated
+
+
+def test_print_rejects_collection_format_spec_and_unaddressable_list() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    print(f\"{values:d}\")\n"
+            "    print([3, 4])\n"
+            "    return 0\n"
+        )
+    text = str(captured.value)
+    assert "List[i32] print values support only the default format" in text
+    assert "print requires an addressable List[i32]" in text
+
+
+def test_print_rejects_unprintable_list_element_type() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "struct Point:\n"
+            "    x: i32\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    points = [Point(x=1)]\n"
+            "    print(points)\n"
+            "    return 0\n"
+        )
+    assert "type Point cannot be printed" in str(captured.value)
+
+
 def test_scoped_defer_runs_before_return_value_is_released() -> None:
     generated = compile_source(
         "def compute() -> i32:\n"

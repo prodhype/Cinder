@@ -185,6 +185,43 @@ def test_nested_fstrings_and_signed_integer_radix_formats(tmp_path: Path) -> Non
     )
 
 
+def test_print_lists_maps_sets_and_tuples(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "def main() -> i32:\n"
+        "    values = [5, 1, 4]\n"
+        "    defer values.clear()\n"
+        "    scores = {\"Ada\": 3, \"Grace\": 5}\n"
+        "    defer scores.clear()\n"
+        "    primes = {2}\n"
+        "    defer primes.clear()\n"
+        "    empty_set: Set[i32] = set()\n"
+        "    defer empty_set.clear()\n"
+        "    summary = (9, 3)\n"
+        "    singleton = (1,)\n"
+        "    print(values)\n"
+        "    print(scores)\n"
+        "    print(primes)\n"
+        "    print(empty_set)\n"
+        "    print(summary)\n"
+        "    print(singleton)\n"
+        "    print(f\"values={values}\")\n"
+        "    print(values, summary)\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "[5, 1, 4]\n"
+        "{'Ada': 3, 'Grace': 5}\n"
+        "{2}\n"
+        "set()\n"
+        "(9, 3)\n"
+        "(1,)\n"
+        "values=[5, 1, 4]\n"
+        "[5, 1, 4] (9, 3)\n"
+    )
+
+
 def test_native_classes_dyn_reflection_and_destructor_order(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

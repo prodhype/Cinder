@@ -122,6 +122,55 @@ char *cinder_clone_string(const char *text)
     return copy;
 }
 
+static void cinder_print_repr_byte(unsigned char value)
+{
+    switch (value) {
+        case '\'':
+            (void)fputs("\\'", stdout);
+            break;
+        case '\\':
+            (void)fputs("\\\\", stdout);
+            break;
+        case '\n':
+            (void)fputs("\\n", stdout);
+            break;
+        case '\r':
+            (void)fputs("\\r", stdout);
+            break;
+        case '\t':
+            (void)fputs("\\t", stdout);
+            break;
+        case '\0':
+            (void)fputs("\\0", stdout);
+            break;
+        default:
+            if (value < 32 || value >= 127) {
+                (void)printf("\\x%02x", value);
+            } else {
+                (void)putchar((int)value);
+            }
+            break;
+    }
+}
+
+void cinder_print_repr_char(char value)
+{
+    (void)putchar('\'');
+    cinder_print_repr_byte((unsigned char)value);
+    (void)putchar('\'');
+}
+
+void cinder_print_repr_string(const char *text)
+{
+    (void)putchar('\'');
+    if (text != NULL) {
+        for (const unsigned char *cursor = (const unsigned char *)text; *cursor != '\0'; ++cursor) {
+            cinder_print_repr_byte(*cursor);
+        }
+    }
+    (void)putchar('\'');
+}
+
 char *cinder_input(const char *prompt)
 {
     if (prompt != NULL) {
