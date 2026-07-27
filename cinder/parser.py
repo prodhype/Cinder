@@ -935,6 +935,40 @@ class Parser:
             interface = ast.NamedTypeNode(interface_start.merge(interface_name.span), ".".join(parts))
             return ast.DynTypeNode(start.merge(interface.span), interface, is_const)
 
+        if self.match(TokenKind.DEF):
+            self.expect(TokenKind.LEFT_PAREN, "expected '(' after 'def' in function type", code="P160")
+            parameters: list[ast.TypeNode] = []
+            if not self.at(TokenKind.RIGHT_PAREN):
+                while True:
+                    parameters.append(self.parse_type())
+                    if not self.match(TokenKind.COMMA):
+                        break
+                    if self.at(TokenKind.RIGHT_PAREN):
+                        break
+            close_paren = self.expect(
+                TokenKind.RIGHT_PAREN,
+                "expected ')' after function type parameters",
+                code="P161",
+            )
+            return_type: ast.TypeNode | None = None
+            if self.match(TokenKind.ARROW):
+                return_type = self.parse_type()
+            result: ast.TypeNode = ast.FunctionTypeNode(
+                start.merge((return_type.span if return_type is not None else close_paren.span)),
+                parameters,
+                return_type,
+            )
+            if is_const:
+                result = ast.ConstTypeNode(start.merge(result.span), result)
+            for wrapper in reversed(wrappers):
+                if wrapper == "pointer":
+                    result = ast.PointerTypeNode(start.merge(result.span), result)
+                elif wrapper == "reference":
+                    result = ast.ReferenceTypeNode(start.merge(result.span), result)
+                else:
+                    result = ast.SliceTypeNode(start.merge(result.span), result)
+            return result
+
         name_token = self.expect(TokenKind.NAME, "expected type name", code="P066")
         parts = [name_token.lexeme]
         while self.match(TokenKind.DOT):

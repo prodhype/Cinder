@@ -742,7 +742,7 @@ cinder emit-project . -o generated
 
 The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations.
 
-Function pointer types, copy/move hooks, closures, and broader compile-time execution remain later work.
+Copy/move hooks, closures with explicit environment structs, and broader compile-time execution remain later work.
 
 The crucial constraint remains this: Cinder must be understandable by reading its
 generated C. Hidden allocation, unpredictable dispatch, exception machinery, or

@@ -44,6 +44,7 @@ from cinder.types import (
     DynType,
     EnumType,
     FileType,
+    FunctionPointerType,
     FunctionValueType,
     ListType,
     MapType,
@@ -4888,6 +4889,11 @@ class CGenerator:
         if resolution.kind in {"super_init", "super_method"}:
             return self._emit_super_call(expression, resolution)
 
+        if resolution.kind == "function_pointer":
+            callee = self._emit_expr(expression.callee)
+            arguments = self._emit_ordered_call_arguments(expression, resolution)
+            return f"({callee})({', '.join(arguments)})"
+
         assert resolution.function is not None
         function = resolution.function
         arguments: list[str] = []
@@ -5860,6 +5866,16 @@ def c_decl(type_: Type, name: str) -> str:
             return c_decl(inner.inner, decorated)
         if isinstance(inner, ReferenceType):
             return c_decl(inner.inner, f"* const {name}".strip())
+        if isinstance(inner, FunctionPointerType):
+            parameters = [
+                c_type_expression(parameter) for parameter in inner.param_types
+            ]
+            if not parameters:
+                parameters.append("void")
+            return (
+                f"{c_decl(inner.return_type, f'(* const {name})')}"
+                f"({', '.join(parameters)})"
+            )
         if isinstance(inner, ArrayType):
             return c_decl(ConstType(inner.inner), f"{name}[{inner.length}]")
         if isinstance(inner, SliceType):
@@ -5910,6 +5926,14 @@ def c_decl(type_: Type, name: str) -> str:
         return f"{c_identifier(owned_c_name(type_))} {name}".strip()
     if isinstance(type_, OpaqueType):
         return f"{type_.c_name} {name}".strip()
+    if isinstance(type_, FunctionPointerType):
+        parameters = [
+            c_type_expression(parameter) for parameter in type_.param_types
+        ]
+        if not parameters:
+            parameters.append("void")
+        declarator = f"(*{name})" if name else "(*)"
+        return f"{c_decl(type_.return_type, declarator)}({', '.join(parameters)})"
     if isinstance(type_, NullType):
         return f"void *{name}".strip()
     if isinstance(

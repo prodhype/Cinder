@@ -8,7 +8,7 @@ The compiler requires Python 3.14+, emits readable portable C11, and can invoke 
 
 Cinder 0.5.0 completes the first five language milestones.
 
-The procedural core includes indentation-aware parsing, primitive and C ABI types, typed globals, inferred locals, functions, named arguments, native control flow, structs and methods, pointers and references, fixed arrays, slices, explicit allocation, scoped `defer`, C imports, exported C functions, and readable C11 generation.
+The procedural core includes indentation-aware parsing, primitive and C ABI types, typed globals, inferred locals, functions, function pointer types, named arguments, native control flow, structs and methods, pointers and references, fixed arrays, slices, explicit allocation, scoped `defer`, C imports, exported C functions, and readable C11 generation.
 
 Native collection support includes heterogeneous value tuples and specialized owning Lists, Maps, and Sets. Maps preserve insertion order and expose live views; Sets support hash membership and algebra. Optional lookup uses tagged `Option[T]` values. `Owned[T]` provides Box-style heap ownership with deterministic drop.
 
@@ -20,7 +20,7 @@ Cinder 0.4 adds classes, constructors, destructors, private fields, one implemen
 
 Cinder 0.5 adds opt-in `@reflect` metadata, runtime type/field/method inspection, dynamic runtime type names, compile-time type and member queries, top-level `static_assert`, and unrolled `comptime` field and method loops.
 
-The implementation remains alpha software. Function pointer types, closures, exceptions, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
+The implementation remains alpha software. Closures, exceptions, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
 
 ## Installation
 
@@ -378,6 +378,23 @@ def increment(value: &i32) -> void:
 ```
 
 References compile to pointers but are transparent inside Cinder expressions. The checker rejects null reference initialization and requires an addressable value when a reference is formed.
+
+Function pointer types use `def` parameter and return syntax and compile to ordinary C function pointers. Named free functions decay to that type without `&`, so they can be stored, passed, and called like values:
+
+```python
+def double(n: i32) -> i32:
+    return n * 2
+
+
+def apply(f: def(i32) -> i32, x: i32) -> i32:
+    return f(x)
+
+
+callback = double
+result = apply(callback, 21)
+```
+
+Closures and bound methods are not supported; only non-capturing free functions may be used as function pointer values.
 
 Fixed arrays and slices are distinct:
 
