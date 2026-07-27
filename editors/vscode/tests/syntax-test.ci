@@ -16,13 +16,16 @@ def area(self: &const Shape) -> f64:
 f64
 # <- support.type.primitive.cinder
 
-Tuple List Result
+Tuple List Result Option Map Set MapKeys MapValues MapItems
 # <- support.type.builtin.cinder
 
-true false null
+true false null None
 # <- constant.language.cinder
 
 static_assert(true)
+# <- support.function.builtin.cinder
+
+Some(1)
 # <- support.function.builtin.cinder
 
 self super

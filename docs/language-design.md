@@ -1,6 +1,6 @@
 # Cinder language design
 
-> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, compile-time member inspection, native tuples, and owning lists. User-defined generics, maps, sets, and the more expansive metaprogramming ideas remain proposals.
+> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results and Options, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, compile-time member inspection, and specialized native collections. User-defined generics and the more expansive metaprogramming ideas remain proposals.
 
 This is a language that compiles to portable C11, not a modification of the C standard. Trying to make whitespace significant while remaining valid C would create a preprocessing mess and poor tooling compatibility.
 
@@ -222,7 +222,7 @@ const slices. `value[:]`, `value[start:]`, and `value[start:stop]` create subvie
 slice steps are not implemented. Indexing and slicing compile to direct C access and
 pointer arithmetic, with no implicit bounds checks.
 
-## Tuples and lists
+## Native collections
 
 `Tuple[...]` is a compiler-specialized heterogeneous value aggregate. Tuple layout is explicit in generated C, tuple elements are immutable, and indices must be compile-time integer literals.
 
@@ -242,7 +242,15 @@ last = values.pop()
 
 List ownership follows the existing explicit move-only direction. A direct local owns its buffer, a direct return transfers it, replacement drops the previous buffer, and all normal scope exits free it. Generic element-processing functions can accept `[]T` or `[]const T`; addressable Lists, fixed arrays, and slices all pass to those parameters without copying. List-to-slice coercion is call-only so a borrowed view cannot be stored or returned implicitly. Mutable slices can update elements, while structural operations use `&List[T]`. Nested lists, aggregate list fields, globals, by-value parameters, and destructor-bearing elements wait for a broader aggregate ownership model.
 
-Square-bracket literals infer lists in untyped contexts. An explicit array type still selects fixed C storage, so `values: i32[3] = [1, 2, 3]` remains an array declaration. Maps and sets are intentionally deferred until hashing and equality constraints are defined.
+Square-bracket literals infer lists in untyped contexts. An explicit array type still selects fixed C storage, so `values: i32[3] = [1, 2, 3]` remains an array declaration.
+
+`Map[K, V]` and `Set[T]` are specialized owning hash tables. Map literals use `{key: value}` and preserve insertion order; Set literals use `{value, ...}` and expose unspecified iteration order. Empty Maps use contextual `{}`, while empty Sets use contextual `set()`.
+
+Maps support key membership, indexed lookup/upsert, optional `get`/`pop`, live `keys`/`values`/`items` views, `clear`, and `update`. Sets support membership, mutation, optional `pop`, bulk update, algebra, equality, and subset/superset comparisons. `MapKeys`, `MapValues`, and `MapItems` contain a borrowed pointer to their Map, remain live across mutation, and carry the same lifetime responsibility as slices.
+
+Hashable values are integer primitives, `bool`, `char`, enums, and `const char*`. C strings use null-safe byte-content equality, and Map/Set insertion clones string keys so hash stability does not depend on the caller's buffer. Removing a string with `Set.pop()` transfers that buffer to the caller.
+
+All three owning homogeneous collections remain move-only direct locals and return values. Nested owning collections, aggregate/global ownership, by-value parameters, and destructor-bearing stored values wait for broader aggregate ownership. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
 
 ## Structs
 
@@ -511,6 +519,17 @@ active cleanup on error, and emits an ordinary early return. It is rejected in
 expression contexts where inserting that return would obscure short-circuit or
 repeated evaluation; see `docs/algebraic-types.md` for the complete rules.
 
+`Option[T]` is a separate tagged value for absence:
+
+```python
+def find_enabled(enabled: bool) -> Option[i32]:
+    if enabled:
+        return Some(42)
+    return None
+```
+
+`Some(value)` may infer `T`; bare `None` requires an expected Option type. Matches are exhaustive over `Some(value)` and `None`. Option values expose `.is_some`, `.is_none`, and checked `.value`; accessing the payload of `None` panics. Option does not use postfix `?`.
+
 ## Control flow
 
 ```python
@@ -702,7 +721,7 @@ cinder emit-project . -o generated
 
 The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns without introducing user-defined generics.
 
-User-defined generics, maps and sets, function pointer types, richer ownership abstractions, closures, and broader compile-time execution remain later work.
+User-defined generics, function pointer types, richer ownership abstractions, closures, and broader compile-time execution remain later work.
 
 The crucial constraint remains this: Cinder must be understandable by reading its
 generated C. Hidden allocation, unpredictable dispatch, exception machinery, or

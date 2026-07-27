@@ -38,11 +38,11 @@ The compiler implements `type_of`, `type_name`, `type_info`, `size_of`, `align_o
 
 Runtime metadata is inspectable in `cinder_runtime.h`, has no startup registration step, and has a measurable binary-size cost. Unreflected concrete types emit no metadata arrays.
 
-## Native collections - tuple/list phase complete
+## Native collections - Map/Set phase complete
 
-Cinder implements specialized heterogeneous `Tuple[...]` values and homogeneous owning `List[T]` buffers. Square-bracket literals infer lists unless a fixed-array context is explicit. Lists support deterministic cleanup, direct return transfer, references, indexing, iteration, `len`, `sort`, `append`, `pop`, and `clear`; tuple indexing is compile-time checked.
+Cinder implements specialized heterogeneous `Tuple[...]` values and homogeneous owning `List[T]`, `Map[K, V]`, and `Set[T]` collections. Maps preserve insertion order and expose live non-owning views; Sets provide membership and algebra. Optional collection lookups use the general tagged `Option[T]` family.
 
-This phase deliberately keeps ownership narrow. Lists are move-only direct locals and return values. Nested lists, aggregate fields, globals, by-value parameters, and destructor-bearing elements are rejected. `Map[K, V]` and `Set[T]` remain the next collection phase because they require explicit hashability and equality rules.
+Collection ownership deliberately remains narrow. Owning collections are move-only direct locals and return values. Nested owning collections, aggregate fields, globals, by-value parameters, and destructor-bearing elements are rejected. Hashable keys are integers, booleans, characters, enums, and copied `const char*` strings with content equality.
 
 ## 0.6 candidates
 
@@ -54,7 +54,7 @@ Compile-time work may grow toward user-defined constant functions and serializer
 
 ## Later language work
 
-Other plausible additions include maps and sets, function pointer types, closures with explicit environment structs, user-defined generic monomorphization, richer match patterns, package dependencies, and a documented stable C ABI for selected exported declarations.
+Other plausible additions include function pointer types, closures with explicit environment structs, user-defined generic monomorphization, richer match patterns, package dependencies, and a documented stable C ABI for selected exported declarations.
 
 ## Non-goals
 

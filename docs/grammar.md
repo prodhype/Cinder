@@ -215,13 +215,17 @@ i32
 i32[16]
 Result[i32, ParseError]
 Result[void, Error]
+Option[i32]
 Tuple[i32, const char*]
 List[i32]
+Map[const char*, i32]
+Set[i32]
+MapKeys[const char*, i32]
 geometry.Vec2
 &dyn geometry.Shape
 ```
 
-`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Tuple[...]`, and `List[T]` are compiler-provided generic families; user-defined generics are not implemented.
+`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `Result[T, E]`, `Option[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families; user-defined generics are not implemented.
 
 References, dynamic references, slices, fixed arrays, class values, and plain `void` have placement restrictions that follow their generated C representations and lifetime rules.
 
@@ -278,7 +282,7 @@ unsafe_stmt        := "unsafe" ":" suite
 
 An untyped assignment to an unknown local name declares that local and infers its type. Later assignments update the existing symbol. Locals use lexical block scope.
 
-`defer` accepts a call expression. Deferred calls run in reverse declaration order on normal scope exit, `return`, `break`, `continue`, and propagated error returns. Class destructor and owned-List cleanup use the same control-flow cleanup paths.
+`defer` accepts a call expression. Deferred calls run in reverse declaration order on normal scope exit, `return`, `break`, `continue`, and propagated error returns. Class destructor and owning-collection cleanup use the same control-flow cleanup paths.
 
 A `comptime` foreach is valid only with `fields_of(...)` or `methods_of(...)`. The loop is unrolled and its binding cannot escape into runtime storage.
 
@@ -292,7 +296,7 @@ match_pattern      := "_"
 binding_list       := NAME ("," NAME)* ","?
 ```
 
-The subject must be an enum, variant, or `Result`. Enum patterns have no bindings. Variant patterns bind one name for each payload field. Result patterns are `Ok`, `Ok(value)`, `Err`, or `Err(error)`, depending on whether the corresponding payload is `void`.
+The subject must be an enum, variant, `Result`, or `Option`. Enum patterns have no bindings. Variant patterns bind one name for each payload field. Result patterns are `Ok`, `Ok(value)`, `Err`, or `Err(error)`, depending on whether the corresponding payload is `void`. Option patterns are `Some(value)` and `None`.
 
 A match must be exhaustive. A wildcard covers all remaining cases and must be final. Duplicate or unreachable cases are rejected. Patterns do not support guards, alternatives, literal patterns, nested destructuring, or ignored fields inside a payload.
 
@@ -308,7 +312,7 @@ and
 |
 ^
 &
-== != < <= > >=
+== != < <= > >= in not in
 << >>
 + -
 * / %
@@ -333,9 +337,11 @@ List literals use square brackets. In an untyped local, `[1, 2]` infers `List[i3
 
 Parenthesized comma expressions are tuple literals: `(left, right)`, `(single,)`, and `()`. Parentheses without a comma remain grouping.
 
+Brace literals are Maps when entries contain colons and Sets otherwise: `{"ready": 1}` and `{1, 2}`. `{}` is an empty Map and requires a `Map[K, V]` context. `set()` is an empty Set and requires a `Set[T]` context. Mixed Map/Set entries are rejected.
+
 `super().__init__(...)` and `super().method(...)` are recognized only inside a derived class method. Abstract base methods cannot be called directly through `super`.
 
-## Tuples and lists
+## Native collections
 
 Tuples are immutable heterogeneous value aggregates. Their element types and length are part of the type. `len(tuple)` is compile-time-known, and tuple indexing requires a non-negative integer literal:
 
@@ -356,7 +362,19 @@ last = values.pop()
 
 An empty list needs a contextual `List[T]` type. List values are move-only: direct local variables and direct function returns own their buffers, replacement drops the previous buffer, and scope exit frees the active buffer. An addressable `List[T]` may be passed without copying to a `[]T` or `[]const T` function parameter; this call-only coercion does not permit storing or returning a List-backed slice. Mutable slices may update elements, while structural operations still require `&List[T]`. By-value List parameters, globals, nested owning lists, aggregate List fields, and destructor-bearing list elements are not implemented. Bind a returned or literal List to a local before indexing, iterating, sorting, calling `len`, or borrowing it as a slice.
 
-List indexing follows the current array/slice model and does not insert bounds checks. `pop` does check for an empty list and panics. While a `for` loop iterates a List, the same storage cannot be structurally modified, replaced, sorted, or borrowed as mutable `[]T`, including through recognized aliases. Read-only `[]const T` helpers and provably unrelated Lists remain available. Maps and sets remain a subsequent collection phase.
+List indexing follows the current array/slice model and does not insert bounds checks. `pop` does check for an empty list and panics. While a `for` loop iterates a List, the same storage cannot be structurally modified, replaced, sorted, or borrowed as mutable `[]T`, including through recognized aliases. Read-only `[]const T` helpers and provably unrelated Lists remain available.
+
+Maps are insertion-ordered owning hash tables. `map[key]` panics when the key is absent; direct assignment inserts or replaces. `get(key)` and `pop(key)` return `Option[V]`. Default iteration yields keys, and `keys()`, `values()`, and `items()` return live first-class `MapKeys[K,V]`, `MapValues[K,V]`, and `MapItems[K,V]` views. Items iterate as `Tuple[K,V]`. Maps also provide `clear()` and `update(other)`.
+
+Sets are unordered owning hash tables. They provide `add`, `discard`, missing-element-panicking `remove`, optional `pop`, `clear`, and `update`. `union`, `intersection`, `difference`, and `symmetric_difference` return fresh Sets; `|`, `&`, `-`, `^`, their compound forms, equality, and subset/superset comparisons provide the operator forms.
+
+`in` and `not in` test Map keys, Set elements, and Map views. Hashable types are integers, `bool`, `char`, enums, and `const char*`. String hashing/equality uses content, and Maps/Sets clone string keys. A popped string Set element transfers its allocation to the caller.
+
+Maps and Sets use the same move-only direct-local/direct-return restrictions as Lists. Their structure cannot be mutated during active iteration, including through hidden aliases caught by runtime guards. Live Map views are non-owning and follow slice-like lifetime rules.
+
+## Options
+
+`Option[T]` is constructed with `Some(value)` or contextual bare `None`. `Some` infers its payload without a context when possible; `None` does not. Option matches must cover `Some` and `None`. `.is_some` and `.is_none` inspect the tag. `.value` requires an addressable Option and panics on `None`. Postfix `?` remains specific to `Result`.
 
 ## Result construction and propagation
 
@@ -415,7 +433,7 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `range(stop)`, `range(start, stop)`, and `range(start, stop, step)` are valid only as loop iterables.
 
-`len(array)`, `len(slice)`, `len(tuple)`, and `len(list)` return `usize`. `len(const char*)` emits `strlen`.
+`len(array)`, `len(slice)`, `len(tuple)`, `len(list)`, `len(map)`, `len(set)`, and `len(map_view)` return `usize`. `len(const char*)` emits `strlen`.
 
 `sort(array_or_slice_or_list)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays and lists must refer to addressable storage. Slices may select a subrange to sort, but slicing a const array produces a const slice that cannot be sorted. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `char*` or `const char*` values use lexicographic C-string order. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
 
@@ -429,6 +447,8 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 Result values expose `.is_ok`, `.value`, and `.error`. Accessing a `void` payload is rejected.
 
+Option values expose `.is_some`, `.is_none`, and checked `.value`.
+
 ## Deliberate omissions
 
-The 0.5 grammar and checker do not implement maps, sets, user-defined generics, multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, aggregate ownership for owning lists or destructor-bearing classes, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, or multi-root package dependency graphs.
+The 0.5 grammar and checker do not implement user-defined generics, multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, function pointer types, closures, exceptions, automatic ownership inference, aggregate ownership for owning collections or destructor-bearing classes, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, or multi-root package dependency graphs.

@@ -55,6 +55,12 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
             "cannot infer the element type of an empty list literal",
         ),
         (
+            "def main() -> i32:\n"
+            "    [{1: 2}]\n"
+            "    return 0\n",
+            "cannot infer a List element type from Map[i32, i32]",
+        ),
+        (
             "def consume(values: List[i32]) -> void:\n"
             "    pass\n",
             "cannot own a List by value",
@@ -90,6 +96,12 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
             "invalid List element type List[i32]",
         ),
         (
+            "def main() -> i32:\n"
+            "    nested: List[Result[Map[i32, i32], i32]] = []\n"
+            "    return 0\n",
+            "invalid List element type Result[Map[i32, i32], i32]",
+        ),
+        (
             "class Resource:\n"
             "    def __del__(self):\n"
             "        pass\n"
@@ -98,18 +110,6 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
             "    values: List[Resource] = []\n"
             "    return 0\n",
             "List element type Resource contains a class with a destructor",
-        ),
-        (
-            "def main() -> i32:\n"
-            "    values: Map[i32, i32]\n"
-            "    return 0\n",
-            "unsupported generic type 'Map'",
-        ),
-        (
-            "def main() -> i32:\n"
-            "    values: Set[i32]\n"
-            "    return 0\n",
-            "unsupported generic type 'Set'",
         ),
         (
             "def main() -> i32:\n"

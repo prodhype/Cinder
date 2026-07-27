@@ -10,7 +10,7 @@
 
 `slices.ci` demonstrates fixed arrays, slicing, mutable-to-const slice conversion, collection iteration, and `.length`.
 
-`collections.ci` demonstrates heterogeneous tuples, inferred and typed owning lists, deterministic list cleanup, mutation, sorting, iteration, and zero-copy List-to-slice arguments.
+`collections.ci` demonstrates heterogeneous tuples; inferred owning Lists, Maps, and Sets; `Option` lookup; live Map views; Set algebra; deterministic cleanup; sorting; iteration; and zero-copy List-to-slice arguments.
 
 `pointers.ci` demonstrates address-of, raw pointers, transparent references, and pointer indexing.
 

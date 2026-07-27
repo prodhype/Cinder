@@ -358,6 +358,11 @@ class LiteralExpr(Expression):
 
 
 @dataclass(slots=True)
+class NoneExpr(Expression):
+    pass
+
+
+@dataclass(slots=True)
 class FStringText(Node):
     value: str
 
@@ -427,6 +432,22 @@ class PropagateExpr(Expression):
 
 @dataclass(slots=True)
 class ListLiteralExpr(Expression):
+    elements: list[Expression]
+
+
+@dataclass(slots=True)
+class MapEntry(Node):
+    key: Expression
+    value: Expression
+
+
+@dataclass(slots=True)
+class MapLiteralExpr(Expression):
+    entries: list[MapEntry]
+
+
+@dataclass(slots=True)
+class SetLiteralExpr(Expression):
     elements: list[Expression]
 
 

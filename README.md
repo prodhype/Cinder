@@ -10,7 +10,7 @@ Cinder 0.5.0 completes the first five language milestones.
 
 The procedural core includes indentation-aware parsing, primitive and C ABI types, typed globals, inferred locals, functions, named arguments, native control flow, structs and methods, pointers and references, fixed arrays, slices, explicit allocation, scoped `defer`, C imports, exported C functions, and readable C11 generation.
 
-Native collection support includes heterogeneous value tuples and homogeneous growable lists. Lists have deterministic move-only ownership, generated element specializations, iteration, indexing, `len`, `sort`, `append`, `pop`, and `clear`. Maps and sets are planned as a later collection phase.
+Native collection support includes heterogeneous value tuples and specialized owning Lists, Maps, and Sets. Maps preserve insertion order and expose live views; Sets support hash membership and algebra. Optional lookup uses tagged `Option[T]` values.
 
 The project system includes deterministic `cinder.toml` manifests, local imports, dotted module paths, dependency ordering, cycle diagnostics, one generated header and translation unit per module, deterministic internal symbols, content-stable generated files, and optional amalgamated output.
 
@@ -20,7 +20,7 @@ Cinder 0.4 adds classes, constructors, destructors, private fields, one implemen
 
 Cinder 0.5 adds opt-in `@reflect` metadata, runtime type/field/method inspection, dynamic runtime type names, compile-time type and member queries, top-level `static_assert`, and unrolled `comptime` field and method loops.
 
-The implementation remains alpha software. User-defined generics, maps and sets, function pointer types, closures, exceptions, aggregate ownership for lists or destructor-bearing classes, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
+The implementation remains alpha software. User-defined generics, function pointer types, closures, exceptions, aggregate ownership for owning collections or destructor-bearing classes, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
 
 ## Installation
 
@@ -323,9 +323,9 @@ match token:
 
 Patterns do not yet support guards, alternatives, literals, or nested destructuring.
 
-## Typed Results and propagation
+## Typed Results, Options, and propagation
 
-`Result[T, E]`, `Tuple[...]`, and `List[T]` are compiler-provided generic families. User-defined generic declarations are not implemented.
+`Result[T, E]`, `Option[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, and `Set[T]` are compiler-provided generic families. User-defined generic declarations are not implemented.
 
 ```python
 def parse(value: i32) -> Result[i32, ParseError]:
@@ -342,6 +342,8 @@ def increment(value: i32) -> Result[i32, ParseError]:
 `Ok` and `Err` are contextual constructors. Postfix `?` evaluates its operand once, checks the explicit tag, runs active deferred calls, List cleanup, and class drops on error, and performs an ordinary early return.
 
 To preserve straightforward C evaluation order, `?` is not accepted in `while` conditions, `elif` conditions, C-style loop conditions or updates, the right side of `and` or `or`, or deferred calls.
+
+`Option[T]` represents an optional value without using pointer nullability. `Some(value)` infers its payload when possible, bare `None` requires an Option context, and matches must cover both cases. `.is_some`, `.is_none`, and checked `.value` access are available; postfix `?` remains Result-only.
 
 ## Types
 
@@ -404,6 +406,29 @@ last = values.pop()
 ```
 
 Lists are move-only direct locals and return values, and are freed deterministically on every normal cleanup path. Addressable Lists may be passed without copying to `[]T` and `[]const T` parameters, letting one element-processing function accept Lists, fixed arrays, and slices. This coercion is call-only; structural operations still use `&List[T]`. Nested lists, list fields/globals, by-value list parameters, and destructor-bearing elements are intentionally deferred with broader aggregate ownership work.
+
+Maps use `{key: value}` literals and preserve insertion order. Sets use `{value, ...}`; an empty Set uses contextual `set()`. Empty `{}` requires a `Map[K, V]` context.
+
+```python
+scores = {"Ada": 7, "Grace": 9}
+scores["Ada"] += 1
+score = scores.get("Ada")
+
+match score:
+    case Some(value):
+        print(value)
+    case None:
+        pass
+
+primes = {2, 3, 5}
+small = primes | {1, 2}
+```
+
+`in` and `not in` test Map keys and Set elements. Maps provide `keys()`, `values()`, and `items()` as live non-owning views; default Map iteration yields keys. Sets provide union, intersection, difference, symmetric difference, and subset/superset comparisons.
+
+Hashable types are integers, `bool`, `char`, enums, and `const char*`. String keys use null-safe content equality and are copied into the collection. A string removed by `Set[const char*].pop()` transfers its allocation to the caller, who must release it with `free(cast[void*](text))`.
+
+Maps and Sets use the same move-only direct-local/direct-return ownership envelope as Lists. Nested owning collections, aggregate fields, globals, by-value parameters, and destructor-bearing elements remain unsupported. Map views are borrowed values with slice-like lifetime responsibility; structural mutation is rejected or guarded while an iterator is active.
 
 ## Structs and methods
 

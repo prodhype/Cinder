@@ -7,6 +7,7 @@ def summarize(values: []const i32) -> Tuple[i32, usize]:
 
 def main() -> i32:
     values = [5, 1, 4, 2, 3]
+    defer values.clear()
     values.append(6)
     sort(values)
 
@@ -16,5 +17,21 @@ def main() -> i32:
     last = values.pop()
     print(f"last={last} remaining={len(values)}")
 
-    values.clear()
+    scores = {"Ada": 3, "Grace": 5}
+    scores["Ada"] += 4
+    for entry in scores.items():
+        print(f"{entry[0]}={entry[1]}")
+
+    ada_score = scores.get("Ada")
+    match ada_score:
+        case Some(score):
+            print(f"Ada score={score}")
+        case None:
+            print("Ada has no score")
+
+    primes = {2, 3, 5}
+    odd = {1, 3, 5, 7}
+    combined = primes | odd
+    print(f"unique values={len(combined)}")
+
     return 0

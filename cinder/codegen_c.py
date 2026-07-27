@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
+from textwrap import dedent
 
 from cinder import ast
 from cinder.ir import IRModule
@@ -20,50 +22,59 @@ from cinder.symbols import (
     VariantSymbol,
 )
 from cinder.types import (
-    ArrayType,
     BOOL,
     CHAR,
+    ERROR,
+    F32,
+    I64,
+    U64,
+    ArrayType,
     ClassType,
     ComptimeCollectionType,
     ComptimeItemType,
     ConstType,
-    EnumType,
     DynType,
-    ERROR,
-    F32,
+    EnumType,
     FunctionValueType,
-    I64,
     ListType,
+    MapType,
+    MapViewType,
     ModuleType,
     NullType,
     OpaqueType,
+    OptionType,
     PointerType,
     PrimitiveType,
     RangeType,
     ReferenceType,
     ResultType,
+    SetType,
     SliceType,
     StructType,
+    TupleType,
     Type,
     TypeValueType,
-    TupleType,
-    U64,
     UnionType,
     VariantType,
-    is_void,
-    nominal_c_name,
     dyn_c_name,
     interface_vtable_c_name,
+    is_c_string,
+    is_equatable,
+    is_void,
     list_c_name,
+    map_c_name,
+    map_view_c_name,
+    nominal_c_name,
+    option_c_name,
     result_c_name,
+    set_c_name,
     strip_const,
     strip_reference,
+    tuple_c_name,
     type_key,
     type_name,
-    tuple_c_name,
     value_type,
 )
-
 
 _C_KEYWORDS = {
     "auto",
@@ -136,18 +147,25 @@ class CWriter:
     def render(self) -> str:
         return "\n".join(self.lines).rstrip() + "\n"
 
+    def raw(self, text: str) -> None:
+        self.lines.extend(
+            line.rstrip()
+            for line in dedent(text).strip("\n").splitlines()
+        )
+
 
 @dataclass(slots=True)
 class _Cleanup:
     expression: ast.Expression | None = None
     variable: VariableSymbol | None = None
     class_: ClassSymbol | None = None
-    list_: ListType | None = None
+    container: ListType | MapType | SetType | None = None
+    iterator_end: tuple[str, str] | None = None
 
 
 @dataclass(slots=True)
 class _ScopeFrame:
-    cleanups: list[_Cleanup] = field(default_factory=list)
+    cleanups: list[_Cleanup] = dataclass_field(default_factory=list)
     loop_body: bool = False
 
 
@@ -167,8 +185,12 @@ class CGenerator:
         self._emit_enum_definitions()
         self._emit_slice_types()
         self._emit_list_type_definitions()
+        self._emit_map_view_types()
         self._emit_type_definitions()
+        self._emit_map_set_type_definitions()
         self._emit_list_helpers()
+        self._emit_map_helpers()
+        self._emit_set_helpers()
         self._emit_sort_helpers()
         self._emit_interface_definitions()
         self._emit_reflection_declarations()
@@ -206,8 +228,12 @@ class CGenerator:
         self._emit_enum_definitions()
         self._emit_slice_types()
         self._emit_list_type_definitions()
+        self._emit_map_view_types()
         self._emit_type_definitions()
+        self._emit_map_set_type_definitions()
         self._emit_list_helpers()
+        self._emit_map_helpers()
+        self._emit_set_helpers()
         self._emit_interface_definitions()
         self.writer.line("#ifdef __cplusplus")
         self.writer.line('extern "C" {')
@@ -290,8 +316,40 @@ class CGenerator:
             self.writer.line(f"typedef struct {name} {name};")
             self.writer.line("#endif")
             emitted = True
+        for map_type in self.ir.map_types:
+            name = c_identifier(map_c_name(map_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            self.writer.line("#endif")
+            emitted = True
+        for set_type in self.ir.set_types:
+            name = c_identifier(set_c_name(set_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            self.writer.line("#endif")
+            emitted = True
+        for view_type in self.ir.map_view_types:
+            name = c_identifier(map_view_c_name(view_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            self.writer.line("#endif")
+            emitted = True
         for result_type in self.ir.result_types:
             name = c_identifier(result_c_name(result_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            self.writer.line("#endif")
+            emitted = True
+        for option_type in self.ir.option_types:
+            name = c_identifier(option_c_name(option_type))
             guard = f"CINDER_DECLARED_{name.upper()}"
             self.writer.line(f"#ifndef {guard}")
             self.writer.line(f"#define {guard}")
@@ -417,6 +475,83 @@ class CGenerator:
             self.writer.line(f"#endif /* {guard} */")
             self.writer.line()
 
+    def _emit_map_set_type_definitions(self) -> None:
+        for map_type in self.ir.map_types:
+            name = c_identifier(map_c_name(map_type))
+            entry_name = f"{name}_Entry"
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {entry_name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(c_decl(map_type.key, "key") + ";")
+            self.writer.line(c_decl(map_type.value, "value") + ";")
+            self.writer.line("uint64_t hash;")
+            self.writer.line("bool occupied;")
+            self.writer.indent -= 1
+            self.writer.line(f"}} {entry_name};")
+            self.writer.line()
+            self.writer.line(f"struct {name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(f"{entry_name} *entries;")
+            self.writer.line("size_t entries_length;")
+            self.writer.line("size_t entries_capacity;")
+            self.writer.line("size_t *buckets;")
+            self.writer.line("size_t capacity;")
+            self.writer.line("size_t length;")
+            self.writer.line("size_t tombstones;")
+            self.writer.line("size_t active_iterators;")
+            self.writer.indent -= 1
+            self.writer.line("};")
+            self.writer.line(f"#endif /* {guard} */")
+            self.writer.line()
+
+        for set_type in self.ir.set_types:
+            name = c_identifier(set_c_name(set_type))
+            entry_name = f"{name}_Entry"
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {entry_name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(c_decl(set_type.inner, "value") + ";")
+            self.writer.line("uint64_t hash;")
+            self.writer.line("unsigned char state;")
+            self.writer.indent -= 1
+            self.writer.line(f"}} {entry_name};")
+            self.writer.line()
+            self.writer.line(f"struct {name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(f"{entry_name} *entries;")
+            self.writer.line("size_t capacity;")
+            self.writer.line("size_t length;")
+            self.writer.line("size_t tombstones;")
+            self.writer.line("size_t active_iterators;")
+            self.writer.indent -= 1
+            self.writer.line("};")
+            self.writer.line(f"#endif /* {guard} */")
+            self.writer.line()
+
+    def _emit_map_view_types(self) -> None:
+        for view_type in self.ir.map_view_types:
+            name = c_identifier(map_view_c_name(view_type))
+            map_name = c_identifier(map_c_name(view_type.map_type))
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"struct {name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(f"const {map_name} *map;")
+            self.writer.indent -= 1
+            self.writer.line("};")
+            self.writer.line(f"#endif /* {guard} */")
+            self.writer.line()
+
     def _emit_type_definitions(self) -> None:
         for type_ in self.ir.definition_order:
             nominal = self.semantic.nominal_symbols.get(type_)
@@ -430,6 +565,8 @@ class CGenerator:
                 self._emit_variant_definition(nominal)
             elif isinstance(type_, ResultType):
                 self._emit_result_definition(type_)
+            elif isinstance(type_, OptionType):
+                self._emit_option_definition(type_)
             elif isinstance(type_, TupleType):
                 self._emit_tuple_definition(type_)
             else:
@@ -452,7 +589,7 @@ class CGenerator:
             )
             self.writer.line("{")
             self.writer.indent += 1
-            self.writer.line(f"{name} result = {{ 0 }};")
+            self.writer.line(f"{name} result = {{ NULL, 0, 0 }};")
             self.writer.line("if (length == 0)")
             self.writer.line("{")
             self.writer.indent += 1
@@ -543,6 +680,972 @@ class CGenerator:
             self.writer.line("}")
             self.writer.line(f"#endif /* {guard} */")
             self.writer.line()
+
+    def _emit_map_helpers(self) -> None:
+        for map_type in self.ir.map_types:
+            self._emit_map_helper_suite(map_type)
+
+    def _emit_map_helper_suite(self, map_type: MapType) -> None:
+        name = c_identifier(map_c_name(map_type))
+        entry_name = f"{name}_Entry"
+        option_name = c_identifier(option_c_name(OptionType(map_type.value)))
+        key_decl = c_decl(map_type.key, "key")
+        value_decl = c_decl(map_type.value, "item_value")
+        keys_decl = c_decl(PointerType(ConstType(map_type.key)), "keys")
+        values_decl = c_decl(PointerType(ConstType(map_type.value)), "values")
+        hash_key = self._hash_expression(map_type.key, "key")
+        equal_key = self._equal_expression(
+            map_type.key,
+            "entry->key",
+            "key",
+        )
+        clone_key = self._clone_expression(map_type.key, "key")
+        drop_key = self._drop_expression(map_type.key, "entry->key")
+        keys_view = c_identifier(
+            map_view_c_name(MapViewType(map_type, "keys"))
+        )
+        values_view = c_identifier(
+            map_view_c_name(MapViewType(map_type, "values"))
+        )
+        items_view = c_identifier(
+            map_view_c_name(MapViewType(map_type, "items"))
+        )
+        item_tuple = TupleType((map_type.key, map_type.value))
+        item_tuple_name = c_identifier(tuple_c_name(item_tuple))
+        view_membership_helpers = ""
+        if is_equatable(map_type.value):
+            needle_decl = c_decl(map_type.value, "needle")
+            value_equal = self._equal_expression(
+                map_type.value,
+                "entry->value",
+                "needle",
+            )
+            item_value_equal = self._equal_expression(
+                map_type.value,
+                "entry->value",
+                "needle.item_1",
+            )
+            view_membership_helpers = dedent(
+                f"""
+                static inline CINDER_MAYBE_UNUSED bool {name}_values_contains(
+                    const {name} *value,
+                    {needle_decl}
+                )
+                {{
+                    for (size_t index = 0; index < value->entries_length; ++index) {{
+                        const {entry_name} *entry = &value->entries[index];
+                        if (entry->occupied && {value_equal}) {{
+                            return true;
+                        }}
+                    }}
+                    return false;
+                }}
+
+                static inline CINDER_MAYBE_UNUSED bool {name}_items_contains(
+                    const {name} *value,
+                    {item_tuple_name} needle
+                )
+                {{
+                    if (value == NULL || value->capacity == 0) {{
+                        return false;
+                    }}
+                    bool found = false;
+                    size_t bucket = {name}_find_bucket(
+                        value,
+                        needle.item_0,
+                        {name}_hash(needle.item_0),
+                        &found
+                    );
+                    if (!found) {{
+                        return false;
+                    }}
+                    const {entry_name} *entry =
+                        &value->entries[value->buckets[bucket]];
+                    return {item_value_equal};
+                }}
+                """
+            ).strip()
+        guard = f"CINDER_HELPERS_{name.upper()}"
+
+        self.writer.raw(
+            f"""
+            #ifndef {guard}
+            #define {guard}
+            #define {name}_BUCKET_EMPTY ((size_t)-1)
+            #define {name}_BUCKET_TOMBSTONE ((size_t)-2)
+
+            static inline CINDER_MAYBE_UNUSED uint64_t {name}_hash({key_decl})
+            {{
+                return {hash_key};
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_key_equal(
+                const {entry_name} *entry,
+                {key_decl}
+            )
+            {{
+                return {equal_key};
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_rehash(
+                {name} *value,
+                size_t new_capacity
+            )
+            {{
+                if (new_capacity < 8 || (new_capacity & (new_capacity - 1)) != 0) {{
+                    cinder_panic("invalid Map capacity");
+                }}
+
+                size_t write_index = 0;
+                for (size_t read_index = 0; read_index < value->entries_length; ++read_index) {{
+                    if (!value->entries[read_index].occupied) {{
+                        continue;
+                    }}
+                    if (write_index != read_index) {{
+                        value->entries[write_index] = value->entries[read_index];
+                    }}
+                    write_index += 1;
+                }}
+                value->entries_length = write_index;
+
+                size_t *new_buckets = (size_t *)cinder_alloc(
+                    new_capacity,
+                    sizeof(size_t)
+                );
+                for (size_t index = 0; index < new_capacity; ++index) {{
+                    new_buckets[index] = {name}_BUCKET_EMPTY;
+                }}
+                for (size_t entry_index = 0; entry_index < value->entries_length; ++entry_index) {{
+                    size_t bucket = value->entries[entry_index].hash & (new_capacity - 1);
+                    while (new_buckets[bucket] != {name}_BUCKET_EMPTY) {{
+                        bucket = (bucket + 1) & (new_capacity - 1);
+                    }}
+                    new_buckets[bucket] = entry_index;
+                }}
+                free(value->buckets);
+                value->buckets = new_buckets;
+                value->capacity = new_capacity;
+                value->tombstones = 0;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_ensure_capacity({name} *value)
+            {{
+                if (
+                    value->capacity != 0
+                    && value->length + value->tombstones
+                        < value->capacity - value->capacity / 4
+                    && value->entries_length - value->length
+                        <= value->length + 8
+                ) {{
+                    return;
+                }}
+                size_t new_capacity = value->capacity == 0 ? 8 : value->capacity;
+                if (
+                    value->capacity != 0
+                    && value->length + 1
+                        >= value->capacity - value->capacity / 4
+                ) {{
+                    if (value->capacity > SIZE_MAX / 2) {{
+                        cinder_panic("Map capacity overflow");
+                    }}
+                    new_capacity = value->capacity * 2;
+                }}
+                if (new_capacity > SIZE_MAX / sizeof(size_t)) {{
+                    cinder_panic("Map capacity overflow");
+                }}
+                {name}_rehash(value, new_capacity);
+            }}
+
+            static inline CINDER_MAYBE_UNUSED size_t {name}_find_bucket(
+                const {name} *value,
+                {key_decl},
+                uint64_t hash,
+                bool *found
+            )
+            {{
+                if (value->capacity == 0) {{
+                    *found = false;
+                    return {name}_BUCKET_EMPTY;
+                }}
+                size_t first_tombstone = {name}_BUCKET_EMPTY;
+                size_t bucket = hash & (value->capacity - 1);
+                for (;;) {{
+                    size_t entry_index = value->buckets[bucket];
+                    if (entry_index == {name}_BUCKET_EMPTY) {{
+                        *found = false;
+                        return first_tombstone == {name}_BUCKET_EMPTY
+                            ? bucket
+                            : first_tombstone;
+                    }}
+                    if (entry_index == {name}_BUCKET_TOMBSTONE) {{
+                        if (first_tombstone == {name}_BUCKET_EMPTY) {{
+                            first_tombstone = bucket;
+                        }}
+                    }} else {{
+                        const {entry_name} *entry = &value->entries[entry_index];
+                        if (
+                            entry->occupied
+                            && entry->hash == hash
+                            && {name}_key_equal(entry, key)
+                        ) {{
+                            *found = true;
+                            return bucket;
+                        }}
+                    }}
+                    bucket = (bucket + 1) & (value->capacity - 1);
+                }}
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_contains(
+                const {name} *value,
+                {key_decl}
+            )
+            {{
+                if (value == NULL || value->capacity == 0) {{
+                    return false;
+                }}
+                bool found = false;
+                (void){name}_find_bucket(value, key, {name}_hash(key), &found);
+                return found;
+            }}
+
+            {view_membership_helpers}
+
+            static inline CINDER_MAYBE_UNUSED {option_name} {name}_get(
+                const {name} *value,
+                {key_decl}
+            )
+            {{
+                {option_name} result = {{ {option_name}_Tag_None, {{ 0 }} }};
+                if (value == NULL || value->capacity == 0) {{
+                    return result;
+                }}
+                bool found = false;
+                size_t bucket = {name}_find_bucket(
+                    value,
+                    key,
+                    {name}_hash(key),
+                    &found
+                );
+                if (!found) {{
+                    return result;
+                }}
+                result.tag = {option_name}_Tag_Some;
+                result.data.value = value->entries[value->buckets[bucket]].value;
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {c_decl(map_type.value, f'{name}_lookup_or_panic')}(
+                const {name} *value,
+                {key_decl}
+            )
+            {{
+                bool found = false;
+                size_t bucket = {name}_find_bucket(
+                    value,
+                    key,
+                    {name}_hash(key),
+                    &found
+                );
+                if (!found) {{
+                    cinder_panic("Map key not found");
+                }}
+                return value->entries[value->buckets[bucket]].value;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(map_type.value), f'{name}_lookup_mut_or_panic')}(
+                {name} *value,
+                {key_decl}
+            )
+            {{
+                if (value == NULL) {{
+                    cinder_panic("null Map receiver");
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot mutate Map during iteration");
+                }}
+                bool found = false;
+                size_t bucket = {name}_find_bucket(
+                    value,
+                    key,
+                    {name}_hash(key),
+                    &found
+                );
+                if (!found) {{
+                    cinder_panic("Map key not found");
+                }}
+                return &value->entries[value->buckets[bucket]].value;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_set(
+                {name} *value,
+                {key_decl},
+                {value_decl}
+            )
+            {{
+                if (value == NULL) {{
+                    cinder_panic("null Map receiver");
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Map during iteration");
+                }}
+                uint64_t hash = {name}_hash(key);
+                bool found = false;
+                size_t bucket = {name}_find_bucket(value, key, hash, &found);
+                if (found) {{
+                    value->entries[value->buckets[bucket]].value = item_value;
+                    return;
+                }}
+                {name}_ensure_capacity(value);
+                bucket = {name}_find_bucket(value, key, hash, &found);
+                if (found) {{
+                    value->entries[value->buckets[bucket]].value = item_value;
+                    return;
+                }}
+                if (value->entries_length == SIZE_MAX) {{
+                    cinder_panic("Map length overflow");
+                }}
+                value->entries = ({entry_name} *)cinder_grow_array(
+                    value->entries,
+                    &value->entries_capacity,
+                    value->entries_length + 1,
+                    sizeof(*value->entries)
+                );
+                size_t entry_index = value->entries_length;
+                value->entries_length += 1;
+                {entry_name} *entry = &value->entries[entry_index];
+                entry->key = {clone_key};
+                entry->value = item_value;
+                entry->hash = hash;
+                entry->occupied = true;
+                if (value->buckets[bucket] == {name}_BUCKET_TOMBSTONE) {{
+                    value->tombstones -= 1;
+                }}
+                value->buckets[bucket] = entry_index;
+                value->length += 1;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {name} {name}_from_values(
+                {keys_decl},
+                {values_decl},
+                size_t length
+            )
+            {{
+                {name} result = {{ NULL, 0, 0, NULL, 0, 0, 0, 0 }};
+                if (length != 0 && (keys == NULL || values == NULL)) {{
+                    cinder_panic("invalid Map literal storage");
+                }}
+                for (size_t index = 0; index < length; ++index) {{
+                    {name}_set(&result, keys[index], values[index]);
+                }}
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {option_name} {name}_pop(
+                {name} *value,
+                {key_decl}
+            )
+            {{
+                {option_name} result = {{ {option_name}_Tag_None, {{ 0 }} }};
+                if (value == NULL) {{
+                    return result;
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Map during iteration");
+                }}
+                bool found = false;
+                size_t bucket = {name}_find_bucket(
+                    value,
+                    key,
+                    {name}_hash(key),
+                    &found
+                );
+                if (!found) {{
+                    return result;
+                }}
+                {entry_name} *entry = &value->entries[value->buckets[bucket]];
+                result.tag = {option_name}_Tag_Some;
+                result.data.value = entry->value;
+                {drop_key}
+                entry->occupied = false;
+                value->buckets[bucket] = {name}_BUCKET_TOMBSTONE;
+                value->length -= 1;
+                value->tombstones += 1;
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)
+            {{
+                if (value == NULL) {{
+                    return;
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot drop Map during iteration");
+                }}
+                for (size_t index = 0; index < value->entries_length; ++index) {{
+                    {entry_name} *entry = &value->entries[index];
+                    if (!entry->occupied) {{
+                        continue;
+                    }}
+                    {drop_key}
+                }}
+                free(value->entries);
+                free(value->buckets);
+                value->entries = NULL;
+                value->entries_length = 0;
+                value->entries_capacity = 0;
+                value->buckets = NULL;
+                value->capacity = 0;
+                value->length = 0;
+                value->tombstones = 0;
+                value->active_iterators = 0;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_clear({name} *value)
+            {{
+                if (value != NULL && value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Map during iteration");
+                }}
+                {name}_drop(value);
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_contains_owned(
+                {name} value,
+                {key_decl}
+            )
+            {{
+                bool result = {name}_contains(&value, key);
+                {name}_drop(&value);
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_update(
+                {name} *value,
+                const {name} *other
+            )
+            {{
+                if (value == other) {{
+                    return;
+                }}
+                if (value == NULL || other == NULL) {{
+                    cinder_panic("null Map update operand");
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Map during iteration");
+                }}
+                for (size_t index = 0; index < other->entries_length; ++index) {{
+                    const {entry_name} *entry = &other->entries[index];
+                    if (entry->occupied) {{
+                        {name}_set(value, entry->key, entry->value);
+                    }}
+                }}
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {keys_view} {name}_keys(
+                const {name} *value
+            )
+            {{
+                {keys_view} result = {{ value }};
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {values_view} {name}_values(
+                const {name} *value
+            )
+            {{
+                {values_view} result = {{ value }};
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {items_view} {name}_items(
+                const {name} *value
+            )
+            {{
+                {items_view} result = {{ value }};
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_begin_iteration(
+                const {name} *value
+            )
+            {{
+                if (value == NULL) {{
+                    cinder_panic("null Map iterator");
+                }}
+                {name} *mutable_value = ({name} *)(void *)value;
+                if (mutable_value->active_iterators == SIZE_MAX) {{
+                    cinder_panic("Map iterator count overflow");
+                }}
+                mutable_value->active_iterators += 1;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_end_iteration(
+                const {name} *value
+            )
+            {{
+                {name} *mutable_value = ({name} *)(void *)value;
+                if (mutable_value == NULL || mutable_value->active_iterators == 0) {{
+                    cinder_panic("invalid Map iterator release");
+                }}
+                mutable_value->active_iterators -= 1;
+            }}
+
+            #undef {name}_BUCKET_EMPTY
+            #undef {name}_BUCKET_TOMBSTONE
+            #endif /* {guard} */
+            """
+        )
+        self.writer.line()
+
+    def _emit_set_helpers(self) -> None:
+        for set_type in self.ir.set_types:
+            self._emit_set_helper_suite(set_type)
+
+    def _emit_set_helper_suite(self, set_type: SetType) -> None:
+        name = c_identifier(set_c_name(set_type))
+        entry_name = f"{name}_Entry"
+        option_name = c_identifier(option_c_name(OptionType(set_type.inner)))
+        item_decl = c_decl(set_type.inner, "item")
+        values_decl = c_decl(
+            PointerType(ConstType(set_type.inner)),
+            "values",
+        )
+        hash_item = self._hash_expression(set_type.inner, "item")
+        equal_item = self._equal_expression(
+            set_type.inner,
+            "entry->value",
+            "item",
+        )
+        clone_item = self._clone_expression(set_type.inner, "item")
+        drop_item = self._drop_expression(set_type.inner, "entry->value")
+        guard = f"CINDER_HELPERS_{name.upper()}"
+
+        self.writer.raw(
+            f"""
+            #ifndef {guard}
+            #define {guard}
+
+            static inline CINDER_MAYBE_UNUSED uint64_t {name}_hash({item_decl})
+            {{
+                return {hash_item};
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_entry_equal(
+                const {entry_name} *entry,
+                {item_decl}
+            )
+            {{
+                return {equal_item};
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_rehash(
+                {name} *value,
+                size_t new_capacity
+            )
+            {{
+                if (new_capacity < 8 || (new_capacity & (new_capacity - 1)) != 0) {{
+                    cinder_panic("invalid Set capacity");
+                }}
+                {entry_name} *new_entries = ({entry_name} *)cinder_alloc(
+                    new_capacity,
+                    sizeof({entry_name})
+                );
+                (void)memset(new_entries, 0, new_capacity * sizeof({entry_name}));
+                for (size_t index = 0; index < value->capacity; ++index) {{
+                    if (value->entries[index].state != 1) {{
+                        continue;
+                    }}
+                    size_t target = value->entries[index].hash & (new_capacity - 1);
+                    while (new_entries[target].state == 1) {{
+                        target = (target + 1) & (new_capacity - 1);
+                    }}
+                    new_entries[target] = value->entries[index];
+                }}
+                free(value->entries);
+                value->entries = new_entries;
+                value->capacity = new_capacity;
+                value->tombstones = 0;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_ensure_capacity({name} *value)
+            {{
+                if (
+                    value->capacity != 0
+                    && value->length + value->tombstones
+                        < value->capacity - value->capacity / 4
+                ) {{
+                    return;
+                }}
+                size_t new_capacity = value->capacity == 0 ? 8 : value->capacity;
+                if (
+                    value->capacity != 0
+                    && value->length + 1
+                        >= value->capacity - value->capacity / 4
+                ) {{
+                    if (value->capacity > SIZE_MAX / 2) {{
+                        cinder_panic("Set capacity overflow");
+                    }}
+                    new_capacity = value->capacity * 2;
+                }}
+                {name}_rehash(value, new_capacity);
+            }}
+
+            static inline CINDER_MAYBE_UNUSED size_t {name}_find_slot(
+                const {name} *value,
+                {item_decl},
+                uint64_t hash,
+                bool *found
+            )
+            {{
+                if (value->capacity == 0) {{
+                    *found = false;
+                    return SIZE_MAX;
+                }}
+                size_t first_tombstone = SIZE_MAX;
+                size_t slot = hash & (value->capacity - 1);
+                for (;;) {{
+                    const {entry_name} *entry = &value->entries[slot];
+                    if (entry->state == 0) {{
+                        *found = false;
+                        return first_tombstone == SIZE_MAX ? slot : first_tombstone;
+                    }}
+                    if (entry->state == 2) {{
+                        if (first_tombstone == SIZE_MAX) {{
+                            first_tombstone = slot;
+                        }}
+                    }} else if (
+                        entry->hash == hash
+                        && {name}_entry_equal(entry, item)
+                    ) {{
+                        *found = true;
+                        return slot;
+                    }}
+                    slot = (slot + 1) & (value->capacity - 1);
+                }}
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_contains(
+                const {name} *value,
+                {item_decl}
+            )
+            {{
+                if (value == NULL || value->capacity == 0) {{
+                    return false;
+                }}
+                bool found = false;
+                (void){name}_find_slot(value, item, {name}_hash(item), &found);
+                return found;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_add(
+                {name} *value,
+                {item_decl}
+            )
+            {{
+                if (value == NULL) {{
+                    cinder_panic("null Set receiver");
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Set during iteration");
+                }}
+                uint64_t hash = {name}_hash(item);
+                bool found = false;
+                (void){name}_find_slot(value, item, hash, &found);
+                if (found) {{
+                    return;
+                }}
+                {name}_ensure_capacity(value);
+                size_t slot = {name}_find_slot(value, item, hash, &found);
+                if (found) {{
+                    return;
+                }}
+                if (value->entries[slot].state == 2) {{
+                    value->tombstones -= 1;
+                }}
+                value->entries[slot].value = {clone_item};
+                value->entries[slot].hash = hash;
+                value->entries[slot].state = 1;
+                value->length += 1;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {name} {name}_from_values(
+                {values_decl},
+                size_t length
+            )
+            {{
+                {name} result = {{ NULL, 0, 0, 0, 0 }};
+                if (length != 0 && values == NULL) {{
+                    cinder_panic("invalid Set literal storage");
+                }}
+                for (size_t index = 0; index < length; ++index) {{
+                    {name}_add(&result, values[index]);
+                }}
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_discard(
+                {name} *value,
+                {item_decl}
+            )
+            {{
+                if (value == NULL) {{
+                    return false;
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Set during iteration");
+                }}
+                bool found = false;
+                size_t slot = {name}_find_slot(
+                    value,
+                    item,
+                    {name}_hash(item),
+                    &found
+                );
+                if (!found) {{
+                    return false;
+                }}
+                {entry_name} *entry = &value->entries[slot];
+                {drop_item}
+                entry->state = 2;
+                value->length -= 1;
+                value->tombstones += 1;
+                return true;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_remove(
+                {name} *value,
+                {item_decl}
+            )
+            {{
+                if (!{name}_discard(value, item)) {{
+                    cinder_panic("Set element not found");
+                }}
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {option_name} {name}_pop({name} *value)
+            {{
+                {option_name} result = {{ {option_name}_Tag_None, {{ 0 }} }};
+                if (value == NULL) {{
+                    return result;
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Set during iteration");
+                }}
+                for (size_t slot = 0; slot < value->capacity; ++slot) {{
+                    {entry_name} *entry = &value->entries[slot];
+                    if (entry->state != 1) {{
+                        continue;
+                    }}
+                    result.tag = {option_name}_Tag_Some;
+                    result.data.value = entry->value;
+                    entry->state = 2;
+                    value->length -= 1;
+                    value->tombstones += 1;
+                    return result;
+                }}
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)
+            {{
+                if (value == NULL) {{
+                    return;
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot drop Set during iteration");
+                }}
+                for (size_t index = 0; index < value->capacity; ++index) {{
+                    {entry_name} *entry = &value->entries[index];
+                    if (entry->state == 1) {{
+                        {drop_item}
+                    }}
+                }}
+                free(value->entries);
+                value->entries = NULL;
+                value->capacity = 0;
+                value->length = 0;
+                value->tombstones = 0;
+                value->active_iterators = 0;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_clear({name} *value)
+            {{
+                if (value != NULL && value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Set during iteration");
+                }}
+                {name}_drop(value);
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_contains_owned(
+                {name} value,
+                {item_decl}
+            )
+            {{
+                bool result = {name}_contains(&value, item);
+                {name}_drop(&value);
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_update(
+                {name} *value,
+                const {name} *other
+            )
+            {{
+                if (value == other) {{
+                    return;
+                }}
+                if (value == NULL || other == NULL) {{
+                    cinder_panic("null Set update operand");
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot structurally mutate Set during iteration");
+                }}
+                for (size_t index = 0; index < other->capacity; ++index) {{
+                    if (other->entries[index].state == 1) {{
+                        {name}_add(value, other->entries[index].value);
+                    }}
+                }}
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {name} {name}_union(
+                const {name} *left,
+                const {name} *right
+            )
+            {{
+                {name} result = {{ NULL, 0, 0, 0, 0 }};
+                {name}_update(&result, left);
+                {name}_update(&result, right);
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {name} {name}_intersection(
+                const {name} *left,
+                const {name} *right
+            )
+            {{
+                {name} result = {{ NULL, 0, 0, 0, 0 }};
+                for (size_t index = 0; index < left->capacity; ++index) {{
+                    if (
+                        left->entries[index].state == 1
+                        && {name}_contains(right, left->entries[index].value)
+                    ) {{
+                        {name}_add(&result, left->entries[index].value);
+                    }}
+                }}
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {name} {name}_difference(
+                const {name} *left,
+                const {name} *right
+            )
+            {{
+                {name} result = {{ NULL, 0, 0, 0, 0 }};
+                for (size_t index = 0; index < left->capacity; ++index) {{
+                    if (
+                        left->entries[index].state == 1
+                        && !{name}_contains(right, left->entries[index].value)
+                    ) {{
+                        {name}_add(&result, left->entries[index].value);
+                    }}
+                }}
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {name} {name}_symmetric_difference(
+                const {name} *left,
+                const {name} *right
+            )
+            {{
+                {name} first = {name}_difference(left, right);
+                {name} second = {name}_difference(right, left);
+                {name} result = {name}_union(&first, &second);
+                {name}_drop(&first);
+                {name}_drop(&second);
+                return result;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_is_subset(
+                const {name} *left,
+                const {name} *right
+            )
+            {{
+                if (left->length > right->length) {{
+                    return false;
+                }}
+                for (size_t index = 0; index < left->capacity; ++index) {{
+                    if (
+                        left->entries[index].state == 1
+                        && !{name}_contains(right, left->entries[index].value)
+                    ) {{
+                        return false;
+                    }}
+                }}
+                return true;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED bool {name}_equal(
+                const {name} *left,
+                const {name} *right
+            )
+            {{
+                return left->length == right->length
+                    && {name}_is_subset(left, right);
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_begin_iteration(
+                const {name} *value
+            )
+            {{
+                if (value == NULL) {{
+                    cinder_panic("null Set iterator");
+                }}
+                {name} *mutable_value = ({name} *)(void *)value;
+                if (mutable_value->active_iterators == SIZE_MAX) {{
+                    cinder_panic("Set iterator count overflow");
+                }}
+                mutable_value->active_iterators += 1;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED void {name}_end_iteration(
+                const {name} *value
+            )
+            {{
+                {name} *mutable_value = ({name} *)(void *)value;
+                if (mutable_value == NULL || mutable_value->active_iterators == 0) {{
+                    cinder_panic("invalid Set iterator release");
+                }}
+                mutable_value->active_iterators -= 1;
+            }}
+
+            #endif /* {guard} */
+            """
+        )
+        self.writer.line()
+
+    @staticmethod
+    def _hash_expression(type_: Type, value: str) -> str:
+        if is_c_string(type_):
+            return f"cinder_hash_string({value})"
+        return f"cinder_hash_u64((uint64_t)({value}))"
+
+    @staticmethod
+    def _equal_expression(type_: Type, left: str, right: str) -> str:
+        if is_c_string(type_):
+            return f"cinder_string_equal({left}, {right})"
+        return f"(({left}) == ({right}))"
+
+    @staticmethod
+    def _clone_expression(type_: Type, value: str) -> str:
+        if is_c_string(type_):
+            return f"cinder_clone_string({value})"
+        return value
+
+    @staticmethod
+    def _drop_expression(type_: Type, value: str) -> str:
+        if is_c_string(type_):
+            return f"free((void *)({value}));"
+        return "(void)0;"
 
     def _emit_tuple_definition(self, tuple_type: TupleType) -> None:
         name = c_identifier(tuple_c_name(tuple_type))
@@ -713,6 +1816,55 @@ class CGenerator:
         self.writer.line("} data;")
         self.writer.indent -= 1
         self.writer.line("};")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
+
+    def _emit_option_definition(self, type_: OptionType) -> None:
+        name = c_identifier(option_c_name(type_))
+        guard = f"CINDER_DEFINED_{name.upper()}"
+        tag_name = f"{name}_Tag"
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(f"typedef enum {tag_name}")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{name}_Tag_None = 0,")
+        self.writer.line(f"{name}_Tag_Some = 1")
+        self.writer.indent -= 1
+        self.writer.line(f"}} {tag_name};")
+        self.writer.line()
+        self.writer.line(f"struct {name}")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{tag_name} tag;")
+        self.writer.line("union")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("unsigned char _cinder_empty;")
+        self.writer.line(c_decl(type_.inner, "value") + ";")
+        self.writer.indent -= 1
+        self.writer.line("} data;")
+        self.writer.indent -= 1
+        self.writer.line("};")
+        self.writer.line()
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED "
+            f"{c_decl(type_.inner, f'{name}_value_or_panic')}"
+            f"(const {name} *option)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(
+            f"if (option == NULL || option->tag != {name}_Tag_Some)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('cinder_panic("attempted to read None.value");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("return option->data.value;")
+        self.writer.indent -= 1
+        self.writer.line("}")
         self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
@@ -1028,10 +2180,7 @@ class CGenerator:
 
     def _function_signature(self, function: FunctionSymbol, *, definition: bool) -> str:
         if function.name == "main" and function.owner is None and not function.is_extern:
-            if not function.parameters:
-                parameters = "void"
-            else:
-                parameters = "int argc, char **argv"
+            parameters = "void" if not function.parameters else "int argc, char **argv"
             return f"int main({parameters})"
 
         linkage = ""
@@ -1065,12 +2214,16 @@ class CGenerator:
         for statement in block.statements:
             if isinstance(statement, (ast.ReturnStmt, ast.BreakStmt, ast.ContinueStmt)):
                 return True
-            if isinstance(statement, ast.IfStmt):
-                if statement.else_body is not None and all(
+            if (
+                isinstance(statement, ast.IfStmt)
+                and statement.else_body is not None
+                and all(
                     self._block_always_exits(branch.body)
                     for branch in statement.branches
-                ) and self._block_always_exits(statement.else_body):
-                    return True
+                )
+                and self._block_always_exits(statement.else_body)
+            ):
+                return True
             if isinstance(statement, ast.MatchStmt):
                 resolution = self.semantic.match_resolutions.get(id(statement))
                 if resolution is not None and resolution.exhaustive and all(
@@ -1088,17 +2241,21 @@ class CGenerator:
             case ast.AssignStmt():
                 self._emit_assignment(statement)
             case ast.ExpressionStmt(expression=expression):
-                list_type = value_type(self.semantic.expression_type(expression))
+                container_type = value_type(
+                    self.semantic.expression_type(expression)
+                )
                 class_ = self._class_symbol_from_storage_type(
                     self.semantic.expression_type(expression)
                 )
-                if isinstance(list_type, ListType):
-                    temporary = self._new_temp("discarded_list")
+                if isinstance(container_type, (ListType, MapType, SetType)):
+                    temporary = self._new_temp("discarded_collection")
                     self.writer.line(
-                        f"{c_decl(list_type, temporary)} = {self._emit_expr(expression)};"
+                        f"{c_decl(container_type, temporary)} = "
+                        f"{self._emit_expr(expression)};"
                     )
                     self.writer.line(
-                        f"{c_identifier(list_c_name(list_type))}_drop(&{temporary});"
+                        f"{self._container_drop_name(container_type)}"
+                        f"(&{temporary});"
                     )
                 elif class_ is not None and self._class_has_destructor(class_):
                     temporary = self._new_temp("discarded")
@@ -1164,20 +2321,62 @@ class CGenerator:
             self.writer.line(f"{declaration} = {initializer};")
             self._register_owned_cleanup(implicit)
             return
-        target = self._emit_lvalue(statement.target)
         expected = strip_reference(self.semantic.expression_type(statement.target))
+        if isinstance(statement.target, ast.IndexExpr):
+            base_type = value_type(
+                self.semantic.expression_type(statement.target.value)
+            )
+            if isinstance(base_type, MapType):
+                self._emit_map_index_assignment(statement, base_type)
+                return
+
+        target = self._emit_lvalue(statement.target)
         value = self._emit_with_expected(statement.value, expected)
         class_ = self._class_symbol_from_storage_type(expected)
-        list_type = value_type(expected)
+        container_type = value_type(expected)
+        if isinstance(container_type, SetType) and statement.operator in {
+            "|=",
+            "&=",
+            "-=",
+            "^=",
+        }:
+            operation = {
+                "|=": "union",
+                "&=": "intersection",
+                "-=": "difference",
+                "^=": "symmetric_difference",
+            }[statement.operator]
+            name = c_identifier(set_c_name(container_type))
+            result = self._new_temp("set_result")
+            target_pointer = self._new_temp("set_target")
+            self.writer.line(
+                f"{c_decl(PointerType(container_type), target_pointer)} = "
+                f"&({target});"
+            )
+            right, right_temp = self._materialize_container_operand(
+                statement.value,
+                container_type,
+            )
+            self.writer.line(
+                f"{c_decl(container_type, result)} = "
+                f"{name}_{operation}({target_pointer}, {right});"
+            )
+            if right_temp is not None:
+                self.writer.line(f"{name}_drop(&{right_temp});")
+            self.writer.line(f"{name}_drop({target_pointer});")
+            self.writer.line(f"*{target_pointer} = {result};")
+            return
         if (
             statement.operator == "="
-            and isinstance(list_type, ListType)
+            and isinstance(container_type, (ListType, MapType, SetType))
             and isinstance(statement.target, ast.NameExpr)
         ):
-            temporary = self._new_temp("list_move")
-            self.writer.line(f"{c_decl(list_type, temporary)} = {value};")
+            temporary = self._new_temp("collection_move")
             self.writer.line(
-                f"{c_identifier(list_c_name(list_type))}_drop(&{target});"
+                f"{c_decl(container_type, temporary)} = {value};"
+            )
+            self.writer.line(
+                f"{self._container_drop_name(container_type)}(&{target});"
             )
             self.writer.line(f"{target} = {temporary};")
             return
@@ -1293,6 +2492,11 @@ class CGenerator:
             assert isinstance(subject_type, ResultType)
             suffix = "Ok" if case_resolution.result_is_ok else "Err"
             return f"{subject_name}.tag == {self._result_tag(subject_type, suffix)}"
+        if case_resolution.kind == "option":
+            assert isinstance(subject_type, OptionType)
+            suffix = "Some" if case_resolution.option_is_some else "None"
+            name = c_identifier(option_c_name(subject_type))
+            return f"{subject_name}.tag == {name}_Tag_{suffix}"
         raise AssertionError(f"invalid match case resolution {case_resolution.kind!r}")
 
     def _emit_match_bindings(
@@ -1313,6 +2517,8 @@ class CGenerator:
                 source = f"{subject_name}.data.{case_name}.{c_identifier(binding.field_name)}"
             elif case_resolution.kind == "result":
                 source = f"{subject_name}.data.{'ok' if case_resolution.result_is_ok else 'err'}"
+            elif case_resolution.kind == "option":
+                source = f"{subject_name}.data.value"
             else:
                 raise AssertionError("only payload cases may bind values")
             self.writer.line(f"{c_decl(ConstType(binding.symbol.type), binding_name)} = {source};")
@@ -1329,6 +2535,8 @@ class CGenerator:
         self.writer.line("{")
         self.writer.indent += 1
         index_name = self._new_temp("index")
+        skip_condition: str | None = None
+        iterator_cleanup: _Cleanup | None = None
         if isinstance(iterable_type, SliceType):
             iterator_name = self._new_temp("slice")
             iterator_value = self._emit_with_expected(statement.iterable, iterable_type)
@@ -1348,6 +2556,78 @@ class CGenerator:
             )
             length = length_name
             value = f"{iterator_name}->data[{index_name}]"
+        elif isinstance(iterable_type, MapType):
+            iterator_name = self._new_temp("map")
+            iterator_value = self._container_pointer(statement.iterable)
+            self.writer.line(
+                f"{c_decl(PointerType(ConstType(iterable_type)), iterator_name)} = "
+                f"{iterator_value};"
+            )
+            helper = c_identifier(map_c_name(iterable_type))
+            self.writer.line(f"{helper}_begin_iteration({iterator_name});")
+            iterator_cleanup = _Cleanup(
+                iterator_end=(f"{helper}_end_iteration", iterator_name)
+            )
+            if self.scope_frames:
+                self.scope_frames[-1].cleanups.append(iterator_cleanup)
+            length = f"{iterator_name}->entries_length"
+            skip_condition = (
+                f"!{iterator_name}->entries[{index_name}].occupied"
+            )
+            value = f"{iterator_name}->entries[{index_name}].key"
+        elif isinstance(iterable_type, SetType):
+            iterator_name = self._new_temp("set")
+            iterator_value = self._container_pointer(statement.iterable)
+            self.writer.line(
+                f"{c_decl(PointerType(ConstType(iterable_type)), iterator_name)} = "
+                f"{iterator_value};"
+            )
+            helper = c_identifier(set_c_name(iterable_type))
+            self.writer.line(f"{helper}_begin_iteration({iterator_name});")
+            iterator_cleanup = _Cleanup(
+                iterator_end=(f"{helper}_end_iteration", iterator_name)
+            )
+            if self.scope_frames:
+                self.scope_frames[-1].cleanups.append(iterator_cleanup)
+            length = f"{iterator_name}->capacity"
+            skip_condition = (
+                f"{iterator_name}->entries[{index_name}].state != 1"
+            )
+            value = f"{iterator_name}->entries[{index_name}].value"
+        elif isinstance(iterable_type, MapViewType):
+            view_name = self._new_temp("map_view")
+            self.writer.line(
+                f"{c_decl(iterable_type, view_name)} = "
+                f"{self._emit_expr(statement.iterable)};"
+            )
+            iterator_name = self._new_temp("map")
+            map_type = iterable_type.map_type
+            self.writer.line(
+                f"{c_decl(PointerType(ConstType(map_type)), iterator_name)} = "
+                f"{view_name}.map;"
+            )
+            helper = c_identifier(map_c_name(map_type))
+            self.writer.line(f"{helper}_begin_iteration({iterator_name});")
+            iterator_cleanup = _Cleanup(
+                iterator_end=(f"{helper}_end_iteration", iterator_name)
+            )
+            if self.scope_frames:
+                self.scope_frames[-1].cleanups.append(iterator_cleanup)
+            length = f"{iterator_name}->entries_length"
+            skip_condition = (
+                f"!{iterator_name}->entries[{index_name}].occupied"
+            )
+            if iterable_type.kind == "keys":
+                value = f"{iterator_name}->entries[{index_name}].key"
+            elif iterable_type.kind == "values":
+                value = f"{iterator_name}->entries[{index_name}].value"
+            else:
+                tuple_type = TupleType((map_type.key, map_type.value))
+                value = (
+                    f"({c_type_expression(tuple_type)}){{ "
+                    f".item_0 = {iterator_name}->entries[{index_name}].key, "
+                    f".item_1 = {iterator_name}->entries[{index_name}].value }}"
+                )
         elif isinstance(iterable_type, ArrayType):
             iterator = self._emit_expr(statement.iterable)
             length = str(iterable_type.length)
@@ -1360,12 +2640,27 @@ class CGenerator:
         )
         self.writer.line("{")
         self.writer.indent += 1
+        if skip_condition is not None:
+            self.writer.line(f"if ({skip_condition})")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line("continue;")
+            self.writer.indent -= 1
+            self.writer.line("}")
         self.writer.line(
             f"{c_decl(symbol.type, c_identifier(symbol.name))} = {value};"
         )
         self._emit_block_contents(statement.body, loop_body=True)
         self.writer.indent -= 1
         self.writer.line("}")
+        if iterator_cleanup is not None:
+            if self.scope_frames:
+                cleanup = self.scope_frames[-1].cleanups.pop()
+                if cleanup is not iterator_cleanup:
+                    raise AssertionError("iterator cleanup stack is unbalanced")
+            assert iterator_cleanup.iterator_end is not None
+            helper_name, pointer = iterator_cleanup.iterator_end
+            self.writer.line(f"{helper_name}({pointer});")
         self.writer.indent -= 1
         self.writer.line("}")
 
@@ -1512,6 +2807,10 @@ class CGenerator:
         exclude_variable: VariableSymbol | None = None,
     ) -> None:
         for cleanup in reversed(frame.cleanups):
+            if cleanup.iterator_end is not None:
+                helper, pointer = cleanup.iterator_end
+                self.writer.line(f"{helper}({pointer});")
+                continue
             if cleanup.expression is not None:
                 self.writer.line(self._emit_expr(cleanup.expression) + ";")
                 continue
@@ -1522,9 +2821,9 @@ class CGenerator:
             name = c_identifier(cleanup.variable.c_name or cleanup.variable.name)
             if cleanup.class_ is not None:
                 self.writer.line(f"{self._class_drop_name(cleanup.class_)}(&{name});")
-            elif cleanup.list_ is not None:
+            elif cleanup.container is not None:
                 self.writer.line(
-                    f"{c_identifier(list_c_name(cleanup.list_))}_drop(&{name});"
+                    f"{self._container_drop_name(cleanup.container)}(&{name});"
                 )
             else:
                 raise AssertionError("invalid cleanup entry")
@@ -1532,10 +2831,10 @@ class CGenerator:
     def _register_owned_cleanup(self, symbol: VariableSymbol) -> None:
         if not self.scope_frames:
             return
-        list_type = value_type(symbol.type)
-        if isinstance(list_type, ListType):
+        container_type = value_type(symbol.type)
+        if isinstance(container_type, (ListType, MapType, SetType)):
             self.scope_frames[-1].cleanups.append(
-                _Cleanup(variable=symbol, list_=list_type)
+                _Cleanup(variable=symbol, container=container_type)
             )
             return
         class_ = self._class_symbol_from_storage_type(symbol.type)
@@ -1557,10 +2856,19 @@ class CGenerator:
         class_ = self._class_symbol_from_storage_type(symbol.type)
         if class_ is not None and self._class_has_destructor(class_):
             return symbol
-        return symbol if isinstance(value_type(symbol.type), ListType) else None
+        return (
+            symbol
+            if isinstance(value_type(symbol.type), (ListType, MapType, SetType))
+            else None
+        )
 
     def _emit_initializer(self, expression: ast.Expression, expected: Type) -> str:
         expected_value = strip_const(expected)
+        if isinstance(expression, ast.NoneExpr) and isinstance(
+            expected_value,
+            OptionType,
+        ):
+            return "{ 0 }"
         if isinstance(expression, ast.ListLiteralExpr) and isinstance(expected_value, ArrayType):
             values = [
                 self._emit_initializer(element, expected_value.inner)
@@ -1585,6 +2893,7 @@ class CGenerator:
                 "union_constructor",
                 "variant_constructor",
                 "result_constructor",
+                "option_some",
             }:
                 return self._constructor_initializer(expression, resolution)
 
@@ -1596,7 +2905,20 @@ class CGenerator:
         resolution: CallResolution,
     ) -> str:
         fields: list[str] = []
-        if resolution.kind == "variant_constructor":
+        if resolution.kind == "option_some":
+            option_type = resolution.compile_value
+            if not isinstance(option_type, OptionType):
+                raise AssertionError("Some constructor has no Option type")
+            name = c_identifier(option_c_name(option_type))
+            fields.append(f".tag = {name}_Tag_Some")
+            if expression.arguments:
+                value = self._emit_initializer(
+                    expression.arguments[0].value,
+                    option_type.inner,
+                )
+                fields.append(f".data.value = {value}")
+
+        elif resolution.kind == "variant_constructor":
             assert resolution.variant_case is not None
             fields.append(f".tag = {c_identifier(resolution.variant_case.c_name)}")
             case_name = c_identifier(resolution.variant_case.name)
@@ -1681,15 +3003,16 @@ class CGenerator:
                 return self._array_as_slice(expression, expected_raw)
             if isinstance(actual_value, ListType):
                 return self._list_as_slice(expression, expected_raw)
-            if isinstance(actual_value, SliceType) and actual_value != expected_raw:
-                if (
-                    isinstance(expected_raw.inner, ConstType)
-                    and expected_raw.inner.inner == actual_value.inner
-                ):
-                    return (
-                        f"{self._slice_name(expected_raw)}_from_mutable("
-                        f"{self._emit_expr(expression)})"
-                    )
+            if (
+                isinstance(actual_value, SliceType)
+                and actual_value != expected_raw
+                and isinstance(expected_raw.inner, ConstType)
+                and expected_raw.inner.inner == actual_value.inner
+            ):
+                return (
+                    f"{self._slice_name(expected_raw)}_from_mutable("
+                    f"{self._emit_expr(expression)})"
+                )
 
         return self._emit_expr(expression)
 
@@ -1708,6 +3031,12 @@ class CGenerator:
         match expression:
             case ast.LiteralExpr():
                 return self._emit_literal(expression)
+            case ast.NoneExpr():
+                option_type = value_type(
+                    self.semantic.expression_type(expression)
+                )
+                assert isinstance(option_type, OptionType)
+                return f"(({c_type_expression(option_type)}){{ 0 }})"
             case ast.FStringExpr():
                 raise AssertionError("f-strings may only be emitted as print arguments")
             case ast.NameExpr():
@@ -1720,6 +3049,13 @@ class CGenerator:
                 c_operator = "!" if operator == "not" else operator
                 return f"({c_operator}{self._emit_expr(operand)})"
             case ast.BinaryExpr(left=left, operator=operator, right=right):
+                resolution = self.semantic.binary_resolutions.get(id(expression))
+                if resolution is not None:
+                    return self._emit_resolved_binary(
+                        expression,
+                        resolution.kind,
+                        resolution.owner_type,
+                    )
                 c_operator = {"and": "&&", "or": "||"}.get(operator, operator)
                 if operator in {"and", "or"}:
                     return (
@@ -1764,6 +3100,14 @@ class CGenerator:
                     for element in expression.elements
                 )
                 return f"({c_type_expression(literal_type)}){{ {values} }}"
+            case ast.MapLiteralExpr(entries=entries):
+                map_type = value_type(self.semantic.expression_type(expression))
+                assert isinstance(map_type, MapType)
+                return self._emit_map_literal(entries, map_type)
+            case ast.SetLiteralExpr(elements=elements):
+                set_type = value_type(self.semantic.expression_type(expression))
+                assert isinstance(set_type, SetType)
+                return self._emit_set_literal(elements, set_type)
             case ast.TupleLiteralExpr():
                 tuple_type = value_type(self.semantic.expression_type(expression))
                 assert isinstance(tuple_type, TupleType)
@@ -1787,6 +3131,276 @@ class CGenerator:
                 )
             case _:
                 raise AssertionError(f"unhandled expression: {expression!r}")
+
+    def _emit_map_literal(
+        self,
+        entries: list[ast.MapEntry],
+        map_type: MapType,
+    ) -> str:
+        name = c_identifier(map_c_name(map_type))
+        temporary = self._new_temp("map_literal")
+        self.writer.line(f"{c_decl(map_type, temporary)} = {{ 0 }};")
+        cleanup = _Cleanup(iterator_end=(f"{name}_drop", f"&{temporary}"))
+        if self.scope_frames:
+            self.scope_frames[-1].cleanups.append(cleanup)
+        for entry in entries:
+            key_name = self._new_temp("map_key")
+            value_name = self._new_temp("map_value")
+            self.writer.line(
+                f"{c_decl(map_type.key, key_name)} = "
+                f"{self._emit_with_expected(entry.key, map_type.key)};"
+            )
+            self.writer.line(
+                f"{c_decl(map_type.value, value_name)} = "
+                f"{self._emit_with_expected(entry.value, map_type.value)};"
+            )
+            self.writer.line(
+                f"{name}_set(&{temporary}, {key_name}, {value_name});"
+            )
+        if self.scope_frames:
+            popped = self.scope_frames[-1].cleanups.pop()
+            if popped is not cleanup:
+                raise AssertionError("Map literal cleanup stack is unbalanced")
+        return temporary
+
+    def _emit_set_literal(
+        self,
+        elements: list[ast.Expression],
+        set_type: SetType,
+    ) -> str:
+        name = c_identifier(set_c_name(set_type))
+        temporary = self._new_temp("set_literal")
+        self.writer.line(f"{c_decl(set_type, temporary)} = {{ 0 }};")
+        cleanup = _Cleanup(iterator_end=(f"{name}_drop", f"&{temporary}"))
+        if self.scope_frames:
+            self.scope_frames[-1].cleanups.append(cleanup)
+        for element in elements:
+            item_name = self._new_temp("set_item")
+            self.writer.line(
+                f"{c_decl(set_type.inner, item_name)} = "
+                f"{self._emit_with_expected(element, set_type.inner)};"
+            )
+            self.writer.line(f"{name}_add(&{temporary}, {item_name});")
+        if self.scope_frames:
+            popped = self.scope_frames[-1].cleanups.pop()
+            if popped is not cleanup:
+                raise AssertionError("Set literal cleanup stack is unbalanced")
+        return temporary
+
+    def _emit_resolved_binary(
+        self,
+        expression: ast.BinaryExpr,
+        kind: str,
+        owner_type: Type | None,
+    ) -> str:
+        if kind == "string_equal":
+            value = (
+                f"cinder_string_equal({self._emit_expr(expression.left)}, "
+                f"{self._emit_expr(expression.right)})"
+            )
+            return f"(!{value})" if expression.operator == "!=" else value
+
+        if kind == "map_contains":
+            assert isinstance(owner_type, MapType)
+            name = c_identifier(map_c_name(owner_type))
+            key = self._emit_with_expected(expression.left, owner_type.key)
+            if isinstance(expression.right, ast.MapLiteralExpr):
+                owned = self._emit_inline_map_literal(
+                    expression.right.entries,
+                    owner_type,
+                )
+                value = f"{name}_contains_owned({owned}, {key})"
+                return f"(!{value})" if expression.operator == "not in" else value
+            if isinstance(expression.right, ast.CallExpr):
+                owned = self._emit_expr(expression.right)
+                value = f"{name}_contains_owned({owned}, {key})"
+                return f"(!{value})" if expression.operator == "not in" else value
+            pointer, temporary = self._materialize_container_operand(
+                expression.right,
+                owner_type,
+            )
+            value = f"{name}_contains({pointer}, {key})"
+            if expression.operator == "not in":
+                value = f"(!{value})"
+            if temporary is None:
+                return value
+            result = self._new_temp("contains")
+            self.writer.line(f"bool {result} = {value};")
+            self.writer.line(f"{name}_drop(&{temporary});")
+            return result
+
+        if kind == "set_contains":
+            assert isinstance(owner_type, SetType)
+            name = c_identifier(set_c_name(owner_type))
+            item = self._emit_with_expected(expression.left, owner_type.inner)
+            if isinstance(expression.right, ast.SetLiteralExpr):
+                owned = self._emit_inline_set_literal(
+                    expression.right.elements,
+                    owner_type,
+                )
+                value = f"{name}_contains_owned({owned}, {item})"
+                return f"(!{value})" if expression.operator == "not in" else value
+            if isinstance(expression.right, ast.CallExpr):
+                owned = self._emit_expr(expression.right)
+                value = f"{name}_contains_owned({owned}, {item})"
+                return f"(!{value})" if expression.operator == "not in" else value
+            pointer, temporary = self._materialize_container_operand(
+                expression.right,
+                owner_type,
+            )
+            value = f"{name}_contains({pointer}, {item})"
+            if expression.operator == "not in":
+                value = f"(!{value})"
+            if temporary is None:
+                return value
+            result = self._new_temp("contains")
+            self.writer.line(f"bool {result} = {value};")
+            self.writer.line(f"{name}_drop(&{temporary});")
+            return result
+
+        if kind == "map_view_contains":
+            assert isinstance(owner_type, MapViewType)
+            name = c_identifier(map_c_name(owner_type.map_type))
+            view = self._emit_expr(expression.right)
+            if owner_type.kind == "keys":
+                item = self._emit_with_expected(
+                    expression.left,
+                    owner_type.map_type.key,
+                )
+                value = f"{name}_contains(({view}).map, {item})"
+            elif owner_type.kind == "values":
+                item = self._emit_with_expected(
+                    expression.left,
+                    owner_type.map_type.value,
+                )
+                value = f"{name}_values_contains(({view}).map, {item})"
+            else:
+                item_type = TupleType(
+                    (owner_type.map_type.key, owner_type.map_type.value)
+                )
+                item = self._emit_with_expected(expression.left, item_type)
+                value = f"{name}_items_contains(({view}).map, {item})"
+            return f"(!{value})" if expression.operator == "not in" else value
+
+        if kind.startswith("set_") and kind != "set_compare":
+            assert isinstance(owner_type, SetType)
+            name = c_identifier(set_c_name(owner_type))
+            method = kind.removeprefix("set_")
+            left, left_temp = self._materialize_container_operand(
+                expression.left,
+                owner_type,
+            )
+            right, right_temp = self._materialize_container_operand(
+                expression.right,
+                owner_type,
+            )
+            result = self._new_temp("set_expression")
+            self.writer.line(
+                f"{c_decl(owner_type, result)} = "
+                f"{name}_{method}({left}, {right});"
+            )
+            for temporary in (left_temp, right_temp):
+                if temporary is not None:
+                    self.writer.line(f"{name}_drop(&{temporary});")
+            return result
+
+        if kind == "set_compare":
+            assert isinstance(owner_type, SetType)
+            name = c_identifier(set_c_name(owner_type))
+            left, left_temp = self._materialize_container_operand(
+                expression.left,
+                owner_type,
+            )
+            right, right_temp = self._materialize_container_operand(
+                expression.right,
+                owner_type,
+            )
+            operator = expression.operator
+            if operator == "==":
+                value = f"{name}_equal({left}, {right})"
+            elif operator == "!=":
+                value = f"(!{name}_equal({left}, {right}))"
+            elif operator == "<=":
+                value = f"{name}_is_subset({left}, {right})"
+            elif operator == ">=":
+                value = f"{name}_is_subset({right}, {left})"
+            elif operator == "<":
+                value = (
+                    f"(({left})->length < ({right})->length && "
+                    f"{name}_is_subset({left}, {right}))"
+                )
+            elif operator == ">":
+                value = (
+                    f"(({left})->length > ({right})->length && "
+                    f"{name}_is_subset({right}, {left}))"
+                )
+            else:
+                raise AssertionError(f"invalid Set comparison {operator!r}")
+            if left_temp is None and right_temp is None:
+                return value
+            result = self._new_temp("set_compare")
+            self.writer.line(f"bool {result} = {value};")
+            for temporary in (left_temp, right_temp):
+                if temporary is not None:
+                    self.writer.line(f"{name}_drop(&{temporary});")
+            return result
+
+        raise AssertionError(f"unhandled binary resolution {kind!r}")
+
+    def _materialize_container_operand(
+        self,
+        expression: ast.Expression,
+        type_: MapType | SetType,
+    ) -> tuple[str, str | None]:
+        if isinstance(
+            expression,
+            (ast.NameExpr, ast.AttributeExpr),
+        ) or (
+            isinstance(expression, ast.UnaryExpr)
+            and expression.operator == "*"
+        ):
+            return self._container_pointer(expression), None
+        temporary = self._new_temp("collection_operand")
+        self.writer.line(
+            f"{c_decl(type_, temporary)} = {self._emit_expr(expression)};"
+        )
+        return f"&{temporary}", temporary
+
+    def _emit_inline_map_literal(
+        self,
+        entries: list[ast.MapEntry],
+        map_type: MapType,
+    ) -> str:
+        name = c_identifier(map_c_name(map_type))
+        if not entries:
+            return f"{name}_from_values(NULL, NULL, 0)"
+        keys = ", ".join(
+            self._emit_with_expected(entry.key, map_type.key)
+            for entry in entries
+        )
+        values = ", ".join(
+            self._emit_with_expected(entry.value, map_type.value)
+            for entry in entries
+        )
+        key_array = c_type_expression(ArrayType(map_type.key, len(entries)))
+        value_array = c_type_expression(ArrayType(map_type.value, len(entries)))
+        return (
+            f"{name}_from_values(({key_array}){{ {keys} }}, "
+            f"({value_array}){{ {values} }}, {len(entries)})"
+        )
+
+    def _emit_inline_set_literal(
+        self,
+        elements: list[ast.Expression],
+        set_type: SetType,
+    ) -> str:
+        name = c_identifier(set_c_name(set_type))
+        values = ", ".join(
+            self._emit_with_expected(element, set_type.inner)
+            for element in elements
+        )
+        array = c_type_expression(ArrayType(set_type.inner, len(elements)))
+        return f"{name}_from_values(({array}){{ {values} }}, {len(elements)})"
 
     def _emit_literal(self, expression: ast.LiteralExpr) -> str:
         if expression.literal_kind == "bool":
@@ -1897,6 +3511,34 @@ class CGenerator:
                 return f"(({base}){operator}tag == {self._result_tag(raw, 'Ok')})"
             payload = "ok" if resolution.kind == "result_value" else "err"
             return f"({base}){operator}data.{payload}"
+        if resolution.kind in {
+            "option_is_some",
+            "option_is_none",
+            "option_value",
+        }:
+            base_type = strip_const(
+                self.semantic.expression_type(expression.value)
+            )
+            pointer = isinstance(base_type, (PointerType, ReferenceType))
+            base = self._emit_expr(
+                expression.value,
+                mode="raw" if isinstance(base_type, ReferenceType) else "value",
+            )
+            raw = (
+                strip_const(base_type.inner)
+                if pointer
+                else value_type(base_type)
+            )
+            assert isinstance(raw, OptionType)
+            name = c_identifier(option_c_name(raw))
+            if resolution.kind == "option_is_some":
+                operator = "->" if pointer else "."
+                return f"(({base}){operator}tag == {name}_Tag_Some)"
+            if resolution.kind == "option_is_none":
+                operator = "->" if pointer else "."
+                return f"(({base}){operator}tag == {name}_Tag_None)"
+            address = base if pointer else f"&({base})"
+            return f"{name}_value_or_panic({address})"
         if resolution.kind in ("slice_data", "slice_length"):
             base_type = strip_const(self.semantic.expression_type(expression.value))
             pointer = isinstance(base_type, ReferenceType)
@@ -1911,6 +3553,20 @@ class CGenerator:
             assert isinstance(list_type, ListType)
             method = str(resolution.compile_value)
             return f"{c_identifier(list_c_name(list_type))}_{c_identifier(method)}"
+        if resolution.kind == "map_method":
+            map_type = value_type(
+                self.semantic.expression_type(expression.value)
+            )
+            assert isinstance(map_type, MapType)
+            method = str(resolution.compile_value)
+            return f"{c_identifier(map_c_name(map_type))}_{c_identifier(method)}"
+        if resolution.kind == "set_method":
+            set_type = value_type(
+                self.semantic.expression_type(expression.value)
+            )
+            assert isinstance(set_type, SetType)
+            method = str(resolution.compile_value)
+            return f"{c_identifier(set_c_name(set_type))}_{c_identifier(method)}"
         if resolution.kind == "array_data":
             return self._emit_expr(expression.value)
         if resolution.kind == "array_length":
@@ -2032,6 +3688,42 @@ class CGenerator:
         assert isinstance(type_, ResultType)
         return type_
 
+    def _emit_map_index_assignment(
+        self,
+        statement: ast.AssignStmt,
+        map_type: MapType,
+    ) -> None:
+        assert isinstance(statement.target, ast.IndexExpr)
+        name = c_identifier(map_c_name(map_type))
+        map_pointer = self._new_temp("map")
+        key_name = self._new_temp("map_key")
+        value_name = self._new_temp("map_value")
+        self.writer.line(
+            f"{c_decl(PointerType(map_type), map_pointer)} = "
+            f"{self._container_pointer(statement.target.value)};"
+        )
+        self.writer.line(
+            f"{c_decl(map_type.key, key_name)} = "
+            f"{self._emit_with_expected(statement.target.index, map_type.key)};"
+        )
+        self.writer.line(
+            f"{c_decl(map_type.value, value_name)} = "
+            f"{self._emit_with_expected(statement.value, map_type.value)};"
+        )
+        if statement.operator == "=":
+            self.writer.line(
+                f"{name}_set({map_pointer}, {key_name}, {value_name});"
+            )
+            return
+        target_pointer = self._new_temp("map_slot")
+        self.writer.line(
+            f"{c_decl(PointerType(map_type.value), target_pointer)} = "
+            f"{name}_lookup_mut_or_panic({map_pointer}, {key_name});"
+        )
+        self.writer.line(
+            f"(*{target_pointer}) {statement.operator} {value_name};"
+        )
+
     def _emit_index(self, expression: ast.IndexExpr) -> str:
         base_type = value_type(self.semantic.expression_type(expression.value))
         if isinstance(base_type, TupleType):
@@ -2040,6 +3732,11 @@ class CGenerator:
             base = self._emit_expr(expression.value)
             return f"({base}).item_{expression.index.value}"
         index = self._emit_expr(expression.index)
+        if isinstance(base_type, MapType):
+            name = c_identifier(map_c_name(base_type))
+            base = self._container_pointer(expression.value)
+            index = self._emit_with_expected(expression.index, base_type.key)
+            return f"{name}_lookup_or_panic({base}, {index})"
         if isinstance(base_type, (SliceType, ListType)):
             base = self._emit_expr(expression.value)
             return f"({base}).data[{index}]"
@@ -2072,6 +3769,7 @@ class CGenerator:
             "union_constructor",
             "variant_constructor",
             "result_constructor",
+            "option_some",
         }:
             if resolution.kind == "constructor":
                 assert resolution.struct is not None
@@ -2082,11 +3780,19 @@ class CGenerator:
             elif resolution.kind == "variant_constructor":
                 assert resolution.variant is not None
                 constructor_type = resolution.variant.type
+            elif resolution.kind == "option_some":
+                if not isinstance(resolution.compile_value, OptionType):
+                    raise AssertionError("Some constructor has no Option type")
+                constructor_type = resolution.compile_value
             else:
                 assert resolution.result_type is not None
                 constructor_type = resolution.result_type
             initializer = self._emit_initializer(expression, constructor_type)
             return f"(({c_type_expression(constructor_type)}){initializer})"
+        if resolution.kind == "set_empty":
+            if not isinstance(resolution.compile_value, SetType):
+                raise AssertionError("set() has no Set type")
+            return f"(({c_type_expression(resolution.compile_value)}){{ 0 }})"
         if resolution.kind == "class_constructor":
             if resolution.class_ is None:
                 raise AssertionError("class constructor has no class symbol")
@@ -2108,6 +3814,72 @@ class CGenerator:
                 return f"{name}_append({receiver}, {', '.join(arguments)})"
             method = resolution.kind.removeprefix("list_")
             return f"{name}_{method}({receiver})"
+        if resolution.kind.startswith("map_"):
+            if not isinstance(expression.callee, ast.AttributeExpr):
+                raise AssertionError("Map method callee is not an attribute")
+            map_type = resolution.compile_value
+            if not isinstance(map_type, MapType):
+                raise AssertionError("Map method has no Map type")
+            name = c_identifier(map_c_name(map_type))
+            receiver = self._container_pointer(expression.callee.value)
+            method = resolution.kind.removeprefix("map_")
+            if method in {"get", "pop"}:
+                key = self._emit_with_expected(
+                    expression.arguments[0].value,
+                    map_type.key,
+                )
+                return f"{name}_{method}({receiver}, {key})"
+            if method == "update":
+                other, temporary = self._materialize_container_operand(
+                    expression.arguments[0].value,
+                    map_type,
+                )
+                value = f"{name}_update({receiver}, {other})"
+                if temporary is None:
+                    return value
+                self.writer.line(value + ";")
+                self.writer.line(f"{name}_drop(&{temporary});")
+                return "((void)0)"
+            return f"{name}_{method}({receiver})"
+        if resolution.kind.startswith("set_"):
+            if not isinstance(expression.callee, ast.AttributeExpr):
+                raise AssertionError("Set method callee is not an attribute")
+            set_type = resolution.compile_value
+            if not isinstance(set_type, SetType):
+                raise AssertionError("Set method has no Set type")
+            name = c_identifier(set_c_name(set_type))
+            receiver = self._container_pointer(expression.callee.value)
+            method = resolution.kind.removeprefix("set_")
+            if method in {"add", "discard", "remove"}:
+                item = self._emit_with_expected(
+                    expression.arguments[0].value,
+                    set_type.inner,
+                )
+                return f"{name}_{method}({receiver}, {item})"
+            if method == "update" or method in {
+                "union",
+                "intersection",
+                "difference",
+                "symmetric_difference",
+            }:
+                other, temporary = self._materialize_container_operand(
+                    expression.arguments[0].value,
+                    set_type,
+                )
+                value = f"{name}_{method}({receiver}, {other})"
+                if temporary is None:
+                    return value
+                if method == "update":
+                    self.writer.line(value + ";")
+                    self.writer.line(f"{name}_drop(&{temporary});")
+                    return "((void)0)"
+                result = self._new_temp("set_method")
+                self.writer.line(
+                    f"{c_decl(set_type, result)} = {value};"
+                )
+                self.writer.line(f"{name}_drop(&{temporary});")
+                return result
+            return f"{name}_{method}({receiver})"
         if resolution.kind == "len":
             argument = expression.arguments[0].value
             argument_type = value_type(self.semantic.expression_type(argument))
@@ -2115,6 +3887,10 @@ class CGenerator:
                 return f"CINDER_ARRAY_LEN({self._emit_expr(argument)})"
             if isinstance(argument_type, (SliceType, ListType)):
                 return f"({self._emit_expr(argument)}).length"
+            if isinstance(argument_type, (MapType, SetType)):
+                return f"({self._container_pointer(argument)})->length"
+            if isinstance(argument_type, MapViewType):
+                return f"({self._emit_expr(argument)}).map->length"
             if isinstance(argument_type, TupleType):
                 return (
                     f"((void)({self._emit_expr(argument)}), "
@@ -2525,12 +4301,25 @@ class CGenerator:
         )
 
     def _list_pointer(self, expression: ast.Expression) -> str:
+        return self._container_pointer(expression)
+
+    def _container_pointer(self, expression: ast.Expression) -> str:
         actual = strip_const(self.semantic.expression_type(expression))
         if isinstance(actual, ReferenceType):
             return self._emit_expr(expression, mode="raw")
         if isinstance(actual, PointerType):
             return self._emit_expr(expression)
         return self._emit_address(expression)
+
+    @staticmethod
+    def _container_drop_name(
+        type_: ListType | MapType | SetType,
+    ) -> str:
+        if isinstance(type_, ListType):
+            return f"{c_identifier(list_c_name(type_))}_drop"
+        if isinstance(type_, MapType):
+            return f"{c_identifier(map_c_name(type_))}_drop"
+        return f"{c_identifier(set_c_name(type_))}_drop"
 
     def _slice_name(self, slice_type: SliceType) -> str:
         return "CinderSlice_" + c_identifier(type_key(slice_type.inner))
@@ -3014,8 +4803,16 @@ def c_decl(type_: Type, name: str) -> str:
         return f"{c_identifier(tuple_c_name(type_))} {name}".strip()
     if isinstance(type_, ListType):
         return f"{c_identifier(list_c_name(type_))} {name}".strip()
+    if isinstance(type_, MapType):
+        return f"{c_identifier(map_c_name(type_))} {name}".strip()
+    if isinstance(type_, SetType):
+        return f"{c_identifier(set_c_name(type_))} {name}".strip()
+    if isinstance(type_, MapViewType):
+        return f"{c_identifier(map_view_c_name(type_))} {name}".strip()
     if isinstance(type_, ResultType):
         return f"{c_identifier(result_c_name(type_))} {name}".strip()
+    if isinstance(type_, OptionType):
+        return f"{c_identifier(option_c_name(type_))} {name}".strip()
     if isinstance(type_, OpaqueType):
         return f"{type_.c_name} {name}".strip()
     if isinstance(type_, NullType):

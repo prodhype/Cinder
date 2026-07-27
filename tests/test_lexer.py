@@ -39,6 +39,19 @@ def test_fstring_token() -> None:
     assert fstrings[0].lexeme == 'f"hello {name}"'
 
 
+def test_fstring_token_allows_braces_and_same_quote_inside_replacement() -> None:
+    source = 'def main() -> i32:\n    print(f"{values["key"] in {"key": 1}}")\n'
+    tokens = lex(source, Path("test.ci"))
+    fstrings = [token for token in tokens if token.kind is TokenKind.FSTRING]
+    assert len(fstrings) == 1
+    assert fstrings[0].lexeme == 'f"{values["key"] in {"key": 1}}"'
+
+
+def test_none_is_a_reserved_token() -> None:
+    tokens = lex("value: Option[i32] = None\n", Path("test.ci"))
+    assert TokenKind.NONE in [token.kind for token in tokens]
+
+
 def test_tabs_are_rejected() -> None:
     with pytest.raises(CompilationFailed, match="tabs are not allowed"):
         lex("def main() -> i32:\n\treturn 0\n", Path("test.ci"))

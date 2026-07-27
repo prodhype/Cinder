@@ -235,6 +235,18 @@ class CallResolution:
 
 
 @dataclass(frozen=True, slots=True)
+class IndexResolution:
+    kind: str
+    owner_type: Type
+
+
+@dataclass(frozen=True, slots=True)
+class BinaryResolution:
+    kind: str
+    owner_type: Type | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ComptimeBinding:
     kind: str
     owner: NominalSymbol
@@ -262,6 +274,7 @@ class MatchCaseResolution:
     enum_member: EnumMemberSymbol | None = None
     variant_case: VariantCaseSymbol | None = None
     result_is_ok: bool | None = None
+    option_is_some: bool | None = None
     bindings: tuple[PatternBinding, ...] = ()
 
 

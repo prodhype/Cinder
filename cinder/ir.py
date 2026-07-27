@@ -20,9 +20,13 @@ from cinder.types import (
     DynType,
     EnumType,
     ListType,
+    MapType,
+    MapViewType,
+    OptionType,
     PointerType,
     ReferenceType,
     ResultType,
+    SetType,
     SliceType,
     StructType,
     TupleType,
@@ -90,8 +94,12 @@ class IRModule:
     slice_types: tuple[SliceType, ...]
     tuple_types: tuple[TupleType, ...]
     list_types: tuple[ListType, ...]
+    map_types: tuple[MapType, ...]
+    set_types: tuple[SetType, ...]
+    map_view_types: tuple[MapViewType, ...]
     sort_types: tuple[Type, ...]
     result_types: tuple[ResultType, ...]
+    option_types: tuple[OptionType, ...]
     definition_order: tuple[Type, ...]
 
 
@@ -141,11 +149,26 @@ class Lowerer:
                 globals_.append(IRGlobal(symbol, declaration))
 
         slices = tuple(sorted(self._collect_slices(), key=type_key))
-        tuples = tuple(sorted(self._collect_tuples(), key=type_key))
         lists = tuple(sorted(self._collect_lists(), key=type_key))
+        maps = tuple(sorted(self._collect_maps(), key=type_key))
+        sets = tuple(sorted(self._collect_sets(), key=type_key))
+        map_view_values = self._collect_map_views()
+        map_view_values.update(
+            MapViewType(map_type, kind)
+            for map_type in maps
+            for kind in ("keys", "values", "items")
+        )
+        map_views = tuple(sorted(map_view_values, key=type_key))
+        tuple_values = self._collect_tuples()
+        tuple_values.update(TupleType((map_type.key, map_type.value)) for map_type in maps)
+        tuples = tuple(sorted(tuple_values, key=type_key))
         sort_types = tuple(sorted(self._collect_sort_types(), key=type_key))
         results = tuple(sorted(self._collect_results(), key=type_key))
-        definition_order = tuple(self._definition_order(results, tuples))
+        option_values = self._collect_options()
+        option_values.update(OptionType(map_type.value) for map_type in maps)
+        option_values.update(OptionType(set_type.inner) for set_type in sets)
+        options = tuple(sorted(option_values, key=type_key))
+        definition_order = tuple(self._definition_order(results, options, tuples))
         return IRModule(
             semantic=self.semantic,
             structs=structs,
@@ -158,8 +181,12 @@ class Lowerer:
             slice_types=slices,
             tuple_types=tuples,
             list_types=lists,
+            map_types=maps,
+            set_types=sets,
+            map_view_types=map_views,
             sort_types=sort_types,
             result_types=results,
+            option_types=options,
             definition_order=definition_order,
         )
 
@@ -209,11 +236,20 @@ class Lowerer:
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
+            elif isinstance(raw, OptionType):
+                collect(raw.inner)
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
             elif isinstance(raw, ListType):
                 collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, SetType):
+                collect(raw.inner)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
 
         for type_ in self._all_semantic_types():
             collect(type_)
@@ -237,6 +273,15 @@ class Lowerer:
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
+            elif isinstance(raw, OptionType):
+                collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, SetType):
+                collect(raw.inner)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
 
         for type_ in self._all_semantic_types():
             collect(type_)
@@ -259,6 +304,152 @@ class Lowerer:
                     collect(element)
             elif isinstance(raw, DynType):
                 collect(raw.interface)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
+            elif isinstance(raw, OptionType):
+                collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, SetType):
+                collect(raw.inner)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_maps(self) -> set[MapType]:
+        result: set[MapType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, MapType):
+                if raw in result:
+                    return
+                result.add(raw)
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(
+                raw,
+                (PointerType, ReferenceType, ArrayType, SliceType, ListType, SetType),
+            ):
+                collect(raw.inner)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
+            elif isinstance(raw, OptionType):
+                collect(raw.inner)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_sets(self) -> set[SetType]:
+        result: set[SetType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, SetType):
+                if raw in result:
+                    return
+                result.add(raw)
+                collect(raw.inner)
+            elif isinstance(
+                raw,
+                (PointerType, ReferenceType, ArrayType, SliceType, ListType),
+            ):
+                collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
+            elif isinstance(raw, OptionType):
+                collect(raw.inner)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_map_views(self) -> set[MapViewType]:
+        result: set[MapViewType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, MapViewType):
+                result.add(raw)
+                collect(raw.map_type)
+            elif isinstance(
+                raw,
+                (
+                    PointerType,
+                    ReferenceType,
+                    ArrayType,
+                    SliceType,
+                    ListType,
+                    SetType,
+                    OptionType,
+                ),
+            ):
+                collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_options(self) -> set[OptionType]:
+        result: set[OptionType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, OptionType):
+                if raw in result:
+                    return
+                result.add(raw)
+                collect(raw.inner)
+            elif isinstance(
+                raw,
+                (
+                    PointerType,
+                    ReferenceType,
+                    ArrayType,
+                    SliceType,
+                    ListType,
+                    SetType,
+                ),
+            ):
+                collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
@@ -293,8 +484,15 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
-            elif isinstance(raw, ListType):
+            elif isinstance(raw, (ListType, OptionType)):
                 collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, SetType):
+                collect(raw.inner)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
 
         for type_ in self._all_semantic_types():
             collect(type_)
@@ -303,6 +501,7 @@ class Lowerer:
     def _definition_order(
         self,
         result_types: tuple[ResultType, ...],
+        option_types: tuple[OptionType, ...],
         tuple_types: tuple[TupleType, ...],
     ) -> list[Type]:
         nominal_by_type: dict[Type, NominalSymbol] = {}
@@ -310,7 +509,12 @@ class Lowerer:
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.classes.values()})
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.unions.values()})
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.variants.values()})
-        nodes: set[Type] = {*nominal_by_type, *result_types, *tuple_types}
+        nodes: set[Type] = {
+            *nominal_by_type,
+            *result_types,
+            *option_types,
+            *tuple_types,
+        }
         permanent: set[Type] = set()
         temporary: set[Type] = set()
         ordered: list[Type] = []
@@ -343,6 +547,8 @@ class Lowerer:
                 *self._by_value_definition_types(type_.ok),
                 *self._by_value_definition_types(type_.error),
             }
+        if isinstance(type_, OptionType):
+            return self._by_value_definition_types(type_.inner)
         if isinstance(type_, TupleType):
             dependencies: set[Type] = set()
             for element in type_.elements:
@@ -369,12 +575,32 @@ class Lowerer:
             return set()
         if isinstance(
             raw,
-            (StructType, ClassType, UnionType, VariantType, ResultType, TupleType),
+            (
+                StructType,
+                ClassType,
+                UnionType,
+                VariantType,
+                ResultType,
+                OptionType,
+                TupleType,
+            ),
         ):
             return {raw}
         if isinstance(raw, ArrayType):
             return self._by_value_definition_types(raw.inner)
-        if isinstance(raw, (PointerType, ReferenceType, SliceType, ListType, EnumType)):
+        if isinstance(
+            raw,
+            (
+                PointerType,
+                ReferenceType,
+                SliceType,
+                ListType,
+                MapType,
+                SetType,
+                MapViewType,
+                EnumType,
+            ),
+        ):
             return set()
         return set()
 

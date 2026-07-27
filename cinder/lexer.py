@@ -49,6 +49,7 @@ class TokenKind(StrEnum):
     TRUE = "true"
     FALSE = "false"
     NULL = "null"
+    NONE = "None"
     AND = "and"
     OR = "or"
     NOT = "not"
@@ -134,6 +135,7 @@ _KEYWORDS: dict[str, TokenKind] = {
         TokenKind.TRUE,
         TokenKind.FALSE,
         TokenKind.NULL,
+        TokenKind.NONE,
         TokenKind.AND,
         TokenKind.OR,
         TokenKind.NOT,
@@ -426,6 +428,9 @@ class Lexer:
         *,
         prefix_length: int = 0,
     ) -> int:
+        if prefix_length:
+            return self._scan_fstring(line, line_number, start, prefix_length)
+
         quote = line[start + prefix_length]
         index = start + prefix_length + 1
         escaped = False
@@ -444,10 +449,7 @@ class Lexer:
             if character == quote:
                 end = index + 1
                 lexeme = line[start:end]
-                if prefix_length:
-                    kind = TokenKind.FSTRING
-                else:
-                    kind = TokenKind.CHAR if quote == "'" and decoded_length == 1 else TokenKind.STRING
+                kind = TokenKind.CHAR if quote == "'" and decoded_length == 1 else TokenKind.STRING
                 self.tokens.append(
                     Token(
                         kind,
@@ -462,6 +464,73 @@ class Lexer:
 
         self.diagnostics.error(
             "unterminated string literal",
+            Span(self.path, line_number, start + 1, line_number, len(line) + 1),
+            code="L006",
+        )
+        return len(line)
+
+    def _scan_fstring(
+        self,
+        line: str,
+        line_number: int,
+        start: int,
+        prefix_length: int,
+    ) -> int:
+        quote = line[start + prefix_length]
+        index = start + prefix_length + 1
+        replacement_depth = 0
+        escaped = False
+
+        while index < len(line):
+            character = line[index]
+            if replacement_depth == 0:
+                if escaped:
+                    escaped = False
+                    index += 1
+                    continue
+                if character == "\\":
+                    escaped = True
+                    index += 1
+                    continue
+                if character == quote:
+                    end = index + 1
+                    lexeme = line[start:end]
+                    self.tokens.append(
+                        Token(
+                            TokenKind.FSTRING,
+                            lexeme,
+                            Span(
+                                self.path,
+                                line_number,
+                                start + 1,
+                                line_number,
+                                end + 1,
+                            ),
+                            lexeme,
+                        )
+                    )
+                    return end
+                if character == "{" and not line.startswith("{{", index):
+                    replacement_depth = 1
+                    index += 1
+                    continue
+                if line.startswith(("{{", "}}"), index):
+                    index += 2
+                    continue
+                index += 1
+                continue
+
+            if character in ('"', "'"):
+                index = _skip_quoted_text(line, index)
+                continue
+            if character == "{":
+                replacement_depth += 1
+            elif character == "}":
+                replacement_depth -= 1
+            index += 1
+
+        self.diagnostics.error(
+            "unterminated f-string literal",
             Span(self.path, line_number, start + 1, line_number, len(line) + 1),
             code="L006",
         )
@@ -570,6 +639,22 @@ class Lexer:
             self._brackets.pop()
             return
         self._brackets.pop()
+
+
+def _skip_quoted_text(text: str, start: int) -> int:
+    quote = text[start]
+    index = start + 1
+    escaped = False
+    while index < len(text):
+        character = text[index]
+        if escaped:
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        elif character == quote:
+            return index + 1
+        index += 1
+    return index
 
 
 def _is_identifier_start(character: str) -> bool:
