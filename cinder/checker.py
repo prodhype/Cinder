@@ -5836,6 +5836,14 @@ class Checker:
                     self._type_mismatch(expected_value.inner, actual, element.span)
             return expected_value
 
+        if not expression.elements:
+            self._error(
+                "cannot infer the element type of an empty set literal",
+                expression.span,
+                code="C312",
+                note="add a Set[T] annotation",
+            )
+            return ERROR
         inferred = value_type(self._check_expr(expression.elements[0]))
         for element in expression.elements[1:]:
             current = value_type(self._check_expr(element, expected=inferred))

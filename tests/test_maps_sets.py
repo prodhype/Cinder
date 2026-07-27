@@ -6,12 +6,61 @@ from pathlib import Path
 
 import pytest
 
+from cinder import ast
+from cinder.checker import check
 from cinder.compiler import Compiler
-from cinder.diagnostics import CompilationFailed
+from cinder.diagnostics import CompilationFailed, Span
 
 
 def compile_source(source: str) -> str:
     return Compiler().compile_source(source, Path("maps_sets_test.ci")).c_source
+
+
+def test_empty_set_literal_ast_without_context_reports_diagnostic() -> None:
+    path = Path("maps_sets_test.ci")
+    function_span = Span(path, 1, 1, 3, 13)
+    set_span = Span(path, 2, 13, 2, 15)
+    return_span = Span(path, 3, 5, 3, 13)
+    source = "def main() -> i32:\n    value = {}\n    return 0\n"
+    module = ast.Module(
+        function_span,
+        path,
+        [
+            ast.FunctionDecl(
+                function_span,
+                "main",
+                [],
+                ast.NamedTypeNode(Span(path, 1, 15, 1, 18), "i32"),
+                ast.Block(
+                    function_span,
+                    [
+                        ast.VarDeclStmt(
+                            set_span,
+                            "value",
+                            None,
+                            ast.SetLiteralExpr(set_span, []),
+                        ),
+                        ast.ReturnStmt(
+                            return_span,
+                            ast.LiteralExpr(
+                                Span(path, 3, 12, 3, 13),
+                                0,
+                                "integer",
+                                "0",
+                            ),
+                        ),
+                    ],
+                ),
+            )
+        ],
+    )
+
+    with pytest.raises(CompilationFailed) as captured:
+        check(module, source)
+
+    assert "cannot infer the element type of an empty set literal" in str(
+        captured.value
+    )
 
 
 def test_map_and_set_literals_views_and_operations_codegen() -> None:

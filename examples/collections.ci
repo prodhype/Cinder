@@ -7,6 +7,7 @@ def summarize(values: []const i32) -> Tuple[i32, usize]:
 
 def main() -> i32:
     values = [5, 1, 4, 2, 3]
+    defer values.clear()
     values.append(6)
     sort(values)
 
@@ -33,5 +34,4 @@ def main() -> i32:
     combined = primes | odd
     print(f"unique values={len(combined)}")
 
-    values.clear()
     return 0
