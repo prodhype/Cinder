@@ -2,7 +2,7 @@
 
 `hello.ci` is the smallest native program.
 
-`print.ci` demonstrates import-free `print`, multi-argument output, and f-strings with format specs.
+`print.ci` demonstrates import-free `print`, multi-argument output, f-strings with format specs, and Python-like printing of Lists, Maps, Sets, and Tuples.
 
 `input.ci` demonstrates import-free `input` with a Python-style prompt.
 
@@ -16,9 +16,9 @@
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
-`binary_sort.ci` implements stable binary insertion sort on a numeric array.
+`binary_sort.ci` implements stable binary insertion sort on a numeric List, then prints the sorted collection.
 
-`long_string_sort.ci` demonstrates lexicographic sorting of C strings without importing `string`.
+`long_string_sort.ci` demonstrates lexicographic sorting of C strings in a List without importing `string`, then prints the sorted collection.
 
 `algorithm_benchmarks.ci` times exact N-Queens, traveling-salesperson, and edit-distance
 solutions. It reports both fractional wall-clock seconds and implementation-defined C CPU
