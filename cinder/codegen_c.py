@@ -958,6 +958,12 @@ class CGenerator:
                 {key_decl}
             )
             {{
+                if (value == NULL) {{
+                    cinder_panic("null Map receiver");
+                }}
+                if (value->active_iterators != 0) {{
+                    cinder_panic("cannot mutate Map during iteration");
+                }}
                 bool found = false;
                 size_t bucket = {name}_find_bucket(
                     value,

@@ -115,6 +115,25 @@ def test_brace_literals_inside_fstrings_track_nested_colons_and_quotes() -> None
         ),
         (
             "def main() -> i32:\n"
+            "    values = {1: 2}\n"
+            "    for key in values:\n"
+            "        values[key] += 1\n"
+            "    return 0\n",
+            "cannot mutate a Map while iterating over it",
+        ),
+        (
+            "def main() -> i32:\n"
+            "    first = {1: 1}\n"
+            "    second = {2: 2}\n"
+            "    keys = first.keys()\n"
+            "    keys = second.keys()\n"
+            "    for key in keys:\n"
+            "        second[3] = key\n"
+            "    return 0\n",
+            "cannot insert into a Map while iterating over it",
+        ),
+        (
+            "def main() -> i32:\n"
             "    values = {1, 2}\n"
             "    for value in values:\n"
             "        values.add(value)\n"
@@ -127,6 +146,21 @@ def test_map_set_diagnostics(source: str, message: str) -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(source)
     assert message in str(captured.value)
+
+
+def test_map_view_reassignment_tracks_latest_backing_map() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    first = {1: 1}\n"
+        "    second = {2: 2}\n"
+        "    keys = first.keys()\n"
+        "    keys = second.keys()\n"
+        "    for key in keys:\n"
+        "        first[3] = key\n"
+        "    return 0\n"
+    )
+
+    assert "CinderMapKeys_i32_i32" in generated
 
 
 @pytest.mark.skipif(
@@ -263,6 +297,87 @@ def test_hidden_mutation_during_iteration_panics(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "cannot structurally mutate Map during iteration" in result.stderr
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_hidden_compound_map_mutation_during_iteration_panics(
+    tmp_path: Path,
+) -> None:
+    source = (
+        "def mutate(values: &Map[i32, i32]) -> void:\n"
+        "    values[1] += 1\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values = {1: 2}\n"
+        "    for key in values:\n"
+        "        mutate(values)\n"
+        "    return 0\n"
+    )
+    source_path = tmp_path / "iterator_guard_compound.ci"
+    source_path.write_text(source, encoding="utf-8")
+    executable = tmp_path / (
+        "iterator_guard_compound.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "iterator_guard_compound"
+    )
+    artifact = Compiler().build(
+        source_path,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "cannot mutate Map during iteration" in result.stderr
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_char_map_set_keys_compile_and_run(tmp_path: Path) -> None:
+    source = (
+        "def main() -> i32:\n"
+        "    annotated_map: Map[char, i32] = {'a': 1}\n"
+        "    annotated_set: Set[char] = {'a', 'b'}\n"
+        "    inferred_map = {'x': 24, 'y': 25}\n"
+        "    inferred_set = {'m', 'n'}\n"
+        "    annotated_map['b'] = 2\n"
+        "    annotated_map['a'] += 3\n"
+        "    if annotated_map['a'] != 4 or annotated_map['b'] != 2:\n"
+        "        return 1\n"
+        "    if 'b' not in annotated_set or 'z' in annotated_set:\n"
+        "        return 2\n"
+        "    if inferred_map['x'] != 24 or 'n' not in inferred_set:\n"
+        "        return 3\n"
+        "    return 0\n"
+    )
+    source_path = tmp_path / "char_maps_sets.ci"
+    source_path.write_text(source, encoding="utf-8")
+    executable = tmp_path / (
+        "char_maps_sets.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "char_maps_sets"
+    )
+    artifact = Compiler().build(
+        source_path,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.skipif(

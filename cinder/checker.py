@@ -2658,12 +2658,18 @@ class Checker:
                 self.expr_types.get(id(statement.target.value), ERROR)
             )
             if isinstance(map_type, MapType):
-                if (
-                    statement.operator == "="
-                    and self._collection_storage_is_active(statement.target.value)
-                ):
+                target_is_active = self._collection_storage_is_active(
+                    statement.target.value
+                )
+                if statement.operator == "=" and target_is_active:
                     self._error(
                         "cannot insert into a Map while iterating over it",
+                        statement.target.span,
+                        code="C340",
+                    )
+                elif target_is_active:
+                    self._error(
+                        "cannot mutate a Map while iterating over it",
                         statement.target.span,
                         code="C340",
                     )
@@ -2777,6 +2783,15 @@ class Checker:
                 value_type_,
                 statement.value,
             )
+            if isinstance(statement.target, ast.NameExpr):
+                target_symbol = self.name_symbols.get(id(statement.target))
+                if isinstance(target_symbol, VariableSymbol) and isinstance(
+                    value_type(target_symbol.type),
+                    MapViewType,
+                ):
+                    self.map_view_storages[id(target_symbol)] = (
+                        self._collection_storage(statement.value)
+                    )
             if isinstance(effective_target, ReferenceType) and value_type_ == NULL:
                 self._error("references cannot be assigned null", statement.value.span, code="C038")
             return

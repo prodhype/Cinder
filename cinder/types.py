@@ -390,6 +390,7 @@ def is_hashable(type_: Type) -> bool:
     raw = strip_const(type_)
     return (
         raw == BOOL
+        or raw == CHAR
         or is_integer(raw)
         or isinstance(raw, EnumType)
         or is_c_string(raw)
