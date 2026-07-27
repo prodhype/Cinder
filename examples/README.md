@@ -24,6 +24,12 @@
 solutions. It reports both fractional wall-clock seconds and implementation-defined C CPU
 ticks.
 
+`physics.ci` demonstrates common mechanics formulas with the checked math module: energy,
+momentum, force, kinematics, projectile motion, pendulum period, and centripetal acceleration.
+
+`write_jpg.ci` demonstrates import-free `open`, the `with ... as ...:` statement, and
+`File.write` by creating a small valid JPEG on disk.
+
 `defer.ci` demonstrates explicit allocation and cleanup before a returned value leaves scope.
 
 `interop.ci` includes a system C header and supplies a checked external declaration.

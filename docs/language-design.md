@@ -289,6 +289,17 @@ implementation inheritance. Constructing a class produces a zero-initialized val
 and calls `__init__`; it does not allocate implicitly.
 
 ```python
+with open("out.bin", "wb") as file:
+    data: u8[2] = [0x41, 0x42]
+    file.write(data)
+```
+
+`open` is a global builtin that returns the compiler-provided owning `File` type. `with`
+binds that value in a nested scope so the handle closes automatically through ordinary
+`File` drop cleanup. The same cleanup runs for `file = open(...)` at the end of the
+enclosing scope. There is no `__enter__` / `__exit__` protocol in 0.5.
+
+```python
 import stdio
 
 class File:
@@ -305,7 +316,8 @@ class File:
             stdio.fclose(self.handle)
 ```
 
-For a local destructor-bearing value, the compiler calls `__del__` on every normal
+The illustrative user-written class above remains valid for wrapping raw `stdio.FILE`
+handles when a custom type is preferable to the builtin `File`. For a local destructor-bearing value, the compiler calls `__del__` on every normal
 scope exit, including early returns and Result propagation. Such classes are
 move-only in 0.5: implicit copies, by-value parameters, globals, arrays, variants,
 Results, and other owning aggregates are rejected. `__del__` cannot be called

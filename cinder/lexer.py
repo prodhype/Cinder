@@ -55,6 +55,7 @@ class TokenKind(StrEnum):
     NOT = "not"
     UNSAFE = "unsafe"
     DEFER = "defer"
+    WITH = "with"
     PRIVATE = "private"
 
     LEFT_PAREN = "("
@@ -141,6 +142,7 @@ _KEYWORDS: dict[str, TokenKind] = {
         TokenKind.NOT,
         TokenKind.UNSAFE,
         TokenKind.DEFER,
+        TokenKind.WITH,
         TokenKind.PRIVATE,
     )
 }

@@ -95,6 +95,11 @@ class MapViewType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class FileType(Type):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class OpaqueType(Type):
     name: str
     c_name: str
@@ -194,6 +199,7 @@ C_LONG: Final = PrimitiveType("c_long", "long", "integer", None, True)
 C_SIZE_T: Final = PrimitiveType("c_size_t", "size_t", "integer", None, False)
 NULL: Final = NullType()
 ERROR: Final = ErrorType()
+FILE: Final = FileType()
 
 PRIMITIVES: Final[dict[str, PrimitiveType]] = {
     value.name: value
@@ -256,6 +262,10 @@ def list_c_name(type_: ListType) -> str:
     return f"CinderList_{type_key(type_.inner)}"
 
 
+def file_c_name() -> str:
+    return "CinderFile"
+
+
 def map_c_name(type_: MapType) -> str:
     return f"CinderMap_{type_key(type_.key)}_{type_key(type_.value)}"
 
@@ -294,6 +304,8 @@ def type_name(type_: Type) -> str:
             return f"Map[{type_name(key)}, {type_name(value)}]"
         case SetType(inner=inner):
             return f"Set[{type_name(inner)}]"
+        case FileType():
+            return "File"
         case MapViewType(map_type=map_type, kind=kind):
             view_name = {
                 "keys": "MapKeys",
@@ -407,7 +419,7 @@ def is_equatable(type_: Type) -> bool:
 
 
 def is_owning_container(type_: Type) -> bool:
-    return isinstance(strip_const(type_), (ListType, MapType, SetType))
+    return isinstance(strip_const(type_), (ListType, MapType, SetType, FileType))
 
 
 def is_scalar(type_: Type) -> bool:
@@ -578,6 +590,9 @@ def can_assign(target: Type, source: Type) -> bool:
     if isinstance(target, SetType) and isinstance(source, SetType):
         return target == source
 
+    if isinstance(target, FileType) and isinstance(source, FileType):
+        return True
+
     if isinstance(target, MapViewType) and isinstance(source, MapViewType):
         return target == source
 
@@ -619,6 +634,8 @@ def type_key(type_: Type) -> str:
             return f"map_{type_key(key)}_{type_key(value)}"
         case SetType(inner=inner):
             return f"set_{type_key(inner)}"
+        case FileType():
+            return "file"
         case MapViewType(map_type=map_type, kind=kind):
             return (
                 f"map_{_sanitize_key(kind)}_{type_key(map_type.key)}_"

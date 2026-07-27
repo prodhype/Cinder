@@ -17,8 +17,10 @@ from cinder.symbols import (
 from cinder.types import (
     ArrayType,
     ClassType,
+    ConstType,
     DynType,
     EnumType,
+    FileType,
     ListType,
     MapType,
     MapViewType,
@@ -31,6 +33,7 @@ from cinder.types import (
     StructType,
     TupleType,
     Type,
+    U8,
     UnionType,
     VariantType,
     is_void,
@@ -100,6 +103,7 @@ class IRModule:
     sort_types: tuple[Type, ...]
     result_types: tuple[ResultType, ...]
     option_types: tuple[OptionType, ...]
+    uses_file: bool
     definition_order: tuple[Type, ...]
 
 
@@ -148,7 +152,14 @@ class Lowerer:
             if symbol is not None:
                 globals_.append(IRGlobal(symbol, declaration))
 
-        slices = tuple(sorted(self._collect_slices(), key=type_key))
+        slices = set(self._collect_slices())
+        uses_file = any(
+            isinstance(strip_const(type_), FileType)
+            for type_ in self._all_semantic_types()
+        )
+        if uses_file:
+            slices.add(SliceType(ConstType(U8)))
+        slices = tuple(sorted(slices, key=type_key))
         lists = tuple(sorted(self._collect_lists(), key=type_key))
         maps = tuple(sorted(self._collect_maps(), key=type_key))
         sets = tuple(sorted(self._collect_sets(), key=type_key))
@@ -187,6 +198,7 @@ class Lowerer:
             sort_types=sort_types,
             result_types=results,
             option_types=options,
+            uses_file=uses_file,
             definition_order=definition_order,
         )
 
@@ -214,6 +226,7 @@ class Lowerer:
         values.extend(symbol.type for symbol in self.semantic.declaration_symbols.values())
         values.extend(symbol.type for symbol in self.semantic.implicit_declarations.values())
         values.extend(symbol.type for symbol in self.semantic.foreach_symbols.values())
+        values.extend(symbol.type for symbol in self.semantic.with_symbols.values())
         values.extend(self.semantic.expr_types.values())
         for resolution in self.semantic.call_resolutions.values():
             values.extend(

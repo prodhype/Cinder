@@ -647,6 +647,8 @@ class Parser:
             expression = self.parse_expression()
             end = self.expect(TokenKind.NEWLINE, "expected newline after defer", code="P053").span
             return ast.DeferStmt(start.merge(end), expression)
+        if self.at(TokenKind.WITH):
+            return self.parse_with()
         if self.at(TokenKind.UNSAFE):
             start = self.advance().span
             colon = self.expect(TokenKind.COLON, "expected ':' after unsafe", code="P054")
@@ -735,6 +737,15 @@ class Parser:
         colon = self.expect(TokenKind.COLON, "expected ':' after while condition", code="P061")
         body = self.parse_suite_after_colon(colon.span)
         return ast.WhileStmt(start.merge(body.span), condition, body)
+
+    def parse_with(self) -> ast.WithStmt:
+        start = self.expect(TokenKind.WITH).span
+        context = self.parse_expression()
+        self.expect(TokenKind.AS, "expected 'as' after with expression", code="P090")
+        name = self.expect(TokenKind.NAME, "expected name after 'as'", code="P091").lexeme
+        colon = self.expect(TokenKind.COLON, "expected ':' after with binding", code="P092")
+        body = self.parse_suite_after_colon(colon.span)
+        return ast.WithStmt(start.merge(body.span), context, name, body)
 
     def parse_for(self) -> ast.Statement:
         start = self.expect(TokenKind.FOR).span

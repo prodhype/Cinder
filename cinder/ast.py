@@ -341,6 +341,13 @@ class UnsafeStmt(Statement):
 
 
 @dataclass(slots=True)
+class WithStmt(Statement):
+    context: Expression
+    name: str
+    body: Block
+
+
+@dataclass(slots=True)
 class Expression(Node):
     pass
 
