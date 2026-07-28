@@ -1,7 +1,0 @@
-/Volumes/Shelfy/Code/Cinder/.scratch/repros/a2_noprefix.c:24:28: error: passing 'ptr_i32' (aka 'struct ptr_i32') to parameter of incompatible type 'int32_t *' (aka 'int *')
-   24 |     ptr_i32 a = id_ptr_i32(s);
-      |                            ^
-/Volumes/Shelfy/Code/Cinder/.scratch/repros/a2_noprefix.c:17:57: note: passing argument to parameter 'value' here
-   17 | static CINDER_MAYBE_UNUSED int32_t *id_ptr_i32(int32_t *value);
-      |                                                         ^
-1 error generated.
