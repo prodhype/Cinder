@@ -226,6 +226,55 @@ def test_builtin_parse_and_to_string_round_trip(tmp_path: Path) -> None:
     assert result.stdout == "42\ntrue\nempty\ninvalid\noverflow\n3.5\nZ\n"
 
 
+def test_builtin_parse_float_underflow_and_overflow(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "def main() -> i32:\n"
+        "    match parse_f64(\"1e-400\"):\n"
+        "        case Ok(value):\n"
+        "            text = to_string(value)\n"
+        "            defer free(cast[void*](text))\n"
+        "            print(text)\n"
+        "        case Err(error):\n"
+        "            return 1\n"
+        "\n"
+        "    match parse_f32(\"1e-50\"):\n"
+        "        case Ok(value):\n"
+        "            text = to_string(value)\n"
+        "            defer free(cast[void*](text))\n"
+        "            print(text)\n"
+        "        case Err(error):\n"
+        "            return 1\n"
+        "\n"
+        "    match parse_f64(\"1e400\"):\n"
+        "        case Ok(value):\n"
+        "            return 1\n"
+        "        case Err(error):\n"
+        "            match error:\n"
+        "                case ConvertError.overflow:\n"
+        "                    print(\"f64-overflow\")\n"
+        "                case ConvertError.empty:\n"
+        "                    return 1\n"
+        "                case ConvertError.invalid:\n"
+        "                    return 1\n"
+        "\n"
+        "    match parse_f32(\"1e50\"):\n"
+        "        case Ok(value):\n"
+        "            return 1\n"
+        "        case Err(error):\n"
+        "            match error:\n"
+        "                case ConvertError.overflow:\n"
+        "                    print(\"f32-overflow\")\n"
+        "                case ConvertError.empty:\n"
+        "                    return 1\n"
+        "                case ConvertError.invalid:\n"
+        "                    return 1\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "0\n0\nf64-overflow\nf32-overflow\n"
+
+
 def test_convert_example_runs(tmp_path: Path) -> None:
     example = Path(__file__).resolve().parents[1] / "examples" / "convert.ci"
     result = build_and_run(tmp_path, example.read_text(encoding="utf-8"))

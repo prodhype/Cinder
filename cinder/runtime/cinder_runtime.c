@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -434,7 +435,7 @@ bool cinder_parse_f64(const char *text, double *out, CinderParseError *error)
     if (!cinder_finish_parse(end, error)) {
         return false;
     }
-    if (errno == ERANGE) {
+    if (errno == ERANGE && !isfinite(value)) {
         if (error != NULL) {
             *error = CinderParseError_overflow;
         }
@@ -464,7 +465,7 @@ bool cinder_parse_f32(const char *text, float *out, CinderParseError *error)
     if (!cinder_finish_parse(end, error)) {
         return false;
     }
-    if (errno == ERANGE) {
+    if (errno == ERANGE && !isfinite(value)) {
         if (error != NULL) {
             *error = CinderParseError_overflow;
         }
