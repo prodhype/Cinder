@@ -669,7 +669,9 @@ def type_key(type_: Type) -> str:
         case PrimitiveType(name=name):
             return name
         case StructType() | ClassType() | EnumType() | UnionType() | VariantType():
-            return _sanitize_key(nominal_c_name(type_))
+            return "n_" + _sanitize_key(nominal_c_name(type_))
+        case OpaqueType(c_name=c_name):
+            return "n_" + _sanitize_key(c_name)
         case ResultType(ok=ok, error=error):
             return f"result_{type_key(ok)}_{type_key(error)}"
         case OptionType(inner=inner):
@@ -692,8 +694,6 @@ def type_key(type_: Type) -> str:
                 f"map_{_sanitize_key(kind)}_{type_key(map_type.key)}_"
                 f"{type_key(map_type.value)}"
             )
-        case OpaqueType(c_name=c_name):
-            return _sanitize_key(c_name)
         case ConstType(inner=inner):
             return f"const_{type_key(inner)}"
         case PointerType(inner=inner):

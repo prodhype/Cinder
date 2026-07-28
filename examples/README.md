@@ -24,6 +24,8 @@
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
+`fizzbuzz.ci` prompts for an upper bound, then prints Fizz/Buzz/FizzBuzz for 1 through that number using a range loop, modulo, and `if`/`elif`/`else`.
+
 `binary_sort.ci` implements stable binary insertion sort on a numeric List, then prints the sorted collection.
 
 `long_string_sort.ci` demonstrates lexicographic sorting of C strings in a List without importing `string`, then prints the sorted collection.
