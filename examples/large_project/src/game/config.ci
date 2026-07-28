@@ -1,0 +1,22 @@
+const WINDOW_WIDTH: c_int = 800
+const WINDOW_HEIGHT: c_int = 600
+const TARGET_FRAME_MS: u32 = 16
+
+const PADDLE_WIDTH: f32 = 100.0
+const PADDLE_HEIGHT: f32 = 16.0
+const PADDLE_SPEED: f32 = 420.0
+const PADDLE_MARGIN: f32 = 24.0
+
+const BALL_SIZE: f32 = 12.0
+const BALL_SPEED: f32 = 320.0
+
+const BRICK_ROWS: i32 = 5
+const BRICK_COLS: i32 = 10
+const BRICK_COUNT: i32 = 50
+const BRICK_WIDTH: f32 = 70.0
+const BRICK_HEIGHT: f32 = 22.0
+const BRICK_GAP: f32 = 6.0
+const BRICK_TOP: f32 = 60.0
+const BRICK_LEFT: f32 = 35.0
+
+const START_LIVES: i32 = 3

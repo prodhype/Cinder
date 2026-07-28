@@ -59,3 +59,5 @@ momentum, force, kinematics, projectile motion, pendulum period, and centripetal
 `module_project/` is a complete manifest-driven multi-file project. It demonstrates dotted local modules, aliases, transitive imports, generated headers and translation units, cross-module nominal types, and Result propagation across module boundaries.
 
 `class_project/` is a complete multi-file class ABI example. It defines a reflected abstract interface in one module, implements it in another, and performs dynamic dispatch from the entry module through separately generated headers and C translation units.
+
+`large_project/` is a larger multi-module Breakout demo. It binds SDL2 and SDL_mixer via `extern import` / `extern "C"`, opens a window, draws paddle/ball/bricks across nested `sdl/` and `game/` modules, and plays WAV sound effects. See `large_project/README.md` for install and link flags (manual run; not part of CI).

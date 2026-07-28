@@ -1,0 +1,36 @@
+import game.config as config
+import game.math2d as math2d
+import sdl.bindings as sdl
+import sdl.draw as draw
+
+struct Paddle:
+    bounds: math2d.Aabb
+
+    def reset(self: &Paddle) -> void:
+        self.bounds = math2d.Aabb(
+            x=(cast[f32](config.WINDOW_WIDTH) - config.PADDLE_WIDTH) * 0.5,
+            y=cast[f32](config.WINDOW_HEIGHT) - config.PADDLE_MARGIN - config.PADDLE_HEIGHT,
+            w=config.PADDLE_WIDTH,
+            h=config.PADDLE_HEIGHT,
+        )
+
+    def update(self: &Paddle, left: bool, right: bool, dt: f32) -> void:
+        if left:
+            self.bounds.x -= config.PADDLE_SPEED * dt
+        if right:
+            self.bounds.x += config.PADDLE_SPEED * dt
+        if self.bounds.x < 0.0:
+            self.bounds.x = 0.0
+        max_x = cast[f32](config.WINDOW_WIDTH) - self.bounds.w
+        if self.bounds.x > max_x:
+            self.bounds.x = max_x
+
+    def draw(self: &const Paddle, renderer: sdl.Renderer) -> void:
+        draw.fill_rect(
+            renderer,
+            cast[c_int](self.bounds.x),
+            cast[c_int](self.bounds.y),
+            cast[c_int](self.bounds.w),
+            cast[c_int](self.bounds.h),
+            draw.Color(r=240, g=240, b=245, a=255),
+        )

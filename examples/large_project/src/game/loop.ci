@@ -1,0 +1,57 @@
+import game.config as config
+import game.math2d as math2d
+import game.paddle as paddle_mod
+import game.ball as ball_mod
+import game.bricks as bricks_mod
+import game.world as world_mod
+import sdl.app as app_mod
+import sdl.bindings as sdl
+import sdl.events as events
+
+def run(app: app_mod.App) -> i32:
+    paddle = paddle_mod.Paddle(
+        bounds=math2d.Aabb(x=0.0, y=0.0, w=config.PADDLE_WIDTH, h=config.PADDLE_HEIGHT),
+    )
+    ball = ball_mod.Ball(
+        bounds=math2d.Aabb(x=0.0, y=0.0, w=config.BALL_SIZE, h=config.BALL_SIZE),
+        velocity=math2d.Vec2(x=0.0, y=0.0),
+        launched=false,
+    )
+    bricks = bricks_mod.Bricks(remaining=0)
+    world = world_mod.World(
+        paddle=paddle,
+        ball=ball,
+        bricks=bricks,
+        sounds=app.sounds,
+        lives=config.START_LIVES,
+        score=0,
+        won=false,
+        lost=false,
+    )
+    world.reset_game()
+
+    previous_space = false
+    last_ticks = sdl.SDL_GetTicks()
+    running = true
+    while running:
+        input = events.read_input(previous_space)
+        previous_space = input.space
+        if input.quit or input.escape:
+            running = false
+            continue
+
+        now = sdl.SDL_GetTicks()
+        elapsed = now - last_ticks
+        last_ticks = now
+        dt = cast[f32](elapsed) / 1000.0
+        if dt > 0.05:
+            dt = 0.05
+
+        world.update(input, dt)
+        world.draw(app.renderer)
+
+        frame_ms = sdl.SDL_GetTicks() - now
+        if frame_ms < config.TARGET_FRAME_MS:
+            sdl.SDL_Delay(config.TARGET_FRAME_MS - frame_ms)
+
+    return 0

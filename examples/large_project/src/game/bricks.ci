@@ -1,0 +1,66 @@
+import game.config as config
+import game.math2d as math2d
+import sdl.bindings as sdl
+import sdl.draw as draw
+
+struct Bricks:
+    alive: bool[50]
+    remaining: i32
+
+    def reset(self: &Bricks) -> void:
+        self.remaining = config.BRICK_COUNT
+        for index in range(0, config.BRICK_COUNT):
+            self.alive[index] = true
+
+    def brick_bounds(self: &const Bricks, index: i32) -> math2d.Aabb:
+        row = index / config.BRICK_COLS
+        col = index % config.BRICK_COLS
+        return math2d.Aabb(
+            x=config.BRICK_LEFT + cast[f32](col) * (config.BRICK_WIDTH + config.BRICK_GAP),
+            y=config.BRICK_TOP + cast[f32](row) * (config.BRICK_HEIGHT + config.BRICK_GAP),
+            w=config.BRICK_WIDTH,
+            h=config.BRICK_HEIGHT,
+        )
+
+    def collide(self: &Bricks, ball: math2d.Aabb, velocity: &math2d.Vec2) -> bool:
+        for index in range(0, config.BRICK_COUNT):
+            if not self.alive[index]:
+                continue
+            brick = self.brick_bounds(index)
+            if not math2d.overlaps(ball, brick):
+                continue
+            self.alive[index] = false
+            self.remaining -= 1
+            ball_cx = ball.x + ball.w * 0.5
+            ball_cy = ball.y + ball.h * 0.5
+            brick_cx = brick.x + brick.w * 0.5
+            brick_cy = brick.y + brick.h * 0.5
+            dx = math2d.abs_f32(ball_cx - brick_cx) / (brick.w * 0.5)
+            dy = math2d.abs_f32(ball_cy - brick_cy) / (brick.h * 0.5)
+            if dx > dy:
+                velocity.x = -velocity.x
+            else:
+                velocity.y = -velocity.y
+            return true
+        return false
+
+    def draw(self: &const Bricks, renderer: sdl.Renderer) -> void:
+        for index in range(0, config.BRICK_COUNT):
+            if not self.alive[index]:
+                continue
+            brick = self.brick_bounds(index)
+            row = index / config.BRICK_COLS
+            shade = cast[u8](40 + row * 35)
+            draw.fill_rect(
+                renderer,
+                cast[c_int](brick.x),
+                cast[c_int](brick.y),
+                cast[c_int](brick.w),
+                cast[c_int](brick.h),
+                draw.Color(
+                    r=cast[u8](220 - cast[i32](shade)),
+                    g=cast[u8](90 + cast[i32](shade)),
+                    b=cast[u8](140 + cast[i32](shade) / 2),
+                    a=255,
+                ),
+            )

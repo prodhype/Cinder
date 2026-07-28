@@ -1,0 +1,148 @@
+# Checked SDL2 + SDL_mixer bindings used by the Breakout demo.
+# Macros are redeclared as Cinder constants; unknown C types stay opaque
+# inside this module. Cross-module APIs use the handle structs below.
+
+extern import "SDL2/SDL.h"
+extern import "SDL2/SDL_mixer.h"
+
+const SDL_INIT_AUDIO: u32 = 0x00000010
+const SDL_INIT_VIDEO: u32 = 0x00000020
+const SDL_QUIT: u32 = 0x100
+const SDL_WINDOWPOS_UNDEFINED: c_int = 0x1FFF0000
+const SDL_RENDERER_ACCELERATED: u32 = 0x00000002
+const SDL_RENDERER_PRESENTVSYNC: u32 = 0x00000004
+
+const SDL_SCANCODE_A: c_int = 4
+const SDL_SCANCODE_D: c_int = 7
+const SDL_SCANCODE_ESCAPE: c_int = 41
+const SDL_SCANCODE_SPACE: c_int = 44
+const SDL_SCANCODE_RIGHT: c_int = 79
+const SDL_SCANCODE_LEFT: c_int = 80
+
+const MIX_DEFAULT_FREQUENCY: c_int = 44100
+const MIX_DEFAULT_FORMAT: u16 = 0x8010
+const MIX_DEFAULT_CHANNELS: c_int = 2
+
+# Storage for SDL_PollEvent. Layout matches common 56-byte SDL_Event;
+# only the leading type field is read from Cinder. Named EventBlob so the
+# generated C type does not conflict with the real SDL_Event union.
+struct EventBlob:
+    type: u32
+    padding: u8[52]
+
+# Matches the C SDL_Rect layout for pointer casts into SDL APIs.
+struct Rect:
+    x: c_int
+    y: c_int
+    w: c_int
+    h: c_int
+
+# Opaque SDL pointers are not re-exported across modules, so wrap them.
+struct Window:
+    ptr: *void
+
+struct Renderer:
+    ptr: *void
+
+struct Chunk:
+    ptr: *void
+
+
+extern "C":
+    def SDL_Init(flags: u32) -> c_int
+    def SDL_Quit() -> void
+    def SDL_GetError() -> const char*
+    def SDL_GetTicks() -> u32
+    def SDL_Delay(ms: u32) -> void
+    def SDL_PollEvent(event: *SDL_Event) -> c_int
+    def SDL_GetKeyboardState(numkeys: *c_int) -> *const u8
+    def SDL_CreateWindow(
+        title: const char*,
+        x: c_int,
+        y: c_int,
+        w: c_int,
+        h: c_int,
+        flags: u32,
+    ) -> *SDL_Window
+    def SDL_DestroyWindow(window: *SDL_Window) -> void
+    def SDL_CreateRenderer(
+        window: *SDL_Window,
+        index: c_int,
+        flags: u32,
+    ) -> *SDL_Renderer
+    def SDL_DestroyRenderer(renderer: *SDL_Renderer) -> void
+    def SDL_SetRenderDrawColor(
+        renderer: *SDL_Renderer,
+        r: u8,
+        g: u8,
+        b: u8,
+        a: u8,
+    ) -> c_int
+    def SDL_RenderClear(renderer: *SDL_Renderer) -> c_int
+    def SDL_RenderFillRect(renderer: *SDL_Renderer, rect: *const SDL_Rect) -> c_int
+    def SDL_RenderPresent(renderer: *SDL_Renderer) -> void
+    def Mix_OpenAudio(
+        frequency: c_int,
+        format: u16,
+        channels: c_int,
+        chunksize: c_int,
+    ) -> c_int
+    def Mix_CloseAudio() -> void
+    def Mix_LoadWAV(file: const char*) -> *Mix_Chunk
+    def Mix_FreeChunk(chunk: *Mix_Chunk) -> void
+    def Mix_PlayChannel(channel: c_int, chunk: *Mix_Chunk, loops: c_int) -> c_int
+
+
+def null_window() -> Window:
+    return Window(ptr=null)
+
+
+def null_renderer() -> Renderer:
+    return Renderer(ptr=null)
+
+
+def null_chunk() -> Chunk:
+    return Chunk(ptr=null)
+
+
+def window_from_raw(raw: *SDL_Window) -> Window:
+    unsafe:
+        return Window(ptr=cast[*void](raw))
+
+
+def renderer_from_raw(raw: *SDL_Renderer) -> Renderer:
+    unsafe:
+        return Renderer(ptr=cast[*void](raw))
+
+
+def chunk_from_raw(raw: *Mix_Chunk) -> Chunk:
+    unsafe:
+        return Chunk(ptr=cast[*void](raw))
+
+
+def window_raw(window: Window) -> *SDL_Window:
+    unsafe:
+        return cast[*SDL_Window](window.ptr)
+
+
+def renderer_raw(renderer: Renderer) -> *SDL_Renderer:
+    unsafe:
+        return cast[*SDL_Renderer](renderer.ptr)
+
+
+def chunk_raw(chunk: Chunk) -> *Mix_Chunk:
+    unsafe:
+        return cast[*Mix_Chunk](chunk.ptr)
+
+
+def render_fill_rect(renderer: Renderer, rect: *Rect) -> c_int:
+    unsafe:
+        return SDL_RenderFillRect(
+            renderer_raw(renderer),
+            cast[*const SDL_Rect](cast[*void](rect)),
+        )
+
+
+def poll_event(event: *EventBlob) -> c_int:
+    unsafe:
+        return SDL_PollEvent(cast[*SDL_Event](cast[*void](event)))

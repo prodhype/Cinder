@@ -1,0 +1,115 @@
+import sdl.bindings as sdl
+import sdl.audio as audio
+
+struct App:
+    window: sdl.Window
+    renderer: sdl.Renderer
+    sounds: audio.Sounds
+    ok: bool
+
+
+def create_app(title: const char*, width: c_int, height: c_int) -> App:
+    empty = audio.Sounds(
+        hit=sdl.null_chunk(),
+        brick=sdl.null_chunk(),
+        wall=sdl.null_chunk(),
+        lose=sdl.null_chunk(),
+    )
+    if sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_AUDIO) != 0:
+        print("SDL_Init failed:", sdl.SDL_GetError())
+        return App(
+            window=sdl.null_window(),
+            renderer=sdl.null_renderer(),
+            sounds=empty,
+            ok=false,
+        )
+
+    if sdl.Mix_OpenAudio(
+        sdl.MIX_DEFAULT_FREQUENCY,
+        sdl.MIX_DEFAULT_FORMAT,
+        sdl.MIX_DEFAULT_CHANNELS,
+        2048,
+    ) != 0:
+        print("Mix_OpenAudio failed:", sdl.SDL_GetError())
+        sdl.SDL_Quit()
+        return App(
+            window=sdl.null_window(),
+            renderer=sdl.null_renderer(),
+            sounds=empty,
+            ok=false,
+        )
+
+    raw_window = sdl.SDL_CreateWindow(
+        title,
+        sdl.SDL_WINDOWPOS_UNDEFINED,
+        sdl.SDL_WINDOWPOS_UNDEFINED,
+        width,
+        height,
+        0,
+    )
+    if raw_window == null:
+        print("SDL_CreateWindow failed:", sdl.SDL_GetError())
+        sdl.Mix_CloseAudio()
+        sdl.SDL_Quit()
+        return App(
+            window=sdl.null_window(),
+            renderer=sdl.null_renderer(),
+            sounds=empty,
+            ok=false,
+        )
+
+    raw_renderer = sdl.SDL_CreateRenderer(
+        raw_window,
+        -1,
+        sdl.SDL_RENDERER_ACCELERATED | sdl.SDL_RENDERER_PRESENTVSYNC,
+    )
+    if raw_renderer == null:
+        raw_renderer = sdl.SDL_CreateRenderer(raw_window, -1, 0)
+    if raw_renderer == null:
+        print("SDL_CreateRenderer failed:", sdl.SDL_GetError())
+        sdl.SDL_DestroyWindow(raw_window)
+        sdl.Mix_CloseAudio()
+        sdl.SDL_Quit()
+        return App(
+            window=sdl.null_window(),
+            renderer=sdl.null_renderer(),
+            sounds=empty,
+            ok=false,
+        )
+
+    sounds = audio.load_sounds()
+    if (
+        sounds.hit.ptr == null
+        or sounds.brick.ptr == null
+        or sounds.wall.ptr == null
+        or sounds.lose.ptr == null
+    ):
+        print("Mix_LoadWAV failed:", sdl.SDL_GetError())
+        audio.free_sounds(sounds)
+        sdl.SDL_DestroyRenderer(raw_renderer)
+        sdl.SDL_DestroyWindow(raw_window)
+        sdl.Mix_CloseAudio()
+        sdl.SDL_Quit()
+        return App(
+            window=sdl.null_window(),
+            renderer=sdl.null_renderer(),
+            sounds=empty,
+            ok=false,
+        )
+
+    return App(
+        window=sdl.window_from_raw(raw_window),
+        renderer=sdl.renderer_from_raw(raw_renderer),
+        sounds=sounds,
+        ok=true,
+    )
+
+
+def destroy_app(app: App) -> void:
+    if not app.ok:
+        return
+    audio.free_sounds(app.sounds)
+    sdl.SDL_DestroyRenderer(sdl.renderer_raw(app.renderer))
+    sdl.SDL_DestroyWindow(sdl.window_raw(app.window))
+    sdl.Mix_CloseAudio()
+    sdl.SDL_Quit()
