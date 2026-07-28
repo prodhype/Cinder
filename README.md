@@ -557,6 +557,18 @@ defer free(cast[void*](name))
 print("hello", name)
 ```
 
+Parsing and formatting helpers are also global. `parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` return `Result[T, ConvertError]` after a full-token parse (`empty`, `invalid`, or `overflow` on failure). `to_string(value)` formats integers, floats, `bool`, and `char` into an owned `const char*` that must be freed like `input`:
+
+```python
+match parse_i32(name):
+    case Ok(value):
+        text = to_string(value)
+        defer free(cast[void*](text))
+        print(text)
+    case Err(error):
+        print(cast[i32](error))
+```
+
 `@export` preserves a top-level function's C symbol name:
 
 ```python

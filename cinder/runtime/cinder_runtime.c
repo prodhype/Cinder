@@ -1,5 +1,11 @@
 #include "cinder_runtime.h"
 
+#include <ctype.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
+#include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -223,6 +229,370 @@ char *cinder_input(const char *prompt)
     }
     buffer[length] = '\0';
     return buffer;
+}
+
+static const char *cinder_skip_whitespace(const char *text)
+{
+    while (text != NULL && *text != '\0' && isspace((unsigned char)*text)) {
+        text += 1;
+    }
+    return text;
+}
+
+static bool cinder_finish_parse(char *end, CinderParseError *error)
+{
+    if (end == NULL) {
+        if (error != NULL) {
+            *error = CinderParseError_invalid;
+        }
+        return false;
+    }
+    end = (char *)cinder_skip_whitespace(end);
+    if (*end != '\0') {
+        if (error != NULL) {
+            *error = CinderParseError_invalid;
+        }
+        return false;
+    }
+    return true;
+}
+
+static bool cinder_prepare_parse(const char **text, CinderParseError *error)
+{
+    if (text == NULL || *text == NULL) {
+        if (error != NULL) {
+            *error = CinderParseError_empty;
+        }
+        return false;
+    }
+    *text = cinder_skip_whitespace(*text);
+    if (**text == '\0') {
+        if (error != NULL) {
+            *error = CinderParseError_empty;
+        }
+        return false;
+    }
+    return true;
+}
+
+bool cinder_parse_i64(const char *text, int64_t *out, CinderParseError *error)
+{
+    if (!cinder_prepare_parse(&text, error)) {
+        return false;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    const long long value = strtoll(text, &end, 10);
+    if (end == text) {
+        if (error != NULL) {
+            *error = CinderParseError_invalid;
+        }
+        return false;
+    }
+    if (!cinder_finish_parse(end, error)) {
+        return false;
+    }
+    if (errno == ERANGE || value < INT64_MIN || value > INT64_MAX) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+    if (out != NULL) {
+        *out = (int64_t)value;
+    }
+    return true;
+}
+
+bool cinder_parse_i32(const char *text, int32_t *out, CinderParseError *error)
+{
+    int64_t value = 0;
+    if (!cinder_parse_i64(text, &value, error)) {
+        return false;
+    }
+    if (value < INT32_MIN || value > INT32_MAX) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+    if (out != NULL) {
+        *out = (int32_t)value;
+    }
+    return true;
+}
+
+bool cinder_parse_u64(const char *text, uint64_t *out, CinderParseError *error)
+{
+    if (!cinder_prepare_parse(&text, error)) {
+        return false;
+    }
+    if (*text == '-') {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    const unsigned long long value = strtoull(text, &end, 10);
+    if (end == text) {
+        if (error != NULL) {
+            *error = CinderParseError_invalid;
+        }
+        return false;
+    }
+    if (!cinder_finish_parse(end, error)) {
+        return false;
+    }
+    if (errno == ERANGE || value > UINT64_MAX) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+    if (out != NULL) {
+        *out = (uint64_t)value;
+    }
+    return true;
+}
+
+bool cinder_parse_u32(const char *text, uint32_t *out, CinderParseError *error)
+{
+    uint64_t value = 0;
+    if (!cinder_parse_u64(text, &value, error)) {
+        return false;
+    }
+    if (value > UINT32_MAX) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+    if (out != NULL) {
+        *out = (uint32_t)value;
+    }
+    return true;
+}
+
+bool cinder_parse_isize(const char *text, ptrdiff_t *out, CinderParseError *error)
+{
+    int64_t value = 0;
+    if (!cinder_parse_i64(text, &value, error)) {
+        return false;
+    }
+#if PTRDIFF_MAX < INT64_MAX || PTRDIFF_MIN > INT64_MIN
+    if (value < (int64_t)PTRDIFF_MIN || value > (int64_t)PTRDIFF_MAX) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+#endif
+    if (out != NULL) {
+        *out = (ptrdiff_t)value;
+    }
+    return true;
+}
+
+bool cinder_parse_usize(const char *text, size_t *out, CinderParseError *error)
+{
+    uint64_t value = 0;
+    if (!cinder_parse_u64(text, &value, error)) {
+        return false;
+    }
+#if SIZE_MAX < UINT64_MAX
+    if (value > (uint64_t)SIZE_MAX) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+#endif
+    if (out != NULL) {
+        *out = (size_t)value;
+    }
+    return true;
+}
+
+bool cinder_parse_f64(const char *text, double *out, CinderParseError *error)
+{
+    if (!cinder_prepare_parse(&text, error)) {
+        return false;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    const double value = strtod(text, &end);
+    if (end == text) {
+        if (error != NULL) {
+            *error = CinderParseError_invalid;
+        }
+        return false;
+    }
+    if (!cinder_finish_parse(end, error)) {
+        return false;
+    }
+    if (errno == ERANGE && !isfinite(value)) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+    if (out != NULL) {
+        *out = value;
+    }
+    return true;
+}
+
+bool cinder_parse_f32(const char *text, float *out, CinderParseError *error)
+{
+    if (!cinder_prepare_parse(&text, error)) {
+        return false;
+    }
+
+    errno = 0;
+    char *end = NULL;
+    const float value = strtof(text, &end);
+    if (end == text) {
+        if (error != NULL) {
+            *error = CinderParseError_invalid;
+        }
+        return false;
+    }
+    if (!cinder_finish_parse(end, error)) {
+        return false;
+    }
+    if (errno == ERANGE && !isfinite(value)) {
+        if (error != NULL) {
+            *error = CinderParseError_overflow;
+        }
+        return false;
+    }
+    if (out != NULL) {
+        *out = value;
+    }
+    return true;
+}
+
+bool cinder_parse_bool(const char *text, bool *out, CinderParseError *error)
+{
+    if (!cinder_prepare_parse(&text, error)) {
+        return false;
+    }
+
+    bool value = false;
+    const char *end = text;
+    if (strncmp(text, "true", 4) == 0) {
+        value = true;
+        end = text + 4;
+    } else if (strncmp(text, "false", 5) == 0) {
+        value = false;
+        end = text + 5;
+    } else {
+        if (error != NULL) {
+            *error = CinderParseError_invalid;
+        }
+        return false;
+    }
+    if (!cinder_finish_parse((char *)end, error)) {
+        return false;
+    }
+    if (out != NULL) {
+        *out = value;
+    }
+    return true;
+}
+
+static char *cinder_format_string(const char *format, ...)
+{
+    char buffer[128];
+    va_list arguments;
+    va_start(arguments, format);
+    const int written = vsnprintf(buffer, sizeof(buffer), format, arguments);
+    va_end(arguments);
+    if (written < 0) {
+        cinder_panic("string formatting failed");
+    }
+    if ((size_t)written >= sizeof(buffer)) {
+        cinder_panic("string formatting overflow");
+    }
+    return cinder_clone_string(buffer);
+}
+
+char *cinder_i8_to_string(int8_t value)
+{
+    return cinder_format_string("%" PRId8, value);
+}
+
+char *cinder_i16_to_string(int16_t value)
+{
+    return cinder_format_string("%" PRId16, value);
+}
+
+char *cinder_i32_to_string(int32_t value)
+{
+    return cinder_format_string("%" PRId32, value);
+}
+
+char *cinder_i64_to_string(int64_t value)
+{
+    return cinder_format_string("%" PRId64, value);
+}
+
+char *cinder_u8_to_string(uint8_t value)
+{
+    return cinder_format_string("%" PRIu8, value);
+}
+
+char *cinder_u16_to_string(uint16_t value)
+{
+    return cinder_format_string("%" PRIu16, value);
+}
+
+char *cinder_u32_to_string(uint32_t value)
+{
+    return cinder_format_string("%" PRIu32, value);
+}
+
+char *cinder_u64_to_string(uint64_t value)
+{
+    return cinder_format_string("%" PRIu64, value);
+}
+
+char *cinder_isize_to_string(ptrdiff_t value)
+{
+    return cinder_format_string("%td", value);
+}
+
+char *cinder_usize_to_string(size_t value)
+{
+    return cinder_format_string("%zu", value);
+}
+
+char *cinder_f32_to_string(float value)
+{
+    return cinder_format_string("%g", (double)value);
+}
+
+char *cinder_f64_to_string(double value)
+{
+    return cinder_format_string("%g", value);
+}
+
+char *cinder_bool_to_string(bool value)
+{
+    return cinder_clone_string(value ? "true" : "false");
+}
+
+char *cinder_char_to_string(char value)
+{
+    char buffer[2];
+    buffer[0] = value;
+    buffer[1] = '\0';
+    return cinder_clone_string(buffer);
 }
 
 static void cinder_merge_sort(

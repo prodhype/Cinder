@@ -1,21 +1,18 @@
-extern import "stdlib.h"
-
-extern "C":
-    def atoi(text: const char*) -> c_int
-
-
 def main() -> i32:
     line = input("Up to: ")
     defer free(cast[void*](line))
-    limit = cast[i32](atoi(line))
-
-    for n in range(1, limit + 1):
-        if n % 15 == 0:
-            print("FizzBuzz")
-        elif n % 3 == 0:
-            print("Fizz")
-        elif n % 5 == 0:
-            print("Buzz")
-        else:
-            print(n)
-    return 0
+    match parse_i32(line):
+        case Ok(limit):
+            for n in range(1, limit + 1):
+                if n % 15 == 0:
+                    print("FizzBuzz")
+                elif n % 3 == 0:
+                    print("Fizz")
+                elif n % 5 == 0:
+                    print("Buzz")
+                else:
+                    print(n)
+            return 0
+        case Err(error):
+            print("invalid limit:", cast[i32](error))
+            return 1

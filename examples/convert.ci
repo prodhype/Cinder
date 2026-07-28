@@ -1,0 +1,50 @@
+def require_i32(text: const char*) -> Result[i32, ConvertError]:
+    return parse_i32(text)
+
+
+def doubled(text: const char*) -> Result[i32, ConvertError]:
+    value = require_i32(text)?
+    return Ok(value * 2)
+
+
+def main() -> i32:
+    match doubled("21"):
+        case Ok(value):
+            text = to_string(value)
+            defer free(cast[void*](text))
+            print("doubled:", text)
+        case Err(error):
+            print("parse failed:", cast[i32](error))
+            return 1
+
+    match parse_bool("true"):
+        case Ok(flag):
+            flag_text = to_string(flag)
+            defer free(cast[void*](flag_text))
+            print("bool:", flag_text)
+        case Err(error):
+            print("bool failed:", cast[i32](error))
+            return 1
+
+    match parse_i32(""):
+        case Ok(value):
+            # should not happen (empty string)
+            print("unexpected value:", value)
+            return 1
+        case Err(error):
+            match error:
+                case ConvertError.empty:
+                    print("empty input")
+                case ConvertError.invalid:
+                    print("invalid input")
+                case ConvertError.overflow:
+                    print("overflow input")
+
+    match parse_u32("-1"):
+        case Ok(value):
+            print("unexpected unsigned:", value)
+            return 1
+        case Err(error):
+            print("negative unsigned:", cast[i32](error))
+
+    return 0

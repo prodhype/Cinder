@@ -460,6 +460,10 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `input()` is globally available and reads a line from standard input without importing `stdio`. `input(prompt)` writes the `const char*` prompt to standard output without a newline, flushes it, then reads. The returned `const char*` excludes the trailing newline, strips a preceding carriage return for CRLF input, and owns a freshly allocated buffer; release it with `free(cast[void*](line))` when the value is no longer needed. Reaching EOF before any bytes are read panics, since Cinder does not currently have exceptions.
 
+`parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` are globally available and return `Result[T, ConvertError]`. Leading whitespace is skipped, the entire remaining token must parse, and trailing non-whitespace is rejected. `ConvertError` is a compiler-provided enum with `empty`, `invalid`, and `overflow` members. `parse_bool` accepts only `true` and `false`.
+
+`to_string(value)` is globally available and returns an owned `const char*` for integers (`i8`…`i64`, `u8`…`u64`, `isize`, `usize`), floats (`f32`, `f64`), `bool`, and `char`. Release the result with `free(cast[void*](text))`. Bool formats as `true`/`false`; numbers use decimal text (floats use `%g`-style formatting).
+
 `open(path, mode)` is globally available and returns a move-only `File` without importing `stdio`. A null `fopen` result panics. `File` provides `write(data: []const u8) -> usize`, `flush()`, and `close()`. Scope exit closes any still-open handle. Prefer `with open(...) as file:` to limit the file's lifetime.
 
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
