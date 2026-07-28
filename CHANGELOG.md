@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Cinder adds global Result-based conversion helpers. `parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` return `Result[T, ConvertError]` after a full-token parse, with compiler-provided `ConvertError.empty`, `.invalid`, and `.overflow` cases. `to_string(value)` formats integers, floats, `bool`, and `char` into an owned `const char*` with the same free protocol as `input`. These builtins replace the previous need to hand-declare C `atoi` for common text conversions; `cast[T](x)` remains numeric and pointer reinterpretation only.
+
 Cinder adds native heterogeneous `Tuple[...]` values and homogeneous growable `List[T]` buffers. Tuple literals use parenthesized comma syntax and support compile-time-checked indexing. Square-bracket literals now infer lists in untyped contexts while explicit fixed-array annotations preserve fixed C storage.
 
 Lists provide deterministic move-only ownership, direct return transfer, indexing, iteration, `len`, `sort`, `append`, `pop`, and `clear`. Addressable Lists can also borrow as `[]T` or `[]const T` function arguments without copying, so slice-based APIs work across Lists, fixed arrays, and slices. The compiler emits readable per-element C specializations and uses a checked runtime growth helper. Cross-module generated headers share guarded tuple/list layouts and helpers.

@@ -149,6 +149,93 @@ def test_builtin_input_panics_on_eof_before_line(tmp_path: Path) -> None:
     assert "panic: input reached EOF" in result.stderr
 
 
+def test_builtin_parse_and_to_string_round_trip(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "def doubled(text: const char*) -> Result[i32, ConvertError]:\n"
+        "    value = parse_i32(text)?\n"
+        "    return Ok(value * 2)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    match doubled(\"21\"):\n"
+        "        case Ok(value):\n"
+        "            text = to_string(value)\n"
+        "            defer free(cast[void*](text))\n"
+        "            print(text)\n"
+        "        case Err(error):\n"
+        "            return 1\n"
+        "\n"
+        "    match parse_bool(\"true\"):\n"
+        "        case Ok(flag):\n"
+        "            flag_text = to_string(flag)\n"
+        "            defer free(cast[void*](flag_text))\n"
+        "            print(flag_text)\n"
+        "        case Err(error):\n"
+        "            return 1\n"
+        "\n"
+        "    match parse_i32(\"\"):\n"
+        "        case Ok(value):\n"
+        "            return 1\n"
+        "        case Err(error):\n"
+        "            match error:\n"
+        "                case ConvertError.empty:\n"
+        "                    print(\"empty\")\n"
+        "                case ConvertError.invalid:\n"
+        "                    return 1\n"
+        "                case ConvertError.overflow:\n"
+        "                    return 1\n"
+        "\n"
+        "    match parse_i32(\"12x\"):\n"
+        "        case Ok(value):\n"
+        "            return 1\n"
+        "        case Err(error):\n"
+        "            match error:\n"
+        "                case ConvertError.invalid:\n"
+        "                    print(\"invalid\")\n"
+        "                case ConvertError.empty:\n"
+        "                    return 1\n"
+        "                case ConvertError.overflow:\n"
+        "                    return 1\n"
+        "\n"
+        "    match parse_u32(\"-1\"):\n"
+        "        case Ok(value):\n"
+        "            return 1\n"
+        "        case Err(error):\n"
+        "            match error:\n"
+        "                case ConvertError.overflow:\n"
+        "                    print(\"overflow\")\n"
+        "                case ConvertError.empty:\n"
+        "                    return 1\n"
+        "                case ConvertError.invalid:\n"
+        "                    return 1\n"
+        "\n"
+        "    match parse_f64(\"3.5\"):\n"
+        "        case Ok(value):\n"
+        "            text = to_string(value)\n"
+        "            defer free(cast[void*](text))\n"
+        "            print(text)\n"
+        "        case Err(error):\n"
+        "            return 1\n"
+        "\n"
+        "    letter = to_string('Z')\n"
+        "    defer free(cast[void*](letter))\n"
+        "    print(letter)\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "42\ntrue\nempty\ninvalid\noverflow\n3.5\nZ\n"
+
+
+def test_convert_example_runs(tmp_path: Path) -> None:
+    example = Path(__file__).resolve().parents[1] / "examples" / "convert.ci"
+    result = build_and_run(tmp_path, example.read_text(encoding="utf-8"))
+    assert result.returncode == 0, result.stderr
+    assert "doubled: 42" in result.stdout
+    assert "bool: true" in result.stdout
+    assert "empty input" in result.stdout
+    assert "negative unsigned:" in result.stdout
+
+
 def test_unsigned_integer_explicit_decimal_print(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

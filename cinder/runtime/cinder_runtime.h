@@ -70,6 +70,12 @@ typedef struct CinderTypeInfo {
 
 typedef int (*CinderCompareFn)(const void *left, const void *right);
 
+typedef enum CinderParseError {
+    CinderParseError_empty = 0,
+    CinderParseError_invalid = 1,
+    CinderParseError_overflow = 2
+} CinderParseError;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,6 +93,29 @@ uint64_t cinder_hash_string(const char *text);
 bool cinder_string_equal(const char *left, const char *right);
 char *cinder_clone_string(const char *text);
 char *cinder_input(const char *prompt);
+bool cinder_parse_i32(const char *text, int32_t *out, CinderParseError *error);
+bool cinder_parse_i64(const char *text, int64_t *out, CinderParseError *error);
+bool cinder_parse_u32(const char *text, uint32_t *out, CinderParseError *error);
+bool cinder_parse_u64(const char *text, uint64_t *out, CinderParseError *error);
+bool cinder_parse_isize(const char *text, ptrdiff_t *out, CinderParseError *error);
+bool cinder_parse_usize(const char *text, size_t *out, CinderParseError *error);
+bool cinder_parse_f32(const char *text, float *out, CinderParseError *error);
+bool cinder_parse_f64(const char *text, double *out, CinderParseError *error);
+bool cinder_parse_bool(const char *text, bool *out, CinderParseError *error);
+char *cinder_i8_to_string(int8_t value);
+char *cinder_i16_to_string(int16_t value);
+char *cinder_i32_to_string(int32_t value);
+char *cinder_i64_to_string(int64_t value);
+char *cinder_u8_to_string(uint8_t value);
+char *cinder_u16_to_string(uint16_t value);
+char *cinder_u32_to_string(uint32_t value);
+char *cinder_u64_to_string(uint64_t value);
+char *cinder_isize_to_string(ptrdiff_t value);
+char *cinder_usize_to_string(size_t value);
+char *cinder_f32_to_string(float value);
+char *cinder_f64_to_string(double value);
+char *cinder_bool_to_string(bool value);
+char *cinder_char_to_string(char value);
 void cinder_print_repr_char(char value);
 void cinder_print_repr_string(const char *text);
 double cinder_wall_time(void);

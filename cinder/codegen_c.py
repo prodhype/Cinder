@@ -33,9 +33,17 @@ from cinder.types import (
     CHAR,
     ERROR,
     F32,
+    F64,
+    I8,
+    I16,
+    I32,
     I64,
+    ISIZE,
     U8,
+    U16,
+    U32,
     U64,
+    USIZE,
     ArrayType,
     ClassType,
     ComptimeCollectionType,
@@ -88,6 +96,35 @@ from cinder.types import (
     type_name,
     value_type,
 )
+
+_PARSE_RUNTIME = {
+    "parse_i32": "cinder_parse_i32",
+    "parse_i64": "cinder_parse_i64",
+    "parse_u32": "cinder_parse_u32",
+    "parse_u64": "cinder_parse_u64",
+    "parse_isize": "cinder_parse_isize",
+    "parse_usize": "cinder_parse_usize",
+    "parse_f32": "cinder_parse_f32",
+    "parse_f64": "cinder_parse_f64",
+    "parse_bool": "cinder_parse_bool",
+}
+
+_TO_STRING_RUNTIME = {
+    BOOL: "cinder_bool_to_string",
+    CHAR: "cinder_char_to_string",
+    I8: "cinder_i8_to_string",
+    I16: "cinder_i16_to_string",
+    I32: "cinder_i32_to_string",
+    I64: "cinder_i64_to_string",
+    U8: "cinder_u8_to_string",
+    U16: "cinder_u16_to_string",
+    U32: "cinder_u32_to_string",
+    U64: "cinder_u64_to_string",
+    F32: "cinder_f32_to_string",
+    F64: "cinder_f64_to_string",
+    ISIZE: "cinder_isize_to_string",
+    USIZE: "cinder_usize_to_string",
+}
 
 _C_KEYWORDS = {
     "auto",
@@ -4686,6 +4723,10 @@ class CGenerator:
             return self._emit_input_call(expression)
         if resolution.kind == "open":
             return self._emit_open_call(expression)
+        if resolution.kind == "to_string":
+            return self._emit_to_string_call(expression, resolution)
+        if resolution.kind in _PARSE_RUNTIME:
+            return self._emit_parse_call(expression, resolution)
         if resolution.kind.startswith("file_"):
             return self._emit_file_method_call(expression, resolution)
         if resolution.kind in {
@@ -5045,6 +5086,62 @@ class CGenerator:
         )
         prompt = arguments[0] if arguments else "NULL"
         return f"cinder_input({prompt})"
+
+    def _emit_parse_call(
+        self,
+        expression: ast.CallExpr,
+        resolution: CallResolution,
+    ) -> str:
+        if resolution.result_type is None:
+            raise AssertionError("parse builtin has no Result type")
+        runtime = _PARSE_RUNTIME[resolution.kind]
+        arguments = self._emit_ordered_call_arguments(expression, resolution)
+        if len(arguments) != 1:
+            raise AssertionError(f"{resolution.kind} requires one argument")
+        result_type = resolution.result_type
+        result_name = c_identifier(result_c_name(result_type))
+        out_temp = self._new_temp("parse_out")
+        err_temp = self._new_temp("parse_err")
+        result_temp = self._new_temp("parse_result")
+        self.writer.line(f"{c_decl(result_type.ok, out_temp)} = {{ 0 }};")
+        self.writer.line(f"CinderParseError {err_temp} = CinderParseError_invalid;")
+        self.writer.line(
+            f"{c_decl(result_type, result_temp)} = "
+            f"{{ {result_name}_Tag_Err, {{ 0 }} }};"
+        )
+        self.writer.line(
+            f"if ({runtime}({arguments[0]}, &{out_temp}, &{err_temp}))"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{result_temp}.tag = {result_name}_Tag_Ok;")
+        self.writer.line(f"{result_temp}.data.ok = {out_temp};")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("else")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{result_temp}.data.err = {err_temp};")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        return result_temp
+
+    def _emit_to_string_call(
+        self,
+        expression: ast.CallExpr,
+        resolution: CallResolution,
+    ) -> str:
+        if not isinstance(resolution.compile_value, Type):
+            raise AssertionError("to_string has no value type")
+        runtime = _TO_STRING_RUNTIME.get(resolution.compile_value)
+        if runtime is None:
+            raise AssertionError(
+                f"unsupported to_string type {type_name(resolution.compile_value)}"
+            )
+        arguments = self._emit_ordered_call_arguments(expression, resolution)
+        if len(arguments) != 1:
+            raise AssertionError("to_string requires one argument")
+        return f"{runtime}({arguments[0]})"
 
     def _emit_open_call(self, expression: ast.CallExpr) -> str:
         arguments = self._emit_ordered_call_arguments(

@@ -6,6 +6,8 @@
 
 `input.ci` demonstrates import-free `input` with a Python-style prompt.
 
+`convert.ci` demonstrates Result-returning `parse_*` helpers, `ConvertError` matching, `?` propagation, and owned `to_string` formatting.
+
 `vectors.ci` demonstrates structs, named field initialization, const methods, and the checked math module.
 
 `slices.ci` demonstrates fixed arrays, slicing, mutable-to-const slice conversion, collection iteration, and `.length`.
@@ -24,7 +26,7 @@
 
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
-`fizzbuzz.ci` prompts for an upper bound, then prints Fizz/Buzz/FizzBuzz for 1 through that number using a range loop, modulo, and `if`/`elif`/`else`.
+`fizzbuzz.ci` prompts for an upper bound with `input` and `parse_i32`, then prints Fizz/Buzz/FizzBuzz for 1 through that number using a range loop, modulo, and `if`/`elif`/`else`.
 
 `binary_sort.ci` implements stable binary insertion sort on a numeric List, then prints the sorted collection.
 

@@ -58,12 +58,18 @@ from cinder.types import (
     BOOL,
     CHAR,
     ERROR,
+    F32,
     F64,
     FILE,
+    I8,
+    I16,
     I32,
     I64,
+    ISIZE,
     NULL,
     PRIMITIVES,
+    U16,
+    U32,
     U64,
     U8,
     USIZE,
@@ -135,6 +141,37 @@ _REFLECTION_BUILTINS = frozenset(
         "has_field",
         "has_method",
         "implements",
+    }
+)
+
+_PARSE_BUILTINS: dict[str, Type] = {
+    "parse_i32": I32,
+    "parse_i64": I64,
+    "parse_u32": U32,
+    "parse_u64": U64,
+    "parse_isize": ISIZE,
+    "parse_usize": USIZE,
+    "parse_f32": F32,
+    "parse_f64": F64,
+    "parse_bool": BOOL,
+}
+
+_TO_STRING_TYPES = frozenset(
+    {
+        BOOL,
+        CHAR,
+        I8,
+        I16,
+        I32,
+        I64,
+        U8,
+        U16,
+        U32,
+        U64,
+        F32,
+        F64,
+        ISIZE,
+        USIZE,
     }
 )
 
@@ -401,6 +438,36 @@ class Checker:
         for symbol in builtin_global_functions(self.path).values():
             self.global_scope.declare(symbol)
         self._install_reflection_types()
+        self._install_convert_types()
+
+    def _install_convert_types(self) -> None:
+        """Register ConvertError from cinder_runtime.h without re-emitting it."""
+
+        span = Span.point(self.path, 1, 1)
+        type_ = EnumType("ConvertError", "CinderParseError")
+        declaration = ast.EnumDecl(span, "ConvertError", [])
+        symbol = EnumSymbol(
+            name="ConvertError",
+            span=span,
+            kind=SymbolKind.ENUM,
+            type=type_,
+            declaration=declaration,
+            c_name="CinderParseError",
+        )
+        for name, value in (
+            ("empty", 0),
+            ("invalid", 1),
+            ("overflow", 2),
+        ):
+            symbol.members[name] = EnumMemberSymbol(
+                name,
+                value,
+                f"CinderParseError_{name}",
+                span,
+            )
+        self.types["ConvertError"] = type_
+        self._register_nominal(type_, symbol)
+        self.global_scope.declare(symbol)
 
     def _install_reflection_types(self) -> None:
         """Register the inspectable runtime metadata structs.
@@ -3754,7 +3821,17 @@ class Checker:
     def _check_name(self, expression: ast.NameExpr) -> Type:
         symbol = self.current_scope.lookup(expression.name)
         if symbol is None:
-            if expression.name in ("range", "len", "sort", "print", "input", "open", "Ok", "Err") or expression.name in _REFLECTION_BUILTINS:
+            if expression.name in (
+                "range",
+                "len",
+                "sort",
+                "print",
+                "input",
+                "open",
+                "Ok",
+                "Err",
+                "to_string",
+            ) or expression.name in _REFLECTION_BUILTINS or expression.name in _PARSE_BUILTINS:
                 return FunctionValueType(expression.name)
             if expression.name == "super" and isinstance(self.current_owner, ClassSymbol):
                 return FunctionValueType("super")
@@ -4603,6 +4680,10 @@ class Checker:
                 return self._check_input_call(expression)
             if name == "open":
                 return self._check_open_call(expression)
+            if name == "to_string":
+                return self._check_to_string_call(expression)
+            if name in _PARSE_BUILTINS:
+                return self._check_parse_call(expression, name)
             if name in ("Ok", "Err"):
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_result_constructor(expression, expected, is_ok=name == "Ok")
@@ -6375,6 +6456,69 @@ class Checker:
             "input",
             argument_order=tuple(argument_order),
             expected_types=tuple(expected_types),
+        )
+        return string_type()
+
+    def _check_parse_call(self, call: ast.CallExpr, name: str) -> Type:
+        self.expr_types[id(call.callee)] = FunctionValueType(name)
+        ok_type = _PARSE_BUILTINS[name]
+        convert_error = self.types["ConvertError"]
+        result_type = ResultType(ok_type, convert_error)
+        if len(call.arguments) != 1:
+            self._error(
+                f"{name} expects one positional argument, got {len(call.arguments)}",
+                call.span,
+                code="C340",
+            )
+        expected_types: list[Type | None] = []
+        argument_order: list[int] = []
+        for index, argument in enumerate(call.arguments):
+            if argument.name is not None:
+                self._error(f"{name} does not accept named arguments", argument.span, code="C341")
+            expected = string_type() if index == 0 else None
+            actual = self._check_expr(argument.value, expected=expected)
+            if index == 0 and not self._can_assign(string_type(), actual):
+                self._type_mismatch(string_type(), actual, argument.value.span)
+            argument_order.append(index)
+            expected_types.append(expected)
+        self.call_resolutions[id(call)] = CallResolution(
+            name,
+            result_type=result_type,
+            argument_order=tuple(argument_order),
+            expected_types=tuple(expected_types),
+        )
+        return result_type
+
+    def _check_to_string_call(self, call: ast.CallExpr) -> Type:
+        self.expr_types[id(call.callee)] = FunctionValueType("to_string")
+        if len(call.arguments) != 1:
+            self._error(
+                f"to_string expects one positional argument, got {len(call.arguments)}",
+                call.span,
+                code="C342",
+            )
+        expected_types: list[Type | None] = []
+        argument_order: list[int] = []
+        value_type_: Type = ERROR
+        for index, argument in enumerate(call.arguments):
+            if argument.name is not None:
+                self._error("to_string does not accept named arguments", argument.span, code="C343")
+            actual = value_type(self._check_expr(argument.value))
+            if index == 0:
+                value_type_ = actual
+                if actual not in _TO_STRING_TYPES:
+                    self._error(
+                        f"type {type_name(actual)} cannot be converted with to_string",
+                        argument.value.span,
+                        code="C344",
+                    )
+            argument_order.append(index)
+            expected_types.append(actual if index == 0 else None)
+        self.call_resolutions[id(call)] = CallResolution(
+            "to_string",
+            argument_order=tuple(argument_order),
+            expected_types=tuple(expected_types),
+            compile_value=value_type_,
         )
         return string_type()
 

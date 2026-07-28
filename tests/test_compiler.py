@@ -68,6 +68,51 @@ def test_builtin_input_generates_runtime_call_without_import() -> None:
     assert "const char *other = cinder_input(NULL);" in generated
 
 
+def test_builtin_parse_generates_result_wrapper() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    match parse_i32(\"42\"):\n"
+        "        case Ok(value):\n"
+        "            return value\n"
+        "        case Err(error):\n"
+        "            return cast[i32](error)\n"
+    )
+    assert "CinderResult_i32_n_CinderParseError" in generated
+    assert 'cinder_parse_i32("42"' in generated
+    assert "CinderResult_i32_n_CinderParseError_Tag_Ok" in generated
+    assert "CinderParseError" in generated
+
+
+def test_builtin_to_string_generates_runtime_call() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    text = to_string(42)\n"
+        "    defer free(cast[void*](text))\n"
+        "    print(text)\n"
+        "    return 0\n"
+    )
+    assert "cinder_i32_to_string(42)" in generated
+
+
+def test_parse_and_to_string_reject_invalid_arguments() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    parse_i32()\n"
+            "    parse_i32(text=\"1\")\n"
+            "    parse_i32(1)\n"
+            "    to_string()\n"
+            "    to_string(\"nope\")\n"
+            "    return 0\n"
+        )
+    text = str(captured.value)
+    assert "parse_i32 expects one positional argument" in text
+    assert "parse_i32 does not accept named arguments" in text
+    assert "expected *const char, got i32" in text
+    assert "to_string expects one positional argument" in text
+    assert "type *const char cannot be converted with to_string" in text
+
+
 def test_input_rejects_invalid_arguments() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(
