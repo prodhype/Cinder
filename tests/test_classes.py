@@ -44,10 +44,10 @@ def test_abstract_interface_uses_explicit_dyn_value_and_table() -> None:
         "def convert(circle: &Circle) -> f64:\n"
         "    return dynamic_area(circle)\n"
     )
-    assert "typedef struct CinderDyn_Shape" in generated
+    assert "typedef struct CinderDyn_n_Shape" in generated
     assert "void *object;" in generated
-    assert "const CinderVTable_Shape *vtable;" in generated
-    assert "double (*area)(void *object, const CinderVTable_Shape *vtable);" in generated
+    assert "const CinderVTable_n_Shape *vtable;" in generated
+    assert "double (*area)(void *object, const CinderVTable_n_Shape *vtable);" in generated
     assert "return Circle_area((circle));" in generated
     assert "vtable->area(" in generated
     assert ".vtable = &Circle__as__Shape__vtable" in generated

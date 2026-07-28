@@ -41,11 +41,11 @@ def test_owned_recursive_option_layout() -> None:
         "    return (*root).value\n"
     )
 
-    assert "struct CinderOwned_Node" in generated
+    assert "struct CinderOwned_n_Node" in generated
     assert "Node *ptr;" in generated
-    assert "CinderOption_owned_Node" in generated
-    assert "CinderOwned_Node_drop(&root);" in generated
-    assert "CinderOwned_Node_drop(&leaf);" not in generated
+    assert "CinderOption_owned_n_Node" in generated
+    assert "CinderOwned_n_Node_drop(&root);" in generated
+    assert "CinderOwned_n_Node_drop(&leaf);" not in generated
 
 
 def test_owned_drops_destructor_payload() -> None:
@@ -65,7 +65,7 @@ def test_owned_drops_destructor_payload() -> None:
     )
 
     assert "Resource__drop(&((*owned->ptr)));" in generated
-    assert "CinderOwned_Resource_drop(&owned);" in generated
+    assert "CinderOwned_n_Resource_drop(&owned);" in generated
 
 
 @pytest.mark.parametrize(

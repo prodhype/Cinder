@@ -154,7 +154,7 @@ def test_nested_generic_with_option() -> None:
         "            return inner.value\n"
     )
     assert "Box_i32" in generated
-    assert "CinderOption_Box_i32" in generated
+    assert "CinderOption_n_Box_i32" in generated
 
 
 def test_multiple_specializations_and_list_nesting() -> None:
@@ -169,7 +169,7 @@ def test_multiple_specializations_and_list_nesting() -> None:
     )
     assert "Box_i32" in generated
     assert "Box_f64" in generated
-    assert "CinderList_Box_i32" in generated
+    assert "CinderList_n_Box_i32" in generated
 
 
 @pytest.mark.parametrize(

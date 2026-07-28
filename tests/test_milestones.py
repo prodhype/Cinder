@@ -49,7 +49,7 @@ def test_enum_union_variant_and_result_codegen_is_explicit() -> None:
     assert "union Number" in generated
     assert "typedef enum Token_Tag" in generated
     assert "struct Token" in generated
-    assert "typedef struct CinderResult_Token_Error" in generated
+    assert "typedef struct CinderResult_n_Token_n_Error" in generated
     assert ".tag = Token_Tag_Integer" in generated
     assert ".integer = 7" in generated
     assert 'cinder_panic("invalid tag in exhaustive match")' in generated
@@ -70,8 +70,8 @@ def test_result_propagation_lowers_to_an_ordinary_early_return() -> None:
         "    return Ok(parsed + 1)\n"
     )
     assert "__cinder_result_" in generated
-    assert ".tag == CinderResult_i32_Error_Tag_Err" in generated
-    assert "return ((CinderResult_i32_Error)" in generated
+    assert ".tag == CinderResult_i32_n_Error_Tag_Err" in generated
+    assert "return ((CinderResult_i32_n_Error)" in generated
     assert ".data.ok" in generated
 
 
@@ -145,7 +145,7 @@ def test_void_result_payloads_compile() -> None:
         "    validate(ok)?\n"
         "    return Ok(42)\n"
     )
-    assert "CinderResult_void_Error" in generated
+    assert "CinderResult_void_n_Error" in generated
     assert "((void)0)" in generated
 
 
@@ -181,10 +181,10 @@ def test_result_void_success_and_propagation_codegen() -> None:
         "    validate(value)?\n"
         "    return Ok(value)\n"
     )
-    assert "CinderResult_void_Error" in generated
-    assert "CinderResult_void_Error_Tag_Ok" in generated
+    assert "CinderResult_void_n_Error" in generated
+    assert "CinderResult_void_n_Error_Tag_Ok" in generated
     void_definition = generated.split(
-        "\nstruct CinderResult_void_Error\n{", 1
+        "\nstruct CinderResult_void_n_Error\n{", 1
     )[1].split("\n};", 1)[0]
     assert " ok;" not in void_definition
 
@@ -203,7 +203,7 @@ def test_result_propagation_preserves_deferred_cleanup_on_error() -> None:
         "    value = parse()?\n"
         "    return Ok(value)\n"
     )
-    tag_test = generated.index(".tag == CinderResult_i32_Error_Tag_Err")
+    tag_test = generated.index(".tag == CinderResult_i32_n_Error_Tag_Err")
     cleanup = generated.index("free(allocation);", tag_test)
     propagated_return = generated.index("return __cinder_propagate_", cleanup)
     assert tag_test < cleanup < propagated_return

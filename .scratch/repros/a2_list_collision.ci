@@ -1,0 +1,9 @@
+struct ptr_i32:
+    x: i32
+
+def main() -> i32:
+    a: List[ptr_i32] = [ptr_i32(x=1)]
+    p: *i32 = alloc[i32]()
+    *p = 2
+    b: List[*i32] = [p]
+    return (a[0].x) + (*b[0])

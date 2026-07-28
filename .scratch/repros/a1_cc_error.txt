@@ -1,0 +1,4 @@
+/Volumes/Shelfy/Code/Cinder/.scratch/repros/a1_aggregate_cast.c:52:14: error: used type 'cinder_a1_aggregate_cast_a1_aggregate_cast_06a61ed7__B' (aka 'struct cinder_a1_aggregate_cast_a1_aggregate_cast_06a61ed7__B') where arithmetic or pointer type is required
+   52 |         b = ((cinder_a1_aggregate_cast_a1_aggregate_cast_06a61ed7__B)(a));
+      |              ^                                                       ~~~
+1 error generated.

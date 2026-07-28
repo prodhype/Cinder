@@ -1,0 +1,13 @@
+struct ptr_i32:
+    x: i32
+
+def id[T](value: T) -> T:
+    return value
+
+def main() -> i32:
+    s: ptr_i32 = ptr_i32(x=10)
+    p: *i32 = alloc[i32]()
+    *p = 20
+    a = id[ptr_i32](s)
+    b = id[*i32](p)
+    return a.x + *b

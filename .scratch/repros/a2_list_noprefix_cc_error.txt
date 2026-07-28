@@ -1,0 +1,10 @@
+/Volumes/Shelfy/Code/Cinder/.scratch/repros/a2_list_noprefix.c:181:59: warning: incompatible pointer types passing 'ptr_i32[1]' (aka 'struct ptr_i32[1]') to parameter of type 'int32_t *const *' (aka 'int *const *') [-Wincompatible-pointer-types]
+  181 |     CinderList_ptr_i32 a = CinderList_ptr_i32_from_values((ptr_i32 [1]){ ((ptr_i32){ .x = 1 }) }, 1);
+      |                                                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/Volumes/Shelfy/Code/Cinder/.scratch/repros/a2_list_noprefix.c:49:102: note: passing argument to parameter 'values' here
+   49 | static inline CINDER_MAYBE_UNUSED CinderList_ptr_i32 CinderList_ptr_i32_from_values(int32_t * const *values, size_t length)
+      |                                                                                                      ^
+/Volumes/Shelfy/Code/Cinder/.scratch/repros/a2_list_noprefix.c:185:47: error: member reference base type 'int32_t *' (aka 'int *') is not a structure or union
+  185 |     int32_t __cinder_return_1 = (((a).data[0]).x + (*(b).data[0]));
+      |                                  ~~~~~~~~~~~~~^~
+1 warning and 1 error generated.

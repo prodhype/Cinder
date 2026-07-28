@@ -1,0 +1,19 @@
+class R:
+    n: i32
+    def __init__(self, n: i32) -> void:
+        self.n = n
+    def __del__(self) -> void:
+        print("drop", self.n)
+
+def take() -> R:
+    o: Option[R] = Some(R(5))
+    match o:
+        case Some(v):
+            return v
+        case None:
+            return R(0)
+
+def main() -> i32:
+    r: R = take()
+    print("use", r.n)
+    return 0

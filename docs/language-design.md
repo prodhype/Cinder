@@ -250,7 +250,7 @@ Maps support key membership, indexed lookup/upsert, optional `get`/`pop`, live `
 
 Hashable values are integer primitives, `bool`, `char`, enums, and `const char*`. C strings use null-safe byte-content equality, and Map/Set insertion clones string keys so hash stability does not depend on the caller's buffer. Removing a string with `Set.pop()` transfers that buffer to the caller.
 
-All three owning homogeneous collections remain move-only. Nested owning collections, struct/class fields, by-value parameters/returns, and destructor-bearing stored values are supported. Owning globals and union/variant payloads remain rejected. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
+All three owning homogeneous collections remain move-only. Nested owning collections, struct/class fields, and by-value parameters/returns are supported. List elements and Map values may be destructor-bearing; Set elements must be hashable scalars or `const char*` only. Owning globals and union/variant payloads remain rejected. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
 
 ## Structs
 
@@ -320,7 +320,9 @@ The illustrative user-written class above remains valid for wrapping raw `stdio.
 handles when a custom type is preferable to the builtin `File`. For a local destructor-bearing value, the compiler calls `__del__` on every normal
 scope exit, including early returns and Result propagation. Such classes are
 move-only: implicit copies are rejected, while return and by-value parameter
-passing transfer ownership and mark the source moved. Struct/class fields,
+passing transfer ownership and mark the source moved. Match payload bindings of
+owning `Option` or `Result` values are not transferable; use a transferable
+local or a returning call instead of moving the binding. Struct/class fields,
 nested collections, and `Option`/`Result`/`Tuple` wrappers may own them.
 Owning globals and owning union/variant payloads remain rejected. `__del__`
 cannot be called directly.
@@ -588,7 +590,7 @@ This is one of the few places where semicolons are syntactically meaningful.
 
 ## Pattern matching
 
-Cinder implements exhaustive `match` for enums, variants, and Results:
+Cinder implements exhaustive `match` for enums, variants, Results, and Options:
 
 ```python
 match result:

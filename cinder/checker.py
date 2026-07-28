@@ -1977,6 +1977,8 @@ class Checker:
             return False
         if id(symbol) in self.moved_variables:
             return False
+        if symbol.is_match_binding:
+            return False
         return True
 
     def _mark_moved_from(self, expression: ast.Expression) -> VariableSymbol | None:
@@ -3474,6 +3476,7 @@ class Checker:
                             True,
                             False,
                             binding_name,
+                            is_match_binding=True,
                         )
                         previous = case_scope.declare(symbol)
                         if previous is not None:
@@ -3517,6 +3520,7 @@ class Checker:
                             True,
                             False,
                             binding_name,
+                            is_match_binding=True,
                         )
                         previous = case_scope.declare(symbol)
                         if previous is not None:
@@ -3558,6 +3562,7 @@ class Checker:
                             True,
                             False,
                             binding_name,
+                            is_match_binding=True,
                         )
                         previous = case_scope.declare(symbol)
                         if previous is not None:
@@ -6917,23 +6922,33 @@ class Checker:
         target = self._resolve_type(expression.target_type)
         source = self._check_expr(expression.value)
         source_value = value_type(source)
+        _aggregate_uncastable = (
+            StructType,
+            ClassType,
+            UnionType,
+            VariantType,
+            ResultType,
+            FileType,
+            DynType,
+            TupleType,
+            ListType,
+            MapType,
+            SetType,
+            MapViewType,
+            OptionType,
+            OwnedType,
+        )
         if isinstance(
             target,
             (
                 ArrayType,
                 SliceType,
                 ReferenceType,
-                TupleType,
-                ListType,
-                MapType,
-                SetType,
-                MapViewType,
-                OptionType,
-                OwnedType,
+                *_aggregate_uncastable,
             ),
         ) or isinstance(
             source_value,
-            (TupleType, ListType, MapType, SetType, MapViewType, OptionType, OwnedType),
+            _aggregate_uncastable,
         ) or is_void(target):
             self._error(
                 f"cannot cast from {type_name(source_value)} to {type_name(target)}",
@@ -8109,7 +8124,10 @@ class Checker:
                             f"invalid Map value type {type_name(value_type_)}",
                             arguments[1].span,
                             code="C298",
-                            note="Map values must be trivially copyable non-owning values",
+                            note=(
+                                "Map values must be valid container elements "
+                                "(not void, const-qualified, references, or arrays)"
+                            ),
                         )
                         value_type_ = ERROR
                     result = MapType(key_type, value_type_)

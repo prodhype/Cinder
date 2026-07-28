@@ -171,7 +171,7 @@ See `docs/classes-and-interfaces.md` for constructor rules, interface-only bases
 
 `__del__` is compiler-managed deterministic cleanup. Local destructor-bearing objects are dropped on normal block exit, `return`, `break`, `continue`, and propagated `Err` returns. Locals are dropped in reverse declaration order; a derived destructor runs before its implementation-base destructor.
 
-Destructor-bearing classes are move-only in 0.5. They may be initialized from constructors or class-returning calls and transferred by return. Reassignment evaluates the replacement, drops the old value, and transfers the replacement. Implicit copies are rejected.
+Destructor-bearing classes are move-only in 0.5. They may be initialized from constructors or class-returning calls and transferred by return. Reassignment evaluates the replacement, drops the old value, and transfers the replacement. Implicit copies are rejected. Match payload bindings of owning `Option` or `Result` values are not transferable.
 
 ```python
 class Resource:
@@ -307,7 +307,7 @@ variant Token:
 token = Token.Integer(42)
 ```
 
-`match` is restricted to enums, variants, and Results. Matches must be exhaustive unless the final case is a wildcard.
+`match` accepts enums, variants, Results, and Options. Matches must be exhaustive unless the final case is a wildcard.
 
 ```python
 match token:

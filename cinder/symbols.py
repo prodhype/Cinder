@@ -38,6 +38,7 @@ class VariableSymbol(Symbol):
     is_parameter: bool = False
     c_name: str | None = None
     is_module_public: bool = False
+    is_match_binding: bool = False
 
 
 @dataclass(slots=True)
