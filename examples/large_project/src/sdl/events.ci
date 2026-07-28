@@ -1,0 +1,40 @@
+import sdl.bindings as sdl
+
+struct Input:
+    quit: bool
+    left: bool
+    right: bool
+    escape: bool
+    space: bool
+    space_pressed: bool
+
+
+def poll_quit() -> bool:
+    event = sdl.EventBlob()
+    while sdl.poll_event(&event) != 0:
+        if event.type == sdl.SDL_QUIT:
+            return true
+    return false
+
+
+def read_input(previous_space: bool) -> Input:
+    quit = poll_quit()
+    keys = sdl.SDL_GetKeyboardState(null)
+    left = false
+    right = false
+    escape = false
+    space = false
+    if keys != null:
+        left = keys[sdl.SDL_SCANCODE_LEFT] != 0 or keys[sdl.SDL_SCANCODE_A] != 0
+        right = keys[sdl.SDL_SCANCODE_RIGHT] != 0 or keys[sdl.SDL_SCANCODE_D] != 0
+        escape = keys[sdl.SDL_SCANCODE_ESCAPE] != 0
+        space = keys[sdl.SDL_SCANCODE_SPACE] != 0
+    space_pressed = space and not previous_space
+    return Input(
+        quit=quit,
+        left=left,
+        right=right,
+        escape=escape,
+        space=space,
+        space_pressed=space_pressed,
+    )

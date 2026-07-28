@@ -1,0 +1,31 @@
+import sdl.bindings as sdl
+
+struct Color:
+    r: u8
+    g: u8
+    b: u8
+    a: u8
+
+
+def clear(renderer: sdl.Renderer, color: Color) -> void:
+    raw = sdl.renderer_raw(renderer)
+    sdl.SDL_SetRenderDrawColor(raw, color.r, color.g, color.b, color.a)
+    sdl.SDL_RenderClear(raw)
+
+
+def fill_rect(
+    renderer: sdl.Renderer,
+    x: c_int,
+    y: c_int,
+    w: c_int,
+    h: c_int,
+    color: Color,
+) -> void:
+    rect = sdl.Rect(x=x, y=y, w=w, h=h)
+    raw = sdl.renderer_raw(renderer)
+    sdl.SDL_SetRenderDrawColor(raw, color.r, color.g, color.b, color.a)
+    sdl.render_fill_rect(renderer, &rect)
+
+
+def present(renderer: sdl.Renderer) -> void:
+    sdl.SDL_RenderPresent(sdl.renderer_raw(renderer))

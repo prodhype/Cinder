@@ -121,6 +121,7 @@ cinder emit-c examples/reflection.ci -o reflection.c
 cinder emit-project examples/class_project -o generated
 cinder build examples/class_project -o class-demo
 cinder run examples/class_project
+# See also examples/large_project for an SDL2 + SDL_mixer Breakout demo.
 ```
 
 `emit-c` writes one amalgamated C translation unit.

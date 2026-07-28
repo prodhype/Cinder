@@ -1,0 +1,12 @@
+import game.config as config
+import game.loop as loop
+import sdl.app as app_mod
+
+
+def main() -> i32:
+    app = app_mod.create_app("Cinder Breakout", config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
+    if not app.ok:
+        return 1
+    code = loop.run(app)
+    app_mod.destroy_app(app)
+    return code

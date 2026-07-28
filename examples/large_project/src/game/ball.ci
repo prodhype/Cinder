@@ -1,0 +1,86 @@
+import game.config as config
+import game.math2d as math2d
+import game.paddle as paddle_mod
+import sdl.bindings as sdl
+import sdl.draw as draw
+
+struct Ball:
+    bounds: math2d.Aabb
+    velocity: math2d.Vec2
+    launched: bool
+
+    def reset(self: &Ball, paddle: paddle_mod.Paddle) -> void:
+        self.bounds = math2d.Aabb(
+            x=paddle.bounds.x + paddle.bounds.w * 0.5 - config.BALL_SIZE * 0.5,
+            y=paddle.bounds.y - config.BALL_SIZE - 2.0,
+            w=config.BALL_SIZE,
+            h=config.BALL_SIZE,
+        )
+        self.velocity = math2d.Vec2(x=0.0, y=0.0)
+        self.launched = false
+
+    def launch(self: &Ball) -> void:
+        if self.launched:
+            return
+        self.velocity = math2d.Vec2(x=config.BALL_SPEED * 0.6, y=-config.BALL_SPEED)
+        self.launched = true
+
+    def stick_to_paddle(self: &Ball, paddle: paddle_mod.Paddle) -> void:
+        if self.launched:
+            return
+        self.bounds.x = paddle.bounds.x + paddle.bounds.w * 0.5 - config.BALL_SIZE * 0.5
+        self.bounds.y = paddle.bounds.y - config.BALL_SIZE - 2.0
+
+    def integrate(self: &Ball, dt: f32) -> void:
+        if not self.launched:
+            return
+        self.bounds.x += self.velocity.x * dt
+        self.bounds.y += self.velocity.y * dt
+
+    def bounce_walls(self: &Ball) -> i32:
+        hit = 0
+        if self.bounds.x <= 0.0:
+            self.bounds.x = 0.0
+            self.velocity.x = math2d.abs_f32(self.velocity.x)
+            hit = 1
+        max_x = cast[f32](config.WINDOW_WIDTH) - self.bounds.w
+        if self.bounds.x >= max_x:
+            self.bounds.x = max_x
+            self.velocity.x = -math2d.abs_f32(self.velocity.x)
+            hit = 1
+        if self.bounds.y <= 0.0:
+            self.bounds.y = 0.0
+            self.velocity.y = math2d.abs_f32(self.velocity.y)
+            hit = 1
+        return hit
+
+    def bounce_paddle(self: &Ball, paddle: paddle_mod.Paddle) -> bool:
+        if not self.launched:
+            return false
+        if self.velocity.y <= 0.0:
+            return false
+        if not math2d.overlaps(self.bounds, paddle.bounds):
+            return false
+        self.bounds.y = paddle.bounds.y - self.bounds.h
+        offset = (self.bounds.x + self.bounds.w * 0.5) - (paddle.bounds.x + paddle.bounds.w * 0.5)
+        self.velocity.x = offset * 6.0
+        self.velocity.y = -math2d.abs_f32(self.velocity.y)
+        if math2d.abs_f32(self.velocity.x) < 80.0:
+            if self.velocity.x < 0.0:
+                self.velocity.x = -80.0
+            else:
+                self.velocity.x = 80.0
+        return true
+
+    def fell_off(self: &const Ball) -> bool:
+        return self.bounds.y > cast[f32](config.WINDOW_HEIGHT)
+
+    def draw(self: &const Ball, renderer: sdl.Renderer) -> void:
+        draw.fill_rect(
+            renderer,
+            cast[c_int](self.bounds.x),
+            cast[c_int](self.bounds.y),
+            cast[c_int](self.bounds.w),
+            cast[c_int](self.bounds.h),
+            draw.Color(r=255, g=210, b=70, a=255),
+        )

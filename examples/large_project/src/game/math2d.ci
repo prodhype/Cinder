@@ -1,0 +1,26 @@
+struct Vec2:
+    x: f32
+    y: f32
+
+
+struct Aabb:
+    x: f32
+    y: f32
+    w: f32
+    h: f32
+
+    def right(self: &const Aabb) -> f32:
+        return self.x + self.w
+
+    def bottom(self: &const Aabb) -> f32:
+        return self.y + self.h
+
+
+def overlaps(a: Aabb, b: Aabb) -> bool:
+    return a.x < b.right() and b.x < a.right() and a.y < b.bottom() and b.y < a.bottom()
+
+
+def abs_f32(value: f32) -> f32:
+    if value < 0.0:
+        return -value
+    return value
