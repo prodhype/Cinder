@@ -1,6 +1,7 @@
 extern import "ctype.h"
 
 extern "C":
+    # a checked signature for a C library function
     def toupper(character: c_int) -> c_int
 
 
