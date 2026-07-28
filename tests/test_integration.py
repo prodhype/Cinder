@@ -281,8 +281,12 @@ def test_convert_example_runs(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     assert "doubled: 42" in result.stdout
     assert "bool: true" in result.stdout
+    assert "float: 3.5" in result.stdout
+    assert "char: Z" in result.stdout
     assert "empty input" in result.stdout
+    assert result.stdout.count("invalid input") >= 1
     assert "negative unsigned:" in result.stdout
+
 
 
 def test_unsigned_integer_explicit_decimal_print(tmp_path: Path) -> None:
