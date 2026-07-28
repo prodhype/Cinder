@@ -123,6 +123,26 @@ def read_byte(address: usize) -> u8:
         return pointer[0]
 
 
+# WRONG: `cast` only reinterprets numbers and pointers. It does not parse text,
+# and `to_string` does not accept string values.
+# value = cast[i32]("42")
+# text = to_string("nope")
+
+# CORRECT: parse_* returns Result[T, ConvertError]; to_string owns a buffer.
+def convert_example() -> i32:
+    match parse_i32("21"):
+        case Ok(value):
+            text = to_string(value * 2)
+            defer free(cast[void*](text))
+            match parse_i32(text):
+                case Ok(round_trip):
+                    return round_trip
+                case Err(error):
+                    return -1
+        case Err(error):
+            return -2
+
+
 # WRONG: `range` is a loop iterable, not a runtime collection value.
 # numbers = range(0, 4)
 
@@ -466,6 +486,8 @@ def main() -> i32:
         return 7
     if cast[i32](measured_square()) != 16:
         return 8
+    if convert_example() != 42:
+        return 16
     if reveal_safely(secret) != 5:
         return 9
     if resource_example() != 7:

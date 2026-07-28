@@ -1,30 +1,96 @@
 # Cinder
 
-Cinder is a statically typed systems language with Python-shaped syntax and a transparent C11 backend. It uses indentation for blocks, newlines for statements, explicit types at public boundaries, C-compatible data layouts, deterministic cleanup, and ordinary native toolchains.
+Cinder is a systems language with static types.
+Its syntax is near to Python.
+The compiler writes readable C11.
+The language uses indentation for blocks and newlines for statements.
+Public boundaries use explicit types.
+Data layouts are compatible with C.
+Cleanup is deterministic.
+The language uses ordinary native toolchains.
 
-The compiler requires Python 3.14+, emits readable portable C11, and can invoke GCC, Clang, or MSVC-compatible toolchains.
+The compiler needs Python 3.14 or later.
+It writes portable C11 that you can read.
+It can start GCC, Clang, or toolchains that are compatible with MSVC.
 
 ## Status
 
 Cinder 0.5.0 completes the first five language milestones.
 
-The procedural core includes indentation-aware parsing, primitive and C ABI types, typed globals, inferred locals, functions, function pointer types, named arguments, native control flow, structs and methods, pointers and references, fixed arrays, slices, explicit allocation, scoped `defer`, C imports, exported C functions, and readable C11 generation.
+The procedural core includes:
 
-Native collection support includes heterogeneous value tuples and specialized owning Lists, Maps, and Sets. Maps preserve insertion order and expose live views; Sets support hash membership and algebra. Optional lookup uses tagged `Option[T]` values. `Owned[T]` provides Box-style heap ownership with deterministic drop.
+- parsing that uses indentation
+- primitive types and C ABI types
+- typed globals and inferred locals
+- functions and function pointer types
+- named arguments
+- native control flow
+- structs and methods
+- pointers and references
+- fixed arrays and slices
+- explicit allocation
+- scoped `defer`
+- C imports and exported C functions
+- readable C11 generation
 
-The project system includes deterministic `cinder.toml` manifests, local imports, dotted module paths, dependency ordering, cycle diagnostics, one generated header and translation unit per module, deterministic internal symbols, content-stable generated files, and optional amalgamated output.
+Native collection support includes:
 
-The algebraic-data layer includes C enums, plain unions, tagged variants, exhaustive `match`, `Result[T, E]`, contextual `Ok` and `Err`, and postfix `?` propagation that preserves active cleanups.
+- heterogeneous value tuples
+- specialized owning Lists, Maps, and Sets
 
-Cinder 0.4 adds classes, constructors, destructors, private fields, one implementation base, multiple abstract interfaces, checked abstract-method implementation, signature-checked overrides, direct static dispatch, explicit `&dyn Interface` dispatch, deterministic derived-before-base destruction, move-only destructor-bearing values, and cross-module class ABI generation.
+Maps keep insertion order and show live views.
+Sets support hash membership and algebra.
+Optional lookup uses tagged `Option[T]` values.
+`Owned[T]` gives Box-style heap ownership with deterministic drop.
 
-Cinder 0.5 adds opt-in `@reflect` metadata, runtime type/field/method inspection, dynamic runtime type names, compile-time type and member queries, top-level `static_assert`, and unrolled `comptime` field and method loops.
+The project system includes:
 
-The implementation remains alpha software. Closures, exceptions, copy/move hooks, object-file caching, and a stable pre-1.0 binary ABI remain future work.
+- deterministic `cinder.toml` manifests
+- local imports and dotted module paths
+- dependency order and cycle diagnostics
+- one generated header and translation unit per module
+- deterministic internal symbols
+- content-stable generated files
+- optional amalgamated output
+
+The algebraic-data layer includes:
+
+- C enums and plain unions
+- tagged variants
+- exhaustive `match`
+- `Result[T, E]`
+- contextual `Ok` and `Err`
+- postfix `?` propagation that keeps active cleanups
+
+Cinder 0.4 adds:
+
+- classes, constructors, and destructors
+- private fields
+- one implementation base
+- multiple abstract interfaces
+- checked abstract-method implementation
+- signature-checked overrides
+- direct static dispatch
+- explicit `&dyn Interface` dispatch
+- deterministic derived-before-base destruction
+- move-only values that have destructors
+- cross-module class ABI generation
+
+Cinder 0.5 adds:
+
+- opt-in `@reflect` metadata
+- runtime type, field, and method inspection
+- dynamic runtime type names
+- compile-time type and member queries
+- top-level `static_assert`
+- unrolled `comptime` field and method loops
+
+The implementation is alpha software.
+Closures, exceptions, copy and move hooks, object-file caching, and a stable pre-1.0 binary ABI are future work.
 
 ## Installation
 
-From the project root:
+Do these steps from the project root:
 
 ```sh
 python3.14 -m venv .venv
@@ -32,7 +98,7 @@ python3.14 -m venv .venv
 python -m pip install -e .
 ```
 
-On Windows PowerShell:
+On Windows PowerShell, do these steps:
 
 ```powershell
 py -3.14 -m venv .venv
@@ -40,11 +106,14 @@ py -3.14 -m venv .venv
 python -m pip install -e .
 ```
 
-A C11 compiler must be on `PATH`. Cinder checks `CC`, then common compiler commands for the host platform. A specific compiler can be selected with `--cc`.
+Put a C11 compiler on `PATH`.
+Cinder checks `CC` first.
+Then it checks common compiler commands for the host platform.
+Select a specific compiler with `--cc`.
 
 ## Commands
 
-Every command accepts a `.ci` entry file, a project directory, or a `cinder.toml` manifest.
+Each command accepts a `.ci` entry file, a project directory, or a `cinder.toml` manifest.
 
 ```sh
 cinder check examples/classes.ci
@@ -54,15 +123,18 @@ cinder build examples/class_project -o class-demo
 cinder run examples/class_project
 ```
 
-`emit-c` writes one amalgamated C translation unit. `emit-project` writes the normal per-module `.c` and `.cinder.h` tree. `build` writes that same tree under `.cinder/<project-name>/` unless `--build-dir` is supplied, then compiles and links every generated translation unit.
+`emit-c` writes one amalgamated C translation unit.
+`emit-project` writes the usual per-module `.c` and `.cinder.h` tree.
+`build` writes that same tree under `.cinder/<project-name>/` unless you supply `--build-dir`.
+Then `build` compiles and links each generated translation unit.
 
-Compiler and linker flags can be forwarded explicitly:
+You can send compiler and linker flags:
 
 ```sh
 cinder build app.ci --cc clang --cflag=-O3 --ldflag=-pthread -I vendor/include
 ```
 
-Arguments after `--` are passed to programs run with `cinder run`:
+Arguments after `--` go to programs that `cinder run` starts:
 
 ```sh
 cinder run app.ci -- first second
@@ -118,11 +190,16 @@ def main() -> i32:
     return 0
 ```
 
-Concrete calls remain direct C function calls. Only a value whose type is explicitly `&dyn Shape` uses an interface table.
+Concrete calls stay as direct C function calls.
+Only a value with type `&dyn Shape` uses an interface table.
 
 ## Classes and object layout
 
-Classes are values, not implicit heap objects. `Circle(4.0)` zero-initializes a `Circle` value, invokes its generated constructor, and returns the value by ordinary C value semantics.
+Classes are values.
+They are not implicit heap objects.
+`Circle(4.0)` sets a `Circle` value to zero first.
+Then it starts the generated constructor.
+Then it returns the value with ordinary C value semantics.
 
 A class with one implementation base stores that base as its first member:
 
@@ -134,7 +211,7 @@ class Player(Entity):
     score: i32
 ```
 
-The generated layout is structurally equivalent to:
+The generated layout is equivalent to this structure:
 
 ```c
 typedef struct Player {
@@ -143,9 +220,12 @@ typedef struct Player {
 } Player;
 ```
 
-There is no hidden virtual pointer in `Player`. Inherited field and receiver adjustment is explicit in generated C.
+`Player` has no hidden virtual pointer.
+Adjustment of inherited fields and receivers is explicit in generated C.
 
-A concrete class may have one implementation base and multiple interface-only abstract bases. Multiple implementation inheritance is rejected.
+A concrete class can have one implementation base.
+It can also have multiple abstract bases that are interface-only.
+The compiler rejects multiple implementation inheritance.
 
 A concrete call uses static dispatch:
 
@@ -154,24 +234,42 @@ def area(circle: &Circle) -> f64:
     return circle.area()
 ```
 
-An explicit dynamic call uses a two-word non-owning value:
+An explicit dynamic call uses a two-word value that does not own the object:
 
 ```python
 def area(shape: &dyn Shape) -> f64:
     return shape.area()
 ```
 
-The generated representation is an object pointer plus a constant interface-table pointer. Each concrete implementation emits one table per implemented abstract interface. `&const dyn Interface` provides a read-only dynamic borrow.
+The generated form is an object pointer plus a constant interface-table pointer.
+Each concrete implementation writes one table for each abstract interface that it implements.
+`&const dyn Interface` gives a read-only dynamic borrow.
 
 See `docs/classes-and-interfaces.md` for constructor rules, interface-only bases, lifetime transfer, cleanup, and the generated ABI.
 
 ## Constructors, destructors, and moves
 
-`__init__` initializes an existing value. A derived constructor with an implementation-base constructor must call `super().__init__(...)` first.
+`__init__` initializes a value that already exists.
+A derived constructor that has an implementation-base constructor must call `super().__init__(...)` first.
 
-`__del__` is compiler-managed deterministic cleanup. Local destructor-bearing objects are dropped on normal block exit, `return`, `break`, `continue`, and propagated `Err` returns. Locals are dropped in reverse declaration order; a derived destructor runs before its implementation-base destructor.
+`__del__` is deterministic cleanup that the compiler manages.
+The compiler drops local objects that have destructors on:
 
-Destructor-bearing classes are move-only in 0.5. They may be initialized from constructors or class-returning calls and transferred by return. Reassignment evaluates the replacement, drops the old value, and transfers the replacement. Implicit copies are rejected. Match payload bindings of owning `Option` or `Result` values are not transferable.
+- normal block exit
+- `return`
+- `break`
+- `continue`
+- propagated `Err` returns
+
+Locals drop in reverse declaration order.
+A derived destructor runs before its implementation-base destructor.
+
+In 0.5, classes that have destructors are move-only.
+You can initialize them from constructors or from calls that return a class.
+You can transfer them by return.
+Reassignment evaluates the replacement, drops the old value, and transfers the replacement.
+The compiler rejects implicit copies.
+Match payload bindings of owning `Option` or `Result` values are not transferable.
 
 ```python
 class Resource:
@@ -184,7 +282,16 @@ def make() -> Resource:
     return resource
 ```
 
-Destructor-bearing classes may be nested in struct/class fields, collections, and `Option`/`Result`/`Tuple` wrappers, and may be passed by value with use-after-move checking. Owning globals and owning union/variant payloads remain unsupported.
+You can nest classes that have destructors in:
+
+- struct and class fields
+- collections
+- `Option`, `Result`, and `Tuple` wrappers
+
+You can pass them by value.
+The checker looks for use after move.
+Owning globals stay unsupported.
+Owning union and variant payloads stay unsupported.
 
 ## Reflection
 
@@ -198,7 +305,9 @@ struct User:
     active: bool
 ```
 
-The compiler emits constant `CinderTypeInfo`, `CinderFieldInfo`, and `CinderMethodInfo` records. Metadata does not add fields to concrete objects and does not require startup registration.
+The compiler writes constant `CinderTypeInfo`, `CinderFieldInfo`, and `CinderMethodInfo` records.
+Metadata does not add fields to concrete objects.
+Metadata does not need registration at startup.
 
 ```python
 user = User(id=42, name="Cinder", active=true)
@@ -208,7 +317,10 @@ for field in fields(user):
     stdio.printf("%s: %s\n", field.name, field.type_name)
 ```
 
-`type_info`, `fields`, and `methods` require `@reflect`. Concrete `type_name(value)` is compile-time text and does not require metadata. Dynamic `type_name(value)` reads concrete metadata through a reflected interface table.
+`type_info`, `fields`, and `methods` need `@reflect`.
+Concrete `type_name(value)` is compile-time text.
+It does not need metadata.
+Dynamic `type_name(value)` reads concrete metadata through a reflected interface table.
 
 Compile-time queries include:
 
@@ -221,15 +333,32 @@ for field in comptime fields_of(User):
     stdio.printf("%s: %zu\n", field.name, field.offset)
 ```
 
-The compiler implements `type_of`, `type_name`, `type_info`, `size_of`, `align_of`, `field_count`, `method_count`, `has_field`, `has_method`, `implements`, `fields`, `methods`, `fields_of`, and `methods_of`.
+The compiler implements these queries:
 
-Compile-time member loops are unrolled. They do not require runtime metadata and do not emit a runtime loop.
+- `type_of`
+- `type_name`
+- `type_info`
+- `size_of`
+- `align_of`
+- `field_count`
+- `method_count`
+- `has_field`
+- `has_method`
+- `implements`
+- `fields`
+- `methods`
+- `fields_of`
+- `methods_of`
+
+The compiler unrolls compile-time member loops.
+These loops do not need runtime metadata.
+They do not write a runtime loop.
 
 See `docs/reflection.md` for metadata fields, binary-size costs, static-assert behavior, and current limits.
 
 ## Projects and modules
 
-A project is described by `cinder.toml`:
+A project uses a `cinder.toml` file:
 
 ```toml
 [project]
@@ -238,7 +367,7 @@ source-root = "src"
 entry = "main.ci"
 ```
 
-A typical tree is:
+A usual tree is:
 
 ```text
 example/
@@ -250,7 +379,10 @@ example/
             parsing.ci
 ```
 
-Module names are derived from paths below the source root. `geometry.ci` is `geometry`; `support/parsing.ci` is `support.parsing`; `support/__init__.ci` is `support`.
+Module names come from paths below the source root.
+`geometry.ci` is `geometry`.
+`support/parsing.ci` is `support.parsing`.
+`support/__init__.ci` is `support`.
 
 ```python
 import geometry
@@ -258,11 +390,23 @@ import support.parsing as parsing
 from geometry import Vec2, distance
 ```
 
-Cinder resolves the complete acyclic dependency graph, then checks and emits modules in dependency order. Built-in modules such as `stdio` and `math` do not resolve to local files unless shadowed by a local module.
+Cinder finds the full acyclic dependency graph.
+Then it checks and writes modules in dependency order.
+Built-in modules such as `stdio` and `math` do not resolve to local files unless a local module shadows them.
 
-Generated module headers contain public nominal layouts, callable declarations, dynamic interface types and tables, class constructor/drop declarations, and reflected metadata declarations. Internal C names receive a deterministic project-and-module prefix. `main` in the entry module and functions marked `@export` retain externally callable C names.
+Generated module headers contain:
 
-For a project with modules `geometry` and `main`, `emit-project` produces:
+- public nominal layouts
+- callable declarations
+- dynamic interface types and tables
+- class constructor and drop declarations
+- reflected metadata declarations
+
+Internal C names get a deterministic project-and-module prefix.
+`main` in the entry module keeps an externally callable C name.
+Functions with `@export` also keep externally callable C names.
+
+For a project with modules `geometry` and `main`, `emit-project` writes:
 
 ```text
 generated/
@@ -273,7 +417,8 @@ generated/
         main.cinder.h
 ```
 
-Generated headers are valid C11 and include C++ linkage guards for callable declarations.
+Generated headers are valid C11.
+They include C++ linkage guards for callable declarations.
 
 ## Enums, unions, variants, and match
 
@@ -285,7 +430,7 @@ enum ParseError:
     overflow = 4
 ```
 
-Plain unions retain ordinary C union semantics:
+Plain unions keep ordinary C union semantics:
 
 ```python
 union Number:
@@ -295,7 +440,7 @@ union Number:
 number = Number(integer=42)
 ```
 
-Variants use an explicit tag and payload union:
+Variants use an explicit tag and a payload union:
 
 ```python
 variant Token:
@@ -307,7 +452,8 @@ variant Token:
 token = Token.Integer(42)
 ```
 
-`match` accepts enums, variants, Results, and Options. Matches must be exhaustive unless the final case is a wildcard.
+`match` accepts enums, variants, Results, and Options.
+Matches must be exhaustive unless the final case is a wildcard.
 
 ```python
 match token:
@@ -325,7 +471,17 @@ Patterns do not yet support guards, alternatives, literals, or nested destructur
 
 ## Typed Results, Options, and propagation
 
-`Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, and `Set[T]` are compiler-provided generic families. User-defined generics on structs, classes, enums, unions, variants, and free functions are monomorphized into readable specialized C.
+These types are generic families that the compiler supplies:
+
+- `Result[T, E]`
+- `Option[T]`
+- `Owned[T]`
+- `Tuple[...]`
+- `List[T]`
+- `Map[K, V]`
+- `Set[T]`
+
+User-defined generics on structs, classes, enums, unions, variants, and free functions become specialized C that you can read.
 
 ```python
 def parse(value: i32) -> Result[i32, ParseError]:
@@ -339,13 +495,33 @@ def increment(value: i32) -> Result[i32, ParseError]:
     return Ok(parsed + 1)
 ```
 
-`Ok` and `Err` are contextual constructors. Postfix `?` evaluates its operand once, checks the explicit tag, runs active deferred calls, List cleanup, and class drops on error, and performs an ordinary early return.
+`Ok` and `Err` are contextual constructors.
+Postfix `?` evaluates its operand one time.
+Then it checks the explicit tag.
+On error it runs active deferred calls, List cleanup, and class drops.
+Then it does an ordinary early return.
 
-To preserve straightforward C evaluation order, `?` is not accepted in `while` conditions, `elif` conditions, C-style loop conditions or updates, the right side of `and` or `or`, or deferred calls.
+`?` is not accepted in these places, so C evaluation order stays clear:
 
-`Option[T]` represents an optional value without using pointer nullability. `Some(value)` infers its payload when possible, bare `None` requires an Option context, and matches must cover both cases. `.is_some`, `.is_none`, and checked `.value` access are available; postfix `?` remains Result-only.
+- `while` conditions
+- `elif` conditions
+- C-style loop conditions or updates
+- the right side of `and` or `or`
+- deferred calls
 
-`Owned[T]` is a move-only heap owner. `Owned(value)` allocates and moves a value onto the heap; unary `*` yields an addressable payload; drop frees after dropping `T`. Recursive layouts such as `Option[Owned[Node]]` are supported.
+`Option[T]` is an optional value.
+It does not use pointer nullability.
+`Some(value)` can infer its payload when possible.
+Bare `None` needs an Option context.
+Matches must cover both cases.
+`.is_some`, `.is_none`, and checked `.value` access are available.
+Postfix `?` stays Result-only.
+
+`Owned[T]` is a move-only heap owner.
+`Owned(value)` allocates and moves a value onto the heap.
+Unary `*` gives an addressable payload.
+Drop frees after it drops `T`.
+Recursive layouts such as `Option[Owned[Node]]` are supported.
 
 ## Types
 
@@ -365,7 +541,8 @@ void
 
 C ABI aliases include `c_int`, `c_long`, and `c_size_t`.
 
-Pointers and references use prefix syntax. C-style postfix pointer syntax is also accepted where it helps transcribe C declarations.
+Pointers and references use prefix syntax.
+C-style postfix pointer syntax is also accepted when it helps you copy C declarations.
 
 ```python
 pointer: *i32 = &value
@@ -377,9 +554,15 @@ def increment(value: &i32) -> void:
     value += 1
 ```
 
-References compile to pointers but are transparent inside Cinder expressions. The checker rejects null reference initialization and requires an addressable value when a reference is formed.
+References compile to pointers.
+Inside Cinder expressions they are transparent.
+The checker rejects null reference initialization.
+It needs an addressable value when you form a reference.
 
-Function pointer types use `def` parameter and return syntax and compile to ordinary C function pointers. Named free functions decay to that type without `&`, so they can be stored, passed, and called like values:
+Function pointer types use `def` parameter and return syntax.
+They compile to ordinary C function pointers.
+Named free functions decay to that type without `&`.
+You can store them, pass them, and call them like values:
 
 ```python
 def double(n: i32) -> i32:
@@ -394,7 +577,8 @@ callback = double
 result = apply(callback, 21)
 ```
 
-Closures and bound methods are not supported; only non-capturing free functions may be used as function pointer values.
+Closures and bound methods are not supported.
+Only free functions that do not capture may be function pointer values.
 
 Fixed arrays and slices are distinct:
 
@@ -403,7 +587,9 @@ values: i32[4] = [10, 20, 30, 40]
 view: []i32 = values[1:]
 ```
 
-A slice is emitted as a typed `{data, length}` struct. Mutable arrays and slices can be passed to const slice parameters without copying. Slicing and indexing currently perform no bounds checks.
+A slice is a typed `{data, length}` struct.
+You can pass mutable arrays and slices to const slice parameters without a copy.
+Slicing and indexing do no bounds checks at this time.
 
 Tuples are immutable heterogeneous values:
 
@@ -412,9 +598,12 @@ entry: Tuple[i32, const char*] = (7, "ready")
 code = entry[0]
 ```
 
-Tuple indices must be integer literals. Empty and singleton tuples use `()` and `(value,)`.
+Tuple indices must be integer literals.
+Empty and singleton tuples use `()` and `(value,)`.
 
-Lists are homogeneous owning buffers. An untyped square-bracket literal infers a list, while an explicit fixed-array annotation keeps fixed storage:
+Lists are homogeneous owning buffers.
+An untyped square-bracket literal infers a list.
+An explicit fixed-array annotation keeps fixed storage:
 
 ```python
 fixed: i32[3] = [3, 1, 2]
@@ -424,9 +613,22 @@ sort(values)
 last = values.pop()
 ```
 
-Lists are move-only owners of their buffers and are freed deterministically on every normal cleanup path. They may be nested, stored in struct/class fields, passed and returned by value, and hold other owning values; transfers mark the source as moved. Addressable Lists may also be passed without copying to `[]T` and `[]const T` parameters. This coercion is call-only; structural operations still use `&List[T]`. Owning globals remain unsupported.
+Lists are move-only owners of their buffers.
+The runtime frees them on each normal cleanup path.
+You can nest them.
+You can store them in struct and class fields.
+You can pass and return them by value.
+They can hold other owning values.
+Transfers mark the source as moved.
+You can also pass addressable Lists without a copy to `[]T` and `[]const T` parameters.
+This coercion is for calls only.
+Structural operations still use `&List[T]`.
+Owning globals stay unsupported.
 
-Maps use `{key: value}` literals and preserve insertion order. Sets use `{value, ...}`; an empty Set uses contextual `set()`. Empty `{}` requires a `Map[K, V]` context.
+Maps use `{key: value}` literals and keep insertion order.
+Sets use `{value, ...}`.
+An empty Set uses contextual `set()`.
+Empty `{}` needs a `Map[K, V]` context.
 
 ```python
 scores = {"Ada": 7, "Grace": 9}
@@ -443,15 +645,28 @@ primes = {2, 3, 5}
 small = primes | {1, 2}
 ```
 
-`in` and `not in` test Map keys and Set elements. Maps provide `keys()`, `values()`, and `items()` as live non-owning views; default Map iteration yields keys. Sets provide union, intersection, difference, symmetric difference, and subset/superset comparisons.
+`in` and `not in` test Map keys and Set elements.
+Maps give `keys()`, `values()`, and `items()` as live views that do not own.
+Default Map iteration yields keys.
+Sets give union, intersection, difference, symmetric difference, and subset and superset comparisons.
 
-Hashable types are integers, `bool`, `char`, enums, and `const char*`. String keys use null-safe content equality and are copied into the collection. A string removed by `Set[const char*].pop()` transfers its allocation to the caller, who must release it with `free(cast[void*](text))`.
+Hashable types are integers, `bool`, `char`, enums, and `const char*`.
+String keys use null-safe content equality.
+The collection copies them.
+A string that `Set[const char*].pop()` removes transfers its allocation to the caller.
+The caller must release it with `free(cast[void*](text))`.
 
-Maps and Sets use the same move-only ownership model as Lists, including nested/aggregate ownership and by-value parameters. Owning globals and union/variant payloads remain unsupported. Map views are borrowed values with slice-like lifetime responsibility; structural mutation is rejected or guarded while an iterator is active.
+Maps and Sets use the same move-only ownership model as Lists.
+This includes nested and aggregate ownership and by-value parameters.
+Owning globals stay unsupported.
+Owning union and variant payloads stay unsupported.
+Map views are borrowed values with slice-like lifetime duty.
+Structural mutation is rejected or guarded while an iterator is active.
 
 ## Structs and methods
 
-Structs have C-compatible layout and no inheritance or dynamic dispatch.
+Structs have layout that is compatible with C.
+They have no inheritance and no dynamic dispatch.
 
 ```python
 struct Counter:
@@ -461,15 +676,18 @@ struct Counter:
         self.value += amount
 ```
 
-An omitted `self` annotation is inferred as `&Counter`. `self: &const Counter` creates a const method. Calls compile to direct C functions.
+An omitted `self` annotation is inferred as `&Counter`.
+`self: &const Counter` makes a const method.
+Calls compile to direct C functions.
 
-Struct construction is checked field initialization:
+Struct construction checks field initialization:
 
 ```python
 counter = Counter(value=0)
 ```
 
-Named arguments are reordered at compile time. Omitted fields are zero-initialized.
+Named arguments are reordered at compile time.
+Omitted fields are set to zero.
 
 ## Control flow
 
@@ -494,26 +712,40 @@ for index: usize = 0; index < count; index += 1:
     process(values[index])
 ```
 
-`range` accepts one, two, or three integer arguments. Expressions are evaluated once before the loop. A zero step is rejected when literal and triggers `panic` when discovered at runtime.
+`range` accepts one, two, or three integer arguments.
+Expressions evaluate one time before the loop.
+A zero step is rejected when it is a literal.
+A zero step starts `panic` when the runtime finds it.
 
-Locals use lexical block scope, matching generated C rather than Python function-wide local scope.
+Locals use lexical block scope.
+This matches generated C.
+It does not match Python function-wide local scope.
 
 ## Allocation and `defer`
 
-Cinder has no garbage collector or ownership inference.
+Cinder has no garbage collector.
+It has no ownership inference.
 
 ```python
 values = alloc[i32](count)
 defer free(values)
 ```
 
-`alloc[T](count)` calls the small runtime allocation helper, checks multiplication overflow and allocation failure, and returns `*T`. `alloc[T]()` allocates one element. Memory is uninitialized, as with C `malloc`.
+`alloc[T](count)` calls the small runtime allocation helper.
+It checks multiplication overflow and allocation failure.
+It returns `*T`.
+`alloc[T]()` allocates one element.
+Memory is not initialized, as with C `malloc`.
 
-`defer` registers a call for the end of the current lexical scope. Deferred calls run in reverse declaration order on normal exit and all supported early exits. Return values are evaluated into a temporary before cleanup runs. Deferred call arguments are evaluated when cleanup runs, not when `defer` is encountered.
+`defer` registers a call for the end of the current lexical scope.
+Deferred calls run in reverse declaration order on normal exit and on all supported early exits.
+Return values go into a temporary before cleanup runs.
+Deferred call arguments evaluate when cleanup runs.
+They do not evaluate when `defer` is found.
 
 ## C interoperability
 
-A C header can be included directly:
+You can include a C header directly:
 
 ```python
 extern import "sqlite3.h"
@@ -526,7 +758,11 @@ extern "C":
     def sqlite3_open(filename: const char*, database: **sqlite3) -> c_int
 ```
 
-The compiler does not parse arbitrary C headers. `extern import` controls inclusion; `extern "C"` supplies the signatures Cinder checks. Unknown types in external signatures are treated as opaque C types and emitted unchanged.
+The compiler does not parse arbitrary C headers.
+`extern import` controls inclusion.
+`extern "C"` supplies the signatures that Cinder checks.
+Unknown types in external signatures are opaque C types.
+The compiler writes them without change.
 
 Built-in modules map common C APIs into checked namespaces:
 
@@ -547,9 +783,16 @@ print(f"{name}: {score:x}")
 print(values)
 ```
 
-`print` separates multiple arguments with spaces, appends a newline, and supports f-string replacement fields with simple format specs. Lists, Maps, Sets, and Tuples print with Python-like collection syntax when their nested element types are printable. F-strings are currently limited to `print` arguments.
+`print` separates multiple arguments with spaces.
+It adds a newline.
+It supports f-string replacement fields with simple format specs.
+Lists, Maps, Sets, and Tuples print with Python-like collection syntax when their nested element types are printable.
+F-strings are limited to `print` arguments at this time.
 
-For console input, `input()` is also available without an import. `input(prompt)` writes the prompt without a newline, reads one line, and returns it without the trailing newline:
+For console input, `input()` is also available without an import.
+`input(prompt)` writes the prompt without a newline.
+It reads one line.
+It returns that line without the trailing newline:
 
 ```python
 name = input("name: ")
@@ -557,7 +800,22 @@ defer free(cast[void*](name))
 print("hello", name)
 ```
 
-Parsing and formatting helpers are also global. `parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` return `Result[T, ConvertError]` after a full-token parse (`empty`, `invalid`, or `overflow` on failure). `to_string(value)` formats integers, floats, `bool`, and `char` into an owned `const char*` that must be freed like `input`:
+Parsing and formatting helpers are also global.
+These functions return `Result[T, ConvertError]` after a full-token parse:
+
+- `parse_i32`
+- `parse_i64`
+- `parse_u32`
+- `parse_u64`
+- `parse_isize`
+- `parse_usize`
+- `parse_f32`
+- `parse_f64`
+- `parse_bool`
+
+Failure cases are `empty`, `invalid`, or `overflow`.
+`to_string(value)` formats integers, floats, `bool`, and `char` into an owned `const char*`.
+You must free that string as you free `input`:
 
 ```python
 match parse_i32(name):
@@ -569,7 +827,7 @@ match parse_i32(name):
         print(cast[i32](error))
 ```
 
-`@export` preserves a top-level function's C symbol name:
+`@export` keeps the C symbol name of a top-level function:
 
 ```python
 @export
@@ -579,16 +837,21 @@ def engine_update(delta_time: f64) -> void:
 
 ## Unsafe casts
 
-Numeric casts and compatible pointer casts are allowed directly. Pointer/integer casts and unrelated pointer reinterpretation require an explicit block:
+Numeric casts and compatible pointer casts are allowed directly.
+Pointer and integer casts need an explicit block.
+Unrelated pointer reinterpretation also needs an explicit block:
 
 ```python
 unsafe:
     byte_pointer = cast[*u8](address)
 ```
 
-This makes dangerous code visible; it does not make raw pointer operations memory-safe.
+This makes dangerous code visible.
+It does not make raw pointer operations safe in memory.
 
 ## Project layout
+
+The repository layout is:
 
 ```text
 cinder/
@@ -615,6 +878,9 @@ docs/
 
 ## Development
 
+Install the development extras.
+Then compile, test, and check the sources:
+
 ```sh
 python -m pip install -e '.[dev]'
 python -m compileall -q cinder tests
@@ -623,8 +889,22 @@ ruff check cinder tests
 mypy cinder
 ```
 
-Integration tests compile generated C and execute native programs. The test suite also validates GCC and Clang warnings-as-errors builds, cross-module class/interface ABI behavior, content-stable project emission, and generated-header use from C++17. CI runs on Linux, macOS, and Windows with Python 3.14.
+Integration tests compile generated C and run native programs.
+The test suite also checks:
+
+- GCC and Clang builds with warnings as errors
+- cross-module class and interface ABI behavior
+- content-stable project emission
+- use of generated headers from C++17
+
+CI runs on Linux, macOS, and Windows with Python 3.14.
 
 ## Design constraint
 
-The governing rule is that Cinder must remain understandable by reading generated C. Features that require hidden allocation, unpredictable dispatch, exception unwinding, implicit object lifetimes, or a mandatory garbage collector are excluded until they can be designed without violating that rule.
+Readers must understand Cinder from the generated C.
+Features that need hidden allocation are excluded for now.
+Features that need unpredictable dispatch are excluded for now.
+Features that need exception unwinding are excluded for now.
+Features that need implicit object lifetimes are excluded for now.
+Features that need a mandatory garbage collector are excluded for now.
+Such features stay out until a design can keep that rule.

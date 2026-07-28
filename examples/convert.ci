@@ -26,6 +26,19 @@ def main() -> i32:
             print("bool failed:", cast[i32](error))
             return 1
 
+    match parse_f64("3.5"):
+        case Ok(value):
+            float_text = to_string(value)
+            defer free(cast[void*](float_text))
+            print("float:", float_text)
+        case Err(error):
+            print("float failed:", cast[i32](error))
+            return 1
+
+    letter = to_string('Z')
+    defer free(cast[void*](letter))
+    print("char:", letter)
+
     match parse_i32(""):
         case Ok(value):
             # should not happen (empty string)
@@ -37,6 +50,19 @@ def main() -> i32:
                     print("empty input")
                 case ConvertError.invalid:
                     print("invalid input")
+                case ConvertError.overflow:
+                    print("overflow input")
+
+    match parse_i32("12x"):
+        case Ok(value):
+            print("unexpected partial:", value)
+            return 1
+        case Err(error):
+            match error:
+                case ConvertError.invalid:
+                    print("invalid input")
+                case ConvertError.empty:
+                    print("empty input")
                 case ConvertError.overflow:
                     print("overflow input")
 

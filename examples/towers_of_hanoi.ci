@@ -8,7 +8,16 @@ def move_disks(count: i32, source: const char*, target: const char*, spare: cons
 
 
 def main() -> i32:
-    disks: i32 = 4
-    print(f"solving Towers of Hanoi with {disks} disks")
-    move_disks(disks, "A", "C", "B")
-    return 0
+    line = input("Disks: ")
+    defer free(cast[void*](line))
+    match parse_i32(line):
+        case Ok(disks):
+            if disks < 0:
+                print("need a non-negative disk count")
+                return 1
+            print(f"solving Towers of Hanoi with {disks} disks")
+            move_disks(disks, "A", "C", "B")
+            return 0
+        case Err(error):
+            print("invalid disk count:", cast[i32](error))
+            return 1

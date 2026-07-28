@@ -6,7 +6,7 @@
 
 `input.ci` demonstrates import-free `input` with a Python-style prompt.
 
-`convert.ci` demonstrates Result-returning `parse_*` helpers, `ConvertError` matching, `?` propagation, and owned `to_string` formatting.
+`convert.ci` demonstrates Result-returning `parse_*` helpers (`i32`, `u32`, `bool`, `f64`), `ConvertError` matching (`empty`, `invalid`, overflow), `?` propagation, and owned `to_string` formatting for integers, floats, `bool`, and `char`.
 
 `vectors.ci` demonstrates structs, named field initialization, const methods, and the checked math module.
 
@@ -27,6 +27,8 @@
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
 `fizzbuzz.ci` prompts for an upper bound with `input` and `parse_i32`, then prints Fizz/Buzz/FizzBuzz for 1 through that number using a range loop, modulo, and `if`/`elif`/`else`.
+
+`towers_of_hanoi.ci` prompts for a disk count with `input` and `parse_i32`, then prints the recursive move sequence.
 
 `binary_sort.ci` implements stable binary insertion sort on a numeric List, then prints the sorted collection.
 
