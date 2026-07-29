@@ -763,14 +763,16 @@ Checked declarations use an explicit ABI block:
 
 ```python
 extern "C":
+    type sqlite3
     def sqlite3_open(filename: const char*, database: **sqlite3) -> c_int
 ```
 
 The compiler does not parse arbitrary C headers.
 `extern import` controls inclusion.
 `extern "C"` supplies the signatures that Cinder checks.
-Unknown types in external signatures are opaque C types.
-The compiler writes them without change.
+Declare opaque C types with `type Name`, or let unknown names in extern signatures become opaque automatically.
+Opaque types are exported across modules like other module types.
+The compiler writes their C names without change.
 
 Built-in modules map common C APIs into checked namespaces:
 

@@ -204,6 +204,7 @@ class SemanticModel:
     globals: OrderedDict[str, VariableSymbol]
     includes: list[str]
     libraries: list[str]
+    opaques: OrderedDict[str, OpaqueType] = dataclass_field(default_factory=OrderedDict)
     type_templates: dict[str, TypeTemplateSymbol] = dataclass_field(default_factory=dict)
     function_templates: dict[str, FunctionTemplateSymbol] = dataclass_field(default_factory=dict)
     expr_types: dict[int, Type] = dataclass_field(default_factory=dict)
@@ -265,6 +266,8 @@ class SemanticModel:
                 continue
             exported_types[symbol.name] = symbol.type
             exported_type_symbols[symbol.name] = symbol
+        for name, opaque in self.opaques.items():
+            exported_types[name] = opaque
         return ModuleSymbol(
             name=self.module_name.rsplit(".", 1)[-1],
             span=self.module.span,
@@ -318,6 +321,7 @@ class Checker:
         self.enums: OrderedDict[str, EnumSymbol] = OrderedDict()
         self.unions: OrderedDict[str, UnionSymbol] = OrderedDict()
         self.variants: OrderedDict[str, VariantSymbol] = OrderedDict()
+        self.opaques: OrderedDict[str, OpaqueType] = OrderedDict()
         self.type_templates: dict[str, TypeTemplateSymbol] = {}
         self.function_templates: dict[str, FunctionTemplateSymbol] = {}
         self._type_specializations: dict[tuple[str, str, tuple[Type, ...]], NominalSymbol] = {}
@@ -404,6 +408,7 @@ class Checker:
             variants=self.variants,
             functions=self.functions,
             globals=self.globals,
+            opaques=self.opaques,
             type_templates=self.type_templates,
             function_templates=self.function_templates,
             includes=self.includes,
@@ -684,6 +689,8 @@ class Checker:
                             )
                             continue
                         self.types[public_name] = imported_type
+                        if isinstance(imported_type, OpaqueType):
+                            self.opaques[public_name] = imported_type
                         original_nominal = module.type_symbols.get(imported_name)
                         if original_nominal is not None:
                             alias_symbol = self._alias_nominal(original_nominal, public_name, item.span)
@@ -791,6 +798,8 @@ class Checker:
                 self.libraries.append(library)
 
     def _collect_type_names(self) -> None:
+        for declaration in self.module.extern_types:
+            self._collect_opaque_type(declaration)
         for declaration in self.module.structs:
             self._collect_struct_name(declaration)
         for declaration in self.module.classes:
@@ -801,6 +810,32 @@ class Checker:
             self._collect_union_name(declaration)
         for declaration in self.module.variants:
             self._collect_variant_name(declaration)
+
+    def _collect_opaque_type(self, declaration: ast.ExternTypeDecl) -> None:
+        if not self._ensure_type_name_available(declaration.name, declaration.span, "C005"):
+            return
+        opaque = OpaqueType(declaration.name, declaration.name)
+        self.types[declaration.name] = opaque
+        self.opaques[declaration.name] = opaque
+
+    def _register_opaque_type(self, name: str, span: Span | None = None) -> OpaqueType | None:
+        existing = self.types.get(name)
+        if isinstance(existing, OpaqueType):
+            self.opaques.setdefault(name, existing)
+            return existing
+        if existing is not None:
+            if span is not None:
+                self._error(
+                    f"type {name!r} is a Cinder type with a mangled C name; "
+                    f"declare `type {name}` for the C header type, or rename the Cinder type",
+                    span,
+                    code="C360",
+                )
+            return None
+        opaque = OpaqueType(name, name)
+        self.types[name] = opaque
+        self.opaques[name] = opaque
+        return opaque
 
     def _ensure_type_name_available(self, name: str, span: Span, code: str) -> bool:
         if name not in self.types and name not in self.type_templates:
@@ -4164,6 +4199,12 @@ class Checker:
                     "module_type", nominal=nominal, owner_type=nominal.type
                 )
                 return nominal.type
+            if expression.name in module.types:
+                type_ = module.types[expression.name]
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "module_type", owner_type=type_
+                )
+                return type_
             if expression.name in module.type_templates:
                 template = module.type_templates[expression.name]
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
@@ -8170,8 +8211,32 @@ class Checker:
                     )
                     result = ERROR
                 if result is None and allow_opaque:
-                    result = OpaqueType(name, name)
-                    self.types[name] = result
+                    registered = self._register_opaque_type(name, node.span)
+                    result = registered if registered is not None else ERROR
+                elif (
+                    allow_opaque
+                    and result is not None
+                    and not isinstance(result, OpaqueType)
+                    and name not in PRIMITIVES
+                    and (
+                        name in self.structs
+                        or name in self.classes
+                        or name in self.enums
+                        or name in self.unions
+                        or name in self.variants
+                    )
+                ):
+                    # Extern signatures must not silently bind Cinder nominal types
+                    # that emit mangled C names (ABI mismatch with the real header type).
+                    self._error(
+                        f"type {name!r} is a Cinder type with a mangled C name; "
+                        f"declare `type {name}` for the C header type, or rename the Cinder type",
+                        node.span,
+                        code="C360",
+                    )
+                    result = ERROR
+                if isinstance(result, OpaqueType):
+                    self.opaques.setdefault(name, result)
                 if result is None:
                     self._error(f"unknown type {name!r}", node.span, code="C100")
                     result = ERROR

@@ -647,16 +647,24 @@ extern import "sqlite3.h"
 ```
 
 The compiler does not parse arbitrary headers. An `extern "C"` block supplies the
-signatures Cinder checks; otherwise unknown types in these declarations are emitted
-as opaque C types:
+signatures Cinder checks. Prefer an explicit opaque declaration; unknown names in
+extern signatures are still inferred as opaque C types for compatibility:
 
 ```python
 extern "C":
+    type sqlite3
     def sqlite3_open(
         filename: const char*,
         database: **sqlite3
     ) -> c_int
 ```
+
+Opaque types are exported with the defining module, so other modules can write
+`*bindings.sqlite3` or `from bindings import sqlite3`. Do not give a Cinder
+`struct`/`class` the same source name as a C header type you need in `extern`
+signatures—the Cinder type would emit a mangled C name and break the ABI. Use a
+distinct storage struct (for example `EventBlob`) when you need layout under a
+different name.
 
 `@export` preserves the C symbol name of a top-level Cinder function:
 

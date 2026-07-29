@@ -4418,8 +4418,14 @@ class CGenerator:
             assert resolution.function is not None
             return c_identifier(resolution.function.c_name)
         if resolution.kind == "module_type":
-            assert resolution.nominal is not None
-            return c_identifier(resolution.nominal.c_name)
+            if resolution.nominal is not None:
+                return c_identifier(resolution.nominal.c_name)
+            owner_type = resolution.owner_type
+            if isinstance(owner_type, OpaqueType):
+                return owner_type.c_name
+            if owner_type is not None and owner_type is not ERROR:
+                return c_type_expression(owner_type)
+            raise AssertionError("module_type attribute has neither nominal nor owner_type")
         if resolution.kind == "enum_member":
             assert resolution.enum_member is not None
             return c_identifier(resolution.enum_member.c_name)
