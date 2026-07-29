@@ -50,7 +50,7 @@ struct World:
         if self.bricks.collide(self.ball.bounds, self.ball.velocity):
             self.score += 10
             audio.play(self.sounds.brick)
-            print(f"score={self.score} bricks={self.bricks.remaining}")
+            # print(f"score={self.score} bricks={self.bricks.remaining}")
 
         if self.bricks.remaining <= 0:
             self.won = true
