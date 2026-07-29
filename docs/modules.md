@@ -17,11 +17,34 @@ A directory without a manifest is accepted only when it has exactly one conventi
 name = "physics_demo"
 source-root = "src"
 entry = "app/main.ci"
+
+[native]
+include-dirs = ["third_party/sdl2/include"]
+library-dirs = ["third_party/sdl2/lib"]
+libraries = ["SDL2", "SDL2_mixer"]
+link-files = ["third_party/sdl2/lib/libSDL2.a"]
+cflags = []
+ldflags = []
 ```
 
 `name` defaults to the project directory name. `source-root` defaults to `src`. `entry` defaults to `main.ci` relative to the source root.
 
-Project names use ASCII letters, digits, `.`, `-`, and `_`, beginning with a letter or digit. Paths are required to remain inside the project root. Unknown manifest keys are rejected instead of silently ignored.
+Project names use ASCII letters, digits, `.`, `-`, and `_`, beginning with a letter or digit. Paths are required to remain inside the project root. Only the `[project]` and `[native]` top-level tables are allowed; unknown keys in either table are rejected.
+
+### `[native]` (optional)
+
+Native compile and link inputs for `cinder build` / `cinder run`. Relative paths resolve against the project root (the directory that contains `cinder.toml`). Paths need not exist at manifest-parse time so `cinder check` still works without dependencies installed.
+
+| Key | Meaning |
+|-----|---------|
+| `include-dirs` | Extra `-I` / MSVC `/I` directories |
+| `library-dirs` | Extra `-L` / MSVC `/LIBPATH:` directories |
+| `libraries` | Short library names only (no `-l` prefix, no path separators) → `-lname` / `name.lib` |
+| `link-files` | Explicit archive or object paths passed as linker inputs (useful for static single-binary builds) |
+| `cflags` | Opaque extra compiler flags |
+| `ldflags` | Opaque extra linker flags |
+
+Merge order (manifest first, CLI last): automatic project include paths, then `[native]` include dirs / cflags / libraries / library dirs / link-files / ldflags, then CLI `-I` / `--cflag` / `--ldflag`. Semantic libraries from imports such as `math` (`-lm`) are merged with `[native].libraries`.
 
 ## Resolution
 
@@ -40,7 +63,7 @@ Compiler-provided modules such as `stdio`, `math`, `stdlib`, `string`, and `cind
 
 Imports are discovered from parsed top-level declarations. The loader performs a depth-first traversal and records modules in dependency-first order. A cycle is diagnosed at the import that closes it, including the cycle path.
 
-The checker receives only modules that have already been checked. Imported function signatures, global types, constants, nominal types, C includes, and link libraries therefore come from semantic models rather than textual source concatenation.
+The checker receives only modules that have already been checked. Imported function signatures, global types, constants, nominal types, C includes, and per-module link libraries therefore come from semantic models rather than textual source concatenation. Project-wide native libraries and flags still come from the optional `[native]` table and the CLI.
 
 ## Imports
 

@@ -520,3 +520,259 @@ def test_reflected_class_header_is_usable_from_cpp(tmp_path: Path) -> None:
     )
     assert compile_cpp.returncode == 0, compile_cpp.stderr
     assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+def test_manifest_rejects_unknown_top_level_table(tmp_path: Path) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "main.ci").write_text(
+        "def main() -> i32:\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"demo\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n"
+        "\n"
+        "[packaging]\n"
+        "bundle = true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProjectError) as captured:
+        Compiler().compile_project(tmp_path)
+    assert "unknown top-level table(s)" in str(captured.value)
+    assert "packaging" in str(captured.value)
+
+
+def test_manifest_rejects_unknown_native_keys(tmp_path: Path) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "main.ci").write_text(
+        "def main() -> i32:\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"demo\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n"
+        "\n"
+        "[native]\n"
+        "libs = [\"SDL2\"]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProjectError) as captured:
+        Compiler().compile_project(tmp_path)
+    assert "unknown [native] key(s)" in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("libraries_line", "needle"),
+    [
+        ('libraries = ["-lSDL2"]\n', "not a flag"),
+        ('libraries = ["path/SDL2"]\n', "without path separators"),
+    ],
+)
+def test_manifest_rejects_invalid_native_libraries(
+    tmp_path: Path,
+    libraries_line: str,
+    needle: str,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "main.ci").write_text(
+        "def main() -> i32:\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"demo\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n"
+        "\n"
+        "[native]\n"
+        f"{libraries_line}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProjectError) as captured:
+        Compiler().compile_project(tmp_path)
+    assert needle in str(captured.value)
+
+
+def test_native_paths_resolve_relative_to_project_root(tmp_path: Path) -> None:
+    from cinder.project import resolve_project
+
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "main.ci").write_text(
+        "def main() -> i32:\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "vendor" / "include").mkdir(parents=True)
+    (tmp_path / "vendor" / "lib").mkdir(parents=True)
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"demo\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n"
+        "\n"
+        "[native]\n"
+        "include-dirs = [\"vendor/include\"]\n"
+        "library-dirs = [\"vendor/lib\"]\n"
+        "link-files = [\"vendor/lib/libdemo.a\"]\n"
+        "libraries = [\"demo\"]\n"
+        "cflags = [\"-pthread\"]\n"
+        "ldflags = [\"-Wl,-dead_strip\"]\n",
+        encoding="utf-8",
+    )
+
+    config = resolve_project(tmp_path)
+    assert config.include_dirs == ((tmp_path / "vendor" / "include").resolve(),)
+    assert config.library_dirs == ((tmp_path / "vendor" / "lib").resolve(),)
+    assert config.link_files == ((tmp_path / "vendor" / "lib" / "libdemo.a").resolve(),)
+    assert config.libraries == ("demo",)
+    assert config.c_flags == ("-pthread",)
+    assert config.linker_flags == ("-Wl,-dead_strip",)
+
+
+def test_empty_native_table_is_allowed(tmp_path: Path) -> None:
+    from cinder.project import resolve_project
+
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "main.ci").write_text(
+        "def main() -> i32:\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"demo\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n"
+        "\n"
+        "[native]\n",
+        encoding="utf-8",
+    )
+
+    config = resolve_project(tmp_path)
+    assert config.libraries == ()
+    assert config.include_dirs == ()
+
+
+@pytestmark_native
+def test_native_link_files_and_libraries_build(tmp_path: Path) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    vendor_lib = tmp_path / "vendor" / "lib"
+    vendor_lib.mkdir(parents=True)
+
+    stub_c = tmp_path / "stub.c"
+    stub_c.write_text("int native_answer(void) { return 7; }\n", encoding="utf-8")
+    stub_o = tmp_path / "stub.o"
+    archive = vendor_lib / "libnative_answer.a"
+    compile_stub = subprocess.run(
+        [
+            shutil.which("cc") or "cc",
+            "-c",
+            str(stub_c),
+            "-o",
+            str(stub_o),
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert compile_stub.returncode == 0, compile_stub.stderr
+    archive_stub = subprocess.run(
+        [shutil.which("ar") or "ar", "rcs", str(archive), str(stub_o)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert archive_stub.returncode == 0, archive_stub.stderr
+
+    (source_root / "main.ci").write_text(
+        "extern \"C\":\n"
+        "    def native_answer() -> c_int\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return cast[i32](native_answer() - 7)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"native_link_demo\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n"
+        "\n"
+        "[native]\n"
+        "library-dirs = [\"vendor/lib\"]\n"
+        "libraries = [\"native_answer\"]\n"
+        "link-files = [\"vendor/lib/libnative_answer.a\"]\n"
+        "cflags = [\"-DCINDER_NATIVE_PRESENT\"]\n",
+        encoding="utf-8",
+    )
+
+    artifact = Compiler().build(
+        tmp_path,
+        output=tmp_path / "program",
+        build_dir=tmp_path / "build",
+    )
+    command = artifact.toolchain.command
+    assert str(archive.resolve()) in command
+    assert f"-L{(tmp_path / 'vendor' / 'lib').resolve()}" in command
+    assert "-lnative_answer" in command
+    assert "-DCINDER_NATIVE_PRESENT" in command
+    assert command.index(str(archive.resolve())) < command.index("-lnative_answer")
+
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytestmark_native
+def test_cli_cflags_and_ldflags_append_after_manifest(tmp_path: Path) -> None:
+    from cinder.compiler import CompilerOptions
+
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (source_root / "main.ci").write_text(
+        "def main() -> i32:\n    return 0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"flag_order\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n"
+        "\n"
+        "[native]\n"
+        "cflags = [\"-DCINDER_NATIVE_FLAG\"]\n"
+        "ldflags = [\"-Wl,-dead_strip\"]\n",
+        encoding="utf-8",
+    )
+
+    artifact = Compiler(
+        CompilerOptions(
+            c_flags=("-DCINDER_CLI_FLAG",),
+            linker_flags=("-Wl,-x",),
+        )
+    ).build(
+        tmp_path,
+        output=tmp_path / "program",
+        build_dir=tmp_path / "build",
+    )
+    command = list(artifact.toolchain.command)
+    assert command.index("-DCINDER_NATIVE_FLAG") < command.index("-DCINDER_CLI_FLAG")
+    assert command.index("-Wl,-dead_strip") < command.index("-Wl,-x")

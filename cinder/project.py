@@ -22,6 +22,12 @@ class ProjectConfig:
     source_root: Path
     entry: Path
     manifest: Path | None = None
+    include_dirs: tuple[Path, ...] = ()
+    library_dirs: tuple[Path, ...] = ()
+    libraries: tuple[str, ...] = ()
+    link_files: tuple[Path, ...] = ()
+    c_flags: tuple[str, ...] = ()
+    linker_flags: tuple[str, ...] = ()
 
     @property
     def source_roots(self) -> tuple[Path, ...]:
@@ -236,6 +242,12 @@ def resolve_project(path: Path | str) -> ProjectConfig:
             source_root=configured.source_root,
             entry=requested,
             manifest=configured.manifest,
+            include_dirs=configured.include_dirs,
+            library_dirs=configured.library_dirs,
+            libraries=configured.libraries,
+            link_files=configured.link_files,
+            c_flags=configured.c_flags,
+            linker_flags=configured.linker_flags,
         )
 
     return ProjectConfig(
@@ -274,6 +286,13 @@ def _read_manifest(manifest: Path) -> ProjectConfig:
         payload = tomllib.loads(manifest.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as error:
         raise ProjectError(f"invalid project manifest {manifest}: {error}") from error
+
+    allowed_tables = {"project", "native"}
+    unknown_tables = sorted(set(payload) - allowed_tables)
+    if unknown_tables:
+        raise ProjectError(
+            f"unknown top-level table(s) in {manifest}: {', '.join(unknown_tables)}"
+        )
 
     project = payload.get("project")
     if not isinstance(project, dict):
@@ -316,13 +335,130 @@ def _read_manifest(manifest: Path) -> ProjectConfig:
     if not entry.is_file():
         raise ProjectError(f"project entry source does not exist: {entry}")
 
+    native = _read_native_table(payload.get("native"), root=root, manifest=manifest)
+
     return ProjectConfig(
         name=name,
         root=root,
         source_root=source_root,
         entry=entry,
         manifest=manifest.resolve(),
+        include_dirs=native.include_dirs,
+        library_dirs=native.library_dirs,
+        libraries=native.libraries,
+        link_files=native.link_files,
+        c_flags=native.c_flags,
+        linker_flags=native.linker_flags,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _NativeConfig:
+    include_dirs: tuple[Path, ...] = ()
+    library_dirs: tuple[Path, ...] = ()
+    libraries: tuple[str, ...] = ()
+    link_files: tuple[Path, ...] = ()
+    c_flags: tuple[str, ...] = ()
+    linker_flags: tuple[str, ...] = ()
+
+
+def _read_native_table(
+    native: object,
+    *,
+    root: Path,
+    manifest: Path,
+) -> _NativeConfig:
+    if native is None:
+        return _NativeConfig()
+    if not isinstance(native, dict):
+        raise ProjectError(f"[native] in {manifest} must be a table")
+
+    allowed = {
+        "include-dirs",
+        "library-dirs",
+        "libraries",
+        "link-files",
+        "cflags",
+        "ldflags",
+    }
+    unknown = sorted(set(native) - allowed)
+    if unknown:
+        raise ProjectError(
+            f"unknown [native] key(s) in {manifest}: {', '.join(unknown)}"
+        )
+
+    return _NativeConfig(
+        include_dirs=_native_paths(
+            native.get("include-dirs", []),
+            key="include-dirs",
+            root=root,
+        ),
+        library_dirs=_native_paths(
+            native.get("library-dirs", []),
+            key="library-dirs",
+            root=root,
+        ),
+        libraries=_native_library_names(native.get("libraries", [])),
+        link_files=_native_paths(
+            native.get("link-files", []),
+            key="link-files",
+            root=root,
+        ),
+        c_flags=_native_flag_strings(native.get("cflags", []), key="cflags"),
+        linker_flags=_native_flag_strings(native.get("ldflags", []), key="ldflags"),
+    )
+
+
+def _native_paths(value: object, *, key: str, root: Path) -> tuple[Path, ...]:
+    if not isinstance(value, list):
+        raise ProjectError(f"[native].{key} must be an array of strings")
+    paths: list[Path] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise ProjectError(
+                f"[native].{key}[{index}] must be a non-empty string"
+            )
+        candidate = Path(item.strip())
+        resolved = candidate if candidate.is_absolute() else (root / candidate)
+        paths.append(resolved.resolve())
+    return tuple(paths)
+
+
+def _native_library_names(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ProjectError("[native].libraries must be an array of strings")
+    names: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise ProjectError(
+                f"[native].libraries[{index}] must be a non-empty string"
+            )
+        name = item.strip()
+        if name.startswith("-"):
+            raise ProjectError(
+                f"[native].libraries[{index}] must be a short library name, "
+                f"not a flag (got {name!r})"
+            )
+        if "/" in name or "\\" in name:
+            raise ProjectError(
+                f"[native].libraries[{index}] must be a short library name "
+                f"without path separators (got {name!r})"
+            )
+        names.append(name)
+    return tuple(names)
+
+
+def _native_flag_strings(value: object, *, key: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ProjectError(f"[native].{key} must be an array of strings")
+    flags: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise ProjectError(
+                f"[native].{key}[{index}] must be a non-empty string"
+            )
+        flags.append(item.strip())
+    return tuple(flags)
 
 
 def _find_manifest(start: Path) -> Path | None:
