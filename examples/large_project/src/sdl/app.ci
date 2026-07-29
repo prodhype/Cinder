@@ -18,7 +18,7 @@ def create_app(title: const char*, width: c_int, height: c_int) -> App:
         sdl.MIX_DEFAULT_FREQUENCY,
         sdl.MIX_DEFAULT_FORMAT,
         sdl.MIX_DEFAULT_CHANNELS,
-        8,
+        128,
     ) != 0:
         print("Mix_OpenAudio failed:", sdl.SDL_GetError())
         sdl.SDL_Quit()
