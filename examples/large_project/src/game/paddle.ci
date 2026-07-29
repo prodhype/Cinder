@@ -25,7 +25,7 @@ struct Paddle:
         if self.bounds.x > max_x:
             self.bounds.x = max_x
 
-    def draw(self: &const Paddle, renderer: sdl.Renderer) -> void:
+    def draw(self: &const Paddle, renderer: *sdl.SDL_Renderer) -> void:
         draw.fill_rect(
             renderer,
             cast[c_int](self.bounds.x),
