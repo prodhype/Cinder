@@ -186,3 +186,38 @@ def test_opaque_codegen_keeps_unprefixed_c_name(tmp_path: Path) -> None:
     assert "typedef" not in header or "FILE" in header
     assert "cinder_" not in header.split("FILE")[0][-40:] or True
     assert "cinder_opaque_c_name" not in header.replace("cinder_gen", "")
+
+
+def test_opaque_module_attribute_codegen_does_not_assert(tmp_path: Path) -> None:
+    """type_name(module.Opaque) forces _emit_attribute on a module_type without nominal."""
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"opaque_attr_cg\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "bindings.ci").write_text(
+        "extern import \"stdio.h\"\n"
+        "\n"
+        "extern \"C\":\n"
+        "    type FILE\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import bindings\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    name = type_name(bindings.FILE)\n"
+        "    print(name)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    project = Compiler().compile_project(tmp_path)
+    main_source = project.units_by_name["main"].c_source
+    # type_name lowers to a string literal and may void-cast the attribute (FILE).
+    assert '"FILE"' in main_source
+    assert "(FILE)" in main_source or "(void)(FILE)" in main_source or "FILE)," in main_source
