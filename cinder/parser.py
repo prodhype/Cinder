@@ -232,9 +232,18 @@ class Parser:
             if self.match(TokenKind.NEWLINE):
                 continue
             decorators = self.parse_decorators()
+            if self.at(TokenKind.NAME) and self.current.lexeme == "type":
+                if decorators:
+                    self.error(
+                        "opaque type declarations cannot have decorators",
+                        self.current.span,
+                        code="P147",
+                    )
+                declarations.append(self.parse_extern_type())
+                continue
             if not self.at(TokenKind.DEF):
                 self.error(
-                    "only function declarations are allowed in extern blocks",
+                    "only opaque type and function declarations are allowed in extern blocks",
                     self.current.span,
                     code="P020",
                 )
@@ -243,6 +252,14 @@ class Parser:
             )
         self.expect(TokenKind.DEDENT, "expected end of external block", code="P021")
         return declarations
+
+    def parse_extern_type(self) -> ast.ExternTypeDecl:
+        type_token = self.expect(TokenKind.NAME, "expected 'type'", code="P145")
+        if type_token.lexeme != "type":
+            self.error("expected 'type'", type_token.span, code="P145")
+        name = self.expect(TokenKind.NAME, "expected opaque type name", code="P146")
+        end = self.expect(TokenKind.NEWLINE, "expected newline after opaque type", code="P148").span
+        return ast.ExternTypeDecl(type_token.span.merge(end), name.lexeme)
 
     def parse_dotted_name(self) -> str:
         parts = [self.expect(TokenKind.NAME, "expected a module name", code="P022").lexeme]

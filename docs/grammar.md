@@ -34,9 +34,14 @@ from_import_decl   := "from" dotted_name "import" imported_name
 imported_name      := NAME ("as" NAME)?
 extern_import_decl := "extern" "import" STRING NEWLINE
 extern_block       := "extern" STRING ":" external_suite
+external_suite     := NEWLINE INDENT external_item+ DEDENT
+external_item      := opaque_type_decl | function_decl
+opaque_type_decl   := "type" NAME NEWLINE
 
 dotted_name        := NAME ("." NAME)*
 ```
+
+`type Name` inside `extern "C"` declares an opaque C type. The word `type` is contextual there so identifiers such as field names may still be called `type`. Opaque types are module-exported and usable from importers as `*Module.Name` or `from module import Name`.
 
 A source file is one module. Local modules resolve below the configured project source root. Built-in modules such as `stdio`, `math`, `stdlib`, and `cinder` are supplied by the compiler.
 

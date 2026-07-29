@@ -108,6 +108,11 @@ class ExternImportDecl(TopLevel):
 
 
 @dataclass(slots=True)
+class ExternTypeDecl(TopLevel):
+    name: str
+
+
+@dataclass(slots=True)
 class FunctionDecl(TopLevel):
     name: str
     parameters: list[Parameter]
@@ -209,6 +214,10 @@ class Module(Node):
     @property
     def extern_imports(self) -> list[ExternImportDecl]:
         return [item for item in self.items if isinstance(item, ExternImportDecl)]
+
+    @property
+    def extern_types(self) -> list[ExternTypeDecl]:
+        return [item for item in self.items if isinstance(item, ExternTypeDecl)]
 
     @property
     def structs(self) -> list[StructDecl]:
@@ -492,6 +501,7 @@ type TopLevelItem = (
     ImportDecl
     | FromImportDecl
     | ExternImportDecl
+    | ExternTypeDecl
     | FunctionDecl
     | StructDecl
     | ClassDecl

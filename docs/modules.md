@@ -63,7 +63,7 @@ Compiler-provided modules such as `stdio`, `math`, `stdlib`, `string`, and `cind
 
 Imports are discovered from parsed top-level declarations. The loader performs a depth-first traversal and records modules in dependency-first order. A cycle is diagnosed at the import that closes it, including the cycle path.
 
-The checker receives only modules that have already been checked. Imported function signatures, global types, constants, nominal types, C includes, and per-module link libraries therefore come from semantic models rather than textual source concatenation. Project-wide native libraries and flags still come from the optional `[native]` table and the CLI.
+The checker receives only modules that have already been checked. Imported function signatures, global types, constants, nominal types, opaque C types from `extern "C"`, C includes, and per-module link libraries therefore come from semantic models rather than textual source concatenation. Project-wide native libraries and flags still come from the optional `[native]` table and the CLI.
 
 ## Imports
 
