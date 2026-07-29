@@ -67,7 +67,7 @@ struct World:
             else:
                 self.reset_round()
 
-    def draw_hud(self: &const World, renderer: sdl.Renderer) -> void:
+    def draw_hud(self: &const World, renderer: *sdl.SDL_Renderer) -> void:
         for life in range(0, self.lives):
             draw.fill_rect(
                 renderer,
@@ -108,7 +108,7 @@ struct World:
                 draw.Color(r=220, g=90, b=90, a=255),
             )
 
-    def draw(self: &const World, renderer: sdl.Renderer) -> void:
+    def draw(self: &const World, renderer: *sdl.SDL_Renderer) -> void:
         draw.clear(renderer, draw.Color(r=18, g=22, b=30, a=255))
         self.bricks.draw(renderer)
         self.paddle.draw(renderer)

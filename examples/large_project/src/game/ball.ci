@@ -75,7 +75,7 @@ struct Ball:
     def fell_off(self: &const Ball) -> bool:
         return self.bounds.y > cast[f32](config.WINDOW_HEIGHT)
 
-    def draw(self: &const Ball, renderer: sdl.Renderer) -> void:
+    def draw(self: &const Ball, renderer: *sdl.SDL_Renderer) -> void:
         draw.fill_rect(
             renderer,
             cast[c_int](self.bounds.x),

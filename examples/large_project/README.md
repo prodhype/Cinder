@@ -14,8 +14,9 @@ src/
   game/                 # config, math2d, paddle, ball, bricks, world, loop
 ```
 
-Thirteen `.ci` modules under `src/`. Opaque SDL handles are wrapped in Cinder
-structs in `sdl/bindings.ci` so other modules can pass them safely.
+Thirteen `.ci` modules under `src/`. `sdl/bindings.ci` declares opaque C types
+(`type SDL_Window`, and so on) so other modules can use `*sdl.SDL_Renderer`
+directly without `*void` handle wrappers.
 
 The manifest already lists the short library names:
 

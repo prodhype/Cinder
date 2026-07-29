@@ -1,32 +1,32 @@
 import sdl.bindings as sdl
 
 struct Sounds:
-    hit: sdl.Chunk
-    brick: sdl.Chunk
-    wall: sdl.Chunk
-    lose: sdl.Chunk
+    hit: *sdl.Mix_Chunk
+    brick: *sdl.Mix_Chunk
+    wall: *sdl.Mix_Chunk
+    lose: *sdl.Mix_Chunk
 
 
 def load_sounds() -> Sounds:
     return Sounds(
-        hit=sdl.chunk_from_raw(sdl.Mix_LoadWAV("assets/hit.wav")),
-        brick=sdl.chunk_from_raw(sdl.Mix_LoadWAV("assets/brick.wav")),
-        wall=sdl.chunk_from_raw(sdl.Mix_LoadWAV("assets/wall.wav")),
-        lose=sdl.chunk_from_raw(sdl.Mix_LoadWAV("assets/lose.wav")),
+        hit=sdl.Mix_LoadWAV("assets/hit.wav"),
+        brick=sdl.Mix_LoadWAV("assets/brick.wav"),
+        wall=sdl.Mix_LoadWAV("assets/wall.wav"),
+        lose=sdl.Mix_LoadWAV("assets/lose.wav"),
     )
 
 
-def play(chunk: sdl.Chunk) -> void:
-    if chunk.ptr != null:
-        sdl.Mix_PlayChannel(-1, sdl.chunk_raw(chunk), 0)
+def play(chunk: *sdl.Mix_Chunk) -> void:
+    if chunk != null:
+        sdl.Mix_PlayChannel(-1, chunk, 0)
 
 
 def free_sounds(sounds: Sounds) -> void:
-    if sounds.hit.ptr != null:
-        sdl.Mix_FreeChunk(sdl.chunk_raw(sounds.hit))
-    if sounds.brick.ptr != null:
-        sdl.Mix_FreeChunk(sdl.chunk_raw(sounds.brick))
-    if sounds.wall.ptr != null:
-        sdl.Mix_FreeChunk(sdl.chunk_raw(sounds.wall))
-    if sounds.lose.ptr != null:
-        sdl.Mix_FreeChunk(sdl.chunk_raw(sounds.lose))
+    if sounds.hit != null:
+        sdl.Mix_FreeChunk(sounds.hit)
+    if sounds.brick != null:
+        sdl.Mix_FreeChunk(sounds.brick)
+    if sounds.wall != null:
+        sdl.Mix_FreeChunk(sounds.wall)
+    if sounds.lose != null:
+        sdl.Mix_FreeChunk(sounds.lose)

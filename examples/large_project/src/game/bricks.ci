@@ -44,7 +44,7 @@ struct Bricks:
             return true
         return false
 
-    def draw(self: &const Bricks, renderer: sdl.Renderer) -> void:
+    def draw(self: &const Bricks, renderer: *sdl.SDL_Renderer) -> void:
         for index in range(0, config.BRICK_COUNT):
             if not self.alive[index]:
                 continue

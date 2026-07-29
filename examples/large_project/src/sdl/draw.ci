@@ -7,14 +7,13 @@ struct Color:
     a: u8
 
 
-def clear(renderer: sdl.Renderer, color: Color) -> void:
-    raw = sdl.renderer_raw(renderer)
-    sdl.SDL_SetRenderDrawColor(raw, color.r, color.g, color.b, color.a)
-    sdl.SDL_RenderClear(raw)
+def clear(renderer: *sdl.SDL_Renderer, color: Color) -> void:
+    sdl.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a)
+    sdl.SDL_RenderClear(renderer)
 
 
 def fill_rect(
-    renderer: sdl.Renderer,
+    renderer: *sdl.SDL_Renderer,
     x: c_int,
     y: c_int,
     w: c_int,
@@ -22,10 +21,9 @@ def fill_rect(
     color: Color,
 ) -> void:
     rect = sdl.Rect(x=x, y=y, w=w, h=h)
-    raw = sdl.renderer_raw(renderer)
-    sdl.SDL_SetRenderDrawColor(raw, color.r, color.g, color.b, color.a)
+    sdl.SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a)
     sdl.render_fill_rect(renderer, &rect)
 
 
-def present(renderer: sdl.Renderer) -> void:
-    sdl.SDL_RenderPresent(sdl.renderer_raw(renderer))
+def present(renderer: *sdl.SDL_Renderer) -> void:
+    sdl.SDL_RenderPresent(renderer)
