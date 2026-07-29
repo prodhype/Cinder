@@ -71,6 +71,8 @@ def compile_c11(
     linker_flags: Sequence[str],
     include_dirs: Sequence[Path],
     debug: bool,
+    library_dirs: Sequence[Path] = (),
+    link_files: Sequence[Path] = (),
 ) -> ToolchainResult:
     output.parent.mkdir(parents=True, exist_ok=True)
     sources = _source_paths(generated_c)
@@ -84,10 +86,13 @@ def compile_c11(
             runtime_c,
             runtime_include,
             output,
+            libraries,
             c_flags,
             linker_flags,
             include_dirs,
             debug,
+            library_dirs,
+            link_files,
         )
     else:
         command = _unix_command(
@@ -101,6 +106,8 @@ def compile_c11(
             linker_flags,
             include_dirs,
             debug,
+            library_dirs,
+            link_files,
         )
 
     process = subprocess.run(
@@ -140,6 +147,8 @@ def _unix_command(
     linker_flags: Sequence[str],
     include_dirs: Sequence[Path],
     debug: bool,
+    library_dirs: Sequence[Path],
+    link_files: Sequence[Path],
 ) -> list[str]:
     command = compiler.split()
     command.extend(
@@ -156,6 +165,8 @@ def _unix_command(
     command.extend(c_flags)
     command.extend(str(path) for path in generated_c)
     command.extend((str(runtime_c), "-o", str(output)))
+    command.extend(str(path) for path in _unique_paths(link_files))
+    command.extend(f"-L{path}" for path in _unique_paths(library_dirs))
     command.extend(f"-l{library}" for library in dict.fromkeys(libraries))
     command.extend(linker_flags)
     return command
@@ -167,10 +178,13 @@ def _msvc_command(
     runtime_c: Path,
     runtime_include: Path,
     output: Path,
+    libraries: Sequence[str],
     c_flags: Sequence[str],
     linker_flags: Sequence[str],
     include_dirs: Sequence[Path],
     debug: bool,
+    library_dirs: Sequence[Path],
+    link_files: Sequence[Path],
 ) -> list[str]:
     command = compiler.split()
     command.extend(
@@ -186,9 +200,16 @@ def _msvc_command(
     command.extend(c_flags)
     command.extend(str(path) for path in generated_c)
     command.extend((str(runtime_c), f"/Fe:{output}"))
-    if linker_flags:
+
+    link_args: list[str] = []
+    link_args.extend(str(path) for path in _unique_paths(link_files))
+    link_args.extend(f"/LIBPATH:{path}" for path in _unique_paths(library_dirs))
+    for library in dict.fromkeys(libraries):
+        link_args.append(library if library.lower().endswith(".lib") else f"{library}.lib")
+    link_args.extend(linker_flags)
+    if link_args:
         command.append("/link")
-        command.extend(linker_flags)
+        command.extend(link_args)
     return command
 
 

@@ -17,6 +17,13 @@ src/
 Thirteen `.ci` modules under `src/`. Opaque SDL handles are wrapped in Cinder
 structs in `sdl/bindings.ci` so other modules can pass them safely.
 
+The manifest already lists the short library names:
+
+```toml
+[native]
+libraries = ["SDL2", "SDL2_mixer"]
+```
+
 ## Controls
 
 - Left / Right or A / D — move paddle
@@ -28,7 +35,7 @@ Score and lives also print to stdout. The on-screen HUD is colored rect bars
 
 ## Dependencies
 
-Install SDL2 and SDL_mixer system-wide:
+Install SDL2 and SDL_mixer system-wide (dynamic link, fine for local play):
 
 ```sh
 # macOS (Homebrew)
@@ -42,46 +49,66 @@ sudo apt install libsdl2-dev libsdl2-mixer-dev
 
 Run commands from this directory so `assets/*.wav` resolve.
 
-**macOS (Homebrew):**
+**macOS (Homebrew)** — libraries come from `cinder.toml`; pass include/search paths:
 
 ```sh
 cinder build . -o breakout \
   -I "$(brew --prefix)/include" \
   -I "$(brew --prefix)/include/SDL2" \
-  --ldflag="-L$(brew --prefix)/lib" \
-  --ldflag=-lSDL2 \
-  --ldflag=-lSDL2_mixer
+  --ldflag="-L$(brew --prefix)/lib"
 
 ./breakout
 ```
 
-Or with `cinder run` (same include/link flags):
+Or:
 
 ```sh
 cinder run . \
   -I "$(brew --prefix)/include" \
   -I "$(brew --prefix)/include/SDL2" \
-  --ldflag="-L$(brew --prefix)/lib" \
-  --ldflag=-lSDL2 \
-  --ldflag=-lSDL2_mixer
+  --ldflag="-L$(brew --prefix)/lib"
 ```
 
-**Linux (pkg-config):**
+**Linux:**
 
 ```sh
 cinder build . -o breakout \
   -I /usr/include \
-  -I /usr/include/SDL2 \
-  --ldflag=-lSDL2 \
-  --ldflag=-lSDL2_mixer
+  -I /usr/include/SDL2
 
 ./breakout
 ```
 
-`cinder.toml` does not store linker flags yet; pass `-I` / `--ldflag` on the CLI.
-Both `-I …/include` and `-I …/include/SDL2` are needed: Cinder emits
+Both `-I …/include` and `-I …/include/SDL2` are typically needed: Cinder emits
 `#include "SDL2/SDL.h"`, while SDL_mixer headers include `"SDL_stdinc.h"` as a
-sibling of `SDL.h`.
+sibling of `SDL.h`. CLI `-I` / `--ldflag` append after manifest `[native]` values.
+
+## Single-binary / vendored static libs
+
+For a redistributable executable, vendor headers and static archives under the
+project (for example `third_party/sdl2/`) and point the manifest at them with
+**project-relative** paths—no machine-local Homebrew prefixes:
+
+```toml
+[native]
+include-dirs = [
+  "third_party/sdl2/include",
+  "third_party/sdl2/include/SDL2",
+]
+library-dirs = ["third_party/sdl2/lib"]
+libraries = ["SDL2", "SDL2_mixer"]
+# Prefer explicit archives when you want the linker to pull static objects:
+link-files = [
+  "third_party/sdl2/lib/libSDL2.a",
+  "third_party/sdl2/lib/libSDL2_mixer.a",
+]
+# Escape hatch for platform flags, e.g. macOS frameworks or -Wl options:
+# ldflags = ["-framework", "Cocoa"]
+```
+
+Then `cinder build . -o breakout` needs no extra `-I`/`-L`/`-l` on the CLI. The
+resulting binary still embeds the Cinder runtime; static SDL archives keep
+third-party code inside that one file (subject to each library’s license).
 
 ## Notes
 

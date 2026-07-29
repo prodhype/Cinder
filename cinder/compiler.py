@@ -220,9 +220,14 @@ class Compiler:
             compiler = discover_compiler(self.options.compiler)
             libraries = tuple(
                 dict.fromkeys(
-                    library
-                    for unit in project.units
-                    for library in unit.semantic.libraries
+                    [
+                        *(
+                            library
+                            for unit in project.units
+                            for library in unit.semantic.libraries
+                        ),
+                        *config.libraries,
+                    ]
                 )
             )
             source_directories = tuple(
@@ -235,15 +240,18 @@ class Compiler:
                 runtime_include=runtime_include,
                 output=output_path,
                 libraries=libraries,
-                c_flags=self.options.c_flags,
-                linker_flags=self.options.linker_flags,
+                c_flags=(*config.c_flags, *self.options.c_flags),
+                linker_flags=(*config.linker_flags, *self.options.linker_flags),
                 include_dirs=(
                     working_directory,
                     *project.graph.config.source_roots,
                     *source_directories,
+                    *config.include_dirs,
                     *self.options.include_dirs,
                 ),
                 debug=self.options.debug,
+                library_dirs=config.library_dirs,
+                link_files=config.link_files,
             )
 
         entry_source = working_directory / project.entry_unit.generated_source_name

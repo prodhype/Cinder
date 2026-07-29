@@ -129,7 +129,7 @@ cinder run examples/class_project
 `build` writes that same tree under `.cinder/<project-name>/` unless you supply `--build-dir`.
 Then `build` compiles and links each generated translation unit.
 
-You can send compiler and linker flags:
+You can send compiler and linker flags (these append after any `[native]` values in `cinder.toml`):
 
 ```sh
 cinder build app.ci --cc clang --cflag=-O3 --ldflag=-pthread -I vendor/include
@@ -366,7 +366,14 @@ A project uses a `cinder.toml` file:
 name = "example"
 source-root = "src"
 entry = "main.ci"
+
+[native]
+libraries = ["SDL2"]
+include-dirs = ["third_party/sdl2/include"]
+library-dirs = ["third_party/sdl2/lib"]
 ```
+
+Optional `[native]` supplies include dirs, library search paths, short `-l` names, explicit `link-files` (static archives for single-binary builds), and raw `cflags` / `ldflags`. Relative paths resolve from the project root. CLI `-I` / `--cflag` / `--ldflag` append after the manifest. See `docs/modules.md`.
 
 A usual tree is:
 
