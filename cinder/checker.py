@@ -2216,8 +2216,38 @@ class Checker:
                 code="C238",
                 note="bind the class value to a local before borrowing it as &dyn",
             )
-        if isinstance(target_raw, (ReferenceType, DynType)):
+        self._record_implicit_value_use(target, source, expression)
+
+    def _record_implicit_value_use(
+        self,
+        target: Type,
+        source: Type,
+        expression: ast.Expression,
+    ) -> ValueUseKind | None:
+        """Record storage borrowed by an accepted implicit conversion."""
+        if not self._can_assign(target, source) and not self._is_list_slice_argument(
+            target, source
+        ):
+            return None
+        target_raw = strip_const(target)
+        source_raw = strip_const(source)
+        source_value = value_type(source)
+        borrow = False
+        if isinstance(target_raw, ReferenceType):
+            borrow = not isinstance(source_raw, (PointerType, ReferenceType))
+        elif isinstance(target_raw, DynType):
+            borrow = (
+                not isinstance(source_raw, (DynType, PointerType, ReferenceType))
+                and self._class_value_info(source_raw)[0] is not None
+            )
+        elif isinstance(target_raw, SliceType):
+            borrow = isinstance(source_value, (ArrayType, ListType))
+        elif isinstance(target_raw, PointerType):
+            borrow = isinstance(source_value, ArrayType)
+        if borrow:
             self._record_direct_value_use(expression, ValueUseKind.BORROW)
+            return ValueUseKind.BORROW
+        return None
 
     @staticmethod
     def _is_list_slice_argument(target: Type, source: Type) -> bool:
@@ -2264,7 +2294,8 @@ class Checker:
                 code="C293",
                 note="use a []const T parameter while iteration is active",
             )
-        self._record_direct_value_use(expression, ValueUseKind.BORROW)
+        source = self.expr_types.get(id(expression), ERROR)
+        self._record_implicit_value_use(target, source, expression)
 
     def _make_function_symbol(
         self,
@@ -3097,6 +3128,9 @@ class Checker:
                 )
             if effective_value != target_set:
                 self._type_mismatch(target_set, effective_value, statement.value.span)
+            self._record_direct_value_use(statement.target, ValueUseKind.BORROW)
+            if isinstance(effective_value, SetType):
+                self._record_direct_value_use(statement.value, ValueUseKind.BORROW)
             return
 
         if isinstance(statement.target, ast.IndexExpr):
@@ -3229,6 +3263,7 @@ class Checker:
                     statement.span,
                     code="C040",
                 )
+        self._record_direct_value_use(statement.target, ValueUseKind.BORROW)
 
     def _check_lvalue(self, expression: ast.Expression) -> tuple[Type, bool, bool]:
         if isinstance(expression, ast.NameExpr):
@@ -3425,6 +3460,9 @@ class Checker:
             )
             item_type = ERROR
 
+        if isinstance(iterable_value, (ListType, MapType, SetType, ArrayType)):
+            self._record_direct_value_use(statement.iterable, ValueUseKind.BORROW)
+
         if statement.annotation is not None:
             declared = self._resolve_type(statement.annotation)
             if not self._can_assign(declared, item_type):
@@ -3537,7 +3575,8 @@ class Checker:
         return False
 
     def _check_match(self, statement: ast.MatchStmt) -> None:
-        subject_type = value_type(self._check_expr(statement.value))
+        original_subject_type = self._check_expr(statement.value)
+        subject_type = value_type(original_subject_type)
         nominal = self.nominal_symbols.get(subject_type)
         enum = nominal if isinstance(nominal, EnumSymbol) else None
         variant = nominal if isinstance(nominal, VariantSymbol) else None
@@ -3550,6 +3589,11 @@ class Checker:
                 statement.value.span,
                 code="C119",
             )
+        elif variant is not None or (
+            isinstance(subject_type, (ResultType, OptionType))
+            and self.type_needs_drop(subject_type)
+        ):
+            self._record_direct_value_use(statement.value, ValueUseKind.BORROW)
 
         if enum is not None:
             required = set(enum.members)
@@ -3873,6 +3917,8 @@ class Checker:
                 code="C134",
             )
         self.propagate_resolutions[id(expression)] = PropagateResolution(operand_type, return_type)
+        if self.type_needs_drop(operand_type):
+            self._record_direct_value_use(expression.value, ValueUseKind.MOVE)
         return operand_type.ok
 
     def _check_literal(self, expression: ast.LiteralExpr, expected: Type | None) -> Type:
@@ -3929,7 +3975,8 @@ class Checker:
         self.name_symbols[id(expression)] = symbol
         if isinstance(symbol, VariableSymbol):
             self._check_not_moved(expression)
-            self._record_direct_value_use(expression, ValueUseKind.COPY)
+            if id(expression) not in self.value_use_resolutions:
+                self._record_direct_value_use(expression, ValueUseKind.COPY)
             return symbol.type
         if isinstance(symbol, ComptimeVariableSymbol):
             return symbol.type
@@ -3983,6 +4030,7 @@ class Checker:
             if isinstance(raw, (PointerType, ReferenceType)):
                 return raw.inner
             if isinstance(raw, OwnedType):
+                self._record_direct_value_use(expression.operand, ValueUseKind.BORROW)
                 return raw.inner
             self._error(
                 "dereference requires a pointer, reference, or Owned value",
@@ -4045,6 +4093,8 @@ class Checker:
                 resolution_kind,
                 right_value,
             )
+            if isinstance(right_value, (MapType, SetType)):
+                self._record_direct_value_use(expression.right, ValueUseKind.BORROW)
             return BOOL
 
         if isinstance(left_value, SetType) or isinstance(right_value, SetType):
@@ -4070,12 +4120,16 @@ class Checker:
                     }[operator],
                     left_value,
                 )
+                self._record_direct_value_use(expression.left, ValueUseKind.BORROW)
+                self._record_direct_value_use(expression.right, ValueUseKind.BORROW)
                 return left_value
             if operator in {"==", "!=", "<", "<=", ">", ">="}:
                 self.binary_resolutions[id(expression)] = BinaryResolution(
                     "set_compare",
                     left_value,
                 )
+                self._record_direct_value_use(expression.left, ValueUseKind.BORROW)
+                self._record_direct_value_use(expression.right, ValueUseKind.BORROW)
                 return BOOL
             self._error(
                 f"operator {operator!r} is not supported for Set values",
@@ -4193,7 +4247,20 @@ class Checker:
                 return self._check_attribute_on_type(expression, specialized.type)
 
         base_type = self._check_expr(expression.value)
-        return self._check_attribute_on_type(expression, base_type)
+        result = self._check_attribute_on_type(expression, base_type)
+        resolution = self.attribute_resolutions.get(id(expression))
+        if resolution is not None and resolution.kind in {
+            "field", "class_field", "dyn_field", "union_field",
+            "result_is_ok", "result_value", "result_error",
+            "option_is_some", "option_is_none", "option_value",
+            "array_data", "array_length", "slice_data", "slice_length",
+        }:
+            raw = value_type(base_type)
+            if isinstance(raw, (StructType, ClassType, UnionType, ArrayType)) or (
+                isinstance(raw, (ResultType, OptionType)) and self.type_needs_drop(raw)
+            ):
+                self._record_direct_value_use(expression.value, ValueUseKind.BORROW)
+        return result
 
     def _specialize_template_from_expected(
         self,
@@ -4693,6 +4760,7 @@ class Checker:
                 "map_lookup",
                 raw,
             )
+            self._record_direct_value_use(expression.value, ValueUseKind.BORROW)
             return raw.value
 
         index = self._check_expr(expression.index, expected=USIZE)
@@ -4718,6 +4786,7 @@ class Checker:
                     code="C272",
                 )
                 return ERROR
+            self._record_direct_value_use(expression.value, ValueUseKind.BORROW)
             return raw.elements[tuple_index]
         if isinstance(raw, ListType):
             if not self._is_addressable(expression.value):
@@ -4727,8 +4796,11 @@ class Checker:
                     code="C278",
                     note="bind the List to a local before indexing",
                 )
+            self._record_direct_value_use(expression.value, ValueUseKind.BORROW)
             return raw.inner
         if isinstance(raw, (ArrayType, SliceType, PointerType)):
+            if isinstance(raw, ArrayType):
+                self._record_direct_value_use(expression.value, ValueUseKind.BORROW)
             return raw.inner
         self._error(f"type {type_name(base)} is not indexable", expression.value.span, code="C069")
         return ERROR
@@ -4739,6 +4811,8 @@ class Checker:
         if not isinstance(raw, (ArrayType, SliceType)):
             self._error("slicing requires an array or slice", expression.value.span, code="C070")
             return ERROR
+        if isinstance(raw, ArrayType):
+            self._record_direct_value_use(expression.value, ValueUseKind.BORROW)
         for bound in (expression.start, expression.stop):
             if bound is not None:
                 bound_type = self._check_expr(bound, expected=USIZE)
@@ -5075,6 +5149,8 @@ class Checker:
                 code="C265",
             )
             return ERROR
+        if not isinstance(receiver_storage, (PointerType, ReferenceType)):
+            self._record_direct_value_use(receiver, ValueUseKind.BORROW)
 
         if self._list_storage_is_active(receiver):
             self._error(
@@ -5170,6 +5246,8 @@ class Checker:
                 code="C325",
             )
             return ERROR
+        if not isinstance(receiver_storage, (PointerType, ReferenceType)):
+            self._record_direct_value_use(receiver, ValueUseKind.BORROW)
 
         if not self._is_addressable(receiver):
             self._error(
@@ -5242,6 +5320,8 @@ class Checker:
                 code="C318",
             )
             return ERROR
+        if not isinstance(receiver_storage, (PointerType, ReferenceType)):
+            self._record_direct_value_use(receiver, ValueUseKind.BORROW)
 
         mutating = method in {"pop", "clear", "update"}
         if mutating and self._collection_storage_is_active(receiver):
@@ -5301,6 +5381,8 @@ class Checker:
             )
             if argument_type != ERROR and not self._can_assign(argument_type, actual):
                 self._type_mismatch(argument_type, actual, argument.value.span)
+            elif method == "update" and isinstance(value_type(actual), MapType):
+                self._record_direct_value_use(argument.value, ValueUseKind.BORROW)
             expected_types.append(
                 argument_type if argument_type != ERROR else None
             )
@@ -5335,6 +5417,8 @@ class Checker:
                 code="C324",
             )
             return ERROR
+        if not isinstance(receiver_storage, (PointerType, ReferenceType)):
+            self._record_direct_value_use(receiver, ValueUseKind.BORROW)
 
         algebra = {
             "union",
@@ -5399,6 +5483,10 @@ class Checker:
             )
             if argument_type != ERROR and not self._can_assign(argument_type, actual):
                 self._type_mismatch(argument_type, actual, argument.value.span)
+            elif (method == "update" or method in algebra) and isinstance(
+                value_type(actual), SetType
+            ):
+                self._record_direct_value_use(argument.value, ValueUseKind.BORROW)
             expected_types.append(
                 argument_type if argument_type != ERROR else None
             )
@@ -6122,6 +6210,10 @@ class Checker:
             actual = self._check_expr(argument.value, expected=field.type)
             if not self._can_assign(field.type, actual):
                 self._type_mismatch(field.type, actual, argument.value.span)
+            else:
+                self._record_implicit_value_use(field.type, actual, argument.value)
+                if self.type_needs_drop(field.type):
+                    self._record_direct_value_use(argument.value, ValueUseKind.MOVE)
             order.append(index)
             expected_types.append(field.type)
             field_order.append(field.name)
@@ -6259,6 +6351,14 @@ class Checker:
             self._validate_borrow_source(expected, actual, receiver)
         elif not self._can_assign(expected, actual):
             self._type_mismatch(expected, actual, receiver.span)
+        else:
+            if self.type_needs_drop(expected):
+                self._record_direct_value_use(receiver, ValueUseKind.MOVE)
+
+        if isinstance(expected, ReferenceType) and not isinstance(
+            strip_const(actual), (ReferenceType, PointerType)
+        ) and self._can_assign(expected.inner, actual):
+            self._record_direct_value_use(receiver, ValueUseKind.BORROW)
 
     def _validate_function_call(
         self,
@@ -6694,6 +6794,11 @@ class Checker:
         actual = self._check_expr(expression)
         self._require_printable_collection_addressable(expression, actual)
         self._validate_printable_type(actual, None, expression.span)
+        raw = value_type(actual)
+        if isinstance(raw, (ListType, MapType, SetType)) or (
+            isinstance(raw, TupleType) and self.type_needs_drop(raw)
+        ):
+            self._record_direct_value_use(expression, ValueUseKind.BORROW)
 
     def _check_fstring_parts(self, expression: ast.FStringExpr) -> None:
         for part in expression.parts:
@@ -6707,6 +6812,11 @@ class Checker:
             else:
                 actual = self._check_expr(part.expression)
                 self._require_printable_collection_addressable(part.expression, actual)
+                raw = value_type(actual)
+                if isinstance(raw, (ListType, MapType, SetType)) or (
+                    isinstance(raw, TupleType) and self.type_needs_drop(raw)
+                ):
+                    self._record_direct_value_use(part.expression, ValueUseKind.BORROW)
             self._validate_printable_type(actual, part.format_spec, part.span)
 
     def _require_printable_collection_addressable(
@@ -6849,6 +6959,10 @@ class Checker:
             "len", argument_order=(0,), expected_types=(None,)
         )
         self.expr_types[id(call.callee)] = FunctionValueType("len")
+        if isinstance(argument_type, (ListType, MapType, SetType, ArrayType)) or (
+            isinstance(argument_type, TupleType) and self.type_needs_drop(argument_type)
+        ):
+            self._record_direct_value_use(call.arguments[0].value, ValueUseKind.BORROW)
         return USIZE
 
     def _check_sort_call(self, call: ast.CallExpr) -> Type:
@@ -6904,6 +7018,8 @@ class Checker:
             "sort", argument_order=(0,), expected_types=(slice_type,)
         )
         self.expr_types[id(call.callee)] = FunctionValueType("sort")
+        if isinstance(argument_type, (ListType, ArrayType)):
+            self._record_direct_value_use(argument_expression, ValueUseKind.BORROW)
         return VOID
 
     @staticmethod
@@ -6950,6 +7066,10 @@ class Checker:
                         value_type_,
                         entry.value.span,
                     )
+                else:
+                    self._record_implicit_value_use(expected_value.value, value_type_, entry.value)
+                    if self.type_needs_drop(expected_value.value):
+                        self._record_direct_value_use(entry.value, ValueUseKind.MOVE)
             return expected_value
 
         if not expression.entries:
@@ -7000,6 +7120,12 @@ class Checker:
                 code="C306",
             )
             value_type_ = ERROR
+        if value_type_ != ERROR:
+            for entry in expression.entries:
+                actual = self.expr_types.get(id(entry.value), ERROR)
+                self._record_implicit_value_use(value_type_, actual, entry.value)
+                if self.type_needs_drop(value_type_):
+                    self._record_direct_value_use(entry.value, ValueUseKind.MOVE)
         return MapType(key_type, value_type_)
 
     def _check_set_literal(
@@ -7013,6 +7139,10 @@ class Checker:
                 actual = self._check_expr(element, expected=expected_value.inner)
                 if not self._can_assign(expected_value.inner, actual):
                     self._type_mismatch(expected_value.inner, actual, element.span)
+                else:
+                    self._record_implicit_value_use(expected_value.inner, actual, element)
+                    if self.type_needs_drop(expected_value.inner):
+                        self._record_direct_value_use(element, ValueUseKind.MOVE)
             return expected_value
 
         if not expression.elements:
@@ -7079,6 +7209,10 @@ class Checker:
                         actual,
                         element.span,
                     )
+                else:
+                    self._record_implicit_value_use(expected_value.inner, actual, element)
+                    if self.type_needs_drop(expected_value.inner):
+                        self._record_direct_value_use(element, ValueUseKind.MOVE)
             return ArrayType(expected_value.inner, len(expression.elements))
 
         if isinstance(expected_value, ListType):
@@ -7159,6 +7293,10 @@ class Checker:
                         actual,
                         element.span,
                     )
+                elif element_expected is not None:
+                    self._record_implicit_value_use(element_expected, actual, element)
+                    if self.type_needs_drop(element_expected):
+                        self._record_direct_value_use(element, ValueUseKind.MOVE)
             return expected_value
 
         elements: list[Type] = []
