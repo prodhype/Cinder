@@ -38,6 +38,10 @@
 solutions. It reports both fractional wall-clock seconds and implementation-defined C CPU
 ticks.
 
+`leibniz_pi.ci` approximates π with the Leibniz series over 1,000,000,000 iterations and
+reports wall-clock elapsed time in milliseconds. The loop derives each term's sign from the
+index so optimizing C compilers can auto-vectorize it.
+
 `physics.ci` demonstrates common mechanics formulas with the checked math module: energy,
 momentum, force, kinematics, projectile motion, pendulum period, and centripetal acceleration.
 
