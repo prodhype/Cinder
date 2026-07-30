@@ -1,4 +1,7 @@
 __pycache__/
 .vendor/
+third_party/sdl2/*
+!third_party/sdl2/README.md
 breakout
 breakout.exe
+large_project
