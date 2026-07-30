@@ -4,4 +4,27 @@ source-root = "src"
 entry = "main.ci"
 
 [native]
-libraries = ["SDL2", "SDL2_mixer"]
+include-dirs = [
+  "third_party/sdl2/include",
+  "third_party/sdl2/include/SDL2",
+]
+link-files = [
+  "third_party/sdl2/lib/libSDL2_mixer.a",
+  "third_party/sdl2/lib/libSDL2.a",
+]
+ldflags = [
+  "-Wl,-framework,CoreVideo",
+  "-Wl,-framework,Cocoa",
+  "-Wl,-framework,IOKit",
+  "-Wl,-framework,ForceFeedback",
+  "-Wl,-framework,Carbon",
+  "-Wl,-framework,CoreAudio",
+  "-Wl,-framework,AudioToolbox",
+  "-Wl,-framework,AVFoundation",
+  "-Wl,-framework,Foundation",
+  "-Wl,-weak_framework,GameController",
+  "-Wl,-weak_framework,Metal",
+  "-Wl,-weak_framework,QuartzCore",
+  "-Wl,-weak_framework,CoreHaptics",
+  "-lm",
+]

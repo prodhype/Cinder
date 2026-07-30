@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from enum import Enum, auto
 
-from cinder.symbols import ClassSymbol, StructSymbol
+from cinder.symbols import ClassSymbol, StructSymbol, VariableSymbol
 from cinder.types import (
     ERROR,
     ArrayType,
@@ -156,3 +158,16 @@ def drop_fields(
 ) -> Sequence[tuple[str, Type]]:
     """Field names and types in declaration order for reverse-order drops."""
     return tuple((field.name, field.type) for field in owner.fields.values())
+
+
+class ValueUseKind(Enum):
+    COPY = auto()
+    MOVE = auto()
+    BORROW = auto()
+    ADDRESS = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class ValueUseResolution:
+    kind: ValueUseKind
+    source: VariableSymbol | None

@@ -8,6 +8,8 @@ game, and plays WAV sound effects through SDL_mixer.
 ```text
 cinder.toml
 assets/                 # hit.wav, brick.wav, wall.wav, lose.wav
+scripts/vendor_static_sdl.sh
+third_party/sdl2/       # static headers + .a (generated; see below)
 src/
   main.ci
   sdl/                  # bindings, app, events, draw, audio
@@ -18,13 +20,6 @@ Thirteen `.ci` modules under `src/`. `sdl/bindings.ci` declares opaque C types
 (`type SDL_Window`, and so on) so other modules can use `*sdl.SDL_Renderer`
 directly without `*void` handle wrappers.
 
-The manifest already lists the short library names:
-
-```toml
-[native]
-libraries = ["SDL2", "SDL2_mixer"]
-```
-
 ## Controls
 
 - Left / Right or A / D — move paddle
@@ -34,85 +29,59 @@ libraries = ["SDL2", "SDL2_mixer"]
 Score and lives also print to stdout. The on-screen HUD is colored rect bars
 (no font dependency).
 
-## Dependencies
+## Single-binary build (default)
 
-Install SDL2 and SDL_mixer system-wide (dynamic link, fine for local play):
+`cinder.toml` links vendored static archives under `third_party/sdl2/`. Populate
+them once (needs `cmake`, `curl`, a C toolchain):
+
+```sh
+./scripts/vendor_static_sdl.sh
+```
+
+That builds classic SDL2 2.30.x and a WAV-only SDL2_mixer into
+`third_party/sdl2/{include,lib}`. Then:
+
+```sh
+cinder build . -o breakout
+./breakout
+```
+
+No Homebrew SDL install is required for this path. The executable embeds Cinder’s
+runtime plus SDL2 / SDL_mixer (system frameworks such as Cocoa remain dynamic).
+WAV assets under `assets/` are still loaded from disk at runtime.
+
+## Dynamic link (optional)
+
+To use system SDL instead, switch `[native]` to short library names and pass
+include/search paths on the CLI:
+
+```toml
+[native]
+libraries = ["SDL2", "SDL2_mixer"]
+```
 
 ```sh
 # macOS (Homebrew)
 brew install sdl2 sdl2_mixer
-
-# Debian/Ubuntu
-sudo apt install libsdl2-dev libsdl2-mixer-dev
-```
-
-## Build and run
-
-Run commands from this directory so `assets/*.wav` resolve.
-
-**macOS (Homebrew)** — libraries come from `cinder.toml`; pass include/search paths:
-
-```sh
 cinder build . -o breakout \
   -I "$(brew --prefix)/include" \
   -I "$(brew --prefix)/include/SDL2" \
   --ldflag="-L$(brew --prefix)/lib"
 
-./breakout
-```
-
-Or:
-
-```sh
-cinder run . \
-  -I "$(brew --prefix)/include" \
-  -I "$(brew --prefix)/include/SDL2" \
-  --ldflag="-L$(brew --prefix)/lib"
-```
-
-**Linux:**
-
-```sh
+# Linux
+sudo apt install libsdl2-dev libsdl2-mixer-dev
 cinder build . -o breakout \
   -I /usr/include \
   -I /usr/include/SDL2
-
-./breakout
 ```
 
 Both `-I …/include` and `-I …/include/SDL2` are typically needed: Cinder emits
 `#include "SDL2/SDL.h"`, while SDL_mixer headers include `"SDL_stdinc.h"` as a
-sibling of `SDL.h`. CLI `-I` / `--ldflag` append after manifest `[native]` values.
-
-## Single-binary / vendored static libs
-
-For a redistributable executable, vendor headers and static archives under the
-project (for example `third_party/sdl2/`) and point the manifest at them with
-**project-relative** paths—no machine-local Homebrew prefixes:
-
-```toml
-[native]
-include-dirs = [
-  "third_party/sdl2/include",
-  "third_party/sdl2/include/SDL2",
-]
-library-dirs = ["third_party/sdl2/lib"]
-libraries = ["SDL2", "SDL2_mixer"]
-# Prefer explicit archives when you want the linker to pull static objects:
-link-files = [
-  "third_party/sdl2/lib/libSDL2.a",
-  "third_party/sdl2/lib/libSDL2_mixer.a",
-]
-# Escape hatch for platform flags, e.g. macOS frameworks or -Wl options:
-# ldflags = ["-framework", "Cocoa"]
-```
-
-Then `cinder build . -o breakout` needs no extra `-I`/`-L`/`-l` on the CLI. The
-resulting binary still embeds the Cinder runtime; static SDL archives keep
-third-party code inside that one file (subject to each library’s license).
+sibling of `SDL.h`.
 
 ## Notes
 
-- Manual demo only — not exercised by CI (needs SDL2, SDL_mixer, and a display).
+- Manual demo only — not exercised by CI (needs a display for the interactive run).
 - Type-check without linking: `cinder check .`
 - Generated build cache lives under `.cinder/` (gitignored).
+- Vendor build trees/tarballs live under `.vendor/` (gitignored).

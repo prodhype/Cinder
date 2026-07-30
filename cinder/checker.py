@@ -18,8 +18,16 @@ from cinder.generics import (
     specialize_variant,
 )
 from cinder.ownership import (
+    ValueUseKind,
+    ValueUseResolution,
+)
+from cinder.ownership import (
     class_needs_drop as ownership_class_needs_drop,
+)
+from cinder.ownership import (
     struct_needs_drop as ownership_struct_needs_drop,
+)
+from cinder.ownership import (
     type_needs_drop as ownership_type_needs_drop,
 )
 from cinder.stdlib import builtin_global_functions, builtin_modules
@@ -68,10 +76,10 @@ from cinder.types import (
     ISIZE,
     NULL,
     PRIMITIVES,
+    U8,
     U16,
     U32,
     U64,
-    U8,
     USIZE,
     VOID,
     ArrayType,
@@ -231,9 +239,13 @@ class SemanticModel:
     global_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
     nominal_symbols: dict[Type, NominalSymbol] = dataclass_field(default_factory=dict)
     static_assert_values: dict[int, bool | None] = dataclass_field(default_factory=dict)
+    value_use_resolutions: dict[int, ValueUseResolution] = dataclass_field(default_factory=dict)
 
     def expression_type(self, expression: ast.Expression) -> Type:
         return self.expr_types.get(id(expression), ERROR)
+
+    def value_use(self, expression: ast.Expression) -> ValueUseResolution | None:
+        return self.value_use_resolutions.get(id(expression))
 
     def module_symbol(self) -> ModuleSymbol:
         constants: dict[str, ConstantSymbol] = {}
@@ -365,6 +377,7 @@ class Checker:
         self.variant_symbols: dict[int, VariantSymbol] = {}
         self.global_symbols: dict[int, VariableSymbol] = {}
         self.static_assert_values: dict[int, bool | None] = {}
+        self.value_use_resolutions: dict[int, ValueUseResolution] = {}
 
         self.current_scope = self.global_scope
         self.current_function: FunctionSymbol | None = None
@@ -437,6 +450,7 @@ class Checker:
             global_symbols=self.global_symbols,
             nominal_symbols=self.nominal_symbols,
             static_assert_values=self.static_assert_values,
+            value_use_resolutions=self.value_use_resolutions,
         )
 
     def _install_builtins(self) -> None:
@@ -2097,6 +2111,40 @@ class Checker:
     def _clear_moved(self, symbol: VariableSymbol) -> None:
         self.moved_variables.discard(id(symbol))
 
+    def _record_direct_value_use(
+        self,
+        expression: ast.Expression,
+        kind: ValueUseKind,
+    ) -> VariableSymbol | None:
+        if not isinstance(expression, ast.NameExpr):
+            return None
+        symbol = self.name_symbols.get(id(expression))
+        if not isinstance(symbol, VariableSymbol):
+            return None
+        if symbol.is_module_public:
+            return None
+        if any(symbol is global_ for global_ in self.globals.values()):
+            return None
+        existing = self.value_use_resolutions.get(id(expression))
+        if existing is not None:
+            if existing.kind is kind and existing.source is symbol:
+                return symbol
+            if existing.kind is not ValueUseKind.COPY:
+                raise AssertionError(
+                    f"incompatible value-use replacement at {expression.span}: "
+                    f"{existing.kind.name} -> {kind.name}"
+                )
+            if kind is ValueUseKind.COPY:
+                raise AssertionError(
+                    f"incompatible value-use replacement at {expression.span}: "
+                    f"{existing.kind.name} -> {kind.name}"
+                )
+        self.value_use_resolutions[id(expression)] = ValueUseResolution(
+            kind,
+            symbol,
+        )
+        return symbol
+
     def _check_not_moved(self, expression: ast.Expression) -> None:
         if not isinstance(expression, ast.NameExpr):
             return
@@ -2120,7 +2168,9 @@ class Checker:
         if self._is_owned_drop_source(expression, type_):
             return None
         if allow_transfer and self._is_transferable_drop_local(expression, type_):
-            return self._mark_moved_from(expression)
+            moved = self._mark_moved_from(expression)
+            self._record_direct_value_use(expression, ValueUseKind.MOVE)
+            return moved
         owned_container = self._owned_container(type_)
         destructible = self._destructible_class(type_)
         if owned_container is not None:
@@ -2166,6 +2216,8 @@ class Checker:
                 code="C238",
                 note="bind the class value to a local before borrowing it as &dyn",
             )
+        if isinstance(target_raw, (ReferenceType, DynType)):
+            self._record_direct_value_use(expression, ValueUseKind.BORROW)
 
     @staticmethod
     def _is_list_slice_argument(target: Type, source: Type) -> bool:
@@ -2212,6 +2264,7 @@ class Checker:
                 code="C293",
                 note="use a []const T parameter while iteration is active",
             )
+        self._record_direct_value_use(expression, ValueUseKind.BORROW)
 
     def _make_function_symbol(
         self,
@@ -3301,6 +3354,7 @@ class Checker:
                     )
             else:
                 self._mark_moved_from(value)
+                self._record_direct_value_use(value, ValueUseKind.MOVE)
 
     def _check_for_each(self, statement: ast.ForEachStmt) -> None:
         iterable_type = self._check_expr(statement.iterable)
@@ -3875,6 +3929,7 @@ class Checker:
         self.name_symbols[id(expression)] = symbol
         if isinstance(symbol, VariableSymbol):
             self._check_not_moved(expression)
+            self._record_direct_value_use(expression, ValueUseKind.COPY)
             return symbol.type
         if isinstance(symbol, ComptimeVariableSymbol):
             return symbol.type
@@ -3919,6 +3974,7 @@ class Checker:
             if not self._is_addressable(expression.operand):
                 self._error("address-of requires an addressable value", expression.operand.span, code="C053")
                 return ERROR
+            self._record_direct_value_use(expression.operand, ValueUseKind.ADDRESS)
             if isinstance(operand_type, ReferenceType):
                 return PointerType(operand_type.inner)
             return PointerType(operand_type)
@@ -5146,7 +5202,7 @@ class Checker:
             for argument in call.arguments:
                 actual = self._check_expr(argument.value, expected=expected)
                 if self._is_list_slice_argument(expected, actual):
-                    self._validate_list_slice_argument(argument.value, expected, actual)
+                    self._validate_list_slice_argument(expected, argument.value)
                 elif not self._can_assign(expected, actual):
                     self._type_mismatch(expected, actual, argument.value.span)
                 expected_types.append(expected)
