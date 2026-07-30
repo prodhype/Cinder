@@ -6188,6 +6188,7 @@ class Checker:
         order: list[int] = []
         expected_types: list[Type | None] = []
         field_order: list[str] = []
+        moved_variables: list[VariableSymbol] = []
         for field_index, field in enumerate(fields):
             argument_index = assigned[field_index]
             if argument_index is None:
@@ -6199,8 +6200,30 @@ class Checker:
                 continue
             argument = call.arguments[argument_index]
             actual = self._check_expr(argument.value, expected=field.type)
-            if not self._can_assign(field.type, actual):
+            list_slice_argument = self._is_list_slice_argument(field.type, actual)
+            if not self._can_assign(field.type, actual) and not list_slice_argument:
                 self._type_mismatch(field.type, actual, argument.value.span)
+            if list_slice_argument:
+                self._validate_list_slice_argument(field.type, argument.value)
+            self._validate_borrow_source(field.type, actual, argument.value)
+            if isinstance(field.type, ReferenceType):
+                if actual == NULL:
+                    self._error("references cannot receive null", argument.value.span, code="C079")
+                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
+                    argument.value
+                ):
+                    self._error(
+                        "reference argument must be addressable",
+                        argument.value.span,
+                        code="C080",
+                    )
+            elif self.type_needs_drop(field.type):
+                moved = self._validate_move_only_source(
+                    argument.value,
+                    strip_const(field.type),
+                )
+                if moved is not None:
+                    moved_variables.append(moved)
             order.append(argument_index)
             expected_types.append(field.type)
             field_order.append(field.name)
@@ -6212,6 +6235,7 @@ class Checker:
             argument_order=tuple(order),
             expected_types=tuple(expected_types),
             field_order=tuple(field_order),
+            moved_variables=tuple(moved_variables),
         )
         return variant.type
 
@@ -6500,9 +6524,24 @@ class Checker:
                     code="C086",
                 )
             actual = self._check_expr(argument.value, expected=field.type)
-            if not self._can_assign(field.type, actual):
+            list_slice_argument = self._is_list_slice_argument(field.type, actual)
+            if not self._can_assign(field.type, actual) and not list_slice_argument:
                 self._type_mismatch(field.type, actual, argument.value.span)
-            if self.type_needs_drop(field.type):
+            if list_slice_argument:
+                self._validate_list_slice_argument(field.type, argument.value)
+            self._validate_borrow_source(field.type, actual, argument.value)
+            if isinstance(field.type, ReferenceType):
+                if actual == NULL:
+                    self._error("references cannot receive null", argument.value.span, code="C079")
+                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
+                    argument.value
+                ):
+                    self._error(
+                        "reference argument must be addressable",
+                        argument.value.span,
+                        code="C080",
+                    )
+            elif self.type_needs_drop(field.type):
                 moved = self._validate_move_only_source(
                     argument.value,
                     strip_const(field.type),

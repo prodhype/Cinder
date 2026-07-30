@@ -385,3 +385,121 @@ def test_dyn_argument_records_borrow() -> None:
     resolution = semantic.value_use(argument)
     assert resolution is not None
     assert resolution.kind is ValueUseKind.BORROW
+
+
+def _named_initializer(module: ast.Module, field_name: str) -> ast.Expression:
+    for node in iter_nodes(function_decl(module, "main")):
+        if isinstance(node, ast.CallExpr):
+            for argument in node.arguments:
+                if argument.name == field_name:
+                    return argument.value
+    raise AssertionError(f"initializer for field {field_name!r} not found")
+
+
+def test_struct_reference_field_records_borrow() -> None:
+    semantic = compile_semantic(
+        "struct Holder:\n"
+        "    value: &i32\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    number: i32 = 3\n"
+        "    holder = Holder(value=number)\n"
+        "    return *holder.value\n"
+    )
+    expr = _named_initializer(semantic.module, "value")
+    assert isinstance(expr, ast.NameExpr)
+    resolution = semantic.value_use(expr)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.BORROW
+
+
+def test_struct_dyn_field_records_borrow() -> None:
+    semantic = compile_semantic(
+        "abstract class Shape:\n"
+        "    @abstractmethod\n"
+        "    def area(self) -> f64:\n"
+        "        pass\n"
+        "\n"
+        "class Circle(Shape):\n"
+        "    radius: f64\n"
+        "\n"
+        "    def __init__(self, radius: f64):\n"
+        "        self.radius = radius\n"
+        "\n"
+        "    @override\n"
+        "    def area(self) -> f64:\n"
+        "        return self.radius * self.radius\n"
+        "\n"
+        "struct Holder:\n"
+        "    shape: &dyn Shape\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    circle = Circle(1.0)\n"
+        "    holder = Holder(shape=circle)\n"
+        "    return cast[i32](holder.shape.area())\n"
+    )
+    expr = _named_initializer(semantic.module, "shape")
+    assert isinstance(expr, ast.NameExpr)
+    resolution = semantic.value_use(expr)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.BORROW
+
+
+def test_struct_list_to_slice_field_records_borrow() -> None:
+    semantic = compile_semantic(
+        "struct View:\n"
+        "    items: []const i32\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[i32] = [7, 8]\n"
+        "    view = View(items=values)\n"
+        "    return view.items[0]\n"
+    )
+    expr = _named_initializer(semantic.module, "items")
+    assert isinstance(expr, ast.NameExpr)
+    resolution = semantic.value_use(expr)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.BORROW
+
+
+def test_struct_move_only_field_records_move() -> None:
+    semantic = compile_semantic(
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[i32] = [1, 2]\n"
+        "    bundle = Bundle(items=values)\n"
+        "    return cast[i32](len(bundle.items))\n"
+    )
+    expr = _named_initializer(semantic.module, "items")
+    assert isinstance(expr, ast.NameExpr)
+    resolution = semantic.value_use(expr)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.MOVE
+
+
+def test_variant_copyable_payload_records_copy() -> None:
+    semantic = compile_semantic(
+        "variant Token:\n"
+        "    Integer(value: i32)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    number: i32 = 9\n"
+        "    token = Token.Integer(number)\n"
+        "    match token:\n"
+        "        case Integer(value):\n"
+        "            return value\n"
+    )
+    call = next(
+        node
+        for node in iter_nodes(function_decl(semantic.module, "main"))
+        if isinstance(node, ast.CallExpr)
+        and isinstance(node.callee, ast.AttributeExpr)
+        and node.callee.name == "Integer"
+    )
+    argument = call.arguments[0].value
+    assert isinstance(argument, ast.NameExpr)
+    resolution = semantic.value_use(argument)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.COPY
