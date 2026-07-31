@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+`File` Source I/O is available alongside `write`: `read(buffer: []u8) -> usize` fills a mutable byte slice (`0` means EOF), `read_line() -> const char*` returns an owned line without the trailing newline (`null` at EOF so blank lines stay distinct; free like `input`), and `read_all() -> List[u8]` returns the remaining bytes as an owning list. Closed handles, I/O errors, and allocation failure panic, matching existing File/`input` conventions.
+
 Cinder adds global Result-based conversion helpers. `parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` return `Result[T, ConvertError]` after a full-token parse, with compiler-provided `ConvertError.empty`, `.invalid`, and `.overflow` cases. `to_string(value)` formats integers, floats, `bool`, and `char` into an owned `const char*` with the same free protocol as `input`. These builtins replace the previous need to hand-declare C `atoi` for common text conversions; `cast[T](x)` remains numeric and pointer reinterpretation only.
 
 Cinder adds native heterogeneous `Tuple[...]` values and homogeneous growable `List[T]` buffers. Tuple literals use parenthesized comma syntax and support compile-time-checked indexing. Square-bracket literals now infer lists in untyped contexts while explicit fixed-array annotations preserve fixed C storage.

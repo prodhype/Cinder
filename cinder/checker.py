@@ -4352,7 +4352,14 @@ class Checker:
             return ERROR
 
         if isinstance(raw, FileType):
-            if expression.name in {"write", "flush", "close"}:
+            if expression.name in {
+                "write",
+                "read",
+                "read_line",
+                "read_all",
+                "flush",
+                "close",
+            }:
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
                     "file_method",
                     owner_type=base_type,
@@ -5212,6 +5219,53 @@ class Checker:
                 expected_types=tuple(expected_types),
             )
             return USIZE
+
+        if method == "read":
+            if len(call.arguments) != 1:
+                self._error(
+                    f"File.read expects one argument, got {len(call.arguments)}",
+                    call.span,
+                    code="C329",
+                )
+            expected = SliceType(U8)
+            expected_types = []
+            for argument in call.arguments:
+                actual = self._check_expr(argument.value, expected=expected)
+                if self._is_list_slice_argument(expected, actual):
+                    self._validate_list_slice_argument(expected, argument.value)
+                elif not self._can_assign(expected, actual):
+                    self._type_mismatch(expected, actual, argument.value.span)
+                expected_types.append(expected)
+            self.call_resolutions[id(call)] = CallResolution(
+                "file_read",
+                argument_order=tuple(range(len(call.arguments))),
+                expected_types=tuple(expected_types),
+            )
+            return USIZE
+
+        if method == "read_line":
+            if call.arguments:
+                self._error(
+                    f"File.read_line expects no arguments, got {len(call.arguments)}",
+                    call.span,
+                    code="C330",
+                )
+                for argument in call.arguments:
+                    self._check_expr(argument.value)
+            self.call_resolutions[id(call)] = CallResolution("file_read_line")
+            return string_type()
+
+        if method == "read_all":
+            if call.arguments:
+                self._error(
+                    f"File.read_all expects no arguments, got {len(call.arguments)}",
+                    call.span,
+                    code="C330",
+                )
+                for argument in call.arguments:
+                    self._check_expr(argument.value)
+            self.call_resolutions[id(call)] = CallResolution("file_read_all")
+            return ListType(U8)
 
         if call.arguments:
             self._error(

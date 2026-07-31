@@ -1,0 +1,42 @@
+def main() -> i32:
+    path: const char* = "cinder_sample.txt"
+
+    with open(path, "wb") as out:
+        # "hello\nworld\n"
+        payload: u8[12] = [
+            104, 101, 108, 108, 111, 10,
+            119, 111, 114, 108, 100, 10,
+        ]
+        if out.write(payload) != 12:
+            print(f"failed while writing {path}")
+            return 1
+
+    with open(path, "rb") as file:
+        chunk: u8[5]
+        counted = file.read(chunk)
+        print(f"read {counted} bytes:", chunk[0], chunk[1], chunk[2], chunk[3], chunk[4])
+
+    with open(path, "rb") as file:
+        first = file.read_line()
+        defer free(cast[void*](first))
+        second = file.read_line()
+        defer free(cast[void*](second))
+        print("read_line:", first)
+        print("read_line:", second)
+
+    with open(path, "rb") as file:
+        data = file.read_all()
+        print(f"read_all length={len(data)}")
+        print(data)
+
+    print(f"finished reading {path}")
+
+    with open("examples/read_file.ci", "rb") as self_file:
+        while true:
+            line = self_file.read_line()
+            if line == null:
+                break
+            defer free(cast[void*](line))
+            print(line)
+
+    return 0

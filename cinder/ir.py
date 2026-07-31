@@ -159,10 +159,18 @@ class Lowerer:
             isinstance(strip_const(type_), FileType)
             for type_ in self._all_semantic_types()
         )
+        uses_file_read_all = any(
+            resolution.kind == "file_read_all"
+            for resolution in self.semantic.call_resolutions.values()
+        )
         if uses_file:
             slices.add(SliceType(ConstType(U8)))
+            slices.add(SliceType(U8))
         slices = tuple(sorted(slices, key=type_key))
-        lists = tuple(sorted(self._collect_lists(), key=type_key))
+        list_values = self._collect_lists()
+        if uses_file_read_all:
+            list_values.add(ListType(U8))
+        lists = tuple(sorted(list_values, key=type_key))
         maps = tuple(sorted(self._collect_maps(), key=type_key))
         sets = tuple(sorted(self._collect_sets(), key=type_key))
         map_view_values = self._collect_map_views()

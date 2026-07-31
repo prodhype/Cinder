@@ -469,7 +469,7 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `to_string(value)` is globally available and returns an owned `const char*` for integers (`i8`…`i64`, `u8`…`u64`, `isize`, `usize`), floats (`f32`, `f64`), `bool`, and `char`. Release the result with `free(cast[void*](text))`. Bool formats as `true`/`false`; numbers use decimal text (floats use `%g`-style formatting).
 
-`open(path, mode)` is globally available and returns a move-only `File` without importing `stdio`. A null `fopen` result panics. `File` provides `write(data: []const u8) -> usize`, `flush()`, and `close()`. Scope exit closes any still-open handle. Prefer `with open(...) as file:` to limit the file's lifetime.
+`open(path, mode)` is globally available and returns a move-only `File` without importing `stdio`. A null `fopen` result panics. `File` provides `write(data: []const u8) -> usize`, `read(buffer: []u8) -> usize`, `read_line() -> const char*`, `read_all() -> List[u8]`, `flush()`, and `close()`. `read` fills up to `buffer.length` and returns the byte count (`0` means EOF). `read_line` returns an owned C string without the trailing newline (and strips a preceding carriage return for CRLF); release it with `free(cast[void*](line))`. Immediate EOF yields `null` so blank lines (owned `""`) stay distinct; `free(null)` is safe. `read_all` returns the remaining bytes as an owning `List[u8]`. Closed-handle use, I/O failure, and out-of-memory conditions panic. Scope exit closes any still-open handle. Prefer `with open(...) as file:` to limit the file's lifetime.
 
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
 
