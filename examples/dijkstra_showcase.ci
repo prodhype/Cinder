@@ -27,9 +27,9 @@ abstract class Reporter:
 
 @reflect
 class ConsoleReporter(Reporter):
-    label: const char*
+    label: String
 
-    def __init__(self, label: const char*):
+    def __init__(self, label: String):
         self.label = label
 
     @override

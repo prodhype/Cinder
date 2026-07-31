@@ -8,7 +8,7 @@ struct App:
     ok: bool
 
 
-def create_app(title: const char*, width: c_int, height: c_int) -> App:
+def create_app(title: String, width: c_int, height: c_int) -> App:
     empty = audio.Sounds(hit=null, brick=null, wall=null, lose=null)
     if sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_AUDIO) != 0:
         print("SDL_Init failed:", sdl.SDL_GetError())

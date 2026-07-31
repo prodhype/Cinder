@@ -43,6 +43,14 @@ Sets support hash membership and algebra.
 Optional lookup uses tagged `Option[T]` values.
 `Owned[T]` gives Box-style heap ownership with deterministic drop.
 
+Owned text support includes:
+
+- move-only UTF-8 `String` values
+- copy-on-write static literals and explicit `clone`
+- checked byte access and UTF-8-boundary slicing
+- append, reserve, clear, and concatenation
+- consuming `StringBuilder` construction
+
 The project system includes:
 
 - deterministic `cinder.toml` manifests
@@ -150,9 +158,9 @@ import math
 
 @reflect
 abstract class Shape:
-    name: const char*
+    name: String
 
-    def __init__(self, name: const char*):
+    def __init__(self, name: String):
         self.name = name
 
     @abstractmethod
@@ -302,7 +310,7 @@ Runtime reflection is opt-in:
 @reflect
 struct User:
     id: u64
-    name: const char*
+    name: String
     active: bool
 ```
 
@@ -479,12 +487,13 @@ Patterns do not yet support guards, alternatives, literals, or nested destructur
 
 ## Typed Results, Options, and propagation
 
-These types are generic families that the compiler supplies:
+The compiler supplies these built-in types and generic families:
 
 - `Result[T, E]`
 - `Option[T]`
 - `Owned[T]`
 - `Tuple[...]`
+- `String`
 - `List[T]`
 - `Map[K, V]`
 - `Set[T]`
@@ -531,6 +540,45 @@ Unary `*` gives an addressable payload.
 Drop frees after it drops `T`.
 Recursive layouts such as `Option[Owned[Node]]` are supported.
 
+## Strings
+
+`String` is Cinder's primary text type.
+An ordinary string literal has type `String`.
+An explicit `const char*` context still produces a low-level C string for interoperability:
+
+```python
+name = "Cinder"
+c_name: const char* = "Cinder"
+```
+
+`String` owns UTF-8 text and is move-only.
+Its runtime shape is conceptually a data pointer, byte length, and capacity; that description is not a stable pre-1.0 ABI promise.
+Scope exit drops the active value deterministically.
+A static literal can share static storage until a mutation needs an owned buffer, so creating a literal does not require an immediate allocation.
+Copying is explicit with `clone()`.
+
+`len(text)` returns the number of UTF-8 bytes, not the number of Unicode scalar values or grapheme clusters.
+Owned Strings cannot contain embedded NUL bytes, so every FFI borrow preserves the complete text; use `List[u8]` for arbitrary bytes.
+Strings do not support direct indexing.
+Use `byte_at(index)` for one byte.
+A slice such as `text[start:stop]` creates a copied `String`; both indices must be in range and on UTF-8 boundaries.
+
+```python
+text = "Cin"
+text.append("der")
+text.reserve(32)
+copy = text.clone()
+joined = text + " language"
+text.clear()
+```
+
+`append`, `reserve`, and `clear` mutate an addressable `String`.
+Concatenation with `+` borrows both operands and returns a fresh `String`.
+String comparisons and `sort` use lexicographic UTF-8 byte content.
+
+`StringBuilder` supports `append`, ASCII `append_char`, and `reserve` for incremental construction.
+`finish()` consumes the builder and returns its completed `String`.
+
 ## Types
 
 Portable primitive types are:
@@ -555,7 +603,7 @@ C-style postfix pointer syntax is also accepted when it helps you copy C declara
 ```python
 pointer: *i32 = &value
 argv: **char
-name: const char* = "Cinder"
+c_name: const char* = "Cinder"
 
 
 def increment(value: &i32) -> void:
@@ -602,7 +650,7 @@ Slicing and indexing do no bounds checks at this time.
 Tuples are immutable heterogeneous values:
 
 ```python
-entry: Tuple[i32, const char*] = (7, "ready")
+entry: Tuple[i32, String] = (7, "ready")
 code = entry[0]
 ```
 
@@ -658,11 +706,10 @@ Maps give `keys()`, `values()`, and `items()` as live views that do not own.
 Default Map iteration yields keys.
 Sets give union, intersection, difference, symmetric difference, and subset and superset comparisons.
 
-Hashable types are integers, `bool`, `char`, enums, and `const char*`.
-String keys use null-safe content equality.
-The collection copies them.
-A string that `Set[const char*].pop()` removes transfers its allocation to the caller.
-The caller must release it with `free(cast[void*](text))`.
+Hashable types are integers, `bool`, `char`, enums, `String`, and low-level `const char*`.
+Maps and Sets hash and compare `String` values by UTF-8 byte content, not buffer identity.
+They clone String keys or elements on insertion so later mutation of the source cannot change collection membership.
+Removing a `String` from an owning collection transfers the value; its eventual cleanup remains deterministic.
 
 Maps and Sets use the same move-only ownership model as Lists.
 This includes nested and aggregate ownership and by-value parameters.
@@ -774,6 +821,12 @@ Declare opaque C types with `type Name`, or let unknown names in extern signatur
 Opaque types are exported across modules like other module types.
 The compiler writes their C names without change.
 
+External signatures remain explicit C ABI types.
+`String` does not replace `const char*` in an `extern "C"` declaration.
+At an extern or compiler-provided builtin call boundary, a `String` argument can implicitly borrow as `const char*`.
+That pointer exists only for the call: it cannot be assigned, stored, or returned.
+There is no implicit conversion from `const char*` to `String`; use an API that explicitly copies and validates external text.
+
 Built-in modules map common C APIs into checked namespaces:
 
 ```python
@@ -797,6 +850,7 @@ print(values)
 It adds a newline.
 It supports f-string replacement fields with simple format specs.
 Lists, Maps, Sets, and Tuples print with Python-like collection syntax when their nested element types are printable.
+`String` arguments are borrowed rather than consumed.
 F-strings are limited to `print` arguments at this time.
 
 For console input, `input()` is also available without an import.
@@ -806,11 +860,11 @@ It returns that line without the trailing newline:
 
 ```python
 name = input("name: ")
-defer free(cast[void*](name))
 print("hello", name)
 ```
 
 Parsing and formatting helpers are also global.
+`input` returns a `String`.
 These functions return `Result[T, ConvertError]` after a full-token parse:
 
 - `parse_i32`
@@ -824,18 +878,23 @@ These functions return `Result[T, ConvertError]` after a full-token parse:
 - `parse_bool`
 
 Failure cases are `empty`, `invalid`, or `overflow`.
-`to_string(value)` formats integers, floats, `bool`, and `char` into an owned `const char*`.
-You must free that string as you free `input`:
+The parse helpers borrow their `String` argument.
+`to_string(value)` formats integers, floats, `bool`, and `char` into a `String`:
 
 ```python
 match parse_i32(name):
     case Ok(value):
         text = to_string(value)
-        defer free(cast[void*](text))
         print(text)
     case Err(error):
         print(cast[i32](error))
 ```
+
+`open(path, mode)` borrows its `String` arguments and returns a move-only `File`.
+`File.write` accepts borrowed `String` text as well as byte slices.
+`File.read_line()` returns `Option[String]`: immediate EOF is `None`, while a blank line is `Some("")`.
+`File.read_text()` reads the remaining bytes and validates UTF-8 before returning `String`.
+Use `File.read_all()` when arbitrary bytes are required; it continues to return `List[u8]`.
 
 `@export` keeps the C symbol name of a top-level function:
 
@@ -885,6 +944,12 @@ examples/
 tests/
 docs/
 ```
+
+## Self-hosting
+
+Python 3.14 remains Cinder's stage0 compiler implementation.
+No self-hosted Cinder compiler exists yet.
+See [`docs/self-hosting.md`](docs/self-hosting.md) for the ordered bootstrap milestones and current ownership constraints.
 
 ## Development
 

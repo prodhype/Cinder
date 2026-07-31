@@ -1,7 +1,7 @@
 @reflect
 struct User:
     id: u64
-    name: const char*
+    name: String
     active: bool
 
     def enabled(self: &const User) -> bool:

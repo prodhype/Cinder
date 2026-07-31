@@ -20,12 +20,15 @@ def test_with_open_writes_and_drops_file() -> None:
         '    with open("out.bin", "wb") as file:\n'
         "        data: u8[2] = [0x41, 0x42]\n"
         "        written = file.write(data)\n"
-        "        return cast[i32](written)\n"
+        '        text = "CD"\n'
+        "        text_written = file.write(text)\n"
+        "        return cast[i32](written + text_written)\n"
     )
 
     assert "CinderFile file = CinderFile_open" in generated
-    assert 'CinderFile_open("out.bin", "wb")' in generated
+    assert "cinder_string_cstr" in generated
     assert "CinderFile_write((&(file))" in generated
+    assert "CinderFile_write_string((&(file))" in generated
     assert "CinderFile_drop(&file);" in generated
     assert "#include <stdio.h>" in generated
     # Shared File helper guard must always include read_all, even for write-only modules.
@@ -43,7 +46,7 @@ def test_file_read_all_helper_survives_dependency_without_read_all(tmp_path: Pat
         encoding="utf-8",
     )
     (source_root / "writer.ci").write_text(
-        "def write_marker(path: const char*) -> void:\n"
+        "def write_marker(path: String) -> void:\n"
         '    with open(path, "wb") as file:\n'
         "        data: u8[3] = [65, 66, 67]\n"
         "        file.write(data)\n",
@@ -53,8 +56,8 @@ def test_file_read_all_helper_survives_dependency_without_read_all(tmp_path: Pat
         "import writer\n"
         "\n"
         "def main() -> i32:\n"
-        '    path: const char* = "marker.bin"\n'
-        "    writer.write_marker(path)\n"
+        '    path = "marker.bin"\n'
+        "    writer.write_marker(path.clone())\n"
         '    with open(path, "rb") as file:\n'
         "        data = file.read_all()\n"
         "        if len(data) != 3:\n"
@@ -115,16 +118,20 @@ def test_file_read_helpers_codegen() -> None:
         "        buffer: u8[4]\n"
         "        counted = file.read(buffer)\n"
         "        line = file.read_line()\n"
-        "        defer free(cast[void*](line))\n"
+        "        text = file.read_text()\n"
         "        data = file.read_all()\n"
-        "        return cast[i32](counted + len(data))\n"
+        "        if line.is_some:\n"
+        "            return cast[i32](counted + len(line.value) + len(text) + len(data))\n"
+        "        return 0\n"
     )
 
     assert "CinderFile_read((&(file))" in generated
     assert "CinderFile_read_line((&(file)))" in generated
+    assert "CinderFile_read_text((&(file)))" in generated
     assert "CinderFile_read_all((&(file)))" in generated
     assert "static inline CINDER_MAYBE_UNUSED size_t CinderFile_read(" in generated
-    assert "static inline CINDER_MAYBE_UNUSED char *CinderFile_read_line(" in generated
+    assert "CinderOption_string CinderFile_read_line(" in generated
+    assert "CinderString CinderFile_read_text(" in generated
     assert "static inline CINDER_MAYBE_UNUSED CinderList_u8 CinderFile_read_all(" in generated
     assert "typedef struct CinderSlice_u8" in generated
 
@@ -185,6 +192,13 @@ def test_file_read_helpers_codegen() -> None:
             "    return 0\n",
             "File.read_all expects no arguments",
         ),
+        (
+            "def main() -> i32:\n"
+            '    with open("in.bin", "rb") as file:\n'
+            "        file.read_text(1)\n"
+            "    return 0\n",
+            "File.read_text expects no arguments",
+        ),
     ],
 )
 def test_file_ownership_and_with_binding(source: str, message: str | None) -> None:
@@ -205,13 +219,10 @@ def test_file_ownership_and_with_binding(source: str, message: str | None) -> No
 def test_file_read_write_roundtrip_runs_end_to_end(tmp_path: Path) -> None:
     source = (
         "def main() -> i32:\n"
-        '    path: const char* = "cinder_read_roundtrip.bin"\n'
+        '    path = "cinder_read_roundtrip.bin"\n'
         "\n"
         "    with open(path, \"wb\") as out:\n"
-        "        payload: u8[11] = [\n"
-        "            104, 101, 108, 108, 111, 10,\n"
-        "            119, 111, 114, 108, 100,\n"
-        "        ]\n"
+        '        payload = "hello\\nworld"\n'
         "        if out.write(payload) != 11:\n"
         "            return 1\n"
         "\n"
@@ -224,8 +235,7 @@ def test_file_read_write_roundtrip_runs_end_to_end(tmp_path: Path) -> None:
         "            return 3\n"
         "\n"
         "        line = file.read_line()\n"
-        "        defer free(cast[void*](line))\n"
-        "        if line == null or line[0] != 0:\n"
+        "        if line.is_none or len(line.value) != 0:\n"
         "            return 4\n"
         "\n"
         "        rest = file.read_all()\n"
@@ -236,16 +246,19 @@ def test_file_read_write_roundtrip_runs_end_to_end(tmp_path: Path) -> None:
         "\n"
         "    with open(path, \"rb\") as file:\n"
         "        first = file.read_line()\n"
-        "        defer free(cast[void*](first))\n"
         "        second = file.read_line()\n"
-        "        defer free(cast[void*](second))\n"
-        "        if first[0] != 104 or first[4] != 111:\n"
+        '        if first.is_none or first.value != "hello":\n'
         "            return 7\n"
-        "        if second[0] != 119 or second[4] != 100:\n"
+        '        if second.is_none or second.value != "world":\n'
         "            return 8\n"
         "        empty = file.read_line()\n"
-        "        if empty != null:\n"
+        "        if empty.is_some:\n"
         "            return 9\n"
+        "\n"
+        "    with open(path, \"rb\") as file:\n"
+        "        text = file.read_text()\n"
+        '        if text != "hello\\nworld":\n'
+        "            return 10\n"
         "\n"
         "    return 0\n"
     )
@@ -278,7 +291,7 @@ def test_file_read_write_roundtrip_runs_end_to_end(tmp_path: Path) -> None:
 def test_read_line_preserves_lone_trailing_cr(tmp_path: Path) -> None:
     source = (
         "def main() -> i32:\n"
-        '    path: const char* = "cr_payload.bin"\n'
+        '    path = "cr_payload.bin"\n'
         "\n"
         "    with open(path, \"wb\") as out:\n"
         "        # x\\r\\n then abc\\r at EOF\n"
@@ -288,18 +301,17 @@ def test_read_line_preserves_lone_trailing_cr(tmp_path: Path) -> None:
         "\n"
         "    with open(path, \"rb\") as file:\n"
         "        first = file.read_line()\n"
-        "        defer free(cast[void*](first))\n"
-        "        if first[0] != 120 or first[1] != 0:\n"
+        '        if first.is_none or first.value != "x":\n'
         "            return 2\n"
         "\n"
         "        second = file.read_line()\n"
-        "        defer free(cast[void*](second))\n"
-        "        if second[0] != 97 or second[1] != 98 or second[2] != 99:\n"
+        "        if second.is_none:\n"
         "            return 3\n"
-        "        if second[3] != 13 or second[4] != 0:\n"
+        '        if second.value != "abc\\r":\n'
         "            return 4\n"
         "\n"
-        "        if file.read_line() != null:\n"
+        "        eof = file.read_line()\n"
+        "        if eof.is_some:\n"
         "            return 5\n"
         "\n"
         "    return 0\n"

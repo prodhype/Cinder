@@ -2,19 +2,40 @@
 
 ## Unreleased
 
-`File` Source I/O is available alongside `write`: `read(buffer: []u8) -> usize` fills a mutable byte slice (`0` means EOF), `read_line() -> const char*` returns an owned line without the trailing newline (`null` at EOF so blank lines stay distinct; free like `input`), and `read_all() -> List[u8]` returns the remaining bytes as an owning list. Closed handles, I/O errors, and allocation failure panic, matching existing File/`input` conventions.
+### Owned UTF-8 text
 
-Cinder adds global Result-based conversion helpers. `parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` return `Result[T, ConvertError]` after a full-token parse, with compiler-provided `ConvertError.empty`, `.invalid`, and `.overflow` cases. `to_string(value)` formats integers, floats, `bool`, and `char` into an owned `const char*` with the same free protocol as `input`. These builtins replace the previous need to hand-declare C `atoi` for common text conversions; `cast[T](x)` remains numeric and pointer reinterpretation only.
+`String` becomes Cinder's primary text type. Ordinary literals produce move-only UTF-8 Strings with deterministic drop. Their runtime shape is conceptually data, byte length, and capacity; static literals use copy-on-write storage. Independent copies use explicit `clone`, addressable values support `append`, `reserve`, and `clear`, and `+` borrows its operands to return a fresh String.
+
+String length and slicing use byte offsets. `len` reports bytes, direct indexing is unavailable, and `byte_at` makes byte access explicit. A String slice is an owned copy and requires an in-range span whose endpoints are UTF-8 boundaries. Embedded NUL bytes are rejected so FFI borrows preserve the complete text; arbitrary bytes remain `List[u8]`.
+
+`StringBuilder` adds `append`, ASCII `append_char`, and `reserve`, with a consuming `finish` operation that returns String.
+
+String equality, Map/Set hashing and membership, and String sorting use UTF-8 byte content rather than buffer identity.
+
+At an extern or compiler-provided builtin call boundary, String may borrow implicitly as `const char*` for that call only. The pointer cannot be stored, and there is no implicit `const char*`-to-String conversion. Extern declarations continue to expose explicit C ABI types.
+
+`File` source I/O now uses owned text alongside byte input: `read(buffer: []u8) -> usize` fills a mutable byte slice (`0` means EOF), `read_line() -> Option[String]` distinguishes immediate EOF (`None`) from a blank line (`Some("")`), `read_text() -> String` validates UTF-8, and `read_all() -> List[u8]` remains the arbitrary-byte operation. `File.write` accepts either borrowed String text or byte slices. Closed handles, invalid text, I/O errors, and allocation failure follow the existing panic convention.
+
+Cinder's global Result-based conversion helpers borrow String. `parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` return `Result[T, ConvertError]` after a full-token parse, with compiler-provided `ConvertError.empty`, `.invalid`, and `.overflow` cases. `input()` and `to_string(value)` return String, so their results use ordinary deterministic drop rather than a manual free protocol. `to_string` supports integers, floats, `bool`, and `char`. `print` and `open` also borrow their String arguments. Print-only f-strings remain unchanged.
+
+### Breaking changes
+
+- Ordinary string literals infer `String`, not `const char*`. An explicit `const char*` context remains available for low-level C interop.
+- String is move-only. Implicit copies are rejected; use `clone` when an independent value is required.
+- `input` and `to_string` return String. Existing `free(cast[void*](text))` cleanup for those results must be removed.
+- Parse helpers, `open`, and text printing consume no ownership and now use String at their language-facing boundaries. Raw `const char*` does not convert back to String implicitly.
+- `File.write` additionally accepts borrowed String text. `File.read_line` returns `Option[String]` rather than a nullable owned `const char*`; callers must handle `None` for immediate EOF.
+- String collection keys, elements, and sorting use content semantics. Code that depended on C-pointer identity or manual ownership transfer must move to explicit low-level pointer handling.
 
 Cinder adds native heterogeneous `Tuple[...]` values and homogeneous growable `List[T]` buffers. Tuple literals use parenthesized comma syntax and support compile-time-checked indexing. Square-bracket literals now infer lists in untyped contexts while explicit fixed-array annotations preserve fixed C storage.
 
 Lists provide deterministic move-only ownership, direct return transfer, indexing, iteration, `len`, `sort`, `append`, `pop`, and `clear`. Addressable Lists can also borrow as `[]T` or `[]const T` function arguments without copying, so slice-based APIs work across Lists, fixed arrays, and slices. The compiler emits readable per-element C specializations and uses a checked runtime growth helper. Cross-module generated headers share guarded tuple/list layouts and helpers.
 
-Maps and Sets extend the native collection phase with specialized deterministic hash tables, brace literals, membership, insertion-ordered Map iteration, live `keys`/`values`/`items` views, optional lookup/removal, and Set algebra. Integer, boolean, character, enum, and `const char*` keys are hashable. String keys use content equality and are copied into the owning collection.
+Maps and Sets extend the native collection phase with specialized deterministic hash tables, brace literals, membership, insertion-ordered Map iteration, live `keys`/`values`/`items` views, optional lookup/removal, and Set algebra. Integer, boolean, character, enum, String, and low-level `const char*` keys are hashable. String keys use content equality, and insertion clones String keys or elements so later source mutation cannot invalidate membership.
 
 The release also adds general `Option[T]` values with `Some`, contextual `None`, exhaustive matching, state attributes, and checked payload access. Maps and Sets follow Lists' move-only ownership model, including direct return transfer, cleanup on all exits, and mutation guards during active iteration.
 
-Aggregate ownership is now first-class for `List`/`Map`/`Set`/`File` and destructor-bearing classes: struct/class by-value owning fields, nested owning collections and owning elements, by-value owning parameters with use-after-move diagnostics, and `Option`/`Result`/`Tuple`(/array) drop glue. Owning globals and unions/user variants with owning members remain rejected.
+Aggregate ownership is now first-class for `List`/`Map`/`Set`/`File` and destructor-bearing classes: struct/class by-value owning fields, nested owning collections and owning elements, by-value owning parameters with use-after-move diagnostics, and `Option`/`Result`/`Tuple`(/array) drop glue. Runtime-initialized owning globals and unions/user variants with owning members remain rejected; a `const` String initialized directly from a static literal is the narrow global exception.
 
 `Owned[T]` adds Box-style heap ownership: `Owned(value)` allocates and moves a value onto the heap, unary `*` yields an addressable payload, and drop frees after dropping `T`. Values are move-only, nest in aggregates and `Option`/`List`, and support recursive layouts such as `Option[Owned[Node]]`.
 

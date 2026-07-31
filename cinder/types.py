@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
+from typing import ClassVar, Final
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +107,16 @@ class MapViewType(Type):
 @dataclass(frozen=True, slots=True)
 class FileType(Type):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class StringType(Type):
+    c_name: ClassVar[str] = "CinderString"
+
+
+@dataclass(frozen=True, slots=True)
+class StringBuilderType(Type):
+    c_name: ClassVar[str] = "CinderStringBuilder"
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,6 +226,8 @@ C_SIZE_T: Final = PrimitiveType("c_size_t", "size_t", "integer", None, False)
 NULL: Final = NullType()
 ERROR: Final = ErrorType()
 FILE: Final = FileType()
+STRING: Final = StringType()
+STRING_BUILDER: Final = StringBuilderType()
 
 PRIMITIVES: Final[dict[str, PrimitiveType]] = {
     value.name: value
@@ -242,7 +254,11 @@ PRIMITIVES: Final[dict[str, PrimitiveType]] = {
 }
 
 
-def string_type() -> PointerType:
+def string_type() -> StringType:
+    return STRING
+
+
+def c_string_type() -> PointerType:
     return PointerType(ConstType(CHAR))
 
 
@@ -284,6 +300,14 @@ def list_c_name(type_: ListType) -> str:
 
 def file_c_name() -> str:
     return "CinderFile"
+
+
+def string_c_name() -> str:
+    return STRING.c_name
+
+
+def string_builder_c_name() -> str:
+    return STRING_BUILDER.c_name
 
 
 def map_c_name(type_: MapType) -> str:
@@ -334,6 +358,10 @@ def type_name(type_: Type) -> str:
             return f"Set[{type_name(inner)}]"
         case FileType():
             return "File"
+        case StringType():
+            return "String"
+        case StringBuilderType():
+            return "StringBuilder"
         case MapViewType(map_type=map_type, kind=kind):
             view_name = {
                 "keys": "MapKeys",
@@ -420,6 +448,14 @@ def is_pointer_like(type_: Type) -> bool:
     return isinstance(strip_const(type_), (PointerType, ReferenceType))
 
 
+def is_string(type_: Type) -> bool:
+    return isinstance(strip_const(type_), StringType)
+
+
+def is_string_builder(type_: Type) -> bool:
+    return isinstance(strip_const(type_), StringBuilderType)
+
+
 def is_c_string(type_: Type) -> bool:
     raw = strip_const(type_)
     return (
@@ -432,10 +468,10 @@ def is_c_string(type_: Type) -> bool:
 def is_hashable(type_: Type) -> bool:
     raw = strip_const(type_)
     return (
-        raw == BOOL
-        or raw == CHAR
+        raw in (BOOL, CHAR)
         or is_integer(raw)
         or isinstance(raw, EnumType)
+        or is_string(raw)
         or is_c_string(raw)
     )
 
@@ -446,13 +482,22 @@ def is_equatable(type_: Type) -> bool:
         is_numeric(raw)
         or raw == BOOL
         or isinstance(raw, (EnumType, PointerType, ReferenceType))
+        or is_string(raw)
     )
 
 
 def is_owning_container(type_: Type) -> bool:
     return isinstance(
         strip_const(type_),
-        (ListType, MapType, SetType, FileType, OwnedType),
+        (
+            ListType,
+            MapType,
+            SetType,
+            FileType,
+            StringType,
+            StringBuilderType,
+            OwnedType,
+        ),
     )
 
 
@@ -689,6 +734,10 @@ def type_key(type_: Type) -> str:
             return f"set_{type_key(inner)}"
         case FileType():
             return "file"
+        case StringType():
+            return "string"
+        case StringBuilderType():
+            return "string_builder"
         case MapViewType(map_type=map_type, kind=kind):
             return (
                 f"map_{_sanitize_key(kind)}_{type_key(map_type.key)}_"

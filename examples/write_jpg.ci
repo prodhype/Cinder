@@ -65,7 +65,7 @@ def write_jpeg(file: &File) -> bool:
 
 
 def main() -> i32:
-    path: const char* = "cinder_sample.jpg"
+    path: String = "cinder_sample.jpg"
 
     with open(path, "wb") as file:
         if not write_jpeg(file):

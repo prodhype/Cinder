@@ -130,7 +130,7 @@ def test_runtime_dyn_reflection_requires_reflected_interface() -> None:
             "    def area(self) -> f64:\n"
             "        pass\n"
             "\n"
-            "def name(shape: &dyn Shape) -> const char*:\n"
+            "def name(shape: &dyn Shape) -> String:\n"
             "    return type_name(shape)\n"
         )
     assert "runtime type_name on dyn requires a @reflect interface" in str(captured.value)

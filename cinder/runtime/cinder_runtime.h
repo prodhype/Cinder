@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #if defined(__cplusplus)
 #define CINDER_NORETURN [[noreturn]]
@@ -68,6 +69,18 @@ typedef struct CinderTypeInfo {
     size_t method_count;
 } CinderTypeInfo;
 
+typedef struct CinderString {
+    char *data;
+    size_t length;
+    size_t capacity;
+} CinderString;
+
+typedef struct CinderStringBuilder {
+    char *data;
+    size_t length;
+    size_t capacity;
+} CinderStringBuilder;
+
 typedef int (*CinderCompareFn)(const void *left, const void *right);
 
 typedef enum CinderParseError {
@@ -92,7 +105,52 @@ uint64_t cinder_hash_u64(uint64_t value);
 uint64_t cinder_hash_string(const char *text);
 bool cinder_string_equal(const char *left, const char *right);
 char *cinder_clone_string(const char *text);
-char *cinder_input(const char *prompt);
+CinderString cinder_string_from_bytes(const char *data, size_t length);
+CinderString cinder_string_from_cstr(const char *text);
+CinderString cinder_string_clone(const CinderString *string);
+void cinder_string_drop(CinderString *string);
+void cinder_string_reserve(CinderString *string, size_t minimum_capacity);
+void cinder_string_clear(CinderString *string);
+void cinder_string_append(CinderString *string, const CinderString *suffix);
+void cinder_string_append_char(CinderString *string, char value);
+CinderString cinder_string_concat(
+    const CinderString *left,
+    const CinderString *right
+);
+uint8_t cinder_string_byte_at(const CinderString *string, size_t index);
+CinderString cinder_string_slice(
+    const CinderString *string,
+    size_t start,
+    size_t end
+);
+uint64_t cinder_string_hash_value(const CinderString *string);
+bool cinder_string_equal_value(
+    const CinderString *left,
+    const CinderString *right
+);
+int cinder_string_compare_value(
+    const CinderString *left,
+    const CinderString *right
+);
+const char *cinder_string_cstr(const CinderString *string);
+void cinder_string_builder_init(CinderStringBuilder *builder);
+void cinder_string_builder_drop(CinderStringBuilder *builder);
+void cinder_string_builder_reserve(
+    CinderStringBuilder *builder,
+    size_t minimum_capacity
+);
+void cinder_string_builder_append(
+    CinderStringBuilder *builder,
+    const CinderString *string
+);
+void cinder_string_builder_append_char(
+    CinderStringBuilder *builder,
+    char value
+);
+CinderString cinder_string_builder_finish(CinderStringBuilder *builder);
+bool cinder_read_line(FILE *stream, CinderString *out);
+CinderString cinder_read_all_text(FILE *stream);
+CinderString cinder_input(const char *prompt);
 bool cinder_parse_i32(const char *text, int32_t *out, CinderParseError *error);
 bool cinder_parse_i64(const char *text, int64_t *out, CinderParseError *error);
 bool cinder_parse_u32(const char *text, uint32_t *out, CinderParseError *error);
@@ -102,20 +160,20 @@ bool cinder_parse_usize(const char *text, size_t *out, CinderParseError *error);
 bool cinder_parse_f32(const char *text, float *out, CinderParseError *error);
 bool cinder_parse_f64(const char *text, double *out, CinderParseError *error);
 bool cinder_parse_bool(const char *text, bool *out, CinderParseError *error);
-char *cinder_i8_to_string(int8_t value);
-char *cinder_i16_to_string(int16_t value);
-char *cinder_i32_to_string(int32_t value);
-char *cinder_i64_to_string(int64_t value);
-char *cinder_u8_to_string(uint8_t value);
-char *cinder_u16_to_string(uint16_t value);
-char *cinder_u32_to_string(uint32_t value);
-char *cinder_u64_to_string(uint64_t value);
-char *cinder_isize_to_string(ptrdiff_t value);
-char *cinder_usize_to_string(size_t value);
-char *cinder_f32_to_string(float value);
-char *cinder_f64_to_string(double value);
-char *cinder_bool_to_string(bool value);
-char *cinder_char_to_string(char value);
+CinderString cinder_i8_to_string(int8_t value);
+CinderString cinder_i16_to_string(int16_t value);
+CinderString cinder_i32_to_string(int32_t value);
+CinderString cinder_i64_to_string(int64_t value);
+CinderString cinder_u8_to_string(uint8_t value);
+CinderString cinder_u16_to_string(uint16_t value);
+CinderString cinder_u32_to_string(uint32_t value);
+CinderString cinder_u64_to_string(uint64_t value);
+CinderString cinder_isize_to_string(ptrdiff_t value);
+CinderString cinder_usize_to_string(size_t value);
+CinderString cinder_f32_to_string(float value);
+CinderString cinder_f64_to_string(double value);
+CinderString cinder_bool_to_string(bool value);
+CinderString cinder_char_to_string(char value);
 void cinder_print_repr_char(char value);
 void cinder_print_repr_string(const char *text);
 double cinder_wall_time(void);

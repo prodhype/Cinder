@@ -34,6 +34,8 @@ def compile_source(source: str) -> str:
         ("c_long", "[2, 1]"),
         ("c_size_t", "[2, 1]"),
         ("bool", "[true, false]"),
+        ("String", '["beta", "alpha"]'),
+        # Keep explicit raw C-string sorting covered for low-level interop.
         ("const char*", '["beta", "alpha"]'),
     ],
 )
@@ -181,6 +183,13 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "    sort(words)\n"
         "    if words[0] != first or words[1] != second or words[2] != last:\n"
         "        return 4\n"
+        "\n"
+        '    owned_words: String[4] = ["zeta", "alpha", "éclair", "beta"]\n'
+        "    sort(owned_words)\n"
+        '    if owned_words[0] != "alpha" or owned_words[1] != "beta":\n'
+        "        return 5\n"
+        '    if owned_words[2] != "zeta" or owned_words[3] != "éclair":\n'
+        "        return 6\n"
         "\n"
         "    single: f64[1] = [1.5]\n"
         "    sort(numbers[0:0])\n"

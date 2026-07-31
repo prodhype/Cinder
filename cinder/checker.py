@@ -76,6 +76,8 @@ from cinder.types import (
     ISIZE,
     NULL,
     PRIMITIVES,
+    STRING,
+    STRING_BUILDER,
     U8,
     U16,
     U32,
@@ -106,12 +108,15 @@ from cinder.types import (
     ResultType,
     SetType,
     SliceType,
+    StringBuilderType,
+    StringType,
     StructType,
     TupleType,
     Type,
     TypeValueType,
     UnionType,
     VariantType,
+    c_string_type,
     can_assign,
     can_borrow_elements,
     common_type,
@@ -191,7 +196,7 @@ class _CollectionStorage:
     unknown_runtime_guarded: bool = False
 
 
-type _OwnedContainer = ListType | MapType | SetType | FileType
+type _OwnedContainer = ListType | MapType | SetType | FileType | StringType | StringBuilderType
 
 
 @dataclass(slots=True)
@@ -270,7 +275,7 @@ class SemanticModel:
         # Export only non-specialized concrete types under their source names.
         exported_types: dict[str, Type] = {}
         exported_type_symbols: dict[str, NominalSymbol] = {}
-        for name, symbol in type_symbols.items():
+        for symbol in type_symbols.values():
             if symbol.type_args:
                 continue
             # Specializations are keyed by mangled names; skip those.
@@ -324,6 +329,8 @@ class Checker:
         self.global_scope = Scope()
         self.types: dict[str, Type] = dict(PRIMITIVES)
         self.types["File"] = FILE
+        self.types["String"] = STRING
+        self.types["StringBuilder"] = STRING_BUILDER
         self.available_modules = builtin_modules(self.path)
         if available_modules is not None:
             self.available_modules.update(available_modules)
@@ -528,8 +535,8 @@ class Checker:
         field_info = runtime_struct(
             "CinderFieldInfo",
             (
-                ("name", string_type()),
-                ("type_name", string_type()),
+                ("name", c_string_type()),
+                ("type_name", c_string_type()),
                 ("offset", USIZE),
                 ("size", USIZE),
                 ("alignment", USIZE),
@@ -539,9 +546,9 @@ class Checker:
         method_info = runtime_struct(
             "CinderMethodInfo",
             (
-                ("name", string_type()),
-                ("signature", string_type()),
-                ("return_type_name", string_type()),
+                ("name", c_string_type()),
+                ("signature", c_string_type()),
+                ("return_type_name", c_string_type()),
                 ("parameter_count", USIZE),
                 ("is_abstract", BOOL),
                 ("is_override", BOOL),
@@ -550,7 +557,7 @@ class Checker:
         runtime_struct(
             "CinderTypeInfo",
             (
-                ("name", string_type()),
+                ("name", c_string_type()),
                 ("kind", I32),
                 ("size", USIZE),
                 ("alignment", USIZE),
@@ -1719,12 +1726,23 @@ class Checker:
 
         for global_ in self.globals.values():
             self._validate_list_elements(global_.type, global_.span)
-            if self._contains_owning_container_value(global_.type):
+            raw_global = strip_const(global_.type)
+            static_string = global_.is_const and isinstance(raw_global, StringType)
+            if self._contains_owning_container_value(global_.type) and not static_string:
+                if isinstance(raw_global, (StringType, StringBuilderType)):
+                    message = f"global {global_.name!r} cannot own {type_name(raw_global)}"
+                    note = (
+                        "only const String globals initialized by a literal or "
+                        "compile-time string are supported"
+                    )
+                else:
+                    message = f"global {global_.name!r} cannot own a collection"
+                    note = "portable C11 has no automatic global destruction phase"
                 self._error(
-                    f"global {global_.name!r} cannot own a collection",
+                    message,
                     global_.span,
                     code="C248",
-                    note="portable C11 has no automatic global destruction phase",
+                    note=note,
                 )
             if self._contains_destructible_value(global_.type):
                 self._error(
@@ -1964,7 +1982,14 @@ class Checker:
 
     def _owned_container(self, type_: Type) -> _OwnedContainer | None:
         raw = strip_const(type_)
-        return raw if isinstance(raw, (ListType, MapType, SetType, FileType)) else None
+        return (
+            raw
+            if isinstance(
+                raw,
+                (ListType, MapType, SetType, FileType, StringType, StringBuilderType),
+            )
+            else None
+        )
 
     def _contains_list_value(self, type_: Type) -> bool:
         raw = strip_const(type_)
@@ -2009,6 +2034,13 @@ class Checker:
         container_type: _OwnedContainer,
     ) -> bool:
         expression_type = value_type(self.expr_types.get(id(expression), ERROR))
+        if isinstance(container_type, StringType):
+            return expression_type == container_type and isinstance(
+                expression,
+                (ast.LiteralExpr, ast.CallExpr, ast.BinaryExpr, ast.SliceExpr),
+            )
+        if isinstance(container_type, StringBuilderType):
+            return expression_type == container_type and isinstance(expression, ast.CallExpr)
         return expression_type == container_type and isinstance(
             expression,
             (
@@ -2023,16 +2055,17 @@ class Checker:
     def _is_owned_drop_source(self, expression: ast.Expression, type_: Type) -> bool:
         expected = strip_const(type_)
         expression_type = value_type(self.expr_types.get(id(expression), ERROR))
-        if expression_type != expected and not (
-            expected == ERROR or expression_type == ERROR
+        types_match = expected == ERROR or expression_type in (expected, ERROR)
+        is_option_none = isinstance(expected, OptionType) and isinstance(
+            expression,
+            ast.NoneExpr,
+        )
+        if not types_match and not is_option_none:
+            return False
+        if isinstance(
+            expected,
+            (ListType, MapType, SetType, FileType, StringType, StringBuilderType),
         ):
-            # Allow None for Option types.
-            if not (
-                isinstance(expected, OptionType)
-                and isinstance(expression, ast.NoneExpr)
-            ):
-                return False
-        if isinstance(expected, (ListType, MapType, SetType, FileType)):
             return self._is_owned_container_source(expression, expected)
         if isinstance(expected, ClassType):
             class_ = self.classes_by_type.get(expected)
@@ -2046,7 +2079,7 @@ class Checker:
         if isinstance(expected, ResultType):
             return isinstance(expression, ast.CallExpr)
         if isinstance(expected, TupleType):
-            return isinstance(expression, ast.TupleLiteralExpr)
+            return isinstance(expression, (ast.TupleLiteralExpr, ast.CallExpr))
         if isinstance(expected, ArrayType):
             return isinstance(expression, ast.ListLiteralExpr)
         return isinstance(expression, ast.CallExpr)
@@ -2093,9 +2126,7 @@ class Checker:
             return False
         if id(symbol) in self.moved_variables:
             return False
-        if symbol.is_match_binding:
-            return False
-        return True
+        return not (symbol.is_match_binding or symbol.is_borrow_binding)
 
     def _mark_moved_from(self, expression: ast.Expression) -> VariableSymbol | None:
         if not isinstance(expression, ast.NameExpr):
@@ -2219,6 +2250,10 @@ class Checker:
         if isinstance(target_raw, (ReferenceType, DynType)):
             self._record_direct_value_use(expression, ValueUseKind.BORROW)
 
+    def _record_string_borrow(self, expression: ast.Expression, type_: Type) -> None:
+        if isinstance(value_type(type_), StringType):
+            self._record_direct_value_use(expression, ValueUseKind.BORROW)
+
     @staticmethod
     def _is_list_slice_argument(target: Type, source: Type) -> bool:
         target_raw = strip_const(target)
@@ -2306,6 +2341,15 @@ class Checker:
                     code="C013",
                 )
                 parameter_type = ERROR
+            if declaration.is_extern and self._contains_owned_string_type(parameter_type):
+                self._error(
+                    f"external function parameter {parameter.name!r} cannot use "
+                    f"{type_name(parameter_type)}",
+                    parameter.span,
+                    code="C361",
+                    note="declare the C ABI parameter as *const char instead",
+                )
+                parameter_type = ERROR
             parameters.append(ParameterSymbol(parameter.name, parameter_type, parameter.span, False))
 
         if owner is not None:
@@ -2333,6 +2377,14 @@ class Checker:
                 declaration.return_type.span if declaration.return_type else declaration.span,
                 code="C016",
                 note="return a pointer, slice, result, or owned nominal value instead",
+            )
+            return_type = ERROR
+        if declaration.is_extern and self._contains_owned_string_type(return_type):
+            self._error(
+                f"external functions cannot return {type_name(return_type)}",
+                declaration.return_type.span if declaration.return_type else declaration.span,
+                code="C362",
+                note="use an explicit C ABI type and copy it into String at a checked boundary",
             )
             return_type = ERROR
 
@@ -2363,6 +2415,37 @@ class Checker:
 
     def _c_type_name(self, name: str) -> str:
         return f"{self.c_prefix}{name}" if self.c_prefix else name
+
+    def _contains_owned_string_type(self, type_: Type) -> bool:
+        raw = strip_const(type_)
+        if isinstance(raw, (StringType, StringBuilderType)):
+            return True
+        if isinstance(
+            raw,
+            (
+                PointerType,
+                ReferenceType,
+                ArrayType,
+                SliceType,
+                ListType,
+                SetType,
+                OptionType,
+                OwnedType,
+            ),
+        ):
+            return self._contains_owned_string_type(raw.inner)
+        if isinstance(raw, MapType):
+            return self._contains_owned_string_type(raw.key) or self._contains_owned_string_type(raw.value)
+        if isinstance(raw, TupleType):
+            return any(self._contains_owned_string_type(element) for element in raw.elements)
+        if isinstance(raw, ResultType):
+            return self._contains_owned_string_type(raw.ok) or self._contains_owned_string_type(raw.error)
+        if isinstance(raw, FunctionPointerType):
+            return self._contains_owned_string_type(raw.return_type) or any(
+                self._contains_owned_string_type(parameter)
+                for parameter in raw.param_types
+            )
+        return False
 
     def _c_value_name(self, name: str) -> str:
         return f"{self.c_prefix}{name}" if self.c_prefix else name
@@ -2560,6 +2643,17 @@ class Checker:
                 initializer_type = self._check_expr(declaration.initializer, expected=symbol.type)
                 if not self._can_assign(symbol.type, initializer_type):
                     self._type_mismatch(symbol.type, initializer_type, declaration.initializer.span)
+                if (
+                    symbol.is_const
+                    and isinstance(strip_const(symbol.type), StringType)
+                    and not self._is_static_string_initializer(declaration.initializer)
+                ):
+                    self._error(
+                        "const String global initializer must be a string literal "
+                        "or compile-time string",
+                        declaration.initializer.span,
+                        code="C363",
+                    )
                 if not self._is_constant_expression(declaration.initializer):
                     self._error(
                         "global initializer must be a C constant expression",
@@ -2568,6 +2662,14 @@ class Checker:
                     )
         finally:
             self.current_scope = previous_scope
+
+    def _is_static_string_initializer(self, expression: ast.Expression) -> bool:
+        if isinstance(expression, ast.LiteralExpr) and expression.literal_kind == "string":
+            return True
+        if isinstance(expression, ast.CallExpr):
+            resolution = self.call_resolutions.get(id(expression))
+            return resolution is not None and resolution.kind == "compile_string"
+        return False
 
     def _check_functions(self) -> None:
         self._checking_functions = True
@@ -2716,6 +2818,8 @@ class Checker:
             return self._is_comptime_expression(expression.value)
         if isinstance(expression, ast.CallExpr):
             resolution = self.call_resolutions.get(id(expression))
+            if resolution is not None and resolution.kind == "compile_string":
+                return True
             return resolution is not None and resolution.kind in {
                 "compile_bool",
                 "compile_integer",
@@ -3431,15 +3535,16 @@ class Checker:
                 self._type_mismatch(declared, item_type, statement.annotation.span)
             item_type = declared
 
+        borrowed_item = self.type_needs_drop(item_type)
         loop_scope = Scope(self.current_scope)
         symbol = VariableSymbol(
-            statement.name,
-            statement.span,
-            SymbolKind.VARIABLE,
-            strip_const(item_type),
-            False,
-            False,
-            statement.name,
+            name=statement.name,
+            span=statement.span,
+            kind=SymbolKind.VARIABLE,
+            type=strip_const(item_type),
+            is_const=borrowed_item,
+            c_name=statement.name,
+            is_borrow_binding=borrowed_item,
         )
         loop_scope.declare(symbol)
         self.foreach_symbols[id(statement)] = symbol
@@ -3881,6 +3986,15 @@ class Checker:
         if expression.literal_kind == "char":
             return CHAR
         if expression.literal_kind == "string":
+            if expected is not None and is_c_string(value_type(expected)):
+                return c_string_type()
+            if isinstance(expression.value, str) and "\0" in expression.value:
+                self._error(
+                    "String literals cannot contain NUL bytes",
+                    expression.span,
+                    code="C385",
+                    note="use List[u8] for arbitrary byte data",
+                )
             return string_type()
         if expression.literal_kind == "null":
             return NULL
@@ -4041,6 +4155,7 @@ class Checker:
                 return BOOL
             if not self._can_assign(expected_item, left_value):
                 self._type_mismatch(expected_item, left_value, expression.left.span)
+            self._record_string_borrow(expression.left, left)
             self.binary_resolutions[id(expression)] = BinaryResolution(
                 resolution_kind,
                 right_value,
@@ -4084,6 +4199,43 @@ class Checker:
             )
             return ERROR
 
+        if isinstance(left_value, StringType) or isinstance(right_value, StringType):
+            if not (
+                isinstance(left_value, StringType)
+                and isinstance(right_value, StringType)
+            ):
+                other = right_value if isinstance(left_value, StringType) else left_value
+                self._error(
+                    f"String operands cannot be mixed with {type_name(other)}",
+                    expression.span,
+                    code="C364",
+                )
+                return BOOL if operator in {"==", "!=", "<", "<=", ">", ">="} else ERROR
+            result_type: Type
+            if operator == "+":
+                resolution_kind = "string_concat"
+                result_type = STRING
+            elif operator in {"==", "!="}:
+                resolution_kind = "string_equal"
+                result_type = BOOL
+            elif operator in {"<", "<=", ">", ">="}:
+                resolution_kind = "string_compare"
+                result_type = BOOL
+            else:
+                self._error(
+                    f"operator {operator!r} is not supported for String values",
+                    expression.span,
+                    code="C365",
+                )
+                return ERROR
+            self._record_string_borrow(expression.left, left)
+            self._record_string_borrow(expression.right, right)
+            self.binary_resolutions[id(expression)] = BinaryResolution(
+                resolution_kind,
+                STRING,
+            )
+            return result_type
+
         if operator in ("and", "or"):
             if not is_condition_type(left_value) or not is_condition_type(right_value):
                 self._error(f"operator {operator!r} requires scalar operands", expression.span, code="C055")
@@ -4100,6 +4252,7 @@ class Checker:
             if is_c_string(left_value) and is_c_string(right_value):
                 self.binary_resolutions[id(expression)] = BinaryResolution(
                     "string_equal",
+                    c_string_type(),
                 )
                 return BOOL
             if isinstance(
@@ -4336,6 +4489,43 @@ class Checker:
             base_is_const = base_is_const or isinstance(raw.inner, ConstType)
             raw = strip_const(raw.inner)
 
+        if isinstance(raw, StringType):
+            if expression.name in {
+                "clone",
+                "append",
+                "append_char",
+                "reserve",
+                "clear",
+                "byte_at",
+            }:
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "string_method",
+                    owner_type=base_type,
+                    compile_value=expression.name,
+                )
+                return FunctionValueType(f"String.{expression.name}")
+            self._error(
+                f"type String has no member {expression.name!r}",
+                expression.span,
+                code="C368",
+            )
+            return ERROR
+
+        if isinstance(raw, StringBuilderType):
+            if expression.name in {"append", "append_char", "reserve", "finish"}:
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "string_builder_method",
+                    owner_type=base_type,
+                    compile_value=expression.name,
+                )
+                return FunctionValueType(f"StringBuilder.{expression.name}")
+            self._error(
+                f"type StringBuilder has no member {expression.name!r}",
+                expression.span,
+                code="C369",
+            )
+            return ERROR
+
         if isinstance(raw, ListType):
             if expression.name in {"append", "pop", "clear"}:
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
@@ -4356,6 +4546,7 @@ class Checker:
                 "write",
                 "read",
                 "read_line",
+                "read_text",
                 "read_all",
                 "flush",
                 "close",
@@ -4641,17 +4832,17 @@ class Checker:
         item_type: ComptimeItemType,
     ) -> Type:
         field_attributes: dict[str, Type] = {
-            "name": string_type(),
-            "type_name": string_type(),
+            "name": c_string_type(),
+            "type_name": c_string_type(),
             "offset": USIZE,
             "size": USIZE,
             "alignment": USIZE,
             "is_private": BOOL,
         }
         method_attributes: dict[str, Type] = {
-            "name": string_type(),
-            "signature": string_type(),
-            "return_type_name": string_type(),
+            "name": c_string_type(),
+            "signature": c_string_type(),
+            "return_type_name": c_string_type(),
             "parameter_count": USIZE,
             "is_abstract": BOOL,
             "is_override": BOOL,
@@ -4685,10 +4876,22 @@ class Checker:
     def _check_index(self, expression: ast.IndexExpr) -> Type:
         base = self._check_expr(expression.value)
         raw = value_type(base)
+        if isinstance(raw, StringType):
+            index = self._check_expr(expression.index, expected=USIZE)
+            if not is_integer(value_type(index)):
+                self._error("index must be an integer", expression.index.span, code="C068")
+            self._error(
+                "String does not support direct indexing",
+                expression.span,
+                code="C366",
+                note="use byte_at(index) for checked byte access",
+            )
+            return ERROR
         if isinstance(raw, MapType):
             index = self._check_expr(expression.index, expected=raw.key)
             if not self._can_assign(raw.key, index):
                 self._type_mismatch(raw.key, index, expression.index.span)
+            self._record_string_borrow(expression.index, index)
             if not self._is_addressable(expression.value):
                 self._error(
                     "Map indexing requires an addressable Map",
@@ -4743,6 +4946,22 @@ class Checker:
     def _check_slice(self, expression: ast.SliceExpr) -> Type:
         base = self._check_expr(expression.value)
         raw = value_type(base)
+        if isinstance(raw, StringType):
+            for bound in (expression.start, expression.stop):
+                if bound is not None:
+                    bound_type = self._check_expr(bound, expected=USIZE)
+                    if not is_integer(value_type(bound_type)):
+                        self._error(
+                            "String slice bounds must be integers",
+                            bound.span,
+                            code="C367",
+                        )
+            self._record_string_borrow(expression.value, base)
+            self.index_resolutions[id(expression)] = IndexResolution(
+                "string_slice",
+                STRING,
+            )
+            return STRING
         if not isinstance(raw, (ArrayType, SliceType)):
             self._error("slicing requires an array or slice", expression.value.span, code="C070")
             return ERROR
@@ -4763,6 +4982,12 @@ class Checker:
     def _check_call(self, expression: ast.CallExpr, expected: Type | None = None) -> Type:
         if isinstance(expression.callee, ast.NameExpr):
             name = expression.callee.name
+            if name == "String":
+                self.expr_types[id(expression.callee)] = FunctionValueType(name)
+                return self._check_string_constructor(expression, builder=False)
+            if name == "StringBuilder":
+                self.expr_types[id(expression.callee)] = FunctionValueType(name)
+                return self._check_string_constructor(expression, builder=True)
             if name == "Some":
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_option_constructor(expression, expected)
@@ -4984,6 +5209,26 @@ class Checker:
                 return resolution.method.return_type
             if (
                 resolution is not None
+                and resolution.kind == "string_method"
+                and isinstance(resolution.compile_value, str)
+            ):
+                return self._check_string_method_call(
+                    expression,
+                    expression.callee.value,
+                    resolution.compile_value,
+                )
+            if (
+                resolution is not None
+                and resolution.kind == "string_builder_method"
+                and isinstance(resolution.compile_value, str)
+            ):
+                return self._check_string_builder_method_call(
+                    expression,
+                    expression.callee.value,
+                    resolution.compile_value,
+                )
+            if (
+                resolution is not None
                 and resolution.kind == "list_method"
                 and isinstance(resolution.compile_value, str)
             ):
@@ -5061,6 +5306,224 @@ class Checker:
         for argument in expression.arguments:
             self._check_expr(argument.value)
         return ERROR
+
+    def _check_string_constructor(
+        self,
+        call: ast.CallExpr,
+        *,
+        builder: bool,
+    ) -> Type:
+        name = "StringBuilder" if builder else "String"
+        result = STRING_BUILDER if builder else STRING
+        if call.type_arguments:
+            self._error(f"{name} is not generic", call.span, code="C370")
+        if call.arguments:
+            self._error(
+                f"{name} expects no arguments, got {len(call.arguments)}",
+                call.span,
+                code="C371",
+            )
+            for argument in call.arguments:
+                if argument.name is not None:
+                    self._error(
+                        f"{name} does not accept named arguments",
+                        argument.span,
+                        code="C372",
+                    )
+                self._check_expr(argument.value)
+        self.call_resolutions[id(call)] = CallResolution(
+            "string_builder_new" if builder else "string_new"
+        )
+        return result
+
+    def _check_string_method_call(
+        self,
+        call: ast.CallExpr,
+        receiver: ast.Expression,
+        method: str,
+    ) -> Type:
+        receiver_storage = strip_const(self.expr_types.get(id(receiver), ERROR))
+        if isinstance(receiver_storage, (PointerType, ReferenceType)):
+            receiver_type = strip_const(receiver_storage.inner)
+        else:
+            receiver_type = value_type(receiver_storage)
+        if not isinstance(receiver_type, StringType):
+            self._error(
+                f"{method} requires a String receiver",
+                receiver.span,
+                code="C373",
+            )
+            return ERROR
+
+        mutating = method in {"append", "append_char", "reserve", "clear"}
+        if mutating and not self._is_addressable(receiver):
+            self._error(
+                f"String.{method} requires an addressable String",
+                receiver.span,
+                code="C374",
+            )
+        if mutating and self._lvalue_is_const(receiver):
+            self._error(
+                f"cannot call mutating method {method!r} on a const String",
+                receiver.span,
+                code="C375",
+            )
+        self._record_string_borrow(receiver, receiver_storage)
+        if any(argument.name is not None for argument in call.arguments):
+            self._error(
+                f"String.{method} does not accept named arguments",
+                call.span,
+                code="C376",
+            )
+
+        signatures: dict[str, tuple[tuple[Type, ...], Type, str]] = {
+            "clone": ((), STRING, "string_clone"),
+            "append": ((STRING,), VOID, "string_append"),
+            "append_char": ((CHAR,), VOID, "string_append_char"),
+            "reserve": ((USIZE,), VOID, "string_reserve"),
+            "clear": ((), VOID, "string_clear"),
+            "byte_at": ((USIZE,), U8, "string_byte_at"),
+        }
+        expected_arguments, result, resolution_kind = signatures[method]
+        if len(call.arguments) != len(expected_arguments):
+            self._error(
+                f"String.{method} expects {len(expected_arguments)} argument(s), "
+                f"got {len(call.arguments)}",
+                call.span,
+                code="C377",
+            )
+
+        expected_types: list[Type | None] = []
+        for index, argument in enumerate(call.arguments):
+            expected = expected_arguments[index] if index < len(expected_arguments) else None
+            actual = self._check_expr(argument.value, expected=expected)
+            if expected is not None and not self._can_assign(expected, actual):
+                self._type_mismatch(expected, actual, argument.value.span)
+            if expected is not None:
+                self._record_string_borrow(argument.value, actual)
+            expected_types.append(expected)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            resolution_kind,
+            argument_order=tuple(range(len(call.arguments))),
+            expected_types=tuple(expected_types),
+        )
+        return result
+
+    def _check_string_builder_method_call(
+        self,
+        call: ast.CallExpr,
+        receiver: ast.Expression,
+        method: str,
+    ) -> Type:
+        receiver_storage = strip_const(self.expr_types.get(id(receiver), ERROR))
+        if isinstance(receiver_storage, (PointerType, ReferenceType)):
+            receiver_type = strip_const(receiver_storage.inner)
+        else:
+            receiver_type = value_type(receiver_storage)
+        if not isinstance(receiver_type, StringBuilderType):
+            self._error(
+                f"{method} requires a StringBuilder receiver",
+                receiver.span,
+                code="C378",
+            )
+            return ERROR
+
+        if any(argument.name is not None for argument in call.arguments):
+            self._error(
+                f"StringBuilder.{method} does not accept named arguments",
+                call.span,
+                code="C379",
+            )
+
+        if method == "finish":
+            if call.arguments:
+                self._error(
+                    f"StringBuilder.finish expects no arguments, got {len(call.arguments)}",
+                    call.span,
+                    code="C380",
+                )
+                for argument in call.arguments:
+                    self._check_expr(argument.value)
+            moved: tuple[VariableSymbol, ...] = ()
+            symbol = self._transferable_string_builder(receiver)
+            if symbol is None:
+                self._error(
+                    "StringBuilder.finish requires a transferable builder local",
+                    receiver.span,
+                    code="C381",
+                    note="bind the builder to a mutable local before finishing it",
+                )
+            else:
+                self._mark_moved_from(receiver)
+                self._record_direct_value_use(receiver, ValueUseKind.MOVE)
+                moved = (symbol,)
+            self.call_resolutions[id(call)] = CallResolution(
+                "string_builder_finish",
+                moved_variables=moved,
+            )
+            return STRING
+
+        if not self._is_addressable(receiver):
+            self._error(
+                f"StringBuilder.{method} requires an addressable StringBuilder",
+                receiver.span,
+                code="C382",
+            )
+        if self._lvalue_is_const(receiver):
+            self._error(
+                f"cannot call mutating method {method!r} on a const StringBuilder",
+                receiver.span,
+                code="C383",
+            )
+        self._record_direct_value_use(receiver, ValueUseKind.BORROW)
+
+        signatures: dict[str, tuple[Type, str]] = {
+            "append": (STRING, "string_builder_append"),
+            "append_char": (CHAR, "string_builder_append_char"),
+            "reserve": (USIZE, "string_builder_reserve"),
+        }
+        expected_argument, resolution_kind = signatures[method]
+        if len(call.arguments) != 1:
+            self._error(
+                f"StringBuilder.{method} expects one argument, got {len(call.arguments)}",
+                call.span,
+                code="C384",
+            )
+
+        expected_types: list[Type | None] = []
+        for index, argument in enumerate(call.arguments):
+            expected = expected_argument if index == 0 else None
+            actual = self._check_expr(argument.value, expected=expected)
+            if expected is not None and not self._can_assign(expected, actual):
+                self._type_mismatch(expected, actual, argument.value.span)
+            if isinstance(expected, StringType):
+                self._record_string_borrow(argument.value, actual)
+            expected_types.append(expected)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            resolution_kind,
+            argument_order=tuple(range(len(call.arguments))),
+            expected_types=tuple(expected_types),
+        )
+        return VOID
+
+    def _transferable_string_builder(
+        self,
+        expression: ast.Expression,
+    ) -> VariableSymbol | None:
+        if not isinstance(expression, ast.NameExpr):
+            return None
+        symbol = self.name_symbols.get(id(expression))
+        if not isinstance(symbol, VariableSymbol):
+            return None
+        if not isinstance(strip_const(symbol.type), StringBuilderType):
+            return None
+        if symbol.is_const or isinstance(symbol.type, ConstType):
+            return None
+        if not self._is_transferable_drop_local(expression, STRING_BUILDER):
+            return None
+        return symbol
 
     def _check_list_method_call(
         self,
@@ -5204,15 +5667,19 @@ class Checker:
                     call.span,
                     code="C329",
                 )
-            expected = SliceType(ConstType(U8))
+            byte_slice = SliceType(ConstType(U8))
             expected_types: list[Type | None] = []
             for argument in call.arguments:
-                actual = self._check_expr(argument.value, expected=expected)
-                if self._is_list_slice_argument(expected, actual):
-                    self._validate_list_slice_argument(expected, argument.value)
-                elif not self._can_assign(expected, actual):
-                    self._type_mismatch(expected, actual, argument.value.span)
-                expected_types.append(expected)
+                actual = self._check_expr(argument.value, expected=byte_slice)
+                if isinstance(value_type(actual), StringType):
+                    self._record_string_borrow(argument.value, actual)
+                    expected_types.append(STRING)
+                else:
+                    if self._is_list_slice_argument(byte_slice, actual):
+                        self._validate_list_slice_argument(byte_slice, argument.value)
+                    elif not self._can_assign(byte_slice, actual):
+                        self._type_mismatch(byte_slice, actual, argument.value.span)
+                    expected_types.append(byte_slice)
             self.call_resolutions[id(call)] = CallResolution(
                 "file_write",
                 argument_order=tuple(range(len(call.arguments))),
@@ -5253,7 +5720,19 @@ class Checker:
                 for argument in call.arguments:
                     self._check_expr(argument.value)
             self.call_resolutions[id(call)] = CallResolution("file_read_line")
-            return string_type()
+            return OptionType(STRING)
+
+        if method == "read_text":
+            if call.arguments:
+                self._error(
+                    f"File.read_text expects no arguments, got {len(call.arguments)}",
+                    call.span,
+                    code="C330",
+                )
+                for argument in call.arguments:
+                    self._check_expr(argument.value)
+            self.call_resolutions[id(call)] = CallResolution("file_read_text")
+            return STRING
 
         if method == "read_all":
             if call.arguments:
@@ -5330,7 +5809,6 @@ class Checker:
                 code="C342",
                 note="update would copy owned values; assign entries individually",
             )
-
         expected_types: list[Type | None] = []
         if method in {"get", "pop"}:
             expected_count = 1
@@ -5773,13 +6251,18 @@ class Checker:
             inspected = subject_type.value
         else:
             inspected = value_type(subject_type)
-        if is_owning_container(inspected) and not self._is_addressable(argument):
+        if (
+            is_owning_container(inspected)
+            and not isinstance(inspected, (StringType, StringBuilderType))
+            and not self._is_addressable(argument)
+        ):
             self._error(
                 f"{name} requires an addressable owning collection",
                 argument.span,
                 code="C281",
                 note="bind the collection to a local before inspecting its type",
             )
+        self._record_string_borrow(argument, subject_type)
         nominal = self.nominal_symbols.get(inspected)
 
         if name == "type_name":
@@ -6381,6 +6864,7 @@ class Checker:
         order: list[int] = []
         expected_types: list[Type | None] = []
         moved_variables: list[VariableSymbol] = []
+        ffi_borrow_indices: list[int] = []
         for parameter_index, argument_index in enumerate(assigned):
             if argument_index is None:
                 continue
@@ -6390,10 +6874,22 @@ class Checker:
             argument = call.arguments[argument_index]
             actual = self._check_expr(argument.value, expected=expected)
             list_slice_argument = self._is_list_slice_argument(expected, actual)
-            if not self._can_assign(expected, actual) and not list_slice_argument:
+            ffi_string_borrow = (
+                function.is_extern
+                and is_c_string(expected)
+                and isinstance(value_type(actual), StringType)
+            )
+            if (
+                not self._can_assign(expected, actual)
+                and not list_slice_argument
+                and not ffi_string_borrow
+            ):
                 self._type_mismatch(expected, actual, argument.value.span)
             if list_slice_argument:
                 self._validate_list_slice_argument(expected, argument.value)
+            if ffi_string_borrow:
+                self._record_string_borrow(argument.value, actual)
+                ffi_borrow_indices.append(argument_index)
             self._validate_borrow_source(expected, actual, argument.value)
             if isinstance(expected, ReferenceType):
                 if actual == NULL:
@@ -6415,7 +6911,14 @@ class Checker:
         for argument_index in variadic_indices:
             argument = call.arguments[argument_index]
             actual = self._check_expr(argument.value)
-            if not is_scalar(value_type(actual)) and not isinstance(value_type(actual), StructType):
+            ffi_string_borrow = function.is_extern and isinstance(
+                value_type(actual),
+                StringType,
+            )
+            if ffi_string_borrow:
+                self._record_string_borrow(argument.value, actual)
+                ffi_borrow_indices.append(argument_index)
+            elif not is_scalar(value_type(actual)) and not isinstance(value_type(actual), StructType):
                 self._error(
                     f"type {type_name(actual)} cannot be passed through C varargs",
                     argument.value.span,
@@ -6430,6 +6933,7 @@ class Checker:
             argument_order=tuple(order),
             expected_types=tuple(expected_types),
             moved_variables=tuple(moved_variables),
+            ffi_borrow_indices=tuple(ffi_borrow_indices),
         )
 
     def _function_pointer_from_symbol(
@@ -6640,6 +7144,8 @@ class Checker:
             actual = self._check_expr(argument.value, expected=expected)
             if index == 0 and not self._can_assign(string_type(), actual):
                 self._type_mismatch(string_type(), actual, argument.value.span)
+            if index == 0:
+                self._record_string_borrow(argument.value, actual)
             argument_order.append(index)
             expected_types.append(expected)
         self.call_resolutions[id(call)] = CallResolution(
@@ -6669,6 +7175,8 @@ class Checker:
             actual = self._check_expr(argument.value, expected=expected)
             if index == 0 and not self._can_assign(string_type(), actual):
                 self._type_mismatch(string_type(), actual, argument.value.span)
+            if index == 0:
+                self._record_string_borrow(argument.value, actual)
             argument_order.append(index)
             expected_types.append(expected)
         self.call_resolutions[id(call)] = CallResolution(
@@ -6731,6 +7239,8 @@ class Checker:
             actual = self._check_expr(argument.value, expected=expected)
             if index < 2 and not self._can_assign(expected, actual):
                 self._type_mismatch(expected, actual, argument.value.span)
+            if index < 2:
+                self._record_string_borrow(argument.value, actual)
             argument_order.append(index)
             expected_types.append(expected if index < 2 else None)
         self.call_resolutions[id(call)] = CallResolution(
@@ -6746,6 +7256,7 @@ class Checker:
             self.expr_types[id(expression)] = string_type()
             return
         actual = self._check_expr(expression)
+        self._record_string_borrow(expression, actual)
         self._require_printable_collection_addressable(expression, actual)
         self._validate_printable_type(actual, None, expression.span)
 
@@ -6760,6 +7271,7 @@ class Checker:
                 self.expr_types[id(part.expression)] = actual
             else:
                 actual = self._check_expr(part.expression)
+                self._record_string_borrow(part.expression, actual)
                 self._require_printable_collection_addressable(part.expression, actual)
             self._validate_printable_type(actual, part.format_spec, part.span)
 
@@ -6884,7 +7396,9 @@ class Checker:
                 SetType,
                 MapViewType,
             ),
-        ) and argument_type != string_type():
+        ) and not (
+            isinstance(argument_type, StringType) or is_c_string(argument_type)
+        ):
             self._error(
                 f"len does not support {type_name(argument_type)}",
                 call.arguments[0].value.span,
@@ -6899,6 +7413,7 @@ class Checker:
                 code="C279",
                 note="bind the owning collection to a local before calling len",
             )
+        self._record_string_borrow(call.arguments[0].value, argument_type)
         self.call_resolutions[id(call)] = CallResolution(
             "len", argument_order=(0,), expected_types=(None,)
         )
@@ -6963,7 +7478,7 @@ class Checker:
     @staticmethod
     def _is_sortable_element_type(type_: Type) -> bool:
         raw = strip_const(type_)
-        if is_numeric(raw) or raw == BOOL or isinstance(raw, EnumType):
+        if is_numeric(raw) or raw == BOOL or isinstance(raw, (EnumType, StringType)):
             return True
         return isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR
 
@@ -7263,6 +7778,8 @@ class Checker:
             VariantType,
             ResultType,
             FileType,
+            StringType,
+            StringBuilderType,
             DynType,
             TupleType,
             ListType,
@@ -7311,7 +7828,16 @@ class Checker:
         element = self._resolve_type(expression.element_type)
         if is_void(element) or isinstance(
             element,
-            (ReferenceType, SliceType, ArrayType, ListType, MapType, SetType),
+            (
+                ReferenceType,
+                SliceType,
+                ArrayType,
+                ListType,
+                MapType,
+                SetType,
+                StringType,
+                StringBuilderType,
+            ),
         ):
             self._error(
                 f"cannot allocate elements of type {type_name(element)}",
@@ -8168,6 +8694,10 @@ class Checker:
                 return None
             case PrimitiveType() as primitive:
                 return ast.NamedTypeNode(span, primitive.name)
+            case StringType():
+                return ast.NamedTypeNode(span, "String")
+            case StringBuilderType():
+                return ast.NamedTypeNode(span, "StringBuilder")
             case StructType(name=name, type_args=type_args) | ClassType(name=name, type_args=type_args) | EnumType(name=name, type_args=type_args) | UnionType(name=name, type_args=type_args) | VariantType(name=name, type_args=type_args):
                 base = ast.NamedTypeNode(span, name)
                 if not type_args:
@@ -8331,7 +8861,7 @@ class Checker:
                 case _:
                     return True
 
-        for argument, parameter in zip(call.arguments, params):
+        for argument, parameter in zip(call.arguments, params, strict=False):
             actual = self._check_expr(argument.value)
             if not unify(parameter.annotation, actual):
                 return None
@@ -8763,7 +9293,7 @@ def _print_conversion(format_spec: str | None) -> str | None:
 
 
 def _is_string_type(type_: Type) -> bool:
-    return isinstance(type_, PointerType) and strip_const(type_.inner) == CHAR
+    return isinstance(type_, StringType) or is_c_string(type_)
 
 
 def _contains_propagate(expression: ast.Expression) -> bool:

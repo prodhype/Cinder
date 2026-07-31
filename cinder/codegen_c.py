@@ -8,8 +8,14 @@ from cinder import ast
 from cinder.ir import IRModule
 from cinder.ownership import (
     class_needs_drop as ownership_class_needs_drop,
+)
+from cinder.ownership import (
     drop_fields,
+)
+from cinder.ownership import (
     struct_needs_drop as ownership_struct_needs_drop,
+)
+from cinder.ownership import (
     type_needs_drop as ownership_type_needs_drop,
 )
 from cinder.symbols import (
@@ -69,6 +75,8 @@ from cinder.types import (
     ResultType,
     SetType,
     SliceType,
+    StringBuilderType,
+    StringType,
     StructType,
     TupleType,
     Type,
@@ -89,6 +97,8 @@ from cinder.types import (
     owned_c_name,
     result_c_name,
     set_c_name,
+    string_builder_c_name,
+    string_c_name,
     strip_const,
     strip_reference,
     tuple_c_name,
@@ -212,6 +222,7 @@ class _Cleanup:
     container: ListType | MapType | SetType | FileType | None = None
     drop_type: Type | None = None
     iterator_end: tuple[str, str] | None = None
+    drop_statement: str | None = None
 
 
 @dataclass(slots=True)
@@ -235,6 +246,15 @@ class CGenerator:
         self._structs_by_type = {
             struct.type: struct for struct in self.semantic.structs.values()
         }
+
+    def _generated_option_types(self) -> tuple[OptionType, ...]:
+        options = set(self.ir.option_types)
+        if self.ir.uses_file:
+            # The complete File helper suite is shared behind one guard.  Every
+            # module that can emit it therefore needs the read_line payload type,
+            # even when that module only calls another File method.
+            options.add(OptionType(StringType()))
+        return tuple(sorted(options, key=type_key))
 
     def generate(self) -> str:
         self._emit_preamble()
@@ -455,7 +475,7 @@ class CGenerator:
             self.writer.line(f"typedef struct {name} {name};")
             self.writer.line("#endif")
             emitted = True
-        for option_type in self.ir.option_types:
+        for option_type in self._generated_option_types():
             name = c_identifier(option_c_name(option_type))
             guard = f"CINDER_DECLARED_{name.upper()}"
             self.writer.line(f"#ifndef {guard}")
@@ -750,6 +770,7 @@ class CGenerator:
             self.writer.line()
 
     def _emit_type_definitions(self) -> None:
+        emitted_options: set[OptionType] = set()
         for type_ in self.ir.definition_order:
             nominal = self.semantic.nominal_symbols.get(type_)
             if isinstance(nominal, StructSymbol):
@@ -764,10 +785,14 @@ class CGenerator:
                 self._emit_result_definition(type_)
             elif isinstance(type_, OptionType):
                 self._emit_option_definition(type_)
+                emitted_options.add(type_)
             elif isinstance(type_, TupleType):
                 self._emit_tuple_definition(type_)
             else:
                 raise AssertionError(f"unhandled definition type: {type_!r}")
+        for option_type in self._generated_option_types():
+            if option_type not in emitted_options:
+                self._emit_option_definition(option_type)
 
     def _emit_list_helpers(self) -> None:
         for list_type in self.ir.list_types:
@@ -919,6 +944,8 @@ class CGenerator:
         name = file_c_name()
         guard = f"CINDER_HELPERS_{name.upper()}"
         slice_name = self._slice_name(SliceType(ConstType(U8)))
+        line_option = OptionType(StringType())
+        line_option_name = c_identifier(option_c_name(line_option))
         self.writer.line(f"#ifndef {guard}")
         self.writer.line(f"#define {guard}")
         self.writer.line(
@@ -973,6 +1000,25 @@ class CGenerator:
         self.writer.line("}")
         self.writer.line()
 
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED size_t {name}_write_string("
+            f"{name} *value, const {string_c_name()} *data)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value->handle == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('cinder_panic("write on closed File");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(
+            "return fwrite(cinder_string_cstr(data), 1, data->length, value->handle);"
+        )
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
         mutable_slice_name = self._slice_name(SliceType(U8))
         self.writer.line(
             f"static inline CINDER_MAYBE_UNUSED size_t {name}_read("
@@ -1001,7 +1047,8 @@ class CGenerator:
         self.writer.line()
 
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED char *{name}_read_line({name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED {line_option_name} "
+            f"{name}_read_line({name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -1011,78 +1058,37 @@ class CGenerator:
         self.writer.line('cinder_panic("read_line on closed File");')
         self.writer.indent -= 1
         self.writer.line("}")
-        self.writer.line("size_t capacity = 64;")
-        self.writer.line("size_t length = 0;")
-        self.writer.line("bool saw_newline = false;")
-        self.writer.line("char *buffer = cinder_alloc(capacity, sizeof(char));")
-        self.writer.line("for (;;)")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("int character = fgetc(value->handle);")
-        self.writer.line("if (character == EOF)")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("if (ferror(value->handle))")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("free(buffer);")
-        self.writer.line('cinder_panic("File.read_line failed");')
-        self.writer.indent -= 1
-        self.writer.line("}")
-        self.writer.line("if (length == 0)")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("free(buffer);")
-        self.writer.line("return NULL;")
-        self.writer.indent -= 1
-        self.writer.line("}")
-        self.writer.line("break;")
-        self.writer.indent -= 1
-        self.writer.line("}")
-        self.writer.line("if (character == '\\n')")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("saw_newline = true;")
-        self.writer.line("break;")
-        self.writer.indent -= 1
-        self.writer.line("}")
-        self.writer.line("if (length + 1 >= capacity)")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("if (capacity > SIZE_MAX / 2)")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("free(buffer);")
-        self.writer.line('cinder_panic("File.read_line line is too long");')
-        self.writer.indent -= 1
-        self.writer.line("}")
-        self.writer.line("size_t next_capacity = capacity * 2;")
-        self.writer.line("char *grown = realloc(buffer, next_capacity);")
-        self.writer.line("if (grown == NULL)")
-        self.writer.line("{")
-        self.writer.indent += 1
-        self.writer.line("free(buffer);")
-        self.writer.line('cinder_panic("out of memory");')
-        self.writer.indent -= 1
-        self.writer.line("}")
-        self.writer.line("buffer = grown;")
-        self.writer.line("capacity = next_capacity;")
-        self.writer.indent -= 1
-        self.writer.line("}")
-        self.writer.line("buffer[length] = (char)character;")
-        self.writer.line("length += 1;")
-        self.writer.indent -= 1
-        self.writer.line("}")
         self.writer.line(
-            "if (saw_newline && length > 0 && buffer[length - 1] == '\\r')"
+            f"{line_option_name} result = "
+            f"{{ {line_option_name}_Tag_None, {{ 0 }} }};"
+        )
+        self.writer.line(f"{string_c_name()} line = {{ 0 }};")
+        self.writer.line("if (!cinder_read_line(value->handle, &line))")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("return result;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"result.tag = {line_option_name}_Tag_Some;")
+        self.writer.line("result.data.value = line;")
+        self.writer.line("return result;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED {string_c_name()} "
+            f"{name}_read_text({name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
-        self.writer.line("length -= 1;")
+        self.writer.line("if (value->handle == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('cinder_panic("read_text on closed File");')
         self.writer.indent -= 1
         self.writer.line("}")
-        self.writer.line("buffer[length] = '\\0';")
-        self.writer.line("return buffer;")
+        self.writer.line("return cinder_read_all_text(value->handle);")
         self.writer.indent -= 1
         self.writer.line("}")
         self.writer.line()
@@ -1196,6 +1202,14 @@ class CGenerator:
         clone_key = self._clone_expression(map_type.key, "key")
         drop_key = self._drop_expression(map_type.key, "entry->key")
         drop_value = self._drop_expression(map_type.value, "entry->value")
+        get_value = (
+            self._clone_expression(
+                map_type.value,
+                "value->entries[value->buckets[bucket]].value",
+            )
+            if isinstance(value_type(map_type.value), StringType)
+            else "value->entries[value->buckets[bucket]].value"
+        )
         drop_old_value = self._drop_expression(
             map_type.value,
             "value->entries[value->buckets[bucket]].value",
@@ -1430,7 +1444,7 @@ class CGenerator:
                     return result;
                 }}
                 result.tag = {option_name}_Tag_Some;
-                result.data.value = value->entries[value->buckets[bucket]].value;
+                result.data.value = {get_value};
                 return result;
             }}
 
@@ -1450,6 +1464,24 @@ class CGenerator:
                     cinder_panic("Map key not found");
                 }}
                 return value->entries[value->buckets[bucket]].value;
+            }}
+
+            static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(ConstType(map_type.value)), f'{name}_lookup_ptr_or_panic')}(
+                const {name} *value,
+                {key_decl}
+            )
+            {{
+                bool found = false;
+                size_t bucket = {name}_find_bucket(
+                    value,
+                    key,
+                    {name}_hash(key),
+                    &found
+                );
+                if (!found) {{
+                    cinder_panic("Map key not found");
+                }}
+                return &value->entries[value->buckets[bucket]].value;
             }}
 
             static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(map_type.value), f'{name}_lookup_mut_or_panic')}(
@@ -1720,6 +1752,11 @@ class CGenerator:
         )
         clone_item = self._clone_expression(set_type.inner, "item")
         drop_item = self._drop_expression(set_type.inner, "entry->value")
+        clear_popped_item = (
+            "memset(&entry->value, 0, sizeof(entry->value));"
+            if self._type_needs_drop(set_type.inner)
+            else ""
+        )
         guard = f"CINDER_HELPERS_{name.upper()}"
 
         self.writer.raw(
@@ -1940,6 +1977,7 @@ class CGenerator:
                     }}
                     result.tag = {option_name}_Tag_Some;
                     result.data.value = entry->value;
+                    {clear_popped_item}
                     entry->state = 2;
                     value->length -= 1;
                     value->tombstones += 1;
@@ -2127,23 +2165,34 @@ class CGenerator:
 
     @staticmethod
     def _hash_expression(type_: Type, value: str) -> str:
+        if isinstance(strip_const(type_), StringType):
+            return f"cinder_string_hash_value(&({value}))"
         if is_c_string(type_):
             return f"cinder_hash_string({value})"
         return f"cinder_hash_u64((uint64_t)({value}))"
 
     @staticmethod
     def _equal_expression(type_: Type, left: str, right: str) -> str:
+        if isinstance(strip_const(type_), StringType):
+            return f"cinder_string_equal_value(&({left}), &({right}))"
         if is_c_string(type_):
             return f"cinder_string_equal({left}, {right})"
         return f"(({left}) == ({right}))"
 
     @staticmethod
     def _clone_expression(type_: Type, value: str) -> str:
+        if isinstance(strip_const(type_), StringType):
+            return f"cinder_string_clone(&({value}))"
         if is_c_string(type_):
             return f"cinder_clone_string({value})"
         return value
 
     def _drop_expression(self, type_: Type, value: str) -> str:
+        raw = strip_const(type_)
+        if isinstance(raw, StringType):
+            return f"cinder_string_drop(&({value}));"
+        if isinstance(raw, StringBuilderType):
+            return f"cinder_string_builder_drop(&({value}));"
         if is_c_string(type_):
             return f"free((void *)({value}));"
         if self._type_needs_drop(type_):
@@ -2173,6 +2222,10 @@ class CGenerator:
 
     def _drop_glue_call(self, type_: Type, pointer_expr: str) -> str:
         raw = strip_const(type_)
+        if isinstance(raw, StringType):
+            return f"cinder_string_drop({pointer_expr});"
+        if isinstance(raw, StringBuilderType):
+            return f"cinder_string_builder_drop({pointer_expr});"
         if isinstance(raw, (ListType, MapType, SetType, FileType, OwnedType)):
             return f"{self._container_drop_name(raw)}({pointer_expr});"
         if isinstance(raw, ClassType):
@@ -2307,6 +2360,8 @@ class CGenerator:
         raw = strip_const(type_)
         if raw in (BOOL, CHAR):
             return True
+        if isinstance(raw, StringType):
+            return True
         if _is_printf_string_type(raw):
             return True
         if isinstance(raw, PrimitiveType) and raw.category in {"float", "integer"}:
@@ -2334,6 +2389,11 @@ class CGenerator:
             return
         if raw == CHAR:
             self.writer.line(f"cinder_print_repr_char({c_value});")
+            return
+        if isinstance(raw, StringType):
+            self.writer.line(
+                f"cinder_print_repr_string(cinder_string_cstr(&({c_value})));"
+            )
             return
         if _is_printf_string_type(raw):
             self.writer.line(f"cinder_print_repr_string({c_value});")
@@ -2529,7 +2589,9 @@ class CGenerator:
                 f"{c_decl(pointer_type, 'right')} = ({pointer_c_type})right_value;"
             )
             raw = strip_const(element_type)
-            if isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR:
+            if isinstance(raw, StringType):
+                self.writer.line("return cinder_string_compare_value(left, right);")
+            elif isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR:
                 self.writer.line("return strcmp(*left, *right);")
             else:
                 self.writer.line("return (*left > *right) - (*left < *right);")
@@ -2739,6 +2801,45 @@ class CGenerator:
         self.writer.line("return option->data.value;")
         self.writer.indent -= 1
         self.writer.line("}")
+        if isinstance(value_type(type_.inner), StringType):
+            self.writer.line()
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED "
+                f"{c_decl(PointerType(ConstType(type_.inner)), f'{name}_value_ptr_or_panic')}"
+                f"(const {name} *option)"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(
+                f"if (option == NULL || option->tag != {name}_Tag_Some)"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line('cinder_panic("attempted to read None.value");')
+            self.writer.indent -= 1
+            self.writer.line("}")
+            self.writer.line("return &option->data.value;")
+            self.writer.indent -= 1
+            self.writer.line("}")
+            self.writer.line()
+            self.writer.line(
+                f"static inline CINDER_MAYBE_UNUSED "
+                f"{c_decl(PointerType(type_.inner), f'{name}_value_mut_ptr_or_panic')}"
+                f"({name} *option)"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(
+                f"if (option == NULL || option->tag != {name}_Tag_Some)"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line('cinder_panic("attempted to read None.value");')
+            self.writer.indent -= 1
+            self.writer.line("}")
+            self.writer.line("return &option->data.value;")
+            self.writer.indent -= 1
+            self.writer.line("}")
         self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
@@ -2839,7 +2940,7 @@ class CGenerator:
                 f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
             )
             emitted = True
-        for option_type in self.ir.option_types:
+        for option_type in self._generated_option_types():
             if self._type_needs_drop(option_type):
                 name = c_identifier(option_c_name(option_type))
                 self.writer.line(
@@ -2870,7 +2971,7 @@ class CGenerator:
             self.writer.line()
 
     def _emit_aggregate_drop_helpers(self) -> None:
-        for option_type in self.ir.option_types:
+        for option_type in self._generated_option_types():
             if self._type_needs_drop(option_type):
                 self._emit_option_drop(option_type)
         for result_type in self.ir.result_types:
@@ -2882,6 +2983,9 @@ class CGenerator:
 
     def _emit_option_drop(self, type_: OptionType) -> None:
         name = c_identifier(option_c_name(type_))
+        guard = f"CINDER_DROP_{name.upper()}"
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
         self.writer.line(
             f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
         )
@@ -2902,6 +3006,7 @@ class CGenerator:
         self.writer.line("}")
         self.writer.indent -= 1
         self.writer.line("}")
+        self.writer.line(f"#endif /* {guard} */")
         self.writer.line()
 
     def _emit_result_drop(self, type_: ResultType) -> None:
@@ -3493,7 +3598,6 @@ class CGenerator:
         self.writer.line(f"{target} {statement.operator} {value};")
 
     def _emit_return(self, statement: ast.ReturnStmt) -> None:
-        has_deferred = any(frame.cleanups for frame in self.scope_frames)
         if statement.value is None:
             self._emit_all_deferred()
             self.writer.line("return;")
@@ -3501,6 +3605,7 @@ class CGenerator:
 
         assert self.current_function is not None
         value = self._emit_with_expected(statement.value, self.current_function.return_type)
+        has_deferred = any(frame.cleanups for frame in self.scope_frames)
         if not has_deferred:
             self.writer.line(f"return {value};")
             return
@@ -3906,6 +4011,9 @@ class CGenerator:
         exclude_variable: VariableSymbol | None = None,
     ) -> None:
         for cleanup in reversed(frame.cleanups):
+            if cleanup.drop_statement is not None:
+                self.writer.line(cleanup.drop_statement)
+                continue
             if cleanup.iterator_end is not None:
                 helper, pointer = cleanup.iterator_end
                 self.writer.line(f"{helper}({pointer});")
@@ -3954,12 +4062,10 @@ class CGenerator:
                 return True
             if id(cleanup.variable) in moved_ids:
                 return False
-            if (
+            return not (
                 cleanup.variable.is_parameter
                 and cleanup.variable.name in moved_param_names
-            ):
-                return False
-            return True
+            )
 
         for frame in self.scope_frames:
             frame.cleanups = [cleanup for cleanup in frame.cleanups if keep(cleanup)]
@@ -4277,7 +4383,7 @@ class CGenerator:
             value_name = self._new_temp("map_value")
             self.writer.line(
                 f"{c_decl(map_type.key, key_name)} = "
-                f"{self._emit_with_expected(entry.key, map_type.key)};"
+                f"{self._emit_borrowed_value(entry.key, map_type.key, 'map_key')};"
             )
             self.writer.line(
                 f"{c_decl(map_type.value, value_name)} = "
@@ -4287,9 +4393,10 @@ class CGenerator:
                 f"{name}_set(&{temporary}, {key_name}, {value_name});"
             )
         if self.scope_frames:
-            popped = self.scope_frames[-1].cleanups.pop()
-            if popped is not cleanup:
+            frame = self.scope_frames[-1]
+            if cleanup not in frame.cleanups:
                 raise AssertionError("Map literal cleanup stack is unbalanced")
+            frame.cleanups.remove(cleanup)
         return temporary
 
     def _emit_set_literal(
@@ -4307,13 +4414,14 @@ class CGenerator:
             item_name = self._new_temp("set_item")
             self.writer.line(
                 f"{c_decl(set_type.inner, item_name)} = "
-                f"{self._emit_with_expected(element, set_type.inner)};"
+                f"{self._emit_borrowed_value(element, set_type.inner, 'set_item')};"
             )
             self.writer.line(f"{name}_add(&{temporary}, {item_name});")
         if self.scope_frames:
-            popped = self.scope_frames[-1].cleanups.pop()
-            if popped is not cleanup:
+            frame = self.scope_frames[-1]
+            if cleanup not in frame.cleanups:
                 raise AssertionError("Set literal cleanup stack is unbalanced")
+            frame.cleanups.remove(cleanup)
         return temporary
 
     def _emit_resolved_binary(
@@ -4322,17 +4430,42 @@ class CGenerator:
         kind: str,
         owner_type: Type | None,
     ) -> str:
-        if kind == "string_equal":
+        if kind == "string_equal" and owner_type is not None and is_c_string(
+            owner_type
+        ):
             value = (
                 f"cinder_string_equal({self._emit_expr(expression.left)}, "
                 f"{self._emit_expr(expression.right)})"
             )
             return f"(!{value})" if expression.operator == "!=" else value
 
+        if kind in {
+            "string_concat",
+            "string_equal",
+            "string_order",
+            "string_compare",
+        }:
+            left = self._borrow_string_pointer(expression.left, "string_left")
+            right = self._borrow_string_pointer(expression.right, "string_right")
+            if kind == "string_concat":
+                return f"cinder_string_concat({left}, {right})"
+            if kind == "string_equal":
+                value = f"cinder_string_equal_value({left}, {right})"
+                return f"(!{value})" if expression.operator == "!=" else value
+            comparison = f"cinder_string_compare_value({left}, {right})"
+            operator = expression.operator
+            if operator not in {"<", "<=", ">", ">="}:
+                raise AssertionError(f"invalid String ordering operator {operator!r}")
+            return f"({comparison} {operator} 0)"
+
         if kind == "map_contains":
             assert isinstance(owner_type, MapType)
             name = c_identifier(map_c_name(owner_type))
-            key = self._emit_with_expected(expression.left, owner_type.key)
+            key = self._emit_borrowed_value(
+                expression.left,
+                owner_type.key,
+                "map_contains_key",
+            )
             if isinstance(expression.right, ast.MapLiteralExpr):
                 owned = self._emit_inline_map_literal(
                     expression.right.entries,
@@ -4361,7 +4494,11 @@ class CGenerator:
         if kind == "set_contains":
             assert isinstance(owner_type, SetType)
             name = c_identifier(set_c_name(owner_type))
-            item = self._emit_with_expected(expression.left, owner_type.inner)
+            item = self._emit_borrowed_value(
+                expression.left,
+                owner_type.inner,
+                "set_contains_item",
+            )
             if isinstance(expression.right, ast.SetLiteralExpr):
                 owned = self._emit_inline_set_literal(
                     expression.right.elements,
@@ -4392,15 +4529,17 @@ class CGenerator:
             name = c_identifier(map_c_name(owner_type.map_type))
             view = self._emit_expr(expression.right)
             if owner_type.kind == "keys":
-                item = self._emit_with_expected(
+                item = self._emit_borrowed_value(
                     expression.left,
                     owner_type.map_type.key,
+                    "map_view_key",
                 )
                 value = f"{name}_contains(({view}).map, {item})"
             elif owner_type.kind == "values":
-                item = self._emit_with_expected(
+                item = self._emit_borrowed_value(
                     expression.left,
                     owner_type.map_type.value,
+                    "map_view_value",
                 )
                 value = f"{name}_values_contains(({view}).map, {item})"
             else:
@@ -4504,7 +4643,7 @@ class CGenerator:
         if not entries:
             return f"{name}_from_values(NULL, NULL, 0)"
         keys = ", ".join(
-            self._emit_with_expected(entry.key, map_type.key)
+            self._emit_borrowed_value(entry.key, map_type.key, "map_key")
             for entry in entries
         )
         values = ", ".join(
@@ -4525,7 +4664,7 @@ class CGenerator:
     ) -> str:
         name = c_identifier(set_c_name(set_type))
         values = ", ".join(
-            self._emit_with_expected(element, set_type.inner)
+            self._emit_borrowed_value(element, set_type.inner, "set_item")
             for element in elements
         )
         array = c_type_expression(ArrayType(set_type.inner, len(elements)))
@@ -4538,6 +4677,9 @@ class CGenerator:
             return "NULL"
         if expression.literal_kind == "string":
             assert isinstance(expression.value, str)
+            literal_type = value_type(self.semantic.expression_type(expression))
+            if isinstance(literal_type, StringType):
+                return c_static_string(expression.value)
             return c_string(expression.value)
         if expression.literal_kind == "char":
             assert isinstance(expression.value, str)
@@ -4681,6 +4823,12 @@ class CGenerator:
             operator = "->" if pointer else "."
             member = "data" if resolution.kind == "slice_data" else "length"
             return f"({base}){operator}{member}"
+        if resolution.kind == "string_method":
+            method = str(resolution.compile_value)
+            return f"cinder_string_{c_identifier(method)}"
+        if resolution.kind == "string_builder_method":
+            method = str(resolution.compile_value)
+            return f"cinder_string_builder_{c_identifier(method)}"
         if resolution.kind == "list_method":
             list_type = value_type(
                 self.semantic.expression_type(expression.value)
@@ -4781,9 +4929,9 @@ class CGenerator:
                 raise AssertionError("invalid compile-time field owner")
             attribute = expression.name
             if attribute == "name":
-                return c_string(field.name)
+                return self._emit_compile_text(expression, field.name)
             if attribute == "type_name":
-                return c_string(type_name(field.type))
+                return self._emit_compile_text(expression, type_name(field.type))
             if attribute == "offset":
                 return self._field_offset_expression(symbol.owner, owner, path, field.name)
             field_type = c_type_expression(field.type)
@@ -4801,11 +4949,17 @@ class CGenerator:
                 raise AssertionError("invalid compile-time method binding")
             attribute = expression.name
             if attribute == "name":
-                return c_string(method.name)
+                return self._emit_compile_text(expression, method.name)
             if attribute == "signature":
-                return c_string(self._method_signature_text(method))
+                return self._emit_compile_text(
+                    expression,
+                    self._method_signature_text(method),
+                )
             if attribute == "return_type_name":
-                return c_string(type_name(method.return_type))
+                return self._emit_compile_text(
+                    expression,
+                    type_name(method.return_type),
+                )
             if attribute == "parameter_count":
                 return str(max(0, len(method.parameters) - (1 if method.owner else 0)))
             if attribute == "is_abstract":
@@ -4815,6 +4969,18 @@ class CGenerator:
             raise AssertionError(f"unknown compile-time method attribute {attribute!r}")
 
         raise AssertionError(f"unknown compile-time collection {symbol.collection_kind!r}")
+
+    def _emit_compile_text(
+        self,
+        expression: ast.Expression,
+        value: str,
+    ) -> str:
+        result_type = value_type(self.semantic.expression_type(expression))
+        return (
+            c_static_string(value)
+            if isinstance(result_type, StringType)
+            else c_string(value)
+        )
 
     def _underlying_result_type(self, expression: ast.Expression) -> ResultType:
         type_ = strip_const(self.semantic.expression_type(expression))
@@ -4839,7 +5005,7 @@ class CGenerator:
         )
         self.writer.line(
             f"{c_decl(map_type.key, key_name)} = "
-            f"{self._emit_with_expected(statement.target.index, map_type.key)};"
+            f"{self._emit_borrowed_value(statement.target.index, map_type.key, 'map_key')};"
         )
         self.writer.line(
             f"{c_decl(map_type.value, value_name)} = "
@@ -4863,6 +5029,13 @@ class CGenerator:
 
     def _emit_index(self, expression: ast.IndexExpr) -> str:
         base_type = value_type(self.semantic.expression_type(expression.value))
+        if isinstance(base_type, StringType):
+            base = self._borrow_string_pointer(
+                expression.value,
+                "string_index",
+            )
+            index = self._emit_expr(expression.index)
+            return f"cinder_string_byte_at({base}, {index})"
         if isinstance(base_type, TupleType):
             assert isinstance(expression.index, ast.LiteralExpr)
             assert isinstance(expression.index.value, int)
@@ -4872,7 +5045,11 @@ class CGenerator:
         if isinstance(base_type, MapType):
             name = c_identifier(map_c_name(base_type))
             base = self._container_pointer(expression.value)
-            index = self._emit_with_expected(expression.index, base_type.key)
+            index = self._emit_borrowed_value(
+                expression.index,
+                base_type.key,
+                "map_key",
+            )
             return f"{name}_lookup_or_panic({base}, {index})"
         if isinstance(base_type, (SliceType, ListType)):
             base = self._emit_expr(expression.value)
@@ -4882,8 +5059,22 @@ class CGenerator:
 
     def _emit_slice(self, expression: ast.SliceExpr) -> str:
         result_type = value_type(self.semantic.expression_type(expression))
-        assert isinstance(result_type, SliceType)
         base_type = value_type(self.semantic.expression_type(expression.value))
+        if isinstance(base_type, StringType):
+            if not isinstance(result_type, StringType):
+                raise AssertionError("String slicing did not resolve to String")
+            base = self._borrow_string_pointer(
+                expression.value,
+                "string_slice",
+            )
+            start = "0" if expression.start is None else self._emit_expr(expression.start)
+            stop = (
+                f"({base})->length"
+                if expression.stop is None
+                else self._emit_expr(expression.stop)
+            )
+            return f"cinder_string_slice({base}, {start}, {stop})"
+        assert isinstance(result_type, SliceType)
         if isinstance(base_type, ArrayType):
             base = self._array_as_slice(expression.value, result_type)
         else:
@@ -4900,6 +5091,25 @@ class CGenerator:
         self._exclude_moved_variables(resolution.moved_variables)
         if resolution.kind == "print":
             return self._emit_print_call(expression)
+        if resolution.kind in {
+            "string_constructor",
+            "string_new",
+            "string_clone",
+            "string_append",
+            "string_append_char",
+            "string_reserve",
+            "string_clear",
+            "string_byte_at",
+            "string_builder_constructor",
+            "string_builder_new",
+            "string_builder_append",
+            "string_builder_append_char",
+            "string_builder_reserve",
+            "string_builder_clear",
+            "string_builder_finish",
+            "builder_finish",
+        }:
+            return self._emit_string_call(expression, resolution)
         if resolution.kind == "input":
             return self._emit_input_call(expression)
         if resolution.kind == "open":
@@ -4982,9 +5192,10 @@ class CGenerator:
             receiver = self._container_pointer(expression.callee.value)
             method = resolution.kind.removeprefix("map_")
             if method in {"get", "pop"}:
-                key = self._emit_with_expected(
+                key = self._emit_borrowed_value(
                     expression.arguments[0].value,
                     map_type.key,
+                    "map_key",
                 )
                 return f"{name}_{method}({receiver}, {key})"
             if method == "update":
@@ -5009,9 +5220,10 @@ class CGenerator:
             receiver = self._container_pointer(expression.callee.value)
             method = resolution.kind.removeprefix("set_")
             if method in {"add", "discard", "remove"}:
-                item = self._emit_with_expected(
+                item = self._emit_borrowed_value(
                     expression.arguments[0].value,
                     set_type.inner,
+                    "set_item",
                 )
                 return f"{name}_{method}({receiver}, {item})"
             if method == "update" or method in {
@@ -5054,6 +5266,9 @@ class CGenerator:
                     f"((void)({self._emit_expr(argument)}), "
                     f"{len(argument_type.elements)})"
                 )
+            if isinstance(argument_type, StringType):
+                pointer = self._borrow_string_pointer(argument, "len_string")
+                return f"({pointer})->length"
             return f"strlen({self._emit_expr(argument)})"
         if resolution.kind == "sort":
             expected = resolution.expected_types[0]
@@ -5128,6 +5343,107 @@ class CGenerator:
         arguments.extend(self._emit_ordered_call_arguments(expression, resolution))
 
         return f"{c_identifier(function.c_name)}({', '.join(arguments)})"
+
+    def _emit_string_call(
+        self,
+        expression: ast.CallExpr,
+        resolution: CallResolution,
+    ) -> str:
+        kind = resolution.kind
+        if kind in {"string_constructor", "string_new"}:
+            if not expression.arguments:
+                return f"(({string_c_name()}){{ 0 }})"
+            argument = expression.arguments[0].value
+            argument_type = value_type(self.semantic.expression_type(argument))
+            if isinstance(argument_type, StringType):
+                pointer = self._borrow_string_pointer(argument, "string_constructor")
+                return f"cinder_string_clone({pointer})"
+            return f"cinder_string_from_cstr({self._emit_expr(argument)})"
+
+        if kind in {"string_builder_constructor", "string_builder_new"}:
+            temporary = self._new_temp("string_builder")
+            self.writer.line(f"{string_builder_c_name()} {temporary} = {{ 0 }};")
+            self.writer.line(f"cinder_string_builder_init(&{temporary});")
+            return temporary
+
+        if not isinstance(expression.callee, ast.AttributeExpr):
+            raise AssertionError(f"{kind} call has no String receiver")
+        receiver_expression = expression.callee.value
+
+        if kind == "string_clone":
+            receiver = self._borrow_string_pointer(
+                receiver_expression,
+                "string_clone",
+            )
+            return f"cinder_string_clone({receiver})"
+        if kind == "string_byte_at":
+            if not expression.arguments:
+                raise AssertionError("String.byte_at requires an index")
+            receiver = self._borrow_string_pointer(
+                receiver_expression,
+                "string_byte_at",
+            )
+            index = self._emit_expr(expression.arguments[0].value)
+            return (
+                f"((uint8_t)(unsigned char)"
+                f"cinder_string_byte_at({receiver}, {index}))"
+            )
+
+        builder = kind.startswith("string_builder_") or kind == "builder_finish"
+        pointer_type: Type = (
+            PointerType(StringBuilderType()) if builder else PointerType(StringType())
+        )
+        raw_receiver = (
+            self._container_pointer(receiver_expression)
+            if builder
+            else self._mutable_string_pointer(receiver_expression)
+        )
+        receiver = self._new_temp("string_receiver")
+        self.writer.line(
+            f"{c_decl(pointer_type, receiver)} = {raw_receiver};"
+        )
+
+        if kind in {"string_builder_finish", "builder_finish"}:
+            return f"cinder_string_builder_finish({receiver})"
+        if kind in {"string_clear", "string_builder_clear"}:
+            if builder:
+                return (
+                    f"(cinder_string_builder_drop({receiver}), "
+                    f"cinder_string_builder_init({receiver}))"
+                )
+            return f"cinder_string_clear({receiver})"
+        if kind in {"string_append", "string_builder_append"}:
+            if not expression.arguments:
+                raise AssertionError("append requires a String argument")
+            suffix = self._borrow_string_pointer(
+                expression.arguments[0].value,
+                "string_suffix",
+            )
+            runtime = (
+                "cinder_string_builder_append" if builder else "cinder_string_append"
+            )
+            return f"{runtime}({receiver}, {suffix})"
+        if kind in {"string_append_char", "string_builder_append_char"}:
+            if not expression.arguments:
+                raise AssertionError("append_char requires a char argument")
+            value = self._emit_expr(expression.arguments[0].value)
+            runtime = (
+                "cinder_string_builder_append_char"
+                if builder
+                else "cinder_string_append_char"
+            )
+            return f"{runtime}({receiver}, {value})"
+        if kind in {"string_reserve", "string_builder_reserve"}:
+            if not expression.arguments:
+                raise AssertionError("reserve requires a capacity argument")
+            capacity = self._emit_expr(expression.arguments[0].value)
+            runtime = (
+                "cinder_string_builder_reserve"
+                if builder
+                else "cinder_string_reserve"
+            )
+            return f"{runtime}({receiver}, {capacity})"
+        raise AssertionError(f"unhandled String call resolution {kind!r}")
 
     def _emit_print_call(self, expression: ast.CallExpr) -> str:
         if not any(
@@ -5261,11 +5577,14 @@ class CGenerator:
         return f"&{temporary}"
 
     def _emit_input_call(self, expression: ast.CallExpr) -> str:
-        arguments = self._emit_ordered_call_arguments(
-            expression,
-            self.semantic.call_resolutions[id(expression)],
+        prompt = (
+            "NULL"
+            if not expression.arguments
+            else self._borrow_string_cstr(
+                expression.arguments[0].value,
+                "input_prompt",
+            )
         )
-        prompt = arguments[0] if arguments else "NULL"
         return f"cinder_input({prompt})"
 
     def _emit_parse_call(
@@ -5276,9 +5595,12 @@ class CGenerator:
         if resolution.result_type is None:
             raise AssertionError("parse builtin has no Result type")
         runtime = _PARSE_RUNTIME[resolution.kind]
-        arguments = self._emit_ordered_call_arguments(expression, resolution)
-        if len(arguments) != 1:
+        if len(expression.arguments) != 1:
             raise AssertionError(f"{resolution.kind} requires one argument")
+        argument = self._borrow_string_cstr(
+            expression.arguments[0].value,
+            "parse_text",
+        )
         result_type = resolution.result_type
         result_name = c_identifier(result_c_name(result_type))
         out_temp = self._new_temp("parse_out")
@@ -5291,7 +5613,7 @@ class CGenerator:
             f"{{ {result_name}_Tag_Err, {{ 0 }} }};"
         )
         self.writer.line(
-            f"if ({runtime}({arguments[0]}, &{out_temp}, &{err_temp}))"
+            f"if ({runtime}({argument}, &{out_temp}, &{err_temp}))"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -5325,13 +5647,11 @@ class CGenerator:
         return f"{runtime}({arguments[0]})"
 
     def _emit_open_call(self, expression: ast.CallExpr) -> str:
-        arguments = self._emit_ordered_call_arguments(
-            expression,
-            self.semantic.call_resolutions[id(expression)],
-        )
-        if len(arguments) != 2:
+        if len(expression.arguments) != 2:
             raise AssertionError("open requires path and mode arguments")
-        return f"{file_c_name()}_open({arguments[0]}, {arguments[1]})"
+        path = self._borrow_string_cstr(expression.arguments[0].value, "open_path")
+        mode = self._borrow_string_cstr(expression.arguments[1].value, "open_mode")
+        return f"{file_c_name()}_open({path}, {mode})"
 
     def _emit_file_method_call(
         self,
@@ -5342,7 +5662,21 @@ class CGenerator:
             raise AssertionError("File method callee is not an attribute")
         receiver = self._container_pointer(expression.callee.value)
         name = file_c_name()
-        if resolution.kind == "file_write":
+        if resolution.kind in {"file_write", "file_write_string"}:
+            if (
+                expression.arguments
+                and isinstance(
+                    value_type(
+                        self.semantic.expression_type(expression.arguments[0].value)
+                    ),
+                    StringType,
+                )
+            ):
+                data = self._borrow_string_pointer(
+                    expression.arguments[0].value,
+                    "file_write_string",
+                )
+                return f"{name}_write_string({receiver}, {data})"
             arguments = self._emit_ordered_call_arguments(expression, resolution)
             return f"{name}_write({receiver}, {', '.join(arguments)})"
         if resolution.kind == "file_read":
@@ -5382,9 +5716,12 @@ class CGenerator:
         format_spec: str | None,
     ) -> tuple[str, tuple[str, ...]]:
         type_ = value_type(self.semantic.expression_type(expression))
-        value = self._emit_expr(expression)
         conversion = _print_conversion(format_spec)
 
+        if isinstance(type_, StringType):
+            return "%s", (self._borrow_string_cstr(expression, "print_string"),)
+
+        value = self._emit_expr(expression)
         if type_ == BOOL:
             return "%s", (f"(({value}) ? \"true\" : \"false\")",)
         if type_ == CHAR:
@@ -5414,7 +5751,11 @@ class CGenerator:
         for output_index, argument_index in enumerate(resolution.argument_order):
             argument = expression.arguments[argument_index].value
             expected = resolution.expected_types[output_index]
-            if expected is None:
+            if argument_index in resolution.ffi_borrow_indices:
+                arguments.append(
+                    self._borrow_string_cstr(argument, "ffi_string")
+                )
+            elif expected is None:
                 arguments.append(self._emit_vararg(argument))
             else:
                 arguments.append(self._emit_with_expected(argument, expected))
@@ -5431,7 +5772,7 @@ class CGenerator:
         if kind == "compile_integer":
             return str(int(resolution.compile_value or 0))
         if kind == "compile_string":
-            value = c_string(str(resolution.compile_value or ""))
+            value = c_static_string(str(resolution.compile_value or ""))
             return self._preserve_reflection_subject(expression, value)
         if kind in {"size_of", "align_of"}:
             reflected_type = resolution.compile_value
@@ -5481,7 +5822,7 @@ class CGenerator:
             if kind == "dynamic_type_info":
                 return info
             if kind == "dynamic_type_name":
-                return f"({info}->name)"
+                return f"cinder_string_from_cstr({info}->name)"
             item_name = "fields" if kind == "dynamic_fields" else "methods"
             item_type = self.semantic.types[
                 "CinderFieldInfo" if item_name == "fields" else "CinderMethodInfo"
@@ -5506,6 +5847,35 @@ class CGenerator:
         subject_type = self.semantic.expression_type(subject)
         if isinstance(subject_type, TypeValueType):
             return value
+        subject_value = value_type(subject_type)
+        if isinstance(subject_value, StringType):
+            pointer = self._borrow_string_pointer(
+                subject,
+                "reflect_string",
+            )
+            return f"((void)({pointer}), {value})"
+        if (
+            isinstance(subject_value, StringBuilderType)
+            and not self._is_addressable_string_expression(subject)
+        ):
+            if not self.scope_frames:
+                raise AssertionError(
+                    "temporary StringBuilder reflection outside a scope"
+                )
+            temporary = self._new_temp("reflect_string_builder")
+            self.writer.line(
+                f"{c_decl(StringBuilderType(), temporary)} = "
+                f"{self._emit_expr(subject)};"
+            )
+            self.scope_frames[-1].cleanups.append(
+                _Cleanup(
+                    iterator_end=(
+                        "cinder_string_builder_drop",
+                        f"&{temporary}",
+                    )
+                )
+            )
+            return f"((void)(&{temporary}), {value})"
         return f"((void)({self._emit_expr(subject)}), {value})"
 
     def _emit_reflection_slice(self, kind: str, nominal: NominalSymbol) -> str:
@@ -5611,6 +5981,296 @@ class CGenerator:
                 return self._emit_expr(expression)
             return self._emit_address(expression)
         return self._emit_expr(expression)
+
+    def _borrow_string_pointer(
+        self,
+        expression: ast.Expression,
+        purpose: str,
+    ) -> str:
+        if isinstance(expression, ast.IndexExpr):
+            indexed = self._borrow_indexed_string_pointer(expression, purpose)
+            if indexed is not None:
+                return indexed
+        if isinstance(expression, ast.AttributeExpr):
+            resolution = self.semantic.attribute_resolutions.get(id(expression))
+            if resolution is not None and resolution.kind == "option_value":
+                return self._borrow_option_string_value_pointer(
+                    expression.value,
+                    purpose,
+                )
+            attribute = self._borrow_attribute_string_pointer(
+                expression,
+                purpose,
+            )
+            if attribute is not None:
+                return attribute
+        actual = strip_const(self.semantic.expression_type(expression))
+        if isinstance(actual, ReferenceType):
+            return self._emit_expr(expression, mode="raw")
+        if isinstance(actual, PointerType):
+            return self._emit_expr(expression)
+        if not isinstance(value_type(actual), StringType):
+            raise AssertionError(
+                f"cannot borrow non-String value as String: {type_name(actual)}"
+            )
+        if self._is_addressable_string_expression(expression):
+            return self._emit_address(expression)
+        if not self.scope_frames:
+            raise AssertionError("temporary String borrow emitted outside a scope")
+        temporary = self._new_temp(purpose)
+        self.writer.line(
+            f"{c_decl(StringType(), temporary)} = {self._emit_expr(expression)};"
+        )
+        self.scope_frames[-1].cleanups.append(
+            _Cleanup(iterator_end=("cinder_string_drop", f"&{temporary}"))
+        )
+        return f"&{temporary}"
+
+    def _borrow_indexed_string_pointer(
+        self,
+        expression: ast.IndexExpr,
+        purpose: str,
+    ) -> str | None:
+        base_type = value_type(self.semantic.expression_type(expression.value))
+        if isinstance(base_type, MapType):
+            if not isinstance(value_type(base_type.value), StringType):
+                return None
+            name = c_identifier(map_c_name(base_type))
+            base = self._container_pointer(expression.value)
+            key = self._emit_borrowed_value(
+                expression.index,
+                base_type.key,
+                "map_key",
+            )
+            return f"{name}_lookup_ptr_or_panic({base}, {key})"
+
+        if not isinstance(
+            base_type,
+            (ArrayType, SliceType, ListType, TupleType, PointerType),
+        ):
+            return None
+        if self._is_addressable_string_expression(expression):
+            return self._emit_address(expression)
+
+        owner = self._materialize_borrow_owner(
+            expression.value,
+            base_type,
+            f"{purpose}_owner",
+        )
+        if isinstance(base_type, TupleType):
+            if not (
+                isinstance(expression.index, ast.LiteralExpr)
+                and isinstance(expression.index.value, int)
+            ):
+                raise AssertionError("Tuple String index is not an integer literal")
+            return f"&({owner}.item_{expression.index.value})"
+
+        index = self._emit_expr(expression.index)
+        if isinstance(base_type, (SliceType, ListType)):
+            return f"&({owner}.data[{index}])"
+        return f"&(({owner})[{index}])"
+
+    def _borrow_attribute_string_pointer(
+        self,
+        expression: ast.AttributeExpr,
+        purpose: str,
+    ) -> str | None:
+        resolution = self.semantic.attribute_resolutions.get(id(expression))
+        if resolution is None or self._is_addressable_string_expression(expression):
+            return None
+        if resolution.kind not in {
+            "field",
+            "class_field",
+            "result_value",
+            "result_error",
+        }:
+            return None
+
+        owner_type = value_type(self.semantic.expression_type(expression.value))
+        owner = self._materialize_borrow_owner(
+            expression.value,
+            owner_type,
+            f"{purpose}_owner",
+        )
+        if resolution.kind in {"result_value", "result_error"}:
+            payload = "ok" if resolution.kind == "result_value" else "err"
+            return f"&({owner}.data.{payload})"
+
+        if resolution.field is None:
+            raise AssertionError("String field borrow has no field")
+        member = self._emit_pointer_path_access(
+            f"&{owner}",
+            resolution.access_path,
+            resolution.field.name,
+        )
+        return f"&({member})"
+
+    def _materialize_borrow_owner(
+        self,
+        expression: ast.Expression,
+        owner_type: Type,
+        purpose: str,
+    ) -> str:
+        if not self.scope_frames:
+            raise AssertionError("temporary String owner emitted outside a scope")
+        temporary = self._new_temp(purpose)
+        self.writer.line(
+            f"{c_decl(owner_type, temporary)} = "
+            f"{self._emit_with_expected(expression, owner_type)};"
+        )
+        if self._type_needs_drop(owner_type):
+            self.scope_frames[-1].cleanups.append(
+                _Cleanup(
+                    drop_statement=self._drop_glue_call(
+                        owner_type,
+                        f"&{temporary}",
+                    )
+                )
+            )
+        return temporary
+
+    def _borrow_option_string_value_pointer(
+        self,
+        expression: ast.Expression,
+        purpose: str,
+    ) -> str:
+        storage = strip_const(self.semantic.expression_type(expression))
+        option_type = (
+            strip_const(storage.inner)
+            if isinstance(storage, (PointerType, ReferenceType))
+            else value_type(storage)
+        )
+        if not (
+            isinstance(option_type, OptionType)
+            and isinstance(value_type(option_type.inner), StringType)
+        ):
+            raise AssertionError("Option.value String borrow has a non-String payload")
+        name = c_identifier(option_c_name(option_type))
+        if isinstance(storage, ReferenceType):
+            pointer = self._emit_expr(expression, mode="raw")
+        elif isinstance(storage, PointerType):
+            pointer = self._emit_expr(expression)
+        elif self._is_addressable_string_expression(expression):
+            pointer = self._emit_address(expression)
+        else:
+            if not self.scope_frames:
+                raise AssertionError("temporary Option[String] borrow outside a scope")
+            temporary = self._new_temp(f"{purpose}_option")
+            self.writer.line(
+                f"{c_decl(option_type, temporary)} = {self._emit_expr(expression)};"
+            )
+            self.scope_frames[-1].cleanups.append(
+                _Cleanup(iterator_end=(f"{name}_drop", f"&{temporary}"))
+            )
+            pointer = f"&{temporary}"
+        return f"{name}_value_ptr_or_panic({pointer})"
+
+    def _borrow_string_cstr(
+        self,
+        expression: ast.Expression,
+        purpose: str,
+    ) -> str:
+        pointer = self._borrow_string_pointer(expression, purpose)
+        return f"cinder_string_cstr({pointer})"
+
+    def _emit_borrowed_value(
+        self,
+        expression: ast.Expression,
+        expected: Type,
+        purpose: str,
+    ) -> str:
+        if isinstance(value_type(expected), StringType):
+            pointer = self._borrow_string_pointer(expression, purpose)
+            return f"(*{pointer})"
+        return self._emit_with_expected(expression, expected)
+
+    def _mutable_string_pointer(self, expression: ast.Expression) -> str:
+        if isinstance(expression, ast.AttributeExpr):
+            resolution = self.semantic.attribute_resolutions.get(id(expression))
+            if resolution is not None and resolution.kind == "option_value":
+                return self._mutable_option_string_value_pointer(expression.value)
+        if isinstance(expression, ast.IndexExpr):
+            base_type = value_type(
+                self.semantic.expression_type(expression.value)
+            )
+            if (
+                isinstance(base_type, MapType)
+                and isinstance(value_type(base_type.value), StringType)
+            ):
+                name = c_identifier(map_c_name(base_type))
+                base = self._container_pointer(expression.value)
+                key = self._emit_borrowed_value(
+                    expression.index,
+                    base_type.key,
+                    "map_key",
+                )
+                return f"{name}_lookup_mut_or_panic({base}, {key})"
+        actual = strip_const(self.semantic.expression_type(expression))
+        if isinstance(actual, ReferenceType):
+            return self._emit_expr(expression, mode="raw")
+        if isinstance(actual, PointerType):
+            return self._emit_expr(expression)
+        return self._emit_address(expression)
+
+    def _mutable_option_string_value_pointer(
+        self,
+        expression: ast.Expression,
+    ) -> str:
+        storage = strip_const(self.semantic.expression_type(expression))
+        option_type = (
+            strip_const(storage.inner)
+            if isinstance(storage, (PointerType, ReferenceType))
+            else value_type(storage)
+        )
+        if not (
+            isinstance(option_type, OptionType)
+            and isinstance(value_type(option_type.inner), StringType)
+        ):
+            raise AssertionError(
+                "mutable Option.value String access has a non-String payload"
+            )
+        name = c_identifier(option_c_name(option_type))
+        if isinstance(storage, ReferenceType):
+            pointer = self._emit_expr(expression, mode="raw")
+        elif isinstance(storage, PointerType):
+            pointer = self._emit_expr(expression)
+        else:
+            pointer = self._emit_address(expression)
+        return f"{name}_value_mut_ptr_or_panic({pointer})"
+
+    def _is_addressable_string_expression(self, expression: ast.Expression) -> bool:
+        if isinstance(expression, ast.NameExpr):
+            return True
+        if isinstance(expression, ast.UnaryExpr) and expression.operator == "*":
+            return True
+        if isinstance(expression, ast.AttributeExpr):
+            resolution = self.semantic.attribute_resolutions.get(id(expression))
+            if resolution is None:
+                return False
+            if resolution.kind == "module_global":
+                return True
+            if resolution.kind not in {
+                "field",
+                "union_field",
+                "class_field",
+                "dyn_field",
+                "result_value",
+                "result_error",
+            }:
+                return False
+            base_type = strip_const(
+                self.semantic.expression_type(expression.value)
+            )
+            return isinstance(base_type, (PointerType, ReferenceType)) or (
+                self._is_addressable_string_expression(expression.value)
+            )
+        if isinstance(expression, ast.IndexExpr):
+            base = value_type(self.semantic.expression_type(expression.value))
+            return isinstance(
+                base,
+                (ArrayType, SliceType, ListType, TupleType, PointerType),
+            ) and self._is_addressable_string_expression(expression.value)
+        return False
 
     def _emit_vararg(self, expression: ast.Expression) -> str:
         type_ = value_type(self.semantic.expression_type(expression))
@@ -6181,6 +6841,10 @@ def c_decl(type_: Type, name: str) -> str:
     if isinstance(type_, SliceType):
         return f"{slice_c_name(type_)} {name}".strip()
 
+    if isinstance(type_, StringType):
+        return f"{string_c_name()} {name}".strip()
+    if isinstance(type_, StringBuilderType):
+        return f"{string_builder_c_name()} {name}".strip()
     if isinstance(type_, PrimitiveType):
         return f"{type_.c_name} {name}".strip()
     if isinstance(type_, (StructType, ClassType, EnumType, UnionType, VariantType)):
@@ -6249,9 +6913,16 @@ def c_string(value: str) -> str:
         .replace("\n", "\\n")
         .replace("\r", "\\r")
         .replace("\t", "\\t")
-        .replace("\0", "\\0")
+        .replace("\0", "\\000")
     )
     return f'"{escaped}"'
+
+
+def c_static_string(value: str) -> str:
+    return (
+        f"({string_c_name()}){{ .data = (char *){c_string(value)}, "
+        f".length = {len(value.encode('utf-8'))}, .capacity = 0 }}"
+    )
 
 
 def c_char(value: str) -> str:
