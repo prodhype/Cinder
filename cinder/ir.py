@@ -161,8 +161,14 @@ class Lowerer:
         )
         if uses_file:
             slices.add(SliceType(ConstType(U8)))
+            slices.add(SliceType(U8))
         slices = tuple(sorted(slices, key=type_key))
-        lists = tuple(sorted(self._collect_lists(), key=type_key))
+        list_values = self._collect_lists()
+        # File helpers always include read_all under a shared include guard, so every
+        # File-using module must emit List[u8] support alongside the File helper set.
+        if uses_file:
+            list_values.add(ListType(U8))
+        lists = tuple(sorted(list_values, key=type_key))
         maps = tuple(sorted(self._collect_maps(), key=type_key))
         sets = tuple(sorted(self._collect_sets(), key=type_key))
         map_view_values = self._collect_map_views()

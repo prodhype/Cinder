@@ -48,6 +48,9 @@ momentum, force, kinematics, projectile motion, pendulum period, and centripetal
 `write_jpg.ci` demonstrates import-free `open`, the `with ... as ...:` statement, and
 `File.write` by creating a small valid JPEG on disk.
 
+`read_file.ci` demonstrates Source-side File I/O: `File.read` into a fixed buffer,
+`File.read_line` with owned string cleanup, and `File.read_all` into a `List[u8]`.
+
 `defer.ci` demonstrates explicit allocation and cleanup before a returned value leaves scope.
 
 `interop.ci` includes a system C header and supplies a checked external declaration.
