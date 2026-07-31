@@ -1013,6 +1013,7 @@ class CGenerator:
         self.writer.line("}")
         self.writer.line("size_t capacity = 64;")
         self.writer.line("size_t length = 0;")
+        self.writer.line("bool saw_newline = false;")
         self.writer.line("char *buffer = cinder_alloc(capacity, sizeof(char));")
         self.writer.line("for (;;)")
         self.writer.line("{")
@@ -1041,6 +1042,7 @@ class CGenerator:
         self.writer.line("if (character == '\\n')")
         self.writer.line("{")
         self.writer.indent += 1
+        self.writer.line("saw_newline = true;")
         self.writer.line("break;")
         self.writer.indent -= 1
         self.writer.line("}")
@@ -1071,7 +1073,9 @@ class CGenerator:
         self.writer.line("length += 1;")
         self.writer.indent -= 1
         self.writer.line("}")
-        self.writer.line("if (length > 0 && buffer[length - 1] == '\\r')")
+        self.writer.line(
+            "if (saw_newline && length > 0 && buffer[length - 1] == '\\r')"
+        )
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line("length -= 1;")
@@ -1084,66 +1088,65 @@ class CGenerator:
         self.writer.line()
 
         list_u8 = ListType(U8)
-        if list_u8 in self.ir.list_types:
-            list_name = c_identifier(list_c_name(list_u8))
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED {list_name} {name}_read_all("
-                f"{name} *value)"
-            )
-            self.writer.line("{")
-            self.writer.indent += 1
-            self.writer.line("if (value->handle == NULL)")
-            self.writer.line("{")
-            self.writer.indent += 1
-            self.writer.line('cinder_panic("read_all on closed File");')
-            self.writer.indent -= 1
-            self.writer.line("}")
-            self.writer.line(f"{list_name} result = {{ NULL, 0, 0 }};")
-            self.writer.line("for (;;)")
-            self.writer.line("{")
-            self.writer.indent += 1
-            self.writer.line("if (result.length == SIZE_MAX)")
-            self.writer.line("{")
-            self.writer.indent += 1
-            self.writer.line(f"{list_name}_drop(&result);")
-            self.writer.line('cinder_panic("File.read_all length overflow");')
-            self.writer.indent -= 1
-            self.writer.line("}")
-            self.writer.line(
-                "result.data = (uint8_t *)cinder_grow_array("
-            )
-            self.writer.indent += 1
-            self.writer.line("result.data,")
-            self.writer.line("&result.capacity,")
-            self.writer.line("result.length + 1,")
-            self.writer.line("sizeof(*result.data)")
-            self.writer.indent -= 1
-            self.writer.line(");")
-            self.writer.line("size_t available = result.capacity - result.length;")
-            self.writer.line(
-                "size_t counted = fread("
-                "result.data + result.length, 1, available, value->handle);"
-            )
-            self.writer.line("result.length += counted;")
-            self.writer.line("if (counted < available)")
-            self.writer.line("{")
-            self.writer.indent += 1
-            self.writer.line("if (ferror(value->handle))")
-            self.writer.line("{")
-            self.writer.indent += 1
-            self.writer.line(f"{list_name}_drop(&result);")
-            self.writer.line('cinder_panic("File.read_all failed");')
-            self.writer.indent -= 1
-            self.writer.line("}")
-            self.writer.line("break;")
-            self.writer.indent -= 1
-            self.writer.line("}")
-            self.writer.indent -= 1
-            self.writer.line("}")
-            self.writer.line("return result;")
-            self.writer.indent -= 1
-            self.writer.line("}")
-            self.writer.line()
+        list_name = c_identifier(list_c_name(list_u8))
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED {list_name} {name}_read_all("
+            f"{name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value->handle == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line('cinder_panic("read_all on closed File");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(f"{list_name} result = {{ NULL, 0, 0 }};")
+        self.writer.line("for (;;)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (result.length == SIZE_MAX)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{list_name}_drop(&result);")
+        self.writer.line('cinder_panic("File.read_all length overflow");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(
+            "result.data = (uint8_t *)cinder_grow_array("
+        )
+        self.writer.indent += 1
+        self.writer.line("result.data,")
+        self.writer.line("&result.capacity,")
+        self.writer.line("result.length + 1,")
+        self.writer.line("sizeof(*result.data)")
+        self.writer.indent -= 1
+        self.writer.line(");")
+        self.writer.line("size_t available = result.capacity - result.length;")
+        self.writer.line(
+            "size_t counted = fread("
+            "result.data + result.length, 1, available, value->handle);"
+        )
+        self.writer.line("result.length += counted;")
+        self.writer.line("if (counted < available)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (ferror(value->handle))")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(f"{list_name}_drop(&result);")
+        self.writer.line('cinder_panic("File.read_all failed");')
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("break;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line("return result;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
 
         self.writer.line(
             f"static inline CINDER_MAYBE_UNUSED void {name}_flush({name} *value)"

@@ -28,6 +28,71 @@ def test_with_open_writes_and_drops_file() -> None:
     assert "CinderFile_write((&(file))" in generated
     assert "CinderFile_drop(&file);" in generated
     assert "#include <stdio.h>" in generated
+    # Shared File helper guard must always include read_all, even for write-only modules.
+    assert "static inline CINDER_MAYBE_UNUSED CinderList_u8 CinderFile_read_all(" in generated
+
+
+def test_file_read_all_helper_survives_dependency_without_read_all(tmp_path: Path) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        "name = \"file_read_all_guard\"\n"
+        "source-root = \"src\"\n"
+        "entry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "writer.ci").write_text(
+        "def write_marker(path: const char*) -> void:\n"
+        '    with open(path, "wb") as file:\n'
+        "        data: u8[3] = [65, 66, 67]\n"
+        "        file.write(data)\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import writer\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    path: const char* = "marker.bin"\n'
+        "    writer.write_marker(path)\n"
+        '    with open(path, "rb") as file:\n'
+        "        data = file.read_all()\n"
+        "        if len(data) != 3:\n"
+        "            return 1\n"
+        "        if data[0] != 65 or data[2] != 67:\n"
+        "            return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    project = Compiler().compile_project(tmp_path)
+    writer_header = project.units_by_name["writer"].c_header
+    assert writer_header is not None
+    assert "CINDER_HELPERS_CINDERFILE" in writer_header
+    assert "CinderFile_read_all(" in writer_header
+    assert "CinderList_u8" in writer_header
+
+    main_header = project.units_by_name["main"].c_header
+    assert main_header is not None
+    assert '#include "cinder_gen/writer.cinder.h"' in main_header
+
+    if not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")):
+        return
+
+    executable = tmp_path / (
+        "file_read_all_guard.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "file_read_all_guard"
+    )
+    artifact = Compiler().build(tmp_path, output=executable, build_dir=tmp_path / "build")
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_open_outside_with_still_registers_drop() -> None:
@@ -190,6 +255,59 @@ def test_file_read_write_roundtrip_runs_end_to_end(tmp_path: Path) -> None:
         "file_read_roundtrip.exe"
         if shutil.which("cl") and not shutil.which("cc")
         else "file_read_roundtrip"
+    )
+    artifact = Compiler().build(
+        source_path,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_read_line_preserves_lone_trailing_cr(tmp_path: Path) -> None:
+    source = (
+        "def main() -> i32:\n"
+        '    path: const char* = "cr_payload.bin"\n'
+        "\n"
+        "    with open(path, \"wb\") as out:\n"
+        "        # x\\r\\n then abc\\r at EOF\n"
+        "        payload: u8[7] = [120, 13, 10, 97, 98, 99, 13]\n"
+        "        if out.write(payload) != 7:\n"
+        "            return 1\n"
+        "\n"
+        "    with open(path, \"rb\") as file:\n"
+        "        first = file.read_line()\n"
+        "        defer free(cast[void*](first))\n"
+        "        if first[0] != 120 or first[1] != 0:\n"
+        "            return 2\n"
+        "\n"
+        "        second = file.read_line()\n"
+        "        defer free(cast[void*](second))\n"
+        "        if second[0] != 97 or second[1] != 98 or second[2] != 99:\n"
+        "            return 3\n"
+        "        if second[3] != 13 or second[4] != 0:\n"
+        "            return 4\n"
+        "\n"
+        "        if file.read_line() != null:\n"
+        "            return 5\n"
+        "\n"
+        "    return 0\n"
+    )
+    source_path = tmp_path / "read_line_cr.ci"
+    source_path.write_text(source, encoding="utf-8")
+    executable = tmp_path / (
+        "read_line_cr.exe" if shutil.which("cl") and not shutil.which("cc") else "read_line_cr"
     )
     artifact = Compiler().build(
         source_path,

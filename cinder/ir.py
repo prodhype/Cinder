@@ -159,16 +159,14 @@ class Lowerer:
             isinstance(strip_const(type_), FileType)
             for type_ in self._all_semantic_types()
         )
-        uses_file_read_all = any(
-            resolution.kind == "file_read_all"
-            for resolution in self.semantic.call_resolutions.values()
-        )
         if uses_file:
             slices.add(SliceType(ConstType(U8)))
             slices.add(SliceType(U8))
         slices = tuple(sorted(slices, key=type_key))
         list_values = self._collect_lists()
-        if uses_file_read_all:
+        # File helpers always include read_all under a shared include guard, so every
+        # File-using module must emit List[u8] support alongside the File helper set.
+        if uses_file:
             list_values.add(ListType(U8))
         lists = tuple(sorted(list_values, key=type_key))
         maps = tuple(sorted(self._collect_maps(), key=type_key))
