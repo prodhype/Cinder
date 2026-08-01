@@ -64,9 +64,10 @@ def check_and_dump(source: String) -> i32:
             print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
         return 1
 
-    summary = backend_ir.summarize(parsed.arena, root)
+    ir = backend_ir.lower(parsed.arena, root, checker.model)
+    summary = backend_ir.summarize_ir(ir)
     backend_ir.dump_summary(summary)
-    c_source = codegen.emit_c(parsed.arena, root, scan.source)
+    c_source = codegen.emit_c_from_ir(ir, parsed.arena, scan.source)
     with open("bootstrap_selfhost_output.c", "wb") as output:
         output.write(c_source)
     print("C", len(c_source))

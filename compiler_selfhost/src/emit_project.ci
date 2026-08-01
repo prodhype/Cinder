@@ -1,3 +1,5 @@
+import backend_ir
+import checker
 import codegen
 import fs
 import lexer
@@ -43,17 +45,22 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
         scan.tokenize()
         parsed = parser.new_parser(scan)
         root = parsed.parse_module()
-        header = codegen.emit_module_header(
+        checked = checker.new_checker()
+        checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
+        checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
+        ir = backend_ir.lower(parsed.arena, root, checked.model)
+        header = codegen.emit_module_header_from_ir(
+            ir,
             parsed.arena,
-            root,
             &graph.modules[index].source,
             &graph.modules[index].name,
             &graph.project_name,
             &graph.modules[index].dependencies,
+            &graph.modules[index].imports,
         )
-        source = codegen.emit_module_source(
+        source = codegen.emit_module_source_from_ir(
+            ir,
             parsed.arena,
-            root,
             &graph.modules[index].source,
             &graph.modules[index].name,
             &graph.project_name,
@@ -91,13 +98,18 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
         scan.tokenize()
         parsed = parser.new_parser(scan)
         root = parsed.parse_module()
-        header = codegen.emit_module_header(
+        checked = checker.new_checker()
+        checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
+        checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
+        ir = backend_ir.lower(parsed.arena, root, checked.model)
+        header = codegen.emit_module_header_from_ir(
+            ir,
             parsed.arena,
-            root,
             &graph.modules[index].source,
             &graph.modules[index].name,
             &graph.project_name,
             &graph.modules[index].dependencies,
+            &graph.modules[index].imports,
         )
         builder.append(strip_generated_includes(&header))
         builder.append("\n")
@@ -108,9 +120,13 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
         scan.tokenize()
         parsed = parser.new_parser(scan)
         root = parsed.parse_module()
-        source = codegen.emit_module_source(
+        checked = checker.new_checker()
+        checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
+        checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
+        ir = backend_ir.lower(parsed.arena, root, checked.model)
+        source = codegen.emit_module_source_from_ir(
+            ir,
             parsed.arena,
-            root,
             &graph.modules[index].source,
             &graph.modules[index].name,
             &graph.project_name,

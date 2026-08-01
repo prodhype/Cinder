@@ -81,6 +81,39 @@ def run_gen1_without_python_on_path(
     )
 
 
+def compile_generated_project(
+    generated_root: Path,
+    output: Path,
+) -> subprocess.CompletedProcess[str]:
+    compiler = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+    assert compiler is not None
+    generated_sources = sorted((generated_root / "cinder_gen").rglob("*.c"))
+    assert generated_sources
+    return subprocess.run(
+        [
+            compiler,
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-O2",
+            "-I",
+            str(ROOT / "cinder" / "runtime"),
+            "-I",
+            str(generated_root),
+            "-I",
+            str(ROOT / "compiler_selfhost" / "src"),
+            *(str(path) for path in generated_sources),
+            str(ROOT / "cinder" / "runtime" / "cinder_runtime.c"),
+            "-o",
+            str(output),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
 def write_single_source(tmp_path: Path) -> Path:
     source = tmp_path / "single.ci"
     source.write_text("def main() -> i32:\n    return 42\n", encoding="utf-8")
@@ -213,6 +246,26 @@ def test_gen1_builds_compiler_sources_into_gen2(
 
     source = write_single_source(tmp_path)
     checked = run_gen1_without_python_on_path(gen2, tmp_path, "check", str(source))
+    assert checked.returncode == 0, checked.stderr
+    assert checked.stdout.strip() == f"ok: {source}"
+
+
+def test_gen1_generated_compiler_project_builds_without_replay(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    _gen2, build_dir = gen2_compiler
+    direct_gen2 = tmp_path / (
+        "cinder-direct-gen2.exe" if shutil.which("cl") and not shutil.which("cc") else "cinder-direct-gen2"
+    )
+
+    compiled = compile_generated_project(build_dir, direct_gen2)
+
+    assert compiled.returncode == 0, compiled.stderr
+    assert direct_gen2.is_file()
+
+    source = write_single_source(tmp_path)
+    checked = run_gen1_without_python_on_path(direct_gen2, tmp_path, "check", str(source))
     assert checked.returncode == 0, checked.stderr
     assert checked.stdout.strip() == f"ok: {source}"
 
