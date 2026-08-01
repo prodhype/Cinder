@@ -99,8 +99,8 @@ def test_brace_literals_inside_fstrings_track_nested_colons_and_quotes() -> None
         '    print(f"{1 in {1: 2}}")\n'
         "    return 0\n"
     )
-    assert "cinder_string_equal" in generated
-    assert "CinderMap_ptr_const_char_i32" in generated
+    assert "cinder_string_equal_value" in generated
+    assert "CinderMap_string_i32" in generated
 
 
 @pytest.mark.parametrize(
@@ -263,10 +263,9 @@ def test_maps_sets_run_end_to_end_with_growth_order_and_strings(
     source = (
         "def main() -> i32:\n"
         "    dynamic_key = input()\n"
-        "    words: Map[const char*, i32] = {dynamic_key: 7, \"other\": 9}\n"
+        "    words: Map[String, i32] = {dynamic_key: 7, \"other\": 9}\n"
         "    if dynamic_key != \"alpha\":\n"
         "        return 1\n"
-        "    free(cast[void*](dynamic_key))\n"
         "    if words[\"alpha\"] != 7:\n"
         "        return 2\n"
         "\n"
@@ -325,9 +324,10 @@ def test_maps_sets_run_end_to_end_with_growth_order_and_strings(
         "    popped = names.pop()\n"
         "    match popped:\n"
         "        case Some(text):\n"
-        "            free(cast[void*](text))\n"
+        "            if text != \"first\" and text != \"second\":\n"
+        "                return 13\n"
         "        case None:\n"
-        "            return 13\n"
+        "            return 14\n"
         "    return 0\n"
     )
     source_path = tmp_path / "maps_sets.ci"

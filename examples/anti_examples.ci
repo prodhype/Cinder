@@ -128,12 +128,12 @@ def read_byte(address: usize) -> u8:
 # value = cast[i32]("42")
 # text = to_string("nope")
 
-# CORRECT: parse_* returns Result[T, ConvertError]; to_string owns a buffer.
+# CORRECT: parse_* borrows String and returns Result[T, ConvertError];
+# to_string returns an automatically dropped String.
 def convert_example() -> i32:
     match parse_i32("21"):
         case Ok(value):
             text = to_string(value * 2)
-            defer free(cast[void*](text))
             match parse_i32(text):
                 case Ok(round_trip):
                     return round_trip

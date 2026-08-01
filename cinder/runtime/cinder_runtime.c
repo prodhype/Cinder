@@ -128,7 +128,563 @@ char *cinder_clone_string(const char *text)
     return copy;
 }
 
-static void cinder_print_repr_byte(unsigned char value)
+static CinderString cinder_empty_string(void)
+{
+    CinderString string = {NULL, 0, 0};
+    return string;
+}
+
+static bool cinder_utf8_is_valid(const char *data, size_t length)
+{
+    if (data == NULL) {
+        return length == 0;
+    }
+
+    size_t index = 0;
+    while (index < length) {
+        const unsigned char first = (unsigned char)data[index];
+        /* Owned text must remain losslessly borrowable as a C string. */
+        if (first == 0) {
+            return false;
+        }
+        if (first <= UINT8_C(0x7f)) {
+            index += 1;
+            continue;
+        }
+
+        if (first >= UINT8_C(0xc2) && first <= UINT8_C(0xdf)) {
+            if (index + 1 >= length) {
+                return false;
+            }
+            const unsigned char second = (unsigned char)data[index + 1];
+            if (second < UINT8_C(0x80) || second > UINT8_C(0xbf)) {
+                return false;
+            }
+            index += 2;
+            continue;
+        }
+
+        if (first >= UINT8_C(0xe0) && first <= UINT8_C(0xef)) {
+            if (index + 2 >= length) {
+                return false;
+            }
+            const unsigned char second = (unsigned char)data[index + 1];
+            const unsigned char third = (unsigned char)data[index + 2];
+            const bool valid_second =
+                (first == UINT8_C(0xe0) && second >= UINT8_C(0xa0) &&
+                 second <= UINT8_C(0xbf)) ||
+                (first >= UINT8_C(0xe1) && first <= UINT8_C(0xec) &&
+                 second >= UINT8_C(0x80) && second <= UINT8_C(0xbf)) ||
+                (first == UINT8_C(0xed) && second >= UINT8_C(0x80) &&
+                 second <= UINT8_C(0x9f)) ||
+                (first >= UINT8_C(0xee) && first <= UINT8_C(0xef) &&
+                 second >= UINT8_C(0x80) && second <= UINT8_C(0xbf));
+            if (!valid_second || third < UINT8_C(0x80) ||
+                third > UINT8_C(0xbf)) {
+                return false;
+            }
+            index += 3;
+            continue;
+        }
+
+        if (first >= UINT8_C(0xf0) && first <= UINT8_C(0xf4)) {
+            if (index + 3 >= length) {
+                return false;
+            }
+            const unsigned char second = (unsigned char)data[index + 1];
+            const unsigned char third = (unsigned char)data[index + 2];
+            const unsigned char fourth = (unsigned char)data[index + 3];
+            const bool valid_second =
+                (first == UINT8_C(0xf0) && second >= UINT8_C(0x90) &&
+                 second <= UINT8_C(0xbf)) ||
+                (first >= UINT8_C(0xf1) && first <= UINT8_C(0xf3) &&
+                 second >= UINT8_C(0x80) && second <= UINT8_C(0xbf)) ||
+                (first == UINT8_C(0xf4) && second >= UINT8_C(0x80) &&
+                 second <= UINT8_C(0x8f));
+            if (!valid_second || third < UINT8_C(0x80) ||
+                third > UINT8_C(0xbf) || fourth < UINT8_C(0x80) ||
+                fourth > UINT8_C(0xbf)) {
+                return false;
+            }
+            index += 4;
+            continue;
+        }
+
+        return false;
+    }
+    return true;
+}
+
+static void cinder_validate_string(const CinderString *string)
+{
+    if (string == NULL) {
+        cinder_panic("invalid string argument");
+    }
+    if (string->data == NULL) {
+        if (string->length != 0 || string->capacity != 0) {
+            cinder_panic("invalid string state");
+        }
+        return;
+    }
+    if (string->capacity != 0 && string->length >= string->capacity) {
+        cinder_panic("invalid string state");
+    }
+    if (string->data[string->length] != '\0') {
+        cinder_panic("string is not NUL-terminated");
+    }
+    if (!cinder_utf8_is_valid(string->data, string->length)) {
+        cinder_panic("invalid UTF-8 string");
+    }
+}
+
+static void cinder_validate_builder_structure(
+    const CinderStringBuilder *builder
+)
+{
+    if (builder == NULL) {
+        cinder_panic("invalid string builder argument");
+    }
+    if (builder->data == NULL) {
+        if (builder->length != 0 || builder->capacity != 0) {
+            cinder_panic("invalid string builder state");
+        }
+        return;
+    }
+    if (builder->capacity == 0 || builder->length >= builder->capacity) {
+        cinder_panic("invalid string builder state");
+    }
+    if (builder->data[builder->length] != '\0') {
+        cinder_panic("string builder is not NUL-terminated");
+    }
+}
+
+static void cinder_validate_builder(const CinderStringBuilder *builder)
+{
+    cinder_validate_builder_structure(builder);
+    if (builder->data != NULL &&
+        !cinder_utf8_is_valid(builder->data, builder->length)) {
+        cinder_panic("invalid UTF-8 string builder");
+    }
+}
+
+static size_t cinder_grown_string_capacity(
+    size_t current_capacity,
+    size_t required_capacity
+)
+{
+    size_t next_capacity = current_capacity == 0 ? 16 : current_capacity;
+    while (next_capacity < required_capacity) {
+        if (next_capacity > SIZE_MAX / 2) {
+            next_capacity = required_capacity;
+            break;
+        }
+        next_capacity *= 2;
+    }
+    if (next_capacity < required_capacity) {
+        cinder_panic("string capacity overflow");
+    }
+    return next_capacity;
+}
+
+static CinderString cinder_allocate_string(size_t length)
+{
+    if (length == SIZE_MAX) {
+        cinder_panic("string length overflow");
+    }
+    CinderString string;
+    string.data = cinder_alloc(length + 1, sizeof(char));
+    string.length = length;
+    string.capacity = length + 1;
+    string.data[length] = '\0';
+    return string;
+}
+
+CinderString cinder_string_from_bytes(const char *data, size_t length)
+{
+    if (data == NULL && length != 0) {
+        cinder_panic("invalid string bytes");
+    }
+    if (!cinder_utf8_is_valid(data, length)) {
+        cinder_panic("invalid UTF-8 string");
+    }
+
+    CinderString string = cinder_allocate_string(length);
+    if (length != 0) {
+        (void)memcpy(string.data, data, length);
+    }
+    return string;
+}
+
+CinderString cinder_string_from_cstr(const char *text)
+{
+    if (text == NULL) {
+        cinder_panic("invalid C string");
+    }
+    return cinder_string_from_bytes(text, strlen(text));
+}
+
+CinderString cinder_string_clone(const CinderString *string)
+{
+    cinder_validate_string(string);
+    return cinder_string_from_bytes(string->data, string->length);
+}
+
+void cinder_string_drop(CinderString *string)
+{
+    cinder_validate_string(string);
+    if (string->capacity != 0) {
+        free(string->data);
+    }
+    string->data = NULL;
+    string->length = 0;
+    string->capacity = 0;
+}
+
+void cinder_string_reserve(CinderString *string, size_t minimum_capacity)
+{
+    cinder_validate_string(string);
+    if (minimum_capacity == SIZE_MAX) {
+        cinder_panic("string capacity overflow");
+    }
+
+    size_t content_capacity = minimum_capacity;
+    if (content_capacity < string->length) {
+        content_capacity = string->length;
+    }
+    const size_t required_capacity = content_capacity + 1;
+
+    if (string->capacity == 0) {
+        if (string->data == NULL && minimum_capacity == 0) {
+            return;
+        }
+        const size_t next_capacity =
+            cinder_grown_string_capacity(0, required_capacity);
+        char *owned = cinder_alloc(next_capacity, sizeof(char));
+        if (string->length != 0) {
+            (void)memcpy(owned, string->data, string->length);
+        }
+        owned[string->length] = '\0';
+        string->data = owned;
+        string->capacity = next_capacity;
+        return;
+    }
+
+    if (string->capacity >= required_capacity) {
+        return;
+    }
+    const size_t next_capacity =
+        cinder_grown_string_capacity(string->capacity, required_capacity);
+    char *grown = realloc(string->data, next_capacity);
+    if (grown == NULL) {
+        cinder_panic("out of memory");
+    }
+    string->data = grown;
+    string->capacity = next_capacity;
+}
+
+void cinder_string_clear(CinderString *string)
+{
+    cinder_validate_string(string);
+    if (string->data == NULL) {
+        return;
+    }
+    if (string->capacity == 0) {
+        cinder_string_reserve(string, 0);
+    }
+    string->length = 0;
+    string->data[0] = '\0';
+}
+
+void cinder_string_append(
+    CinderString *string,
+    const CinderString *suffix
+)
+{
+    cinder_validate_string(string);
+    cinder_validate_string(suffix);
+    if (suffix->length == 0) {
+        return;
+    }
+    if (string->length > SIZE_MAX - suffix->length) {
+        cinder_panic("string length overflow");
+    }
+
+    const size_t original_length = string->length;
+    const size_t suffix_length = suffix->length;
+    const bool append_self = string == suffix;
+    const char *suffix_data = suffix->data;
+    cinder_string_reserve(string, original_length + suffix_length);
+    if (append_self) {
+        suffix_data = string->data;
+    }
+    (void)memmove(
+        string->data + original_length,
+        suffix_data,
+        suffix_length
+    );
+    string->length = original_length + suffix_length;
+    string->data[string->length] = '\0';
+}
+
+void cinder_string_append_char(CinderString *string, char value)
+{
+    cinder_validate_string(string);
+    if (value == '\0' || (unsigned char)value > UINT8_C(0x7f)) {
+        cinder_panic("string character must be non-NUL ASCII");
+    }
+    if (string->length == SIZE_MAX) {
+        cinder_panic("string length overflow");
+    }
+
+    const size_t original_length = string->length;
+    cinder_string_reserve(string, original_length + 1);
+    string->data[original_length] = value;
+    string->length = original_length + 1;
+    string->data[string->length] = '\0';
+}
+
+CinderString cinder_string_concat(
+    const CinderString *left,
+    const CinderString *right
+)
+{
+    cinder_validate_string(left);
+    cinder_validate_string(right);
+    if (left->length > SIZE_MAX - right->length) {
+        cinder_panic("string length overflow");
+    }
+
+    CinderString result =
+        cinder_allocate_string(left->length + right->length);
+    if (left->length != 0) {
+        (void)memcpy(result.data, left->data, left->length);
+    }
+    if (right->length != 0) {
+        (void)memcpy(
+            result.data + left->length,
+            right->data,
+            right->length
+        );
+    }
+    return result;
+}
+
+uint8_t cinder_string_byte_at(const CinderString *string, size_t index)
+{
+    cinder_validate_string(string);
+    if (index >= string->length) {
+        cinder_panic("string byte index out of bounds");
+    }
+    return (uint8_t)(unsigned char)string->data[index];
+}
+
+static bool cinder_string_is_utf8_boundary(
+    const CinderString *string,
+    size_t index
+)
+{
+    if (index == 0 || index == string->length) {
+        return true;
+    }
+    const unsigned char value = (unsigned char)string->data[index];
+    return value < UINT8_C(0x80) || value > UINT8_C(0xbf);
+}
+
+CinderString cinder_string_slice(
+    const CinderString *string,
+    size_t start,
+    size_t end
+)
+{
+    cinder_validate_string(string);
+    if (start > end || end > string->length) {
+        cinder_panic("string slice bounds are invalid");
+    }
+    if (!cinder_string_is_utf8_boundary(string, start) ||
+        !cinder_string_is_utf8_boundary(string, end)) {
+        cinder_panic("string slice bound is not a UTF-8 boundary");
+    }
+    return cinder_string_from_bytes(
+        string->data == NULL ? NULL : string->data + start,
+        end - start
+    );
+}
+
+uint64_t cinder_string_hash_value(const CinderString *string)
+{
+    cinder_validate_string(string);
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (size_t index = 0; index < string->length; ++index) {
+        hash ^= (uint64_t)(unsigned char)string->data[index];
+        hash *= UINT64_C(1099511628211);
+    }
+    return cinder_hash_u64(hash);
+}
+
+bool cinder_string_equal_value(
+    const CinderString *left,
+    const CinderString *right
+)
+{
+    cinder_validate_string(left);
+    cinder_validate_string(right);
+    if (left->length != right->length) {
+        return false;
+    }
+    return left->length == 0 ||
+        memcmp(left->data, right->data, left->length) == 0;
+}
+
+int cinder_string_compare_value(
+    const CinderString *left,
+    const CinderString *right
+)
+{
+    cinder_validate_string(left);
+    cinder_validate_string(right);
+    const size_t shared_length =
+        left->length < right->length ? left->length : right->length;
+    if (shared_length != 0) {
+        const int compared = memcmp(left->data, right->data, shared_length);
+        if (compared < 0) {
+            return -1;
+        }
+        if (compared > 0) {
+            return 1;
+        }
+    }
+    if (left->length < right->length) {
+        return -1;
+    }
+    if (left->length > right->length) {
+        return 1;
+    }
+    return 0;
+}
+
+const char *cinder_string_cstr(const CinderString *string)
+{
+    if (string == NULL || string->data == NULL) {
+        return "";
+    }
+    cinder_validate_string(string);
+    return string->data;
+}
+
+void cinder_string_builder_init(CinderStringBuilder *builder)
+{
+    if (builder == NULL) {
+        cinder_panic("invalid string builder argument");
+    }
+    builder->data = NULL;
+    builder->length = 0;
+    builder->capacity = 0;
+}
+
+void cinder_string_builder_drop(CinderStringBuilder *builder)
+{
+    cinder_validate_builder(builder);
+    free(builder->data);
+    builder->data = NULL;
+    builder->length = 0;
+    builder->capacity = 0;
+}
+
+static void cinder_string_builder_reserve_raw(
+    CinderStringBuilder *builder,
+    size_t minimum_capacity
+)
+{
+    cinder_validate_builder_structure(builder);
+    if (minimum_capacity == SIZE_MAX) {
+        cinder_panic("string builder capacity overflow");
+    }
+    const size_t required_capacity = minimum_capacity + 1;
+    if (builder->capacity >= required_capacity) {
+        return;
+    }
+
+    const size_t next_capacity =
+        cinder_grown_string_capacity(builder->capacity, required_capacity);
+    char *grown = realloc(builder->data, next_capacity);
+    if (grown == NULL) {
+        cinder_panic("out of memory");
+    }
+    builder->data = grown;
+    builder->capacity = next_capacity;
+    builder->data[builder->length] = '\0';
+}
+
+void cinder_string_builder_reserve(
+    CinderStringBuilder *builder,
+    size_t minimum_capacity
+)
+{
+    cinder_validate_builder(builder);
+    cinder_string_builder_reserve_raw(builder, minimum_capacity);
+}
+
+static void cinder_string_builder_append_raw(
+    CinderStringBuilder *builder,
+    const char *data,
+    size_t length
+)
+{
+    cinder_validate_builder_structure(builder);
+    if (data == NULL && length != 0) {
+        cinder_panic("invalid string builder bytes");
+    }
+    if (builder->length > SIZE_MAX - length) {
+        cinder_panic("string builder length overflow");
+    }
+
+    const size_t original_length = builder->length;
+    cinder_string_builder_reserve_raw(builder, original_length + length);
+    if (length != 0) {
+        (void)memmove(builder->data + original_length, data, length);
+    }
+    builder->length = original_length + length;
+    if (builder->data != NULL) {
+        builder->data[builder->length] = '\0';
+    }
+}
+
+void cinder_string_builder_append(
+    CinderStringBuilder *builder,
+    const CinderString *string
+)
+{
+    cinder_validate_builder(builder);
+    cinder_validate_string(string);
+    cinder_string_builder_append_raw(builder, string->data, string->length);
+}
+
+void cinder_string_builder_append_char(
+    CinderStringBuilder *builder,
+    char value
+)
+{
+    cinder_validate_builder(builder);
+    if (value == '\0' || (unsigned char)value > UINT8_C(0x7f)) {
+        cinder_panic("string character must be non-NUL ASCII");
+    }
+    cinder_string_builder_append_raw(builder, &value, 1);
+}
+
+CinderString cinder_string_builder_finish(CinderStringBuilder *builder)
+{
+    cinder_validate_builder(builder);
+    CinderString string;
+    string.data = builder->data;
+    string.length = builder->length;
+    string.capacity = builder->capacity;
+    builder->data = NULL;
+    builder->length = 0;
+    builder->capacity = 0;
+    return string;
+}
+
+static void cinder_print_repr_byte(unsigned char value, bool escape_non_ascii)
 {
     switch (value) {
         case '\'':
@@ -150,7 +706,7 @@ static void cinder_print_repr_byte(unsigned char value)
             (void)fputs("\\0", stdout);
             break;
         default:
-            if (value < 32 || value >= 127) {
+            if (value < 32 || (escape_non_ascii && value >= 127)) {
                 (void)printf("\\x%02x", value);
             } else {
                 (void)putchar((int)value);
@@ -162,7 +718,7 @@ static void cinder_print_repr_byte(unsigned char value)
 void cinder_print_repr_char(char value)
 {
     (void)putchar('\'');
-    cinder_print_repr_byte((unsigned char)value);
+    cinder_print_repr_byte((unsigned char)value, true);
     (void)putchar('\'');
 }
 
@@ -171,13 +727,81 @@ void cinder_print_repr_string(const char *text)
     (void)putchar('\'');
     if (text != NULL) {
         for (const unsigned char *cursor = (const unsigned char *)text; *cursor != '\0'; ++cursor) {
-            cinder_print_repr_byte(*cursor);
+            cinder_print_repr_byte(*cursor, false);
         }
     }
     (void)putchar('\'');
 }
 
-char *cinder_input(const char *prompt)
+bool cinder_read_line(FILE *stream, CinderString *out)
+{
+    if (stream == NULL || out == NULL) {
+        cinder_panic("invalid read line arguments");
+    }
+    *out = cinder_empty_string();
+
+    CinderStringBuilder builder;
+    cinder_string_builder_init(&builder);
+    bool read_anything = false;
+
+    for (;;) {
+        const int character = fgetc(stream);
+        if (character == EOF) {
+            if (ferror(stream)) {
+                cinder_string_builder_drop(&builder);
+                cinder_panic("input read failed");
+            }
+            if (!read_anything) {
+                cinder_string_builder_drop(&builder);
+                return false;
+            }
+            break;
+        }
+
+        read_anything = true;
+        if (character == '\n') {
+            if (builder.length != 0 &&
+                builder.data[builder.length - 1] == '\r') {
+                builder.length -= 1;
+                builder.data[builder.length] = '\0';
+            }
+            break;
+        }
+
+        const char byte = (char)(unsigned char)character;
+        cinder_string_builder_append_raw(&builder, &byte, 1);
+    }
+
+    *out = cinder_string_builder_finish(&builder);
+    return true;
+}
+
+CinderString cinder_read_all_text(FILE *stream)
+{
+    if (stream == NULL) {
+        cinder_panic("invalid text stream");
+    }
+
+    CinderStringBuilder builder;
+    cinder_string_builder_init(&builder);
+    char buffer[4096];
+    for (;;) {
+        const size_t count = fread(buffer, sizeof(char), sizeof(buffer), stream);
+        if (count != 0) {
+            cinder_string_builder_append_raw(&builder, buffer, count);
+        }
+        if (count < sizeof(buffer)) {
+            if (ferror(stream)) {
+                cinder_string_builder_drop(&builder);
+                cinder_panic("input read failed");
+            }
+            break;
+        }
+    }
+    return cinder_string_builder_finish(&builder);
+}
+
+CinderString cinder_input(const char *prompt)
 {
     if (prompt != NULL) {
         if (fputs(prompt, stdout) == EOF || fflush(stdout) == EOF) {
@@ -185,50 +809,11 @@ char *cinder_input(const char *prompt)
         }
     }
 
-    size_t capacity = 64;
-    size_t length = 0;
-    char *buffer = cinder_alloc(capacity, sizeof(char));
-
-    for (;;) {
-        int character = fgetc(stdin);
-        if (character == EOF) {
-            if (ferror(stdin)) {
-                free(buffer);
-                cinder_panic("input read failed");
-            }
-            if (length == 0) {
-                free(buffer);
-                cinder_panic("input reached EOF");
-            }
-            break;
-        }
-        if (character == '\n') {
-            break;
-        }
-
-        if (length + 1 >= capacity) {
-            if (capacity > SIZE_MAX / 2) {
-                free(buffer);
-                cinder_panic("input line is too long");
-            }
-            size_t next_capacity = capacity * 2;
-            char *grown = realloc(buffer, next_capacity);
-            if (grown == NULL) {
-                free(buffer);
-                cinder_panic("out of memory");
-            }
-            buffer = grown;
-            capacity = next_capacity;
-        }
-        buffer[length] = (char)character;
-        length += 1;
+    CinderString input;
+    if (!cinder_read_line(stdin, &input)) {
+        cinder_panic("input reached EOF");
     }
-
-    if (length > 0 && buffer[length - 1] == '\r') {
-        length -= 1;
-    }
-    buffer[length] = '\0';
-    return buffer;
+    return input;
 }
 
 static const char *cinder_skip_whitespace(const char *text)
@@ -506,93 +1091,110 @@ bool cinder_parse_bool(const char *text, bool *out, CinderParseError *error)
     return true;
 }
 
-static char *cinder_format_string(const char *format, ...)
+static CinderString cinder_format_string(const char *format, ...)
 {
-    char buffer[128];
+    if (format == NULL) {
+        cinder_panic("invalid string format");
+    }
+
     va_list arguments;
     va_start(arguments, format);
-    const int written = vsnprintf(buffer, sizeof(buffer), format, arguments);
-    va_end(arguments);
+    va_list measured_arguments;
+    va_copy(measured_arguments, arguments);
+    const int written = vsnprintf(NULL, 0, format, measured_arguments);
+    va_end(measured_arguments);
     if (written < 0) {
+        va_end(arguments);
         cinder_panic("string formatting failed");
     }
-    if ((size_t)written >= sizeof(buffer)) {
-        cinder_panic("string formatting overflow");
+
+    CinderString string = cinder_allocate_string((size_t)written);
+    const int actual = vsnprintf(
+        string.data,
+        string.capacity,
+        format,
+        arguments
+    );
+    va_end(arguments);
+    if (actual < 0 || actual != written) {
+        free(string.data);
+        cinder_panic("string formatting failed");
     }
-    return cinder_clone_string(buffer);
+    if (!cinder_utf8_is_valid(string.data, string.length)) {
+        free(string.data);
+        cinder_panic("invalid UTF-8 formatted string");
+    }
+    return string;
 }
 
-char *cinder_i8_to_string(int8_t value)
+CinderString cinder_i8_to_string(int8_t value)
 {
     return cinder_format_string("%" PRId8, value);
 }
 
-char *cinder_i16_to_string(int16_t value)
+CinderString cinder_i16_to_string(int16_t value)
 {
     return cinder_format_string("%" PRId16, value);
 }
 
-char *cinder_i32_to_string(int32_t value)
+CinderString cinder_i32_to_string(int32_t value)
 {
     return cinder_format_string("%" PRId32, value);
 }
 
-char *cinder_i64_to_string(int64_t value)
+CinderString cinder_i64_to_string(int64_t value)
 {
     return cinder_format_string("%" PRId64, value);
 }
 
-char *cinder_u8_to_string(uint8_t value)
+CinderString cinder_u8_to_string(uint8_t value)
 {
     return cinder_format_string("%" PRIu8, value);
 }
 
-char *cinder_u16_to_string(uint16_t value)
+CinderString cinder_u16_to_string(uint16_t value)
 {
     return cinder_format_string("%" PRIu16, value);
 }
 
-char *cinder_u32_to_string(uint32_t value)
+CinderString cinder_u32_to_string(uint32_t value)
 {
     return cinder_format_string("%" PRIu32, value);
 }
 
-char *cinder_u64_to_string(uint64_t value)
+CinderString cinder_u64_to_string(uint64_t value)
 {
     return cinder_format_string("%" PRIu64, value);
 }
 
-char *cinder_isize_to_string(ptrdiff_t value)
+CinderString cinder_isize_to_string(ptrdiff_t value)
 {
     return cinder_format_string("%td", value);
 }
 
-char *cinder_usize_to_string(size_t value)
+CinderString cinder_usize_to_string(size_t value)
 {
     return cinder_format_string("%zu", value);
 }
 
-char *cinder_f32_to_string(float value)
+CinderString cinder_f32_to_string(float value)
 {
     return cinder_format_string("%g", (double)value);
 }
 
-char *cinder_f64_to_string(double value)
+CinderString cinder_f64_to_string(double value)
 {
     return cinder_format_string("%g", value);
 }
 
-char *cinder_bool_to_string(bool value)
+CinderString cinder_bool_to_string(bool value)
 {
-    return cinder_clone_string(value ? "true" : "false");
+    return cinder_string_from_cstr(value ? "true" : "false");
 }
 
-char *cinder_char_to_string(char value)
+CinderString cinder_char_to_string(char value)
 {
-    char buffer[2];
-    buffer[0] = value;
-    buffer[1] = '\0';
-    return cinder_clone_string(buffer);
+    return cinder_string_from_bytes(&value, 1);
 }
 
 static void cinder_merge_sort(

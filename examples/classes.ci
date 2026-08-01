@@ -2,9 +2,9 @@ import math
 
 @reflect
 abstract class Shape:
-    name: const char*
+    name: String
 
-    def __init__(self, name: const char*):
+    def __init__(self, name: String):
         self.name = name
 
     @abstractmethod

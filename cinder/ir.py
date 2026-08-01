@@ -15,6 +15,8 @@ from cinder.symbols import (
     VariantSymbol,
 )
 from cinder.types import (
+    STRING,
+    U8,
     ArrayType,
     ClassType,
     ConstType,
@@ -31,10 +33,11 @@ from cinder.types import (
     ResultType,
     SetType,
     SliceType,
+    StringBuilderType,
+    StringType,
     StructType,
     TupleType,
     Type,
-    U8,
     UnionType,
     VariantType,
     is_void,
@@ -186,6 +189,10 @@ class Lowerer:
         option_values = self._collect_options()
         option_values.update(OptionType(map_type.value) for map_type in maps)
         option_values.update(OptionType(set_type.inner) for set_type in sets)
+        # The shared File helper set always emits read_line, whose public
+        # representation is Option[String], even in write-only modules.
+        if uses_file:
+            option_values.add(OptionType(STRING))
         options = tuple(sorted(option_values, key=type_key))
         owneds = tuple(sorted(self._collect_owned(), key=type_key))
         definition_order = tuple(self._definition_order(results, options, tuples))
@@ -249,6 +256,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, SliceType):
                 result.add(raw)
                 collect(raw.inner)
@@ -259,9 +268,7 @@ class Lowerer:
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
-            elif isinstance(raw, OptionType):
-                collect(raw.inner)
-            elif isinstance(raw, OwnedType):
+            elif isinstance(raw, (OptionType, OwnedType)):
                 collect(raw.inner)
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
@@ -285,6 +292,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, TupleType):
                 if raw in result:
                     return
@@ -320,6 +329,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, ListType):
                 if raw in result:
                     return
@@ -357,6 +368,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, MapType):
                 if raw in result:
                     return
@@ -396,6 +409,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, SetType):
                 if raw in result:
                     return
@@ -436,6 +451,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, MapViewType):
                 result.add(raw)
                 collect(raw.map_type)
@@ -472,6 +489,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, OptionType):
                 if raw in result:
                     return
@@ -511,6 +530,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, OwnedType):
                 if raw in result:
                     return
@@ -560,6 +581,8 @@ class Lowerer:
 
         def collect(type_: Type) -> None:
             raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
             if isinstance(raw, ResultType):
                 if raw in result:
                     return
@@ -662,6 +685,9 @@ class Lowerer:
     def _by_value_definition_types(self, type_: Type) -> set[Type]:
         raw = strip_const(type_)
         if is_void(raw):
+            return set()
+        if isinstance(raw, (StringType, StringBuilderType)):
+            # Runtime-owned ABI leaves are already complete via cinder_runtime.h.
             return set()
         if isinstance(
             raw,

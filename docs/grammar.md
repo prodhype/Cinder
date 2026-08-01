@@ -1,6 +1,6 @@
-# Cinder 0.5 grammar and semantics
+# Cinder grammar and semantics
 
-This document describes syntax accepted by the 0.5 compiler. It is a working language reference, not a promise that every spelling or generated symbol is stable before 1.0.
+This document describes the current accepted language surface. It is a working language reference, not a promise that every spelling or generated symbol is stable before 1.0.
 
 ## Lexical rules
 
@@ -8,7 +8,7 @@ Source is UTF-8 text. Identifiers follow the compiler's Unicode identifier check
 
 A logical statement ends at a newline unless the lexer is inside `()`, `[]`, or `{}`. A backslash is not a line-continuation operator. Indentation uses spaces; tabs in leading indentation are rejected. A block begins after `:` and must increase indentation. Blank lines and comments do not affect indentation.
 
-Line comments begin with `#`. Integer literals support decimal, hexadecimal, octal, and binary spellings. Floating literals use decimal syntax. Character and string literals use Cinder escape decoding and are emitted as C literals.
+Line comments begin with `#`. Integer literals support decimal, hexadecimal, octal, and binary spellings. Floating literals use decimal syntax. Character and string literals use Cinder escape decoding. An ordinary string literal is a `String`; an explicit contextual `const char*` remains available for low-level C interoperability. Grammar positions such as `extern import "header.h"` consume the decoded literal directly rather than constructing a runtime value.
 
 ## Project and module syntax
 
@@ -224,11 +224,13 @@ Result[i32, ParseError]
 Result[void, Error]
 Option[i32]
 Owned[i32]
-Tuple[i32, const char*]
+String
+StringBuilder
+Tuple[i32, String]
 List[i32]
-Map[const char*, i32]
+Map[String, i32]
 Set[i32]
-MapKeys[const char*, i32]
+MapKeys[String, i32]
 geometry.Vec2
 &dyn geometry.Shape
 def(i32) -> i32
@@ -236,7 +238,7 @@ def(i32, i32) -> i32
 *def(i32) -> void
 ```
 
-`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `def(T…) -> R` is a non-null function pointer type represented as a C function pointer; omit `-> R` to default the return type to `void`. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families. User-defined generics use the same `Name[Args…]` application syntax and are monomorphized into readable specialized C types and functions.
+`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `def(T…) -> R` is a non-null function pointer type represented as a C function pointer; omit `-> R` to default the return type to `void`. `String` and `StringBuilder` are compiler-provided owning text types. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families. User-defined generics use the same `Name[Args…]` application syntax and are monomorphized into readable specialized C types and functions.
 
 References, dynamic references, slices, fixed arrays, class values, and plain `void` have placement restrictions that follow their generated C representations and lifetime rules.
 
@@ -256,6 +258,8 @@ External declarations may omit a body or use a body containing only `pass`:
 extern "C":
     def puts(text: const char*) -> c_int
 ```
+
+External declarations continue to use C ABI types such as `const char*`; `String` is not an implicit replacement in an extern signature. A `String` passed directly to an extern or compiler-provided builtin parameter of type `const char*` creates a borrow for that call boundary only. The resulting pointer cannot be assigned to a local, stored, or returned. There is no implicit conversion from `const char*` to `String`; importing C text into owned UTF-8 storage requires an explicit copying and validating API.
 
 Class and struct methods infer only the first unannotated `self` parameter. Other parameters require annotations.
 
@@ -351,7 +355,7 @@ generic_function[TypeArgs...](arguments)
 
 User generic functions may also omit explicit type arguments when every type parameter is uniquely inferred from the call arguments.
 
-List literals use square brackets. In an untyped local, `[1, 2]` infers `List[i32]`; an explicit fixed-array context such as `values: i32[2] = [1, 2]` retains C array storage. Slice expressions support `value[:]`, `value[start:]`, and `value[start:stop]`. Slice steps are not implemented.
+List literals use square brackets. In an untyped local, `[1, 2]` infers `List[i32]`; an explicit fixed-array context such as `values: i32[2] = [1, 2]` retains C array storage. Slice expressions support `value[:]`, `value[start:]`, and `value[start:stop]`. Slice steps are not implemented. Array, slice, and List slicing creates a view; `String` slicing instead creates an owned copy and follows the UTF-8 boundary rules below.
 
 Parenthesized comma expressions are tuple literals: `(left, right)`, `(single,)`, and `()`. Parentheses without a comma remain grouping.
 
@@ -359,12 +363,26 @@ Brace literals are Maps when entries contain colons and Sets otherwise: `{"ready
 
 `super().__init__(...)` and `super().method(...)` are recognized only inside a derived class method. Abstract base methods cannot be called directly through `super`.
 
+## Strings
+
+`String` is the primary UTF-8 text type. Ordinary literals infer `String`; a literal becomes `const char*` only when an explicit C-pointer context requires it.
+
+A `String` is a move-only owner with deterministic drop. Its generated runtime shape is conceptually a data pointer, byte length, and capacity, without making those details a stable pre-1.0 ABI. A static literal may retain borrowed static storage until mutation, at which point copy-on-write produces writable owned storage. Keeping an independent value requires an explicit `clone()`. Owned Strings reject embedded NUL bytes so their complete contents can be borrowed through C-string APIs; arbitrary bytes belong in `List[u8]`.
+
+`len(text)` returns its UTF-8 byte length. Direct indexing is rejected because an index would not clearly denote a byte or a Unicode character. `text.byte_at(index)` reads one byte. `text[start:stop]` returns a copied `String`; the range must be in bounds and both endpoints must be UTF-8 boundaries.
+
+Addressable Strings provide `append`, `reserve`, and `clear`. Binary `+` borrows both String operands and returns a fresh `String`; it does not consume either side. Content equality, hashing in Maps and Sets, and `sort` ordering are based on UTF-8 byte content rather than allocation identity.
+
+`StringBuilder` provides `append`, ASCII `append_char`, and `reserve` for incremental text construction. `finish()` consumes the builder and returns the completed `String`.
+
+Strings can be moved through locals, fields, by-value parameters, returns, and supported owning wrappers. A `const` global String initialized directly from a literal may use static storage; other owning String globals and all owning union or variant payloads remain unsupported under the general owning-value restrictions.
+
 ## Native collections
 
 Tuples are immutable heterogeneous value aggregates. Their element types and length are part of the type. `len(tuple)` is compile-time-known, and tuple indexing requires a non-negative integer literal:
 
 ```python
-entry: Tuple[i32, const char*] = (7, "ready")
+entry: Tuple[i32, String] = (7, "ready")
 code = entry[0]
 ```
 
@@ -386,7 +404,7 @@ Maps are insertion-ordered owning hash tables. `map[key]` panics when the key is
 
 Sets are unordered owning hash tables. They provide `add`, `discard`, missing-element-panicking `remove`, optional `pop`, `clear`, and `update`. `union`, `intersection`, `difference`, and `symmetric_difference` return fresh Sets; `|`, `&`, `-`, `^`, their compound forms, equality, and subset/superset comparisons provide the operator forms.
 
-`in` and `not in` test Map keys, Set elements, and Map views. Hashable types are integers, `bool`, `char`, enums, and `const char*`. String hashing/equality uses content, and Maps/Sets clone string keys. A popped string Set element transfers its allocation to the caller.
+`in` and `not in` test Map keys, Set elements, and Map views. Hashable types are integers, `bool`, `char`, enums, `String`, and low-level `const char*`. Maps and Sets hash and compare `String` keys or elements by UTF-8 byte content. Insertion clones a String key or element so later mutation of the source cannot invalidate the table; elsewhere, retaining an independent String requires an explicit `clone()`.
 
 Maps and Sets use the same move-only direct-local/direct-return restrictions as Lists. Their structure cannot be mutated during active iteration, including through hidden aliases caught by runtime guards. Live Map views are non-owning and follow slice-like lifetime rules.
 
@@ -455,21 +473,21 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `range(stop)`, `range(start, stop)`, and `range(start, stop, step)` are valid only as loop iterables.
 
-`len(array)`, `len(slice)`, `len(tuple)`, `len(list)`, `len(map)`, `len(set)`, and `len(map_view)` return `usize`. `len(const char*)` emits `strlen`.
+`len(array)`, `len(slice)`, `len(tuple)`, `len(string)`, `len(list)`, `len(map)`, `len(set)`, and `len(map_view)` return `usize`. String length is the number of UTF-8 bytes. The low-level `len(const char*)` form follows the C string terminator.
 
-`sort(array_or_slice_or_list)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays and lists must refer to addressable storage. Slices may select a subrange to sort, but slicing a const array produces a const slice that cannot be sorted. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `char*` or `const char*` values use lexicographic C-string order. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
+`sort(array_or_slice_or_list)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays and lists must refer to addressable storage. Slices may select a subrange to sort, but slicing a const array produces a const slice that cannot be sorted. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `String` values use lexicographic UTF-8 byte-content order. Low-level `char*` and `const char*` elements retain C-string ordering. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
 
-`print(...)` is globally available and emits to standard output without importing `stdio`. It accepts zero or more printable values, separates multiple arguments with a space, and appends a newline. Printable values are booleans, characters, integers, floats, `const char*` strings, and collections whose nested element types are printable: `List`, `Map`, `Set`, and `Tuple`. Collection formatting uses Python-like brackets (`[1, 2]`, `{'a': 1}`, `{1, 2}` / `set()`, `(1, 2)`). Owning collections must be addressable locals, like `len`. Format specs are not supported on collections.
+`print(...)` is globally available and emits to standard output without importing `stdio`. It accepts zero or more printable values, separates multiple arguments with a space, and appends a newline. Printable values are booleans, characters, integers, floats, `String`, low-level `const char*`, and collections whose nested element types are printable: `List`, `Map`, `Set`, and `Tuple`. String arguments are borrowed, not consumed. Collection formatting uses Python-like brackets (`[1, 2]`, `{'a': 1}`, `{1, 2}` / `set()`, `(1, 2)`). Owning collections must be addressable locals, like `len`. Format specs are not supported on collections.
 
 `print` also accepts Python-style f-strings. Replacement fields use `{expression}` and may include simple format specs such as `{value:d}`, `{value:x}`, `{value:.2f}`, `{text:s}`, and `{letter:c}`. Literal braces are written as `{{` and `}}`. F-strings are currently supported only as `print` arguments.
 
-`input()` is globally available and reads a line from standard input without importing `stdio`. `input(prompt)` writes the `const char*` prompt to standard output without a newline, flushes it, then reads. The returned `const char*` excludes the trailing newline, strips a preceding carriage return for CRLF input, and owns a freshly allocated buffer; release it with `free(cast[void*](line))` when the value is no longer needed. Reaching EOF before any bytes are read panics, since Cinder does not currently have exceptions.
+`input()` is globally available and reads a line from standard input without importing `stdio`. `input(prompt)` borrows its `String` prompt, writes it to standard output without a newline, flushes, and then reads. The returned `String` excludes the trailing newline and strips a preceding carriage return for CRLF input. Its storage is released by deterministic drop. Reaching EOF before any bytes are read panics, since Cinder does not currently have exceptions.
 
-`parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` are globally available and return `Result[T, ConvertError]`. Leading whitespace is skipped, the entire remaining token must parse, and trailing non-whitespace is rejected. `ConvertError` is a compiler-provided enum with `empty`, `invalid`, and `overflow` members. `parse_bool` accepts only `true` and `false`.
+`parse_i32`, `parse_i64`, `parse_u32`, `parse_u64`, `parse_isize`, `parse_usize`, `parse_f32`, `parse_f64`, and `parse_bool` are globally available and borrow a `String`, returning `Result[T, ConvertError]`. Leading whitespace is skipped, the entire remaining token must parse, and trailing non-whitespace is rejected. `ConvertError` is a compiler-provided enum with `empty`, `invalid`, and `overflow` members. `parse_bool` accepts only `true` and `false`.
 
-`to_string(value)` is globally available and returns an owned `const char*` for integers (`i8`…`i64`, `u8`…`u64`, `isize`, `usize`), floats (`f32`, `f64`), `bool`, and `char`. Release the result with `free(cast[void*](text))`. Bool formats as `true`/`false`; numbers use decimal text (floats use `%g`-style formatting).
+`to_string(value)` is globally available and returns a `String` for integers (`i8`…`i64`, `u8`…`u64`, `isize`, `usize`), floats (`f32`, `f64`), `bool`, and `char`. Bool formats as `true`/`false`; numbers use decimal text (floats use `%g`-style formatting).
 
-`open(path, mode)` is globally available and returns a move-only `File` without importing `stdio`. A null `fopen` result panics. `File` provides `write(data: []const u8) -> usize`, `read(buffer: []u8) -> usize`, `read_line() -> const char*`, `read_all() -> List[u8]`, `flush()`, and `close()`. `read` fills up to `buffer.length` and returns the byte count (`0` means EOF). `read_line` returns an owned C string without the trailing newline (and strips a preceding carriage return for CRLF); release it with `free(cast[void*](line))`. Immediate EOF yields `null` so blank lines (owned `""`) stay distinct; `free(null)` is safe. `read_all` returns the remaining bytes as an owning `List[u8]`. Closed-handle use, I/O failure, and out-of-memory conditions panic. Scope exit closes any still-open handle. Prefer `with open(...) as file:` to limit the file's lifetime.
+`open(path, mode)` is globally available, borrows both `String` arguments, and returns a move-only `File` without importing `stdio`. A null `fopen` result panics. `File` provides text `write(text: String) -> usize` and byte-slice `write(data: []const u8) -> usize` forms, plus `read(buffer: []u8) -> usize`, `read_line() -> Option[String]`, `read_text() -> String`, `read_all() -> List[u8]`, `flush()`, and `close()`. `write` borrows its input rather than consuming it. `read` fills up to `buffer.length` and returns the byte count (`0` means EOF). `read_line` excludes the trailing newline and strips a preceding carriage return for CRLF; immediate EOF is `None`, while a blank line is `Some("")`. `read_text` reads the remaining data and validates UTF-8 before returning it as owned text. `read_all` remains the byte-oriented operation and returns the remaining bytes as an owning `List[u8]`. Closed-handle use, I/O failure, invalid text input, and out-of-memory conditions panic. Scope exit closes any still-open handle. Prefer `with open(...) as file:` to limit the file's lifetime.
 
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
 
@@ -479,4 +497,4 @@ Option values expose `.is_some`, `.is_none`, and checked `.value`.
 
 ## Deliberate omissions
 
-The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Owning globals and owning union/variant payloads remain intentionally rejected.
+The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Apart from a `const` String global backed directly by a static literal, owning globals remain intentionally rejected, as do owning union and variant payloads.

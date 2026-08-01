@@ -54,7 +54,8 @@ def test_builtin_print_generates_printf_without_import() -> None:
         "    return 0\n"
     )
     assert "#include <stdio.h>" in generated
-    assert 'printf("%s %lld\\n", "answer", ((long long)(42)));' in generated
+    assert 'printf("%s %lld\\n"' in generated
+    assert "cinder_string_cstr" in generated
 
 
 def test_builtin_input_generates_runtime_call_without_import() -> None:
@@ -64,8 +65,10 @@ def test_builtin_input_generates_runtime_call_without_import() -> None:
         "    other = input()\n"
         "    return cast[i32](len(name) + len(other))\n"
     )
-    assert 'const char *name = cinder_input("Name: ");' in generated
-    assert "const char *other = cinder_input(NULL);" in generated
+    assert "CinderString name = cinder_input(" in generated
+    assert "CinderString other = cinder_input(NULL);" in generated
+    assert "cinder_string_drop(&name);" in generated
+    assert "cinder_string_drop(&other);" in generated
 
 
 def test_builtin_parse_generates_result_wrapper() -> None:
@@ -78,7 +81,7 @@ def test_builtin_parse_generates_result_wrapper() -> None:
         "            return cast[i32](error)\n"
     )
     assert "CinderResult_i32_n_CinderParseError" in generated
-    assert 'cinder_parse_i32("42"' in generated
+    assert "cinder_parse_i32(cinder_string_cstr" in generated
     assert "CinderResult_i32_n_CinderParseError_Tag_Ok" in generated
     assert "CinderParseError" in generated
 
@@ -87,11 +90,12 @@ def test_builtin_to_string_generates_runtime_call() -> None:
     generated = compile_source(
         "def main() -> i32:\n"
         "    text = to_string(42)\n"
-        "    defer free(cast[void*](text))\n"
         "    print(text)\n"
         "    return 0\n"
     )
+    assert "CinderString text" in generated
     assert "cinder_i32_to_string(42)" in generated
+    assert "cinder_string_drop(&text);" in generated
 
 
 def test_parse_and_to_string_reject_invalid_arguments() -> None:
@@ -108,9 +112,9 @@ def test_parse_and_to_string_reject_invalid_arguments() -> None:
     text = str(captured.value)
     assert "parse_i32 expects one positional argument" in text
     assert "parse_i32 does not accept named arguments" in text
-    assert "expected *const char, got i32" in text
+    assert "expected String, got i32" in text
     assert "to_string expects one positional argument" in text
-    assert "type *const char cannot be converted with to_string" in text
+    assert "type String cannot be converted with to_string" in text
 
 
 def test_input_rejects_invalid_arguments() -> None:
@@ -125,7 +129,7 @@ def test_input_rejects_invalid_arguments() -> None:
     text = str(captured.value)
     assert "input expects zero or one positional argument" in text
     assert "input does not accept named arguments" in text
-    assert "expected *const char, got i32" in text
+    assert "expected String, got i32" in text
 
 
 def test_print_fstring_generates_escaped_printf_format() -> None:

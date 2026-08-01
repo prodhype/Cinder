@@ -39,6 +39,7 @@ class VariableSymbol(Symbol):
     c_name: str | None = None
     is_module_public: bool = False
     is_match_binding: bool = False
+    is_borrow_binding: bool = False
 
 
 @dataclass(slots=True)
@@ -282,6 +283,7 @@ class CallResolution:
     super_class: ClassSymbol | None = None
     compile_value: object | None = None
     moved_variables: tuple[VariableSymbol, ...] = ()
+    ffi_borrow_indices: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

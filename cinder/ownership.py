@@ -22,6 +22,8 @@ from cinder.types import (
     ResultType,
     SetType,
     SliceType,
+    StringBuilderType,
+    StringType,
     StructType,
     TupleType,
     Type,
@@ -42,7 +44,18 @@ def type_needs_drop(
         return False
     if isinstance(raw, (PointerType, ReferenceType, SliceType, DynType, MapViewType)):
         return False
-    if isinstance(raw, (FileType, ListType, MapType, SetType, OwnedType)):
+    if isinstance(
+        raw,
+        (
+            FileType,
+            ListType,
+            MapType,
+            SetType,
+            StringType,
+            StringBuilderType,
+            OwnedType,
+        ),
+    ):
         return True
     if isinstance(raw, ConstType):
         return type_needs_drop(
@@ -121,14 +134,12 @@ def class_needs_drop(
             seen=next_seen,
         ):
             return True
-    if class_.primary_base is not None and class_needs_drop(
+    return class_.primary_base is not None and class_needs_drop(
         class_.primary_base,
         classes=classes,
         structs=structs,
         seen=next_seen,
-    ):
-        return True
-    return False
+    )
 
 
 def struct_needs_drop(

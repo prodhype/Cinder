@@ -1,8 +1,8 @@
-def require_i32(text: const char*) -> Result[i32, ConvertError]:
+def require_i32(text: String) -> Result[i32, ConvertError]:
     return parse_i32(text)
 
 
-def doubled(text: const char*) -> Result[i32, ConvertError]:
+def doubled(text: String) -> Result[i32, ConvertError]:
     value = require_i32(text)?
     return Ok(value * 2)
 
@@ -11,7 +11,6 @@ def main() -> i32:
     match doubled("21"):
         case Ok(value):
             text = to_string(value)
-            defer free(cast[void*](text))
             print("doubled:", text)
         case Err(error):
             print("parse failed:", cast[i32](error))
@@ -20,7 +19,6 @@ def main() -> i32:
     match parse_bool("true"):
         case Ok(flag):
             flag_text = to_string(flag)
-            defer free(cast[void*](flag_text))
             print("bool:", flag_text)
         case Err(error):
             print("bool failed:", cast[i32](error))
@@ -29,14 +27,12 @@ def main() -> i32:
     match parse_f64("3.5"):
         case Ok(value):
             float_text = to_string(value)
-            defer free(cast[void*](float_text))
             print("float:", float_text)
         case Err(error):
             print("float failed:", cast[i32](error))
             return 1
 
     letter = to_string('Z')
-    defer free(cast[void*](letter))
     print("char:", letter)
 
     match parse_i32(""):

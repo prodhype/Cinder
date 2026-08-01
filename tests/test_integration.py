@@ -8,7 +8,6 @@ import pytest
 
 from cinder.compiler import Compiler
 
-
 pytestmark = pytest.mark.skipif(
     not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
     reason="no supported C compiler is available",
@@ -34,8 +33,7 @@ def build_and_run(
         check=False,
         input=stdin,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 
@@ -128,6 +126,8 @@ def test_builtin_input_reads_stdin_with_optional_prompt(tmp_path: Path) -> None:
         "    blank = input()\n"
         "    long_line = input()\n"
         "    print(name)\n"
+        '    if name != "Ada":\n'
+        "        return 1\n"
         "    print(len(blank))\n"
         "    print(len(long_line))\n"
         "    return 0\n",
@@ -152,15 +152,16 @@ def test_builtin_input_panics_on_eof_before_line(tmp_path: Path) -> None:
 def test_builtin_parse_and_to_string_round_trip(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,
-        "def doubled(text: const char*) -> Result[i32, ConvertError]:\n"
+        "def doubled(text: String) -> Result[i32, ConvertError]:\n"
         "    value = parse_i32(text)?\n"
+        '    if text != "21":\n'
+        "        return Err(ConvertError.invalid)\n"
         "    return Ok(value * 2)\n"
         "\n"
         "def main() -> i32:\n"
         "    match doubled(\"21\"):\n"
         "        case Ok(value):\n"
         "            text = to_string(value)\n"
-        "            defer free(cast[void*](text))\n"
         "            print(text)\n"
         "        case Err(error):\n"
         "            return 1\n"
@@ -168,7 +169,6 @@ def test_builtin_parse_and_to_string_round_trip(tmp_path: Path) -> None:
         "    match parse_bool(\"true\"):\n"
         "        case Ok(flag):\n"
         "            flag_text = to_string(flag)\n"
-        "            defer free(cast[void*](flag_text))\n"
         "            print(flag_text)\n"
         "        case Err(error):\n"
         "            return 1\n"
@@ -212,13 +212,11 @@ def test_builtin_parse_and_to_string_round_trip(tmp_path: Path) -> None:
         "    match parse_f64(\"3.5\"):\n"
         "        case Ok(value):\n"
         "            text = to_string(value)\n"
-        "            defer free(cast[void*](text))\n"
         "            print(text)\n"
         "        case Err(error):\n"
         "            return 1\n"
         "\n"
         "    letter = to_string('Z')\n"
-        "    defer free(cast[void*](letter))\n"
         "    print(letter)\n"
         "    return 0\n",
     )
@@ -233,7 +231,6 @@ def test_builtin_parse_float_underflow_and_overflow(tmp_path: Path) -> None:
         "    match parse_f64(\"1e-400\"):\n"
         "        case Ok(value):\n"
         "            text = to_string(value)\n"
-        "            defer free(cast[void*](text))\n"
         "            print(text)\n"
         "        case Err(error):\n"
         "            return 1\n"
@@ -241,7 +238,6 @@ def test_builtin_parse_float_underflow_and_overflow(tmp_path: Path) -> None:
         "    match parse_f32(\"1e-50\"):\n"
         "        case Ok(value):\n"
         "            text = to_string(value)\n"
-        "            defer free(cast[void*](text))\n"
         "            print(text)\n"
         "        case Err(error):\n"
         "            return 1\n"
@@ -371,9 +367,9 @@ def test_native_classes_dyn_reflection_and_destructor_order(tmp_path: Path) -> N
         "\n"
         "@reflect\n"
         "abstract class Shape:\n"
-        "    name: const char*\n"
+        "    name: String\n"
         "\n"
-        "    def __init__(self, name: const char*):\n"
+        "    def __init__(self, name: String):\n"
         "        self.name = name\n"
         "\n"
         "    def __del__(self):\n"

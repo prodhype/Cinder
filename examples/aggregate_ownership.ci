@@ -84,7 +84,7 @@ def make_result_list() -> Result[List[i32], i32]:
     return Ok([7, 8])
 
 
-def maybe_open(path: const char*, ok: bool) -> Option[File]:
+def maybe_open(path: String, ok: bool) -> Option[File]:
     if ok:
         return Some(open(path, "w"))
     return None

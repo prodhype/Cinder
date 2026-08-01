@@ -1,5 +1,5 @@
 def main() -> i32:
-    path: const char* = "cinder_sample.txt"
+    path: String = "cinder_sample.txt"
 
     with open(path, "wb") as out:
         # "hello\nworld\n"
@@ -18,11 +18,13 @@ def main() -> i32:
 
     with open(path, "rb") as file:
         first = file.read_line()
-        defer free(cast[void*](first))
+        if first.is_none:
+            return 1
         second = file.read_line()
-        defer free(cast[void*](second))
-        print("read_line:", first)
-        print("read_line:", second)
+        if second.is_none:
+            return 1
+        print("read_line:", first.value)
+        print("read_line:", second.value)
 
     with open(path, "rb") as file:
         data = file.read_all()
@@ -34,9 +36,8 @@ def main() -> i32:
     with open("examples/read_file.ci", "rb") as self_file:
         while true:
             line = self_file.read_line()
-            if line == null:
+            if line.is_none:
                 break
-            defer free(cast[void*](line))
-            print(line)
+            print(line.value)
 
     return 0

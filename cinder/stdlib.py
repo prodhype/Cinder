@@ -12,17 +12,17 @@ from cinder.symbols import (
 )
 from cinder.types import (
     C_INT,
+    CHAR,
     F32,
     F64,
     I32,
-    PointerType,
-    ConstType,
-    OpaqueType,
-    Type,
     USIZE,
     VOID,
-    CHAR,
-    string_type,
+    ConstType,
+    OpaqueType,
+    PointerType,
+    Type,
+    c_string_type,
 )
 
 
@@ -44,12 +44,12 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
     )
     stdio.functions.update(
         {
-            "printf": _function(span, "printf", C_INT, [("format", string_type())], variadic=True, module="stdio"),
+            "printf": _function(span, "printf", C_INT, [("format", c_string_type())], variadic=True, module="stdio"),
             "fprintf": _function(
                 span,
                 "fprintf",
                 C_INT,
-                [("stream", file_pointer), ("format", string_type())],
+                [("stream", file_pointer), ("format", c_string_type())],
                 variadic=True,
                 module="stdio",
             ),
@@ -57,17 +57,17 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
                 span,
                 "snprintf",
                 C_INT,
-                [("buffer", char_pointer), ("size", USIZE), ("format", string_type())],
+                [("buffer", char_pointer), ("size", USIZE), ("format", c_string_type())],
                 variadic=True,
                 module="stdio",
             ),
-            "puts": _function(span, "puts", C_INT, [("text", string_type())], module="stdio"),
+            "puts": _function(span, "puts", C_INT, [("text", c_string_type())], module="stdio"),
             "putchar": _function(span, "putchar", C_INT, [("character", C_INT)], module="stdio"),
             "fopen": _function(
                 span,
                 "fopen",
                 file_pointer,
-                [("path", string_type()), ("mode", string_type())],
+                [("path", c_string_type()), ("mode", c_string_type())],
                 module="stdio",
             ),
             "fclose": _function(span, "fclose", C_INT, [("stream", file_pointer)], module="stdio"),
@@ -131,13 +131,13 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
     )
     string.functions.update(
         {
-            "strlen": _function(span, "strlen", USIZE, [("text", string_type())], module="string"),
-            "strcmp": _function(span, "strcmp", C_INT, [("left", string_type()), ("right", string_type())], module="string"),
+            "strlen": _function(span, "strlen", USIZE, [("text", c_string_type())], module="string"),
+            "strcmp": _function(span, "strcmp", C_INT, [("left", c_string_type()), ("right", c_string_type())], module="string"),
             "strncmp": _function(
                 span,
                 "strncmp",
                 C_INT,
-                [("left", string_type()), ("right", string_type()), ("count", USIZE)],
+                [("left", c_string_type()), ("right", c_string_type()), ("count", USIZE)],
                 module="string",
             ),
             "memcpy": _function(
@@ -168,7 +168,7 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
         span,
         "cinder_panic",
         VOID,
-        [("message", string_type())],
+        [("message", c_string_type())],
         module="cinder",
         public_name="panic",
     )
@@ -187,7 +187,7 @@ def builtin_global_functions(path: Path) -> dict[str, FunctionSymbol]:
     void_pointer = PointerType(VOID)
     return {
         "free": _function(span, "free", VOID, [("pointer", void_pointer)]),
-        "panic": _function(span, "cinder_panic", VOID, [("message", string_type())], public_name="panic"),
+        "panic": _function(span, "cinder_panic", VOID, [("message", c_string_type())], public_name="panic"),
     }
 
 

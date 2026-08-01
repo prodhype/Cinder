@@ -1,6 +1,6 @@
 # Cinder language design
 
-> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results and Options, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, compile-time member inspection, and specialized native collections. User-defined generics are monomorphized into readable specialized C. The more expansive metaprogramming ideas remain proposals.
+> Implementation status: Cinder 0.5 completes the procedural core, local modules, algebraic data, typed Results and Options, classes, abstract interfaces, explicit dynamic dispatch, deterministic class cleanup, opt-in runtime reflection, static assertions, compile-time member inspection, and specialized native collections. The accepted owned-text foundation adds move-only UTF-8 `String` and `StringBuilder`. User-defined generics are monomorphized into readable specialized C. The more expansive metaprogramming ideas remain proposals.
 
 This is a language that compiles to portable C11, not a modification of the C standard. Trying to make whitespace significant while remaining valid C would create a preprocessing mess and poor tooling compatibility.
 
@@ -48,9 +48,9 @@ struct Vec2:
 
 @reflect
 abstract class Shape:
-    name: const char*
+    name: String
 
-    def __init__(self, name: const char*):
+    def __init__(self, name: String):
         self.name = name
 
     @abstractmethod
@@ -98,8 +98,12 @@ inferred. An omitted function return type defaults to `void`.
 ```python
 count: i32 = 10
 temperature: f64 = 72.5
-name: const char* = "Cinder"
+name = "Cinder"
+c_name: const char* = "Cinder"
 ```
+
+An ordinary string literal is an owning `String`.
+Only an explicit `const char*` context selects the low-level C-interoperability form.
 
 Local variable types may be inferred:
 
@@ -222,12 +226,53 @@ const slices. `value[:]`, `value[start:]`, and `value[start:stop]` create subvie
 slice steps are not implemented. Indexing and slicing compile to direct C access and
 pointer arithmetic, with no implicit bounds checks.
 
+## Strings and text
+
+`String` is Cinder's primary UTF-8 text value. It is move-only and drops its active
+storage deterministically. Its runtime shape is conceptually a data pointer, a byte
+length, and a capacity, but that description does not freeze a pre-1.0 ABI.
+
+Static literals use copy-on-write storage: a literal may refer to static bytes until
+the first mutation needs writable capacity. Retaining an independent String is an
+explicit operation:
+
+```python
+message = "hello"
+copy = message.clone()
+message.append(", Cinder")
+message.reserve(64)
+message.clear()
+```
+
+A String cannot contain an embedded NUL byte. This keeps implicit C-string borrows
+lossless; arbitrary byte buffers remain `List[u8]`.
+
+A `const` global String initialized directly from a literal can remain in static
+storage. Other owning String globals still require runtime lifetime support that is
+not available.
+
+`len(message)` reports UTF-8 bytes. Direct String indexing is intentionally absent,
+because a numeric index would be ambiguous between bytes, Unicode scalar values, and
+grapheme clusters. `byte_at(index)` provides explicit byte access. A slice such as
+`message[start:stop]` checks that the byte range is in bounds and that both endpoints
+are UTF-8 boundaries, then returns a copied `String`.
+
+Concatenation with `+` borrows both operands and returns a fresh String. It does not
+consume either operand. `StringBuilder` supports `append`, ASCII `append_char`, and
+`reserve`; `finish` consumes the builder and returns its completed String. These are
+language-level operations—the generated C helper names are not part of the source API.
+
+Text-oriented builtins follow the same ownership split. `input` and `to_string`
+return String values. Numeric and boolean parse helpers borrow a String, as do
+`print` and `open`; these calls do not consume their arguments. F-strings remain a
+print-only facility rather than general String expressions.
+
 ## Native collections
 
 `Tuple[...]` is a compiler-specialized heterogeneous value aggregate. Tuple layout is explicit in generated C, tuple elements are immutable, and indices must be compile-time integer literals.
 
 ```python
-entry: Tuple[i32, const char*] = (7, "ready")
+entry: Tuple[i32, String] = (7, "ready")
 code = entry[0]
 ```
 
@@ -248,9 +293,9 @@ Square-bracket literals infer lists in untyped contexts. An explicit array type 
 
 Maps support key membership, indexed lookup/upsert, optional `get`/`pop`, live `keys`/`values`/`items` views, `clear`, and `update`. Sets support membership, mutation, optional `pop`, bulk update, algebra, equality, and subset/superset comparisons. `MapKeys`, `MapValues`, and `MapItems` contain a borrowed pointer to their Map, remain live across mutation, and carry the same lifetime responsibility as slices.
 
-Hashable values are integer primitives, `bool`, `char`, enums, and `const char*`. C strings use null-safe byte-content equality, and Map/Set insertion clones string keys so hash stability does not depend on the caller's buffer. Removing a string with `Set.pop()` transfers that buffer to the caller.
+Hashable values are integer primitives, `bool`, `char`, enums, `String`, and low-level `const char*`. Maps and Sets hash and compare String keys or elements by UTF-8 byte content rather than allocation identity. Insertion clones a String key or element so later mutation of the source cannot change table membership. Outside that documented collection operation, keeping an independent String requires an explicit clone.
 
-All three owning homogeneous collections remain move-only. Nested owning collections, struct/class fields, and by-value parameters/returns are supported. List elements and Map values may be destructor-bearing; Set elements must be hashable scalars or `const char*` only. Owning globals and union/variant payloads remain rejected. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
+All three owning homogeneous collections remain move-only. Nested owning collections, struct/class fields, and by-value parameters/returns are supported. List elements and Map values may be destructor-bearing; Set elements may include String and the other supported hashable types. Sorting a mutable sequence of Strings uses lexicographic UTF-8 byte-content order. Owning globals and union/variant payloads remain rejected. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
 
 ## Structs
 
@@ -289,9 +334,8 @@ implementation inheritance. Constructing a class produces a zero-initialized val
 and calls `__init__`; it does not allocate implicitly.
 
 ```python
-with open("out.bin", "wb") as file:
-    data: u8[2] = [0x41, 0x42]
-    file.write(data)
+with open("out.txt", "w") as file:
+    file.write("hello\n")
 ```
 
 `open` is a global builtin that returns the compiler-provided owning `File` type. `with`
@@ -299,13 +343,19 @@ binds that value in a nested scope so the handle closes automatically through or
 `File` drop cleanup. The same cleanup runs for `file = open(...)` at the end of the
 enclosing scope. There is no `__enter__` / `__exit__` protocol in 0.5.
 
+`open` borrows its String path and mode. `File.write` accepts String text or byte
+slices without consuming them. `File.read_line` returns `Option[String]`: immediate EOF is `None`, while
+a blank line is `Some("")`. `File.read_text` reads the remaining data, validates
+UTF-8, and returns String. The byte-oriented `File.read_all` remains available and
+returns `List[u8]`.
+
 ```python
 import stdio
 
 class File:
     private handle: *stdio.FILE
 
-    def __init__(self, path: const char*, mode: const char*):
+    def __init__(self, path: String, mode: String):
         self.handle = stdio.fopen(path, mode)
 
         if self.handle == null:
@@ -398,7 +448,7 @@ import stdio
 @reflect
 class User:
     id: u64
-    name: const char*
+    name: String
     active: bool
 ```
 
@@ -497,6 +547,9 @@ def process_values(count: usize) -> Result[void, ProcessError]:
 
 Class values with `__del__` use compiler-managed scope cleanup instead. `defer` is
 for resources that are not already owned by such a class.
+
+String and StringBuilder storage also uses compiler-managed drop. Their internal
+buffers are not raw allocations for user code to release with `free`.
 
 `Owned[T]` is an explicit heap owner for a single value. `Owned(value)` allocates,
 moves `value` onto the heap, and returns a move-only handle. Unary `*` yields an
@@ -637,6 +690,11 @@ def integer_token(value: i64) -> Token:
     return Token.Integer(value)
 ```
 
+Owning variant payloads are not implemented, so this low-level example deliberately
+uses `const char*`; a variant cannot carry an owning String yet. Likewise, a String
+bound from an owning Option or Result match may be inspected or borrowed but cannot
+currently be transferred out of that match binding.
+
 ## C interoperability
 
 `extern import` emits a C `#include`:
@@ -677,6 +735,13 @@ def seconds(milliseconds: f64) -> f64:
 The generated symbol uses the C calling convention and remains callable from C,
 C++, Rust, Python extensions, or other FFI-compatible languages.
 
+Extern signatures remain written in C ABI types. A C parameter that receives text
+still uses `const char*`, not `String`. Passing a String directly to an extern or
+compiler-provided builtin call can create an implicit `const char*` borrow for that
+call only; the pointer cannot be assigned, stored, or returned. Conversion in the
+other direction is never implicit because Cinder must copy and validate external
+bytes before they become owned UTF-8 text.
+
 ## Modules
 
 ```python
@@ -700,6 +765,9 @@ C headers remain available through `extern import`.
 ## Compiler architecture
 
 The compiler requires Python 3.14+ and emits readable C11.
+Python remains the stage0 implementation; there is no self-hosted Cinder compiler
+yet. The staged path toward one is documented in
+[`docs/self-hosting.md`](self-hosting.md).
 
 ```text
 source
@@ -750,7 +818,7 @@ cinder emit-project . -o generated
 
 ## Implemented milestones
 
-The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations.
+The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations. The owned String foundation supplies the text ownership and UTF-8 rules needed before a self-hosting effort can begin.
 
 Copy/move hooks, closures with explicit environment structs, and broader compile-time execution remain later work.
 
