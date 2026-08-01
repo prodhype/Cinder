@@ -2670,6 +2670,8 @@ class Checker:
             }
         if isinstance(type_, OptionType):
             return self._by_value_aggregate_types(type_.inner)
+        if isinstance(type_, ClosureType):
+            return self._by_value_aggregate_types(type_.env_type)
         if isinstance(type_, OwnedType):
             # Owned stores T behind a pointer, so it breaks by-value aggregate cycles.
             return set()

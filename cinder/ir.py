@@ -24,6 +24,7 @@ from cinder.types import (
     DynType,
     EnumType,
     FileType,
+    FunctionPointerType,
     ListType,
     MapType,
     MapViewType,
@@ -622,6 +623,10 @@ class Lowerer:
                     return
                 result.add(raw)
                 collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
+            elif isinstance(raw, FunctionPointerType):
                 for parameter in raw.param_types:
                     collect(parameter)
                 collect(raw.return_type)

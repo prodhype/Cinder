@@ -40,6 +40,19 @@ def test_closure_pass_store_and_call_codegen() -> None:
     assert "->call(&" in generated
 
 
+def test_closure_nested_in_function_pointer_return_is_declared() -> None:
+    generated = compile_source(
+        "struct Env:\n"
+        "    value: i32\n"
+        "\n"
+        "\n"
+        "def accept(factory: def() -> closure[const Env]() -> i32) -> i32:\n"
+        "    return 0\n"
+    )
+
+    assert "typedef struct CinderClosure_closure_const_env_n_Env_ret_i32" in generated
+
+
 def test_closure_mutable_environment_codegen() -> None:
     generated = compile_source(
         "struct CounterEnv:\n"
@@ -119,6 +132,15 @@ def test_closure_mutable_environment_codegen() -> None:
             "    callback = closure(env, length)\n"
             "    return len(env.text)\n",
             "use of moved value env",
+        ),
+        (
+            "struct Env:\n"
+            "    callback: closure[Env]() -> i32\n"
+            "\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return 0\n",
+            "recursive by-value aggregate layout",
         ),
     ],
 )
