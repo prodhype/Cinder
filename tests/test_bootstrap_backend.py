@@ -134,6 +134,15 @@ def parse_error_record(stdout: str) -> tuple[str, int, int, int, int, int]:
             ["return 0;"],
         ),
         (
+            "class Point:\n"
+            "    x: i32\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return 0\n",
+            ["typedef struct Point", "int32_t x;", "return 0;"],
+            ["Point", "return 0;"],
+        ),
+        (
             "def add(a: i32, b: i32) -> i32:\n"
             "    return a + b\n"
             "\n"
@@ -141,6 +150,15 @@ def parse_error_record(stdout: str) -> tuple[str, int, int, int, int, int]:
             "    return add(41, 1)\n",
             ["int32_t add(int32_t a, int32_t b)", "return add(41, 1);"],
             ["int32_t add(int32_t a, int32_t b)", "return add(41, 1);"],
+        ),
+        (
+            "def widen(value: i64) -> i64:\n"
+            "    return value\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return 0\n",
+            ["int64_t widen(int64_t value)", "return value;"],
+            ["int64_t widen(int64_t value)", "return value;"],
         ),
         (
             "def main() -> i32:\n"
@@ -177,6 +195,16 @@ def parse_error_record(stdout: str) -> tuple[str, int, int, int, int, int]:
             "    return 0\n",
             ["typedef enum State", "State_idle", "State_running", "typedef union Number"],
             ["return 0;"],
+        ),
+        (
+            "def log() -> i32:\n"
+            "    return 0\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    defer log()\n"
+            "    return 42\n",
+            ["log();\n    return 42;"],
+            ["log();"],
         ),
     ],
 )
@@ -242,6 +270,24 @@ def test_bootstrap_backend_matches_unknown_name_diagnostic(
     assert parse_error_record(result.stdout) == diagnostic_record(source, error.value.diagnostics[0])
 
 
+def test_bootstrap_backend_uses_block_scoped_locals(
+    bootstrap_backend_executable: Path,
+    tmp_path: Path,
+) -> None:
+    source = (
+        "def main() -> i32:\n"
+        "    if true:\n"
+        "        value: i32 = 1\n"
+        "    return value\n"
+    )
+    with pytest.raises(CompilationFailed) as error:
+        Compiler().compile_source(source, Path(INPUT_NAME))
+
+    result = run_bootstrap_backend(bootstrap_backend_executable, tmp_path, source)
+    assert result.returncode != 0
+    assert parse_error_record(result.stdout) == diagnostic_record(source, error.value.diagnostics[0])
+
+
 @pytest.mark.parametrize(
     ("source", "expected_code"),
     [
@@ -266,6 +312,44 @@ def test_bootstrap_backend_matches_unknown_name_diagnostic(
             "    value: i32 = true\n"
             "    return value\n",
             107,
+        ),
+        (
+            "def main() -> i32:\n"
+            "    value: i32 = \"x\"\n"
+            "    return value\n",
+            107,
+        ),
+        (
+            "def main() -> i32:\n"
+            "    return true\n",
+            107,
+        ),
+        (
+            "def main() -> i32:\n"
+            "    xs: List[i32] = [true]\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "enum E:\n"
+            "    a\n"
+            "    b\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    x: E = E.a\n"
+            "    match x:\n"
+            "        case _:\n"
+            "            return 1\n"
+            "        case E.b:\n"
+            "            return 2\n",
+            121,
+        ),
+        (
+            "static_assert(false, \"no\")\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return 0\n",
+            214,
         ),
         (
             "def main() -> i32:\n"
