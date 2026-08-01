@@ -5764,7 +5764,7 @@ class Checker:
         result = STRING_BUILDER if builder else STRING
         if call.type_arguments:
             self._error(f"{name} is not generic", call.span, code="C370")
-        if call.arguments:
+        if builder and call.arguments:
             self._error(
                 f"{name} expects no arguments, got {len(call.arguments)}",
                 call.span,
@@ -5778,6 +5778,32 @@ class Checker:
                         code="C372",
                     )
                 self._check_expr(argument.value)
+        elif call.arguments:
+            if len(call.arguments) != 1:
+                self._error(
+                    f"{name} expects zero or one argument, got {len(call.arguments)}",
+                    call.span,
+                    code="C371",
+                )
+            for argument in call.arguments:
+                if argument.name is not None:
+                    self._error(
+                        f"{name} does not accept named arguments",
+                        argument.span,
+                        code="C372",
+                    )
+                actual = self._check_expr(argument.value)
+                raw_actual = strip_const(actual)
+                is_char_pointer = (
+                    isinstance(raw_actual, PointerType)
+                    and strip_const(raw_actual.inner) == CHAR
+                )
+                if (
+                    not isinstance(value_type(actual), StringType)
+                    and not is_c_string(actual)
+                    and not is_char_pointer
+                ):
+                    self._type_mismatch(STRING, actual, argument.value.span)
         self.call_resolutions[id(call)] = CallResolution(
             "string_builder_new" if builder else "string_new"
         )

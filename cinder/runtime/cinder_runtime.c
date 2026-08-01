@@ -244,6 +244,27 @@ static void cinder_validate_string(const CinderString *string)
     }
 }
 
+static void cinder_write_string(FILE *stream, const CinderString *text)
+{
+    cinder_validate_string(text);
+    if (text->length == 0) {
+        return;
+    }
+    if (fwrite(text->data, 1, text->length, stream) != text->length) {
+        cinder_panic("failed to write text");
+    }
+}
+
+void cinder_write_stdout(const CinderString *text)
+{
+    cinder_write_string(stdout, text);
+}
+
+void cinder_write_stderr(const CinderString *text)
+{
+    cinder_write_string(stderr, text);
+}
+
 static void cinder_validate_builder_structure(
     const CinderStringBuilder *builder
 )

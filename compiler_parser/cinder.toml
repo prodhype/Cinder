@@ -1,0 +1,4 @@
+[project]
+name = "bootstrap_parser"
+source-root = "src"
+entry = "parser_main.ci"

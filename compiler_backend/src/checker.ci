@@ -1,0 +1,306 @@
+import backend_ir
+import codegen
+import lexer
+import parser
+import syntax
+import symbols
+import token
+import types
+from syntax import NodeId
+
+
+struct CheckerDiagnostic:
+    code: i32
+    start: usize
+    length: usize
+    line: i32
+    column: i32
+
+
+struct Checker:
+    type_table: types.TypeTable
+    symbols: symbols.SymbolTable
+    diagnostics: List[CheckerDiagnostic]
+
+    def emit_error(self: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
+        if len(self.diagnostics) > 0:
+            return
+        self.diagnostics.append(
+            CheckerDiagnostic(code=code, start=start, length=length, line=line, column=column)
+        )
+
+
+def new_checker() -> Checker:
+    diagnostics: List[CheckerDiagnostic] = []
+    return Checker(type_table=types.new_type_table(), symbols=symbols.new_symbol_table(), diagnostics=diagnostics)
+
+
+def check_and_dump(source: String) -> i32:
+    scan = lexer.new_lexer(source)
+    scan.tokenize()
+    if len(scan.diagnostics) > 0:
+        return scan.dump()
+
+    parsed = parser.new_parser(scan)
+    root = parsed.parse_module()
+    if len(parsed.diagnostics) > 0:
+        for diagnostic in parsed.diagnostics:
+            print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+        return 1
+
+    checker = new_checker()
+    collect_symbols(checker, parsed.arena, root)
+    validate_names(checker, parsed.arena, root, scan.source)
+    if len(checker.diagnostics) > 0:
+        for diagnostic in checker.diagnostics:
+            print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+        return 1
+
+    summary = backend_ir.summarize(parsed.arena, root)
+    backend_ir.dump_summary(summary)
+    c_source = codegen.emit_c(parsed.arena, root, scan.source)
+    with open("bootstrap_selfhost_output.c", "wb") as output:
+        output.write(c_source)
+    print("C", len(c_source))
+    print(c_source)
+    return 0
+
+
+def collect_symbols(checker: &Checker, arena: &const syntax.SyntaxArena, root: NodeId) -> void:
+    collect_symbols_in_node(checker, arena, root)
+
+
+def collect_symbols_in_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
+        parameter_count = count_direct_children(arena, id, syntax.SyntaxKind.PARAMETER)
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.FUNCTION,
+            node.value_start,
+            node.value_length,
+            types.type_i32(),
+            id,
+            symbols.root_scope(),
+            parameter_count,
+        )
+    elif node.kind == syntax.SyntaxKind.STRUCT_DECL:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.STRUCT,
+            node.value_start,
+            node.value_length,
+            types.missing_type(),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+    elif node.kind == syntax.SyntaxKind.IMPORT_DECL:
+        imported = find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
+        if imported.index >= 0:
+            imported_node = arena.nodes[imported.index]
+            checker.symbols.add_symbol(
+                symbols.SymbolKind.GLOBAL,
+                imported_node.value_start,
+                imported_node.value_length,
+                types.missing_type(),
+                id,
+                symbols.root_scope(),
+                0,
+            )
+    elif node.kind == syntax.SyntaxKind.CLASS_DECL:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.CLASS,
+            node.value_start,
+            node.value_length,
+            checker.type_table.nominal(types.TypeKind.CLASS, node.value_start, node.value_length),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+    elif node.kind == syntax.SyntaxKind.ENUM_DECL:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.ENUM,
+            node.value_start,
+            node.value_length,
+            checker.type_table.nominal(types.TypeKind.ENUM, node.value_start, node.value_length),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+    elif node.kind == syntax.SyntaxKind.UNION_DECL:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.UNION,
+            node.value_start,
+            node.value_length,
+            checker.type_table.nominal(types.TypeKind.UNION, node.value_start, node.value_length),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+    elif node.kind == syntax.SyntaxKind.VARIANT_DECL:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.VARIANT,
+            node.value_start,
+            node.value_length,
+            checker.type_table.nominal(types.TypeKind.VARIANT, node.value_start, node.value_length),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+    elif node.kind == syntax.SyntaxKind.GLOBAL_DECL:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.GLOBAL,
+            node.value_start,
+            node.value_length,
+            types.type_i32(),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+    elif node.kind == syntax.SyntaxKind.EXTERN_TYPE_DECL:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.EXTERN_TYPE,
+            node.value_start,
+            node.value_length,
+            checker.type_table.nominal(types.TypeKind.NAMED, node.value_start, node.value_length),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+    for offset in range(0, node.child_count):
+        collect_symbols_in_node(checker, arena, arena.children[node.first_child + offset])
+
+
+def validate_names(checker: &Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String) -> void:
+    validate_names_in_node(checker, arena, root, source)
+
+
+def validate_names_in_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.PARAMETER or node.kind == syntax.SyntaxKind.VAR_DECL_STMT or node.kind == syntax.SyntaxKind.WITH_STMT:
+        checker.symbols.add_symbol(
+            symbols.SymbolKind.LOCAL,
+            node.value_start,
+            node.value_length,
+            types.type_i32(),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+        if node.kind == syntax.SyntaxKind.VAR_DECL_STMT:
+            validate_var_decl(checker, arena, id, source)
+    elif node.kind == syntax.SyntaxKind.EXPR_NAME:
+        if not is_builtin_name(source, node.value_start, node.value_length):
+            found = checker.symbols.find_in_scope(source, symbols.root_scope(), node.value_start, node.value_length)
+            if found.index < 0:
+                checker.emit_error(48, node.start, node.length, node.line, node.column)
+                return
+    elif node.kind == syntax.SyntaxKind.EXPR_CALL:
+        validate_call(checker, arena, id, source)
+    elif node.kind == syntax.SyntaxKind.RETURN_STMT:
+        if node.child_count == 0:
+            checker.emit_error(42, node.start, node.length, node.line, node.column)
+            return
+    elif node.kind == syntax.SyntaxKind.IF_STMT or node.kind == syntax.SyntaxKind.WHILE_STMT:
+        condition = first_child(arena, id)
+        if condition.index >= 0 and is_string_literal(arena, condition):
+            checker.emit_error(24, arena.nodes[condition.index].start, arena.nodes[condition.index].length, arena.nodes[condition.index].line, arena.nodes[condition.index].column)
+            return
+    for offset in range(0, node.child_count):
+        validate_names_in_node(checker, arena, arena.children[node.first_child + offset], source)
+
+
+def validate_var_decl(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    node = arena.nodes[id.index]
+    annotation = find_child_kind(arena, id, syntax.SyntaxKind.TYPE_NAME)
+    initializer = last_child(arena, id)
+    if annotation.index < 0 or initializer.index < 0:
+        return
+    annotation_node = arena.nodes[annotation.index]
+    initializer_node = arena.nodes[initializer.index]
+    if range_text_equals(source, annotation_node.value_start, annotation_node.value_length, "i32"):
+        if initializer_node.kind == syntax.SyntaxKind.EXPR_LITERAL and (initializer_node.flags == cast[i32](token.TokenKind.TRUE) or initializer_node.flags == cast[i32](token.TokenKind.FALSE)):
+            checker.emit_error(107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+
+
+def validate_call(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    call = arena.nodes[id.index]
+    callee = first_child(arena, id)
+    if callee.index < 0:
+        return
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return
+    if is_builtin_name(source, callee_node.value_start, callee_node.value_length):
+        return
+    found = checker.symbols.find_in_scope(source, symbols.root_scope(), callee_node.value_start, callee_node.value_length)
+    if found.index < 0:
+        checker.emit_error(48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
+        return
+    symbol = checker.symbols.symbols[found.index]
+    if symbol.kind != symbols.SymbolKind.FUNCTION:
+        checker.emit_error(48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
+        return
+    actual = count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    expected = symbol.flags
+    if actual < expected:
+        checker.emit_error(78, call.start, call.length, call.line, call.column)
+    elif actual > expected:
+        checker.emit_error(77, call.start, call.length, call.line, call.column)
+
+
+def count_direct_children(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> i32:
+    node = arena.nodes[id.index]
+    count: i32 = 0
+    for offset in range(0, node.child_count):
+        child = arena.nodes[arena.children[node.first_child + offset].index]
+        if child.kind == kind:
+            count += 1
+    return count
+
+
+def first_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        return syntax.missing_node()
+    return arena.children[node.first_child]
+
+
+def last_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        return syntax.missing_node()
+    return arena.children[node.first_child + node.child_count - 1]
+
+
+def find_child_kind(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == kind:
+            return child_id
+    return syntax.missing_node()
+
+
+def is_string_literal(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
+    node = arena.nodes[id.index]
+    return node.kind == syntax.SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING)
+
+
+def is_builtin_name(source: &const String, start: usize, length: usize) -> bool:
+    return range_text_equals(source, start, length, "print") or range_text_equals(source, start, length, "len") or range_text_equals(source, start, length, "open")
+
+
+def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:
+    if length != len(text):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != text.byte_at(offset):
+            return false
+        offset += 1
+    return true
