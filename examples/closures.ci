@@ -1,0 +1,32 @@
+struct AddEnv:
+    delta: i32
+
+
+def add_with_env(env: &const AddEnv, value: i32) -> i32:
+    return value + env.delta
+
+
+struct CounterEnv:
+    value: i32
+
+
+def next_counter(env: &CounterEnv, amount: i32) -> i32:
+    env.value += amount
+    return env.value
+
+
+def apply(callback: closure[const AddEnv](i32) -> i32, value: i32) -> i32:
+    return callback(value)
+
+
+def main() -> i32:
+    # A closure stores an environment value and an adapter function.
+    # A call sends the environment first, then the visible arguments.
+    add_two = closure(AddEnv(delta=2), add_with_env)
+    counter = closure(CounterEnv(value=10), next_counter)
+
+    print("add:", apply(add_two, 40))
+    print("counter:", counter(5))
+    print("counter:", counter(7))
+
+    return 0

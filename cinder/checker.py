@@ -86,6 +86,7 @@ from cinder.types import (
     VOID,
     ArrayType,
     ClassType,
+    ClosureType,
     ComptimeCollectionType,
     ComptimeItemType,
     ConstType,
@@ -1912,6 +1913,8 @@ class Checker:
             )
         if isinstance(raw, ArrayType):
             return self._contains_destructible_value(raw.inner, seen)
+        if isinstance(raw, ClosureType):
+            return self._contains_destructible_value(raw.env_type, seen)
         if isinstance(raw, ListType):
             return self._contains_destructible_value(raw.inner, seen)
         if isinstance(raw, MapType):
@@ -1978,6 +1981,8 @@ class Checker:
             )
         if isinstance(raw, ArrayType):
             return self._contains_owning_container_value(raw.inner, seen)
+        if isinstance(raw, ClosureType):
+            return self._contains_owning_container_value(raw.env_type, seen)
         if isinstance(raw, TupleType):
             return any(
                 self._contains_owning_container_value(element, seen)
@@ -2107,6 +2112,8 @@ class Checker:
             return isinstance(expression, ast.CallExpr)
         if isinstance(expected, TupleType):
             return isinstance(expression, (ast.TupleLiteralExpr, ast.CallExpr))
+        if isinstance(expected, ClosureType):
+            return isinstance(expression, ast.CallExpr)
         if isinstance(expected, ArrayType):
             return isinstance(expression, ast.ListLiteralExpr)
         return isinstance(expression, ast.CallExpr)
@@ -2472,6 +2479,15 @@ class Checker:
                 self._contains_owned_string_type(parameter)
                 for parameter in raw.param_types
             )
+        if isinstance(raw, ClosureType):
+            return (
+                self._contains_owned_string_type(raw.env_type)
+                or self._contains_owned_string_type(raw.return_type)
+                or any(
+                    self._contains_owned_string_type(parameter)
+                    for parameter in raw.param_types
+                )
+            )
         return False
 
     def _c_value_name(self, name: str) -> str:
@@ -2654,6 +2670,8 @@ class Checker:
             }
         if isinstance(type_, OptionType):
             return self._by_value_aggregate_types(type_.inner)
+        if isinstance(type_, ClosureType):
+            return self._by_value_aggregate_types(type_.env_type)
         if isinstance(type_, OwnedType):
             # Owned stores T behind a pointer, so it breaks by-value aggregate cycles.
             return set()
@@ -5019,6 +5037,9 @@ class Checker:
     def _check_call(self, expression: ast.CallExpr, expected: Type | None = None) -> Type:
         if isinstance(expression.callee, ast.NameExpr):
             name = expression.callee.name
+            if name == "closure":
+                self.expr_types[id(expression.callee)] = FunctionValueType(name)
+                return self._check_closure_constructor(expression, expected)
             if name == "String":
                 self.expr_types[id(expression.callee)] = FunctionValueType(name)
                 return self._check_string_constructor(expression, builder=False)
@@ -5329,6 +5350,8 @@ class Checker:
 
         callee_type = self._check_expr(expression.callee)
         callee_value = value_type(callee_type)
+        if isinstance(callee_value, ClosureType):
+            return self._check_closure_call(expression, callee_value)
         if isinstance(callee_value, FunctionPointerType):
             return self._check_function_pointer_call(expression, callee_value)
         if isinstance(callee_value, FunctionValueType):
@@ -6989,6 +7012,281 @@ class Checker:
             tuple(parameter.type for parameter in function.parameters),
             function.return_type,
         )
+
+    def _check_closure_constructor(
+        self,
+        call: ast.CallExpr,
+        expected: Type | None,
+    ) -> Type:
+        if call.type_arguments:
+            self._error("closure construction cannot take type arguments", call.span, code="C377")
+
+        if len(call.arguments) != 2:
+            self._error(
+                f"closure expects 2 arguments, got {len(call.arguments)}",
+                call.span,
+                code="C378",
+            )
+            for argument in call.arguments:
+                self._check_expr(argument.value)
+            return ERROR
+
+        for argument in call.arguments:
+            if argument.name is not None:
+                self._error(
+                    "closure construction does not support named arguments",
+                    argument.span,
+                    code="C379",
+                )
+
+        expected_closure = (
+            value_type(expected)
+            if expected is not None and isinstance(value_type(expected), ClosureType)
+            else None
+        )
+        assert expected_closure is None or isinstance(expected_closure, ClosureType)
+
+        env_expr = call.arguments[0].value
+        adapter_expr = call.arguments[1].value
+        env_expected = expected_closure.env_type if expected_closure is not None else None
+        env_actual = self._check_expr(env_expr, expected=env_expected)
+        env_type = value_type(env_actual)
+        if expected_closure is not None:
+            if not self._can_assign(expected_closure.env_type, env_actual):
+                self._type_mismatch(expected_closure.env_type, env_actual, env_expr.span)
+            env_type = expected_closure.env_type
+
+        env_raw = strip_const(env_type)
+        if not isinstance(env_raw, StructType):
+            self._error(
+                f"closure environment must be a struct, got {type_name(env_type)}",
+                env_expr.span,
+                code="C380",
+            )
+            env_raw = ERROR
+
+        adapter = self._closure_adapter_function(adapter_expr)
+        if adapter is None or env_raw == ERROR:
+            return expected_closure or ERROR
+
+        inferred = self._closure_type_from_adapter(adapter, env_raw, adapter_expr.span)
+        closure_type = inferred
+        if expected_closure is not None:
+            if not self._can_assign(expected_closure, inferred):
+                self._type_mismatch(expected_closure, inferred, adapter_expr.span)
+            closure_type = expected_closure
+
+        moved_variables: list[VariableSymbol] = []
+        if self.type_needs_drop(closure_type.env_type):
+            moved = self._validate_move_only_source(env_expr, closure_type.env_type)
+            if moved is not None:
+                moved_variables.append(moved)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            "closure_new",
+            function=adapter,
+            expected_types=(closure_type.env_type, None),
+            moved_variables=tuple(moved_variables),
+        )
+        return closure_type
+
+    def _closure_adapter_function(
+        self,
+        expression: ast.Expression,
+    ) -> FunctionSymbol | None:
+        if isinstance(expression, ast.NameExpr):
+            symbol = self.current_scope.lookup(expression.name)
+            if isinstance(symbol, FunctionSymbol):
+                self.name_symbols[id(expression)] = symbol
+                pointer = self._function_pointer_from_symbol(symbol)
+                self.expr_types[id(expression)] = (
+                    pointer if pointer is not None else FunctionValueType(symbol.name)
+                )
+                if pointer is None:
+                    self._error(
+                        "closure adapter must be a non-variadic free function",
+                        expression.span,
+                        code="C381",
+                    )
+                    return None
+                return symbol
+            if isinstance(symbol, FunctionTemplateSymbol):
+                self.name_symbols[id(expression)] = symbol
+                self.expr_types[id(expression)] = FunctionValueType(symbol.name)
+                self._error(
+                    "closure adapter cannot be a generic function",
+                    expression.span,
+                    code="C382",
+                )
+                return None
+
+        if isinstance(expression, ast.AttributeExpr):
+            actual = self._check_expr(expression)
+            resolution = self.attribute_resolutions.get(id(expression))
+            if resolution is not None and resolution.kind == "module_function" and resolution.function:
+                function = resolution.function
+                pointer = self._function_pointer_from_symbol(function)
+                if pointer is None:
+                    self._error(
+                        "closure adapter must be a non-variadic free function",
+                        expression.span,
+                        code="C381",
+                    )
+                    return None
+                return function
+            if (
+                resolution is not None
+                and resolution.kind == "module_function_template"
+                and isinstance(resolution.compile_value, FunctionTemplateSymbol)
+            ):
+                self._error(
+                    "closure adapter cannot be a generic function",
+                    expression.span,
+                    code="C382",
+                )
+                return None
+            self._error(
+                f"closure adapter must be a free function, got {type_name(actual)}",
+                expression.span,
+                code="C383",
+            )
+            return None
+
+        actual = self._check_expr(expression)
+        self._error(
+            f"closure adapter must be a free function, got {type_name(actual)}",
+            expression.span,
+            code="C383",
+        )
+        return None
+
+    def _closure_type_from_adapter(
+        self,
+        function: FunctionSymbol,
+        env_type: Type,
+        span: Span,
+    ) -> ClosureType:
+        if not function.parameters:
+            self._error(
+                "closure adapter must take the environment as its first parameter",
+                span,
+                code="C384",
+            )
+            return ClosureType(env_type, False, (), function.return_type)
+
+        env_parameter = function.parameters[0].type
+        if not isinstance(env_parameter, ReferenceType):
+            self._error(
+                "closure adapter first parameter must be an environment reference",
+                function.parameters[0].span,
+                code="C385",
+                note="use &Env or &const Env as the first parameter",
+            )
+            return ClosureType(
+                env_type,
+                False,
+                tuple(parameter.type for parameter in function.parameters[1:]),
+                function.return_type,
+            )
+
+        env_is_const = isinstance(env_parameter.inner, ConstType)
+        adapter_env = strip_const(env_parameter.inner)
+        if adapter_env != env_type:
+            expected_env = ReferenceType(ConstType(env_type) if env_is_const else env_type)
+            self._type_mismatch(expected_env, env_parameter, function.parameters[0].span)
+
+        return ClosureType(
+            env_type,
+            env_is_const,
+            tuple(parameter.type for parameter in function.parameters[1:]),
+            function.return_type,
+        )
+
+    def _check_closure_call(
+        self,
+        call: ast.CallExpr,
+        callee_type: ClosureType,
+    ) -> Type:
+        if call.type_arguments:
+            self._error(
+                "closure calls cannot take type arguments",
+                call.span,
+                code="C386",
+            )
+
+        if not self._is_addressable(call.callee):
+            self._error(
+                "closure call target must be addressable",
+                call.callee.span,
+                code="C387",
+                note="bind the closure to a local before calling it",
+            )
+        elif not callee_type.env_is_const and self._lvalue_is_const(call.callee):
+            self._error(
+                "mutable closure environment requires a non-const closure value",
+                call.callee.span,
+                code="C388",
+            )
+
+        param_types = callee_type.param_types
+        if len(call.arguments) != len(param_types):
+            self._error(
+                f"expected {len(param_types)} argument"
+                f"{'' if len(param_types) == 1 else 's'} for closure call, "
+                f"got {len(call.arguments)}",
+                call.span,
+                code="C389" if len(call.arguments) > len(param_types) else "C390",
+            )
+
+        order: list[int] = []
+        expected_types: list[Type | None] = []
+        moved_variables: list[VariableSymbol] = []
+        for argument_index, argument in enumerate(call.arguments):
+            if argument.name is not None:
+                self._error(
+                    "closure calls do not support named arguments",
+                    argument.span,
+                    code="C391",
+                )
+            if argument_index >= len(param_types):
+                self._check_expr(argument.value)
+                continue
+            expected = param_types[argument_index]
+            order.append(argument_index)
+            expected_types.append(expected)
+            actual = self._check_expr(argument.value, expected=expected)
+            list_slice_argument = self._is_list_slice_argument(expected, actual)
+            if not self._can_assign(expected, actual) and not list_slice_argument:
+                self._type_mismatch(expected, actual, argument.value.span)
+            if list_slice_argument:
+                self._validate_list_slice_argument(expected, argument.value)
+            self._validate_borrow_source(expected, actual, argument.value)
+            if isinstance(expected, ReferenceType):
+                if actual == NULL:
+                    self._error("references cannot receive null", argument.value.span, code="C079")
+                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
+                    argument.value
+                ):
+                    self._error(
+                        "reference argument must be addressable",
+                        argument.value.span,
+                        code="C080",
+                    )
+            elif self.type_needs_drop(expected):
+                moved = self._validate_move_only_source(
+                    argument.value,
+                    strip_const(expected),
+                )
+                if moved is not None:
+                    moved_variables.append(moved)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            "closure",
+            argument_order=tuple(order),
+            expected_types=tuple(expected_types),
+            moved_variables=tuple(moved_variables),
+        )
+        return callee_type.return_type
 
     @staticmethod
     def _is_process_run_function(function: FunctionSymbol) -> bool:
@@ -9311,6 +9609,42 @@ class Checker:
                     )
                     resolved_return = ERROR
                 result = FunctionPointerType(tuple(param_types), resolved_return)
+            case ast.ClosureTypeNode(environment=environment, parameters=parameters, return_type=return_type):
+                resolved_env = self._resolve_type(environment, allow_opaque=allow_opaque)
+                env_is_const = isinstance(resolved_env, ConstType)
+                env_type = strip_const(resolved_env)
+                if not isinstance(env_type, StructType):
+                    self._error(
+                        f"closure environment must be a struct, got {type_name(resolved_env)}",
+                        environment.span,
+                        code="C380",
+                    )
+                    env_type = ERROR
+                param_types = []
+                for parameter in parameters:
+                    param_type = self._resolve_type(parameter, allow_opaque=allow_opaque)
+                    if is_void(param_type):
+                        self._error(
+                            "closure parameters cannot have type void",
+                            parameter.span,
+                            code="C392",
+                        )
+                        param_type = ERROR
+                    param_types.append(param_type)
+                resolved_return = (
+                    VOID
+                    if return_type is None
+                    else self._resolve_type(return_type, allow_opaque=allow_opaque)
+                )
+                if isinstance(resolved_return, (ArrayType, ReferenceType, DynType)):
+                    self._error(
+                        f"closures cannot return {type_name(resolved_return)}",
+                        return_type.span if return_type is not None else node.span,
+                        code="C393",
+                        note="return a pointer, slice, result, or owned nominal value instead",
+                    )
+                    resolved_return = ERROR
+                result = ClosureType(env_type, env_is_const, tuple(param_types), resolved_return)
             case _:
                 raise AssertionError(f"unhandled type node: {node!r}")
         self.type_nodes[id(node)] = result

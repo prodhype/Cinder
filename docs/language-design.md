@@ -188,6 +188,44 @@ Numeric casts and compatible pointer casts do not require `unsafe`. Raw pointer
 access has no implicit bounds or lifetime checks; the block only makes dangerous
 reinterpretation visible.
 
+## Callable values
+
+Plain function pointer values use `def(T...) -> R` and store non-capturing free
+functions as ordinary C function pointers:
+
+```python
+def double(value: i32) -> i32:
+    return value * 2
+
+
+callback: def(i32) -> i32 = double
+```
+
+Closures are explicit about their environment. A closure type names a
+user-declared environment struct, and `closure(env, adapter)` pairs an
+environment value with a non-generic, non-variadic free function whose first
+parameter is `&Env` or `&const Env`:
+
+```python
+struct AddEnv:
+    delta: i32
+
+
+def add_impl(env: &const AddEnv, value: i32) -> i32:
+    return value + env.delta
+
+
+callback: closure[const AddEnv](i32) -> i32 = closure(AddEnv(delta=2), add_impl)
+```
+
+Generated C represents each closure specialization as a readable struct with an
+`env` field and a `call` function pointer. Calling the closure passes `&env`
+automatically and exposes only the adapter's remaining parameters. Owning
+environment fields follow the same move-only and deterministic drop rules as
+ordinary structs. Inline closure bodies, inferred captures, bound method
+closures, and conversion from closures to plain function pointers are not part
+of this model.
+
 ## Arrays and slices
 
 Fixed arrays have a compile-time length and use ordinary C array storage:
@@ -819,9 +857,9 @@ cinder emit-project . -o generated
 
 ## Implemented milestones
 
-The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations. The owned String foundation supplies the text ownership and UTF-8 rules needed before a self-hosting effort can begin.
+The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations. Explicit-environment closures extend function pointers without inferred capture or hidden allocation. The owned String foundation supplies the text ownership and UTF-8 rules needed before a self-hosting effort can begin.
 
-Copy/move hooks, closures with explicit environment structs, and broader compile-time execution remain later work.
+Copy/move hooks, inline/inferred closures, bound method closures, and broader compile-time execution remain later work.
 
 The crucial constraint remains this: Cinder must be understandable by reading its
 generated C. Hidden allocation, unpredictable dispatch, exception machinery, or

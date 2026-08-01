@@ -186,6 +186,14 @@ class FunctionPointerType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class ClosureType(Type):
+    env_type: Type
+    env_is_const: bool
+    param_types: tuple[Type, ...]
+    return_type: Type
+
+
+@dataclass(frozen=True, slots=True)
 class ModuleType(Type):
     name: str
 
@@ -294,6 +302,10 @@ def tuple_c_name(type_: TupleType) -> str:
     return f"CinderTuple_{len(type_.elements)}" + (f"_{suffix}" if suffix else "")
 
 
+def closure_c_name(type_: ClosureType) -> str:
+    return f"CinderClosure_{type_key(type_)}"
+
+
 def list_c_name(type_: ListType) -> str:
     return f"CinderList_{type_key(type_.inner)}"
 
@@ -398,6 +410,17 @@ def type_name(type_: Type) -> str:
         case FunctionPointerType(param_types=param_types, return_type=return_type):
             params = ", ".join(type_name(param) for param in param_types)
             return f"def({params}) -> {type_name(return_type)}"
+        case ClosureType(
+            env_type=env_type,
+            env_is_const=env_is_const,
+            param_types=param_types,
+            return_type=return_type,
+        ):
+            env = type_name(env_type)
+            if env_is_const:
+                env = f"const {env}"
+            params = ", ".join(type_name(param) for param in param_types)
+            return f"closure[{env}]({params}) -> {type_name(return_type)}"
         case ModuleType(name=name):
             return f"module {name}"
         case RangeType(inner=inner):
@@ -690,6 +713,22 @@ def can_assign(target: Type, source: Type) -> bool:
             )
         )
 
+    if isinstance(target, ClosureType) and isinstance(source, ClosureType):
+        if target.env_type != source.env_type:
+            return False
+        if target.env_is_const != source.env_is_const:
+            return False
+        if len(target.param_types) != len(source.param_types):
+            return False
+        if target.return_type != source.return_type:
+            return False
+        return all(
+            target_param == source_param
+            for target_param, source_param in zip(
+                target.param_types, source.param_types, strict=True
+            )
+        )
+
     return False
 
 
@@ -768,6 +807,19 @@ def type_key(type_: Type) -> str:
             params = "_".join(type_key(param) for param in param_types)
             suffix = f"_{params}" if params else ""
             return f"fnptr{suffix}_ret_{type_key(return_type)}"
+        case ClosureType(
+            env_type=env_type,
+            env_is_const=env_is_const,
+            param_types=param_types,
+            return_type=return_type,
+        ):
+            env_prefix = "const_env" if env_is_const else "env"
+            params = "_".join(type_key(param) for param in param_types)
+            suffix = f"_{params}" if params else ""
+            return (
+                f"closure_{env_prefix}_{type_key(env_type)}"
+                f"{suffix}_ret_{type_key(return_type)}"
+            )
         case ModuleType(name=name):
             return f"module_{_sanitize_key(name)}"
         case RangeType(inner=inner):

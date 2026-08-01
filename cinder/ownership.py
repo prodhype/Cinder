@@ -9,6 +9,7 @@ from cinder.types import (
     ERROR,
     ArrayType,
     ClassType,
+    ClosureType,
     ConstType,
     DynType,
     FileType,
@@ -69,6 +70,13 @@ def type_needs_drop(
         if class_ is None:
             return False
         return class_needs_drop(class_, classes=classes, structs=structs, seen=seen)
+    if isinstance(raw, ClosureType):
+        return type_needs_drop(
+            raw.env_type,
+            classes=classes,
+            structs=structs,
+            seen=seen,
+        )
     if isinstance(raw, StructType):
         struct_ = structs.get(raw)
         if struct_ is None:
