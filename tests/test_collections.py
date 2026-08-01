@@ -62,6 +62,13 @@ def test_typed_empty_list_and_empty_and_singleton_tuples_codegen() -> None:
             "use of moved value values",
         ),
         (
+            "def main() -> i32:\n"
+            "    values = [1, 2]\n"
+            "    values = values\n"
+            "    return cast[i32](len(values))\n",
+            "cannot move-assign List[i32] to itself",
+        ),
+        (
             "def main(index: i32, argv: **char) -> i32:\n"
             "    pair = (1, 2)\n"
             "    return pair[index]\n",

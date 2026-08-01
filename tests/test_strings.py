@@ -94,6 +94,18 @@ def test_string_move_reports_use_after_move() -> None:
     assert "use of moved value text" in str(captured.value)
 
 
+def test_string_self_move_assignment_is_rejected() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def main() -> i32:\n"
+            "    text = to_string(123)\n"
+            "    text = text\n"
+            "    return cast[i32](len(text))\n"
+        )
+
+    assert "cannot move-assign String to itself" in str(captured.value)
+
+
 def test_string_concat_comparison_and_slice_codegen() -> None:
     generated = compile_source(
         "def main() -> i32:\n"

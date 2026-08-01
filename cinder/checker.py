@@ -3285,10 +3285,20 @@ class Checker:
                     statement.target.span,
                     code="C260" if owned_container is not None else "C234",
                 )
-            self._validate_move_only_source(
+            moved = self._validate_move_only_source(
                 statement.value,
                 strip_const(effective_target),
             )
+            if (
+                moved is not None
+                and isinstance(statement.target, ast.NameExpr)
+                and self.name_symbols.get(id(statement.target)) is moved
+            ):
+                self._error(
+                    f"cannot move-assign {type_name(strip_const(effective_target))} to itself",
+                    statement.value.span,
+                    code="C386",
+                )
         if isinstance(strip_const(effective_target), ArrayType):
             self._error("fixed arrays cannot be assigned after declaration", statement.target.span, code="C037")
         if statement.operator == "=":
