@@ -1,0 +1,102 @@
+# AST-shaped data can avoid owning variant payloads by storing ownership in
+# arena lists and passing small non-owning handles through the tree.
+
+struct NodeId:
+    index: i32
+
+
+struct StringId:
+    index: i32
+
+
+struct ChildRange:
+    start: i32
+    length: i32
+
+
+variant ExprKind:
+    Literal(value: i32)
+    Binary(op: char, left: NodeId, right: NodeId)
+    Call(name: StringId, args: ChildRange)
+
+
+struct Expr:
+    kind: ExprKind
+
+
+struct AstArena:
+    nodes: List[Expr]
+    children: List[NodeId]
+    strings: List[String]
+
+    def next_node_id(self: &const AstArena) -> NodeId:
+        return NodeId(index=cast[i32](len(self.nodes)))
+
+    def intern(self: &AstArena, text: String) -> StringId:
+        id = StringId(index=cast[i32](len(self.strings)))
+        self.strings.append(text)
+        return id
+
+    def add_literal(self: &AstArena, value: i32) -> NodeId:
+        id = self.next_node_id()
+        self.nodes.append(Expr(kind=ExprKind.Literal(value=value)))
+        return id
+
+    def add_binary(self: &AstArena, op: char, left: NodeId, right: NodeId) -> NodeId:
+        id = self.next_node_id()
+        self.nodes.append(Expr(kind=ExprKind.Binary(op=op, left=left, right=right)))
+        return id
+
+    def add_call(self: &AstArena, name: String, first: NodeId, second: NodeId) -> NodeId:
+        name_id = self.intern(name)
+        arg_range = ChildRange(start=cast[i32](len(self.children)), length=2)
+        self.children.append(first)
+        self.children.append(second)
+        id = self.next_node_id()
+        self.nodes.append(Expr(kind=ExprKind.Call(name=name_id, args=arg_range)))
+        return id
+
+    def evaluate(self: &const AstArena, node_id: NodeId) -> i32:
+        node = self.nodes[node_id.index]
+        match node.kind:
+            case ExprKind.Literal(value):
+                return value
+            case ExprKind.Binary(_, left, right):
+                return self.evaluate(left) + self.evaluate(right)
+            case ExprKind.Call(_, args):
+                total = 0
+                for offset in range(0, args.length):
+                    total += self.evaluate(self.children[args.start + offset])
+                return total
+
+    def child_count(self: &const AstArena, node_id: NodeId) -> i32:
+        node = self.nodes[node_id.index]
+        match node.kind:
+            case ExprKind.Call(_, args):
+                return args.length
+            case ExprKind.Literal(_):
+                return 0
+            case ExprKind.Binary(op, left, right):
+                if op == '?' and left.index == right.index:
+                    return 0
+                return 2
+
+
+def main() -> i32:
+    arena = AstArena(nodes=[], children=[], strings=[])
+    left = arena.add_literal(2)
+    right = arena.add_literal(40)
+    sum = arena.add_binary('+', left, right)
+
+    call = arena.add_call("root", left, sum)
+
+    print(f"sum={arena.evaluate(sum)}")
+    print(f"call={arena.evaluate(call)} children={arena.child_count(call)}")
+
+    if arena.evaluate(sum) != 42:
+        return 1
+    if arena.evaluate(call) != 44:
+        return 2
+    if arena.child_count(call) != 2:
+        return 3
+    return 0

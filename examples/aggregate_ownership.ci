@@ -9,6 +9,8 @@
 # - local moves with use-after-move left as a commented anti-pattern
 #
 # Still rejected by the language: owning globals, owning union/variant payloads.
+# See ast_arena.ci for AST-shaped data with arena-owned lists and non-owning
+# indices/ranges in variant payloads.
 
 class Resource:
     label: i32

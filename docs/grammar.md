@@ -136,7 +136,7 @@ An unannotated class `self` is inferred as `&Owner`. `self: &const Owner` declar
 
 `__del__` is deterministic compiler-managed cleanup. It cannot be called directly. A derived destructor runs before the implementation-base destructor.
 
-Destructor-bearing classes and other types that need drop are move-only. They may be initialized from constructors or class-returning calls, transferred by return or by-value parameter passing, stored in struct/class fields, and replaced by move-style reassignment. Implicit copies are rejected; use-after-move is diagnosed. Owning globals and owning union/variant payloads remain unsupported.
+Destructor-bearing classes and other types that need drop are move-only. They may be initialized from constructors or class-returning calls, transferred by return or by-value parameter passing, stored in struct/class fields, and replaced by move-style reassignment. Implicit copies are rejected; use-after-move is diagnosed. Owning globals and owning union/variant payloads remain unsupported; AST-shaped ownership should use arena-owned storage and non-owning IDs/ranges.
 
 Calls on concrete class types use static dispatch. Dynamic dispatch requires an explicit dynamic-reference type.
 
@@ -396,7 +396,7 @@ sort(values)
 last = values.pop()
 ```
 
-An empty list needs a contextual `List[T]` type. List values are move-only owners of their buffers: locals, fields, by-value parameters, and returns transfer ownership; replacement drops the previous buffer; and scope exit frees the active buffer. Nested lists and destructor-bearing elements are allowed. An addressable `List[T]` may be passed without copying to a `[]T` or `[]const T` function parameter; this call-only coercion does not permit storing or returning a List-backed slice. Mutable slices may update elements, while structural operations still require `&List[T]`. Owning List globals remain unsupported. Bind a returned or literal List to a local before indexing, iterating, sorting, calling `len`, or borrowing it as a slice.
+An empty list needs a contextual `List[T]` type. List values are move-only owners of their buffers: locals, fields, by-value parameters, and returns transfer ownership; replacement drops the previous buffer; and scope exit frees the active buffer. Nested lists and destructor-bearing elements are allowed. An addressable `List[T]` may be passed without copying to a `[]T` or `[]const T` function parameter; this call-only coercion does not permit storing or returning a List-backed slice. Mutable slices may update elements, while structural operations still require `&List[T]`. Owning List globals remain unsupported. AST-like trees should put owning lists in arena structs and store non-owning IDs or ranges in variants. Bind a returned or literal List to a local before indexing, iterating, sorting, calling `len`, or borrowing it as a slice.
 
 List indexing follows the current array/slice model and does not insert bounds checks. `pop` does check for an empty list and panics. While a `for` loop iterates a List, the same storage cannot be structurally modified, replaced, sorted, or borrowed as mutable `[]T`, including through recognized aliases. Read-only `[]const T` helpers and provably unrelated Lists remain available.
 
@@ -414,7 +414,7 @@ Maps and Sets use the same move-only direct-local/direct-return restrictions as 
 
 ## Owned heap values
 
-`Owned[T]` is a move-only heap owner. `Owned(value)` allocates storage for `T`, moves `value` onto the heap, and returns a non-null owning handle. Unary `*` yields an addressable `T` lvalue for reads, writes, and borrowing as `&T` via `&*owned`. Scope exit, return transfer, and reassignment drop the inner value when needed and then free the allocation. Payloads cannot be void, const, references, arrays, pointers, slices, dyn, or map views. Owning globals and union/variant payloads remain rejected. `Owned` does not wrap an existing raw `*T`; use `alloc`/`free`/`defer` for that.
+`Owned[T]` is a move-only heap owner. `Owned(value)` allocates storage for `T`, moves `value` onto the heap, and returns a non-null owning handle. Unary `*` yields an addressable `T` lvalue for reads, writes, and borrowing as `&T` via `&*owned`. Scope exit, return transfer, and reassignment drop the inner value when needed and then free the allocation. Payloads cannot be void, const, references, arrays, pointers, slices, dyn, or map views. Owning globals and union/variant payloads remain rejected; use non-owning indices into arena-owned storage for recursive AST-shaped data. `Owned` does not wrap an existing raw `*T`; use `alloc`/`free`/`defer` for that.
 
 ## Result construction and propagation
 
@@ -497,4 +497,4 @@ Option values expose `.is_some`, `.is_none`, and checked `.value`.
 
 ## Deliberate omissions
 
-The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Apart from a `const` String global backed directly by a static literal, owning globals remain intentionally rejected, as do owning union and variant payloads.
+The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Apart from a `const` String global backed directly by a static literal, owning globals remain intentionally rejected, as do owning union and variant payloads. Recursive AST-shaped data should use arena-owned lists with non-owning scalar indices or ranges in payloads.

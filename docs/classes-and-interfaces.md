@@ -156,7 +156,7 @@ second = first  # error: use of moved value first
 
 Returning an owned local transfers its lifetime to the caller. Reassigning an owned local evaluates the replacement first, drops the old value, and then transfers the replacement. A discarded class-returning call is materialized and immediately dropped.
 
-Aggregate ownership is supported for struct/class fields, nested collections, `Owned[T]`, `Option`/`Result`/`Tuple` wrappers, and by-value parameters. Owning globals and union/variant payloads remain rejected because portable C11 has no automatic global destruction phase and tagged-union drop glue is not implemented yet.
+Aggregate ownership is supported for struct/class fields, nested collections, `Owned[T]`, `Option`/`Result`/`Tuple` wrappers, and by-value parameters. Owning globals and union/variant payloads remain rejected because portable C11 has no automatic global destruction phase and tagged-union drop glue is not implemented yet. For AST-shaped ownership, put the owning lists in an arena struct and use non-owning IDs or ranges inside variant payloads.
 
 `__del__` cannot be called directly. It is compiler-managed cleanup. There is no exception unwinding, reference counting, or ownership inference. Explicit heap ownership uses `Owned[T]` or manual `alloc`/`free`.
 
