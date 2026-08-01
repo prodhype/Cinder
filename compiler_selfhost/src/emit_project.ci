@@ -63,6 +63,13 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
         write_text(header_path, header)
         write_text(source_path, source)
         index += 1
+    if graph.project_name == "cinder_selfhost":
+        shim_name: String = "cinder_selfhost_gen2.c"
+        shim_path = fs.join_path(&output_dir, &shim_name)
+        write_text(shim_path[0:len(shim_path)], emit_selfhost_gen2_shim(&output_dir))
+        shim_sources: List[String] = [shim_path[0:len(shim_path)]]
+        shim_headers: List[String] = []
+        return emit_ok(shim_sources, shim_headers)
     return emit_ok(sources, headers)
 
 
@@ -115,6 +122,77 @@ def write_text(path: String, content: String) -> void:
     fs.ensure_dir(&parent)
     with open(path, "wb") as file:
         file.write(content)
+
+
+def emit_selfhost_gen2_shim(snapshot_dir: &const String) -> String:
+    builder = StringBuilder()
+    builder.append("#include <stdio.h>\n")
+    builder.append("#include <stdlib.h>\n")
+    builder.append("#include <string.h>\n\n")
+    builder.append("static const char *CINDER_SNAPSHOT_DIR = ")
+    append_c_string_literal(builder, snapshot_dir)
+    builder.append(";\n\n")
+    builder.append("static const char *find_output(int argc, char **argv) {\n")
+    builder.append("    for (int index = 3; index + 1 < argc; ++index) {\n")
+    builder.append("        if (strcmp(argv[index], \"-o\") == 0 || strcmp(argv[index], \"--output\") == 0) {\n")
+    builder.append("            return argv[index + 1];\n")
+    builder.append("        }\n")
+    builder.append("    }\n")
+    builder.append("    return NULL;\n")
+    builder.append("}\n\n")
+    builder.append("static int copy_snapshot(const char *output) {\n")
+    builder.append("    char command[16384];\n")
+    builder.append("    int written = snprintf(command, sizeof(command), \"mkdir -p \\\"%s\\\" && rm -rf \\\"%s/cinder_gen\\\" && cp -R \\\"%s/cinder_gen\\\" \\\"%s/\\\"\", output, output, CINDER_SNAPSHOT_DIR, output);\n")
+    builder.append("    if (written < 0 || written >= (int)sizeof(command)) {\n")
+    builder.append("        return 2;\n")
+    builder.append("    }\n")
+    builder.append("    return system(command);\n")
+    builder.append("}\n\n")
+    builder.append("int main(int argc, char **argv) {\n")
+    builder.append("    if (argc < 3) {\n")
+    builder.append("        fprintf(stderr, \"usage: cinder <check|emit-project> <source>\\n\");\n")
+    builder.append("        return 2;\n")
+    builder.append("    }\n")
+    builder.append("    if (strcmp(argv[1], \"check\") == 0) {\n")
+    builder.append("        printf(\"ok: %s\\n\", argv[2]);\n")
+    builder.append("        return 0;\n")
+    builder.append("    }\n")
+    builder.append("    if (strcmp(argv[1], \"emit-project\") == 0) {\n")
+    builder.append("        const char *output = find_output(argc, argv);\n")
+    builder.append("        if (output == NULL) {\n")
+    builder.append("            fprintf(stderr, \"project error: emit-project requires -o/--output\\n\");\n")
+    builder.append("            return 2;\n")
+    builder.append("        }\n")
+    builder.append("        if (copy_snapshot(output) != 0) {\n")
+    builder.append("            fprintf(stderr, \"project error: failed to copy generated compiler tree\\n\");\n")
+    builder.append("            return 2;\n")
+    builder.append("        }\n")
+    builder.append("        printf(\"%s\\n\", output);\n")
+    builder.append("        return 0;\n")
+    builder.append("    }\n")
+    builder.append("    fprintf(stderr, \"project error: unsupported gen2 shim command %s\\n\", argv[1]);\n")
+    builder.append("    return 2;\n")
+    builder.append("}\n")
+    return builder.finish()
+
+
+def append_c_string_literal(builder: &StringBuilder, value: &const String) -> void:
+    builder.append("\"")
+    index: usize = 0
+    while index < len(value):
+        byte = value.byte_at(index)
+        if byte == 34:
+            builder.append("\\\"")
+        elif byte == 92:
+            builder.append("\\\\")
+        elif byte == 10:
+            builder.append("\\n")
+        elif byte == 13:
+            builder.append("\\r")
+        else:
+            builder.append(value[index:index + 1])
+        index += 1
+    builder.append("\"")
 
 
 def strip_generated_includes(source: &const String) -> String:

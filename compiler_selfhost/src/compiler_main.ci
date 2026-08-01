@@ -67,12 +67,10 @@ def main(argc: i32, argv: **char) -> i32:
         return 0
 
     if command == "build":
-        self_path = String(argv[0])
-        return build_command(&loaded, &options, false, &self_path)
+        return build_command(&loaded, &options, false)
 
     if command == "run":
-        self_path = String(argv[0])
-        return build_command(&loaded, &options, true, &self_path)
+        return build_command(&loaded, &options, true)
 
     stderr("project error: unknown command " + command + "\n")
     return 2
@@ -164,7 +162,7 @@ def check_graph(graph: &const project.ProjectGraph) -> bool:
     return true
 
 
-def build_command(graph: &const project.ProjectGraph, options: &const DriverOptions, run_after: bool, self_path: &const String) -> i32:
+def build_command(graph: &const project.ProjectGraph, options: &const DriverOptions, run_after: bool) -> i32:
     if not check_graph(graph):
         return 1
     output = options.output[0:len(options.output)]
@@ -179,25 +177,6 @@ def build_command(graph: &const project.ProjectGraph, options: &const DriverOpti
     if not emitted.ok:
         stderr("project error: " + emitted.error + "\n")
         return 2
-    if graph.project_name == "cinder_selfhost":
-        copy_command: List[String] = ["cp", self_path[0:len(self_path)], output[0:len(output)]]
-        copied = process.run(copy_command)
-        if copied.exit_code != 0:
-            stderr("toolchain error: failed to stage gen2 compiler\n")
-            cinder.write_stderr(copied.stderr)
-            return 2
-        if not run_after:
-            print(output[0:len(output)])
-            return 0
-        command: List[String] = [output[0:len(output)]]
-        index = 0
-        while index < len(options.program_args):
-            command.append(options.program_args[index][0:len(options.program_args[index])])
-            index += 1
-        run = process.run(command)
-        cinder.write_stdout(run.stdout)
-        cinder.write_stderr(run.stderr)
-        return run.exit_code
     runtime = toolchain.runtime_root()
     result = toolchain.compile_c11(
         options.compiler[0:len(options.compiler)],
