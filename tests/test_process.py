@@ -31,6 +31,58 @@ def test_process_run_codegen_and_cleanup() -> None:
     assert "CinderProcessResult__drop" in generated
 
 
+def test_process_run_imported_function_codegen_and_cleanup() -> None:
+    generated = compile_source(
+        "from process import run\n"
+        "from process import run as spawn\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    command: List[String] = ["/bin/sh", "-c", "exit 7"]\n'
+        "    first = run(command)\n"
+        "    second = spawn(command)\n"
+        "    return first.exit_code + second.exit_code\n"
+    )
+
+    assert "const char **" in generated
+    assert generated.count("cinder_process_run_argv(") == 2
+    assert generated.count(".length, __cinder_process_argv") == 2
+    assert "cinder_string_cstr" in generated
+    assert "CinderProcessResult__drop" in generated
+
+
+def test_process_result_name_is_available_without_process_import() -> None:
+    generated = compile_source(
+        "struct ProcessResult:\n"
+        "    code: i32\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    result = ProcessResult(code=7)\n"
+        "    return result.code\n"
+    )
+
+    assert "struct ProcessResult" in generated
+    assert "ProcessResult result = { .code = 7 };" in generated
+
+
+def test_process_result_is_exposed_through_process_module() -> None:
+    generated = compile_source(
+        "import process\n"
+        "\n"
+        "struct ProcessResult:\n"
+        "    code: i32\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    command: List[String] = ["/bin/sh", "-c", "exit 0"]\n'
+        "    runtime: process.ProcessResult = process.run(command)\n"
+        "    local = ProcessResult(code=3)\n"
+        "    return runtime.exit_code + local.code\n"
+    )
+
+    assert "struct ProcessResult" in generated
+    assert "CinderProcessResult runtime =" in generated
+    assert "ProcessResult local = { .code = 3 };" in generated
+
+
 def test_process_run_rejects_invalid_calls() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(

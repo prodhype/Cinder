@@ -472,6 +472,8 @@ class Checker:
         name: str,
         c_name: str,
         fields: tuple[tuple[str, Type], ...],
+        *,
+        expose_name: bool = True,
     ) -> StructSymbol:
         span = Span.point(self.path, 1, 1)
         type_ = StructType(name, c_name)
@@ -493,9 +495,10 @@ class Checker:
                 False,
                 name,
             )
-        self.types[name] = type_
         self._register_nominal(type_, symbol)
-        self.global_scope.declare(symbol)
+        if expose_name:
+            self.types[name] = type_
+            self.global_scope.declare(symbol)
         return symbol
 
     def _install_convert_types(self) -> None:
@@ -576,7 +579,7 @@ class Checker:
     def _install_process_types(self) -> None:
         """Register ProcessResult from cinder_runtime.h without re-emitting it."""
 
-        self._install_runtime_struct(
+        process_result = self._install_runtime_struct(
             "ProcessResult",
             "CinderProcessResult",
             (
@@ -584,7 +587,13 @@ class Checker:
                 ("stdout", STRING),
                 ("stderr", STRING),
             ),
+            expose_name=False,
         )
+        process = self.available_modules.get("process")
+        process_run = process.functions.get("run") if process is not None else None
+        if process_run is not None and self._is_process_run_function(process_run):
+            process.types["ProcessResult"] = process_result.type
+            process.type_symbols["ProcessResult"] = process_result
 
     def _collect_imports(self) -> None:
         for item in self.module.items:
@@ -5097,6 +5106,8 @@ class Checker:
                     )
                 self.name_symbols[id(expression.callee)] = symbol
                 self.expr_types[id(expression.callee)] = FunctionValueType(symbol.name)
+                if self._is_process_run_function(symbol):
+                    return self._check_process_run_call(expression)
                 self._validate_function_call(expression, symbol, skip_parameters=0)
                 return symbol.return_type
             if isinstance(symbol, TypeTemplateSymbol) or (
@@ -5184,10 +5195,7 @@ class Checker:
             self._check_expr(expression.callee, expected)
             resolution = self.attribute_resolutions.get(id(expression.callee))
             if resolution is not None and resolution.kind == "module_function" and resolution.function:
-                if (
-                    resolution.function.module == "process"
-                    and resolution.function.name == "run"
-                ):
+                if self._is_process_run_function(resolution.function):
                     return self._check_process_run_call(expression)
                 self._validate_function_call(expression, resolution.function, skip_parameters=0)
                 return resolution.function.return_type
@@ -6973,7 +6981,7 @@ class Checker:
         self,
         function: FunctionSymbol,
     ) -> FunctionPointerType | None:
-        if function.module == "process" and function.name == "run":
+        if self._is_process_run_function(function):
             return None
         if function.owner is not None or function.is_variadic:
             return None
@@ -6981,6 +6989,10 @@ class Checker:
             tuple(parameter.type for parameter in function.parameters),
             function.return_type,
         )
+
+    @staticmethod
+    def _is_process_run_function(function: FunctionSymbol) -> bool:
+        return function.module == "process" and function.c_name == "cinder_process_run_argv"
 
     def _check_function_pointer_call(
         self,
@@ -7287,7 +7299,7 @@ class Checker:
 
     def _check_process_run_call(self, call: ast.CallExpr) -> Type:
         self.expr_types[id(call.callee)] = FunctionValueType("process.run")
-        result_type = self.types["ProcessResult"]
+        result_type = self.available_modules["process"].types["ProcessResult"]
         expected = SliceType(ConstType(STRING))
         if call.type_arguments:
             self._error("process.run is not generic", call.span, code="C358")
