@@ -94,7 +94,7 @@ Cinder 0.5 adds:
 - unrolled `comptime` field and method loops
 
 The implementation is alpha software.
-Closures, exceptions, copy and move hooks, object-file caching, and a stable pre-1.0 binary ABI are future work.
+Exceptions, copy and move hooks, object-file caching, and a stable pre-1.0 binary ABI are future work.
 
 ## Installation
 
@@ -634,8 +634,27 @@ callback = double
 result = apply(callback, 21)
 ```
 
-Closures and bound methods are not supported.
-Only free functions that do not capture may be function pointer values.
+Closures use explicit environment structs and env-first adapter functions.
+They are distinct from plain function pointers:
+
+```python
+struct AddEnv:
+    delta: i32
+
+
+def add_impl(env: &const AddEnv, value: i32) -> i32:
+    return value + env.delta
+
+
+callback: closure[const AddEnv](i32) -> i32 = closure(AddEnv(delta=2), add_impl)
+result = callback(40)
+```
+
+The adapter must be a non-generic, non-variadic free function whose first
+parameter is `&Env` or `&const Env`.
+The closure owns its environment value; store borrowed state explicitly inside
+the environment struct with reference fields.
+Bound methods are not closure values yet.
 
 Fixed arrays and slices are distinct:
 

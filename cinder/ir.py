@@ -19,6 +19,7 @@ from cinder.types import (
     U8,
     ArrayType,
     ClassType,
+    ClosureType,
     ConstType,
     DynType,
     EnumType,
@@ -100,6 +101,7 @@ class IRModule:
     globals: tuple[IRGlobal, ...]
     slice_types: tuple[SliceType, ...]
     tuple_types: tuple[TupleType, ...]
+    closure_types: tuple[ClosureType, ...]
     list_types: tuple[ListType, ...]
     map_types: tuple[MapType, ...]
     set_types: tuple[SetType, ...]
@@ -184,6 +186,7 @@ class Lowerer:
         tuple_values = self._collect_tuples()
         tuple_values.update(TupleType((map_type.key, map_type.value)) for map_type in maps)
         tuples = tuple(sorted(tuple_values, key=type_key))
+        closures = tuple(sorted(self._collect_closures(), key=type_key))
         sort_types = tuple(sorted(self._collect_sort_types(), key=type_key))
         results = tuple(sorted(self._collect_results(), key=type_key))
         option_values = self._collect_options()
@@ -195,7 +198,7 @@ class Lowerer:
             option_values.add(OptionType(STRING))
         options = tuple(sorted(option_values, key=type_key))
         owneds = tuple(sorted(self._collect_owned(), key=type_key))
-        definition_order = tuple(self._definition_order(results, options, tuples))
+        definition_order = tuple(self._definition_order(results, options, tuples, closures))
         return IRModule(
             semantic=self.semantic,
             structs=structs,
@@ -207,6 +210,7 @@ class Lowerer:
             globals=tuple(globals_),
             slice_types=slices,
             tuple_types=tuples,
+            closure_types=closures,
             list_types=lists,
             map_types=maps,
             set_types=sets,
@@ -273,6 +277,11 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, ListType):
                 collect(raw.inner)
             elif isinstance(raw, MapType):
@@ -300,6 +309,11 @@ class Lowerer:
                 result.add(raw)
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(
                 raw,
                 (PointerType, ReferenceType, ArrayType, SliceType, ListType, OwnedType),
@@ -344,6 +358,11 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, DynType):
                 collect(raw.interface)
             elif isinstance(raw, ResultType):
@@ -392,6 +411,11 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
@@ -434,6 +458,11 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
@@ -476,6 +505,11 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
@@ -517,6 +551,11 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
@@ -558,9 +597,53 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, ResultType):
                 collect(raw.ok)
                 collect(raw.error)
+
+        for type_ in self._all_semantic_types():
+            collect(type_)
+        return result
+
+    def _collect_closures(self) -> set[ClosureType]:
+        result: set[ClosureType] = set()
+
+        def collect(type_: Type) -> None:
+            raw = strip_const(type_)
+            if isinstance(raw, (StringType, StringBuilderType)):
+                return
+            if isinstance(raw, ClosureType):
+                if raw in result:
+                    return
+                result.add(raw)
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
+            elif isinstance(raw, (PointerType, ReferenceType, ArrayType, SliceType, OwnedType)):
+                collect(raw.inner)
+            elif isinstance(raw, TupleType):
+                for element in raw.elements:
+                    collect(element)
+            elif isinstance(raw, ResultType):
+                collect(raw.ok)
+                collect(raw.error)
+            elif isinstance(raw, OptionType):
+                collect(raw.inner)
+            elif isinstance(raw, ListType):
+                collect(raw.inner)
+            elif isinstance(raw, MapType):
+                collect(raw.key)
+                collect(raw.value)
+            elif isinstance(raw, SetType):
+                collect(raw.inner)
+            elif isinstance(raw, MapViewType):
+                collect(raw.map_type)
 
         for type_ in self._all_semantic_types():
             collect(type_)
@@ -597,6 +680,11 @@ class Lowerer:
             elif isinstance(raw, TupleType):
                 for element in raw.elements:
                     collect(element)
+            elif isinstance(raw, ClosureType):
+                collect(raw.env_type)
+                for parameter in raw.param_types:
+                    collect(parameter)
+                collect(raw.return_type)
             elif isinstance(raw, (ListType, OptionType)):
                 collect(raw.inner)
             elif isinstance(raw, MapType):
@@ -616,6 +704,7 @@ class Lowerer:
         result_types: tuple[ResultType, ...],
         option_types: tuple[OptionType, ...],
         tuple_types: tuple[TupleType, ...],
+        closure_types: tuple[ClosureType, ...],
     ) -> list[Type]:
         nominal_by_type: dict[Type, NominalSymbol] = {}
         nominal_by_type.update({symbol.type: symbol for symbol in self.semantic.structs.values()})
@@ -627,6 +716,7 @@ class Lowerer:
             *result_types,
             *option_types,
             *tuple_types,
+            *closure_types,
         }
         permanent: set[Type] = set()
         temporary: set[Type] = set()
@@ -667,6 +757,12 @@ class Lowerer:
             for element in type_.elements:
                 dependencies.update(self._by_value_definition_types(element))
             return dependencies
+        if isinstance(type_, ClosureType):
+            dependencies = set(self._by_value_definition_types(type_.env_type))
+            dependencies.update(self._by_value_definition_types(type_.return_type))
+            for parameter in type_.param_types:
+                dependencies.update(self._by_value_definition_types(parameter))
+            return dependencies
 
         symbol = nominal_by_type.get(type_)
         fields: list[Type] = []
@@ -699,6 +795,7 @@ class Lowerer:
                 ResultType,
                 OptionType,
                 TupleType,
+                ClosureType,
             ),
         ):
             return {raw}

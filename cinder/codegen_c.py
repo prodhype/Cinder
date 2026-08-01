@@ -52,6 +52,7 @@ from cinder.types import (
     USIZE,
     ArrayType,
     ClassType,
+    ClosureType,
     ComptimeCollectionType,
     ComptimeItemType,
     ConstType,
@@ -83,6 +84,7 @@ from cinder.types import (
     TypeValueType,
     UnionType,
     VariantType,
+    closure_c_name,
     dyn_c_name,
     file_c_name,
     interface_vtable_c_name,
@@ -423,6 +425,14 @@ class CGenerator:
             emitted = True
         for tuple_type in self.ir.tuple_types:
             name = c_identifier(tuple_c_name(tuple_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            self.writer.line("#endif")
+            emitted = True
+        for closure_type in self.ir.closure_types:
+            name = c_identifier(closure_c_name(closure_type))
             guard = f"CINDER_DECLARED_{name.upper()}"
             self.writer.line(f"#ifndef {guard}")
             self.writer.line(f"#define {guard}")
@@ -790,6 +800,8 @@ class CGenerator:
                 emitted_options.add(type_)
             elif isinstance(type_, TupleType):
                 self._emit_tuple_definition(type_)
+            elif isinstance(type_, ClosureType):
+                self._emit_closure_definition(type_)
             else:
                 raise AssertionError(f"unhandled definition type: {type_!r}")
         for option_type in self._generated_option_types():
@@ -2255,6 +2267,9 @@ class CGenerator:
         if isinstance(raw, TupleType):
             name = c_identifier(tuple_c_name(raw))
             return f"{name}_drop({pointer_expr});"
+        if isinstance(raw, ClosureType):
+            name = c_identifier(closure_c_name(raw))
+            return f"{name}_drop({pointer_expr});"
         if isinstance(raw, ArrayType):
             return self._array_drop_statements(raw, pointer_expr)
         raise AssertionError(f"no drop glue for {type_name(raw)}")
@@ -2296,6 +2311,30 @@ class CGenerator:
             self.writer.line("unsigned char _cinder_empty;")
         for index, element in enumerate(tuple_type.elements):
             self.writer.line(c_decl(element, f"item_{index}") + ";")
+        self.writer.indent -= 1
+        self.writer.line("};")
+        self.writer.line(f"#endif /* {guard} */")
+        self.writer.line()
+
+    def _emit_closure_definition(self, closure_type: ClosureType) -> None:
+        name = c_identifier(closure_c_name(closure_type))
+        guard = f"CINDER_DEFINED_{name.upper()}"
+        env_parameter: Type = PointerType(
+            ConstType(closure_type.env_type)
+            if closure_type.env_is_const
+            else closure_type.env_type
+        )
+        adapter_type = FunctionPointerType(
+            (env_parameter, *closure_type.param_types),
+            closure_type.return_type,
+        )
+        self.writer.line(f"#ifndef {guard}")
+        self.writer.line(f"#define {guard}")
+        self.writer.line(f"struct {name}")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(c_decl(closure_type.env_type, "env") + ";")
+        self.writer.line(c_decl(adapter_type, "call") + ";")
         self.writer.indent -= 1
         self.writer.line("};")
         self.writer.line(f"#endif /* {guard} */")
@@ -2975,6 +3014,13 @@ class CGenerator:
                     f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
                 )
                 emitted = True
+        for closure_type in self.ir.closure_types:
+            if self._type_needs_drop(closure_type):
+                name = c_identifier(closure_c_name(closure_type))
+                self.writer.line(
+                    f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
+                )
+                emitted = True
         if emitted:
             self.writer.line()
 
@@ -2988,6 +3034,9 @@ class CGenerator:
         for tuple_type in self.ir.tuple_types:
             if self._type_needs_drop(tuple_type):
                 self._emit_tuple_drop(tuple_type)
+        for closure_type in self.ir.closure_types:
+            if self._type_needs_drop(closure_type):
+                self._emit_closure_drop(closure_type)
 
     def _emit_option_drop(self, type_: OptionType) -> None:
         name = c_identifier(option_c_name(type_))
@@ -3065,6 +3114,25 @@ class CGenerator:
             element = tuple_type.elements[index]
             if self._type_needs_drop(element):
                 self.writer.line(self._drop_expression(element, f"value->item_{index}"))
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line()
+
+    def _emit_closure_drop(self, closure_type: ClosureType) -> None:
+        name = c_identifier(closure_c_name(closure_type))
+        self.writer.line(
+            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("if (value == NULL)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line("return;")
+        self.writer.indent -= 1
+        self.writer.line("}")
+        if self._type_needs_drop(closure_type.env_type):
+            self.writer.line(self._drop_expression(closure_type.env_type, "value->env"))
         self.writer.indent -= 1
         self.writer.line("}")
         self.writer.line()
@@ -5097,6 +5165,8 @@ class CGenerator:
     def _emit_call(self, expression: ast.CallExpr) -> str:
         resolution = self.semantic.call_resolutions[id(expression)]
         self._exclude_moved_variables(resolution.moved_variables)
+        if resolution.kind == "closure_new":
+            return self._emit_closure_constructor(expression, resolution)
         if resolution.kind == "print":
             return self._emit_print_call(expression)
         if resolution.kind in {
@@ -5341,6 +5411,19 @@ class CGenerator:
             arguments = self._emit_ordered_call_arguments(expression, resolution)
             return f"({callee})({', '.join(arguments)})"
 
+        if resolution.kind == "closure":
+            closure_type = value_type(self.semantic.expression_type(expression.callee))
+            if not isinstance(closure_type, ClosureType):
+                raise AssertionError("closure call has no closure type")
+            callee_pointer = self._new_temp("closure")
+            self.writer.line(
+                f"{c_decl(PointerType(closure_type), callee_pointer)} = "
+                f"{self._emit_address(expression.callee)};"
+            )
+            arguments = [f"&{callee_pointer}->env"]
+            arguments.extend(self._emit_ordered_call_arguments(expression, resolution))
+            return f"{callee_pointer}->call({', '.join(arguments)})"
+
         assert resolution.function is not None
         function = resolution.function
         arguments: list[str] = []
@@ -5353,6 +5436,26 @@ class CGenerator:
         arguments.extend(self._emit_ordered_call_arguments(expression, resolution))
 
         return f"{c_identifier(function.c_name)}({', '.join(arguments)})"
+
+    def _emit_closure_constructor(
+        self,
+        expression: ast.CallExpr,
+        resolution: CallResolution,
+    ) -> str:
+        closure_type = value_type(self.semantic.expression_type(expression))
+        if not isinstance(closure_type, ClosureType):
+            raise AssertionError("closure constructor has no closure type")
+        if resolution.function is None:
+            raise AssertionError("closure constructor has no adapter function")
+        env_value = self._emit_initializer(
+            expression.arguments[0].value,
+            closure_type.env_type,
+        )
+        return (
+            f"(({c_type_expression(closure_type)})"
+            f"{{ .env = {env_value}, "
+            f".call = {c_identifier(resolution.function.c_name)} }})"
+        )
 
     def _emit_string_call(
         self,
@@ -6938,6 +7041,8 @@ def c_decl(type_: Type, name: str) -> str:
             parameters.append("void")
         declarator = f"(*{name})" if name else "(*)"
         return f"{c_decl(type_.return_type, declarator)}({', '.join(parameters)})"
+    if isinstance(type_, ClosureType):
+        return f"{c_identifier(closure_c_name(type_))} {name}".strip()
     if isinstance(type_, NullType):
         return f"void *{name}".strip()
     if isinstance(

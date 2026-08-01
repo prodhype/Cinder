@@ -986,6 +986,45 @@ class Parser:
                     result = ast.SliceTypeNode(start.merge(result.span), result)
             return result
 
+        if self.at(TokenKind.NAME) and self.current.lexeme == "closure":
+            self.advance()
+            self.expect(TokenKind.LEFT_BRACKET, "expected '[' after 'closure'", code="P165")
+            environment = self.parse_type()
+            self.expect(TokenKind.RIGHT_BRACKET, "expected ']' after closure environment type", code="P166")
+            self.expect(TokenKind.LEFT_PAREN, "expected '(' after closure environment type", code="P167")
+            parameters: list[ast.TypeNode] = []
+            if not self.at(TokenKind.RIGHT_PAREN):
+                while True:
+                    parameters.append(self.parse_type())
+                    if not self.match(TokenKind.COMMA):
+                        break
+                    if self.at(TokenKind.RIGHT_PAREN):
+                        break
+            close_paren = self.expect(
+                TokenKind.RIGHT_PAREN,
+                "expected ')' after closure type parameters",
+                code="P168",
+            )
+            return_type: ast.TypeNode | None = None
+            if self.match(TokenKind.ARROW):
+                return_type = self.parse_type()
+            result = ast.ClosureTypeNode(
+                start.merge((return_type.span if return_type is not None else close_paren.span)),
+                environment,
+                parameters,
+                return_type,
+            )
+            if is_const:
+                result = ast.ConstTypeNode(start.merge(result.span), result)
+            for wrapper in reversed(wrappers):
+                if wrapper == "pointer":
+                    result = ast.PointerTypeNode(start.merge(result.span), result)
+                elif wrapper == "reference":
+                    result = ast.ReferenceTypeNode(start.merge(result.span), result)
+                else:
+                    result = ast.SliceTypeNode(start.merge(result.span), result)
+            return result
+
         name_token = self.expect(TokenKind.NAME, "expected type name", code="P066")
         parts = [name_token.lexeme]
         while self.match(TokenKind.DOT):

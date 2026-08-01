@@ -66,6 +66,13 @@ class FunctionTypeNode(TypeNode):
 
 
 @dataclass(slots=True)
+class ClosureTypeNode(TypeNode):
+    environment: TypeNode
+    parameters: list[TypeNode]
+    return_type: TypeNode | None = None
+
+
+@dataclass(slots=True)
 class Parameter(Node):
     name: str
     annotation: TypeNode | None

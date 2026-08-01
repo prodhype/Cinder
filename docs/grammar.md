@@ -236,9 +236,10 @@ geometry.Vec2
 def(i32) -> i32
 def(i32, i32) -> i32
 *def(i32) -> void
+closure[const AddEnv](i32) -> i32
 ```
 
-`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `def(T…) -> R` is a non-null function pointer type represented as a C function pointer; omit `-> R` to default the return type to `void`. `String` and `StringBuilder` are compiler-provided owning text types. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families. User-defined generics use the same `Name[Args…]` application syntax and are monomorphized into readable specialized C types and functions.
+`*T` is a raw pointer. `&T` is a non-null transparent reference represented as a pointer in C. `T[N]` is a fixed array. `[]T` is a slice. `def(T…) -> R` is a non-null function pointer type represented as a C function pointer; omit `-> R` to default the return type to `void`. `closure[Env](T…) -> R` and `closure[const Env](T…) -> R` are explicit-environment closure types backed by a user-declared struct environment plus an env-first adapter function. `String` and `StringBuilder` are compiler-provided owning text types. `Result[T, E]`, `Option[T]`, `Owned[T]`, `Tuple[...]`, `List[T]`, `Map[K, V]`, `Set[T]`, and the Map view types are compiler-provided generic families. User-defined generics use the same `Name[Args…]` application syntax and are monomorphized into readable specialized C types and functions.
 
 References, dynamic references, slices, fixed arrays, class values, and plain `void` have placement restrictions that follow their generated C representations and lifetime rules.
 
@@ -351,9 +352,12 @@ cast[TargetType](value)
 alloc[ElementType]()
 alloc[ElementType](count)
 generic_function[TypeArgs...](arguments)
+closure(environment, adapter_function)
 ```
 
 User generic functions may also omit explicit type arguments when every type parameter is uniquely inferred from the call arguments.
+
+`closure(environment, adapter_function)` constructs a closure value. The environment expression must produce the struct named by the closure type. The adapter must be a non-generic, non-variadic free function whose first parameter is `&Env` or `&const Env`; the closure call supplies that environment automatically and exposes only the remaining parameters. Closure calls are positional-only.
 
 List literals use square brackets. In an untyped local, `[1, 2]` infers `List[i32]`; an explicit fixed-array context such as `values: i32[2] = [1, 2]` retains C array storage. Slice expressions support `value[:]`, `value[start:]`, and `value[start:stop]`. Slice steps are not implemented. Array, slice, and List slicing creates a view; `String` slicing instead creates an owned copy and follows the UTF-8 boundary rules below.
 
@@ -497,4 +501,4 @@ Option values expose `.is_some`, `.is_none`, and checked `.value`.
 
 ## Deliberate omissions
 
-The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, closures, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Apart from a `const` String global backed directly by a static literal, owning globals remain intentionally rejected, as do owning union and variant payloads. Recursive AST-shaped data should use arena-owned lists with non-owning scalar indices or ranges in payloads.
+The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, inline closure bodies, inferred captures, bound-method closure values, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Apart from a `const` String global backed directly by a static literal, owning globals remain intentionally rejected, as do owning union and variant payloads. Recursive AST-shaped data should use arena-owned lists with non-owning scalar indices or ranges in payloads.

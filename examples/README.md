@@ -24,6 +24,8 @@
 
 `function_pointers.ci` demonstrates transparent function pointer types: annotate with `def(T…) -> R`, pass a named function by name, store it, and call through the value.
 
+`closures.ci` demonstrates explicit-environment closures: user-declared environment structs, env-first adapter functions, const and mutable environment calls, and first-class closure values.
+
 `control_flow.ci` demonstrates range loops, C-style loops, `while`, and conditional branches.
 
 `fizzbuzz.ci` prompts for an upper bound with `input` and `parse_i32`, then prints Fizz/Buzz/FizzBuzz for 1 through that number using a range loop, modulo, and `if`/`elif`/`else`.
