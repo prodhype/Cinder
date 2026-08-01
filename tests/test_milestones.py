@@ -183,6 +183,19 @@ def test_or_pattern_alternatives_must_bind_the_same_names() -> None:
     assert "or-pattern alternatives must bind the same names" in str(captured.value)
 
 
+def test_partially_covered_or_pattern_case_remains_reachable() -> None:
+    generated = compile_source(
+        "def consume(result: Result[i32, i32]) -> i32:\n"
+        "    match result:\n"
+        "        case Ok(_):\n"
+        "            return 0\n"
+        "        case Ok(value) | Err(value):\n"
+        "            return value\n"
+    )
+    assert "Tag_Ok" in generated
+    assert "Tag_Err" in generated
+
+
 def test_result_propagation_requires_a_result_return_type() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(

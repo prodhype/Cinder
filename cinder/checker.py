@@ -3769,9 +3769,14 @@ class Checker:
             if case.guard is not None:
                 continue
 
+            covered_alternatives = [
+                resolution
+                for resolution in pattern_resolutions
+                if self._pattern_covered_by_patterns(subject_type, resolution, covered_patterns)
+            ]
+            if len(covered_alternatives) == len(pattern_resolutions):
+                self._error("unreachable match case", case.pattern.span, code="C123")
             for resolution in pattern_resolutions:
-                if self._pattern_covered_by_patterns(subject_type, resolution, covered_patterns):
-                    self._error("unreachable match case", case.pattern.span, code="C123")
                 covered_patterns.append(resolution)
 
             if (
