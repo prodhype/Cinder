@@ -108,6 +108,8 @@ def collect_symbols_in_node(checker: &Checker, arena: &const syntax.SyntaxArena,
                 symbols.root_scope(),
                 0,
             )
+    elif node.kind == syntax.SyntaxKind.FROM_IMPORT_DECL:
+        collect_from_import_symbols(checker, arena, id)
     elif node.kind == syntax.SyntaxKind.CLASS_DECL:
         checker.symbols.add_symbol(
             symbols.SymbolKind.CLASS,
@@ -172,6 +174,26 @@ def collect_symbols_in_node(checker: &Checker, arena: &const syntax.SyntaxArena,
         collect_symbols_in_node(checker, arena, arena.children[node.first_child + offset])
 
 
+def collect_from_import_symbols(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId) -> void:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.IMPORT_NAME:
+            name = first_child(arena, child_id)
+            if name.index >= 0:
+                name_node = arena.nodes[name.index]
+                checker.symbols.add_symbol(
+                    symbols.SymbolKind.GLOBAL,
+                    name_node.value_start,
+                    name_node.value_length,
+                    types.missing_type(),
+                    child_id,
+                    symbols.root_scope(),
+                    0,
+                )
+
+
 def validate_names(checker: &Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String) -> void:
     validate_names_in_node(checker, arena, root, source)
 
@@ -201,9 +223,11 @@ def validate_names_in_node(checker: &Checker, arena: &const syntax.SyntaxArena, 
     elif node.kind == syntax.SyntaxKind.EXPR_CALL:
         validate_call(checker, arena, id, source)
     elif node.kind == syntax.SyntaxKind.RETURN_STMT:
-        if node.child_count == 0:
-            checker.emit_error(42, node.start, node.length, node.line, node.column)
-            return
+        pass
+    elif node.kind == syntax.SyntaxKind.ASSIGN_STMT:
+        declare_assignment_target_if_missing(checker, arena, id, source)
+    elif node.kind == syntax.SyntaxKind.FOR_EACH_STMT:
+        declare_for_each_target_if_missing(checker, arena, id, source)
     elif node.kind == syntax.SyntaxKind.IF_STMT or node.kind == syntax.SyntaxKind.WHILE_STMT:
         condition = first_child(arena, id)
         if condition.index >= 0 and is_string_literal(arena, condition):
@@ -211,6 +235,46 @@ def validate_names_in_node(checker: &Checker, arena: &const syntax.SyntaxArena, 
             return
     for offset in range(0, node.child_count):
         validate_names_in_node(checker, arena, arena.children[node.first_child + offset], source)
+
+
+def declare_for_each_target_if_missing(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    target = first_child(arena, id)
+    if target.index < 0:
+        return
+    target_node = arena.nodes[target.index]
+    if target_node.kind != syntax.SyntaxKind.NAME:
+        return
+    if checker.symbols.find_in_scope(source, symbols.root_scope(), target_node.value_start, target_node.value_length).index >= 0:
+        return
+    checker.symbols.add_symbol(
+        symbols.SymbolKind.LOCAL,
+        target_node.value_start,
+        target_node.value_length,
+        types.type_i32(),
+        target,
+        symbols.root_scope(),
+        0,
+    )
+
+
+def declare_assignment_target_if_missing(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    target = first_child(arena, id)
+    if target.index < 0:
+        return
+    target_node = arena.nodes[target.index]
+    if target_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return
+    if checker.symbols.find_in_scope(source, symbols.root_scope(), target_node.value_start, target_node.value_length).index >= 0:
+        return
+    checker.symbols.add_symbol(
+        symbols.SymbolKind.LOCAL,
+        target_node.value_start,
+        target_node.value_length,
+        types.type_i32(),
+        target,
+        symbols.root_scope(),
+        0,
+    )
 
 
 def validate_var_decl(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
@@ -241,6 +305,8 @@ def validate_call(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeI
         checker.emit_error(48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
         return
     symbol = checker.symbols.symbols[found.index]
+    if is_nominal_constructor_symbol(symbol.kind) or symbol.kind == symbols.SymbolKind.GLOBAL:
+        return
     if symbol.kind != symbols.SymbolKind.FUNCTION:
         checker.emit_error(48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
         return
@@ -250,6 +316,10 @@ def validate_call(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeI
         checker.emit_error(78, call.start, call.length, call.line, call.column)
     elif actual > expected:
         checker.emit_error(77, call.start, call.length, call.line, call.column)
+
+
+def is_nominal_constructor_symbol(kind: symbols.SymbolKind) -> bool:
+    return kind == symbols.SymbolKind.STRUCT or kind == symbols.SymbolKind.CLASS or kind == symbols.SymbolKind.ENUM or kind == symbols.SymbolKind.UNION or kind == symbols.SymbolKind.VARIANT or kind == symbols.SymbolKind.EXTERN_TYPE
 
 
 def count_direct_children(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> i32:
@@ -292,7 +362,7 @@ def is_string_literal(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
 
 
 def is_builtin_name(source: &const String, start: usize, length: usize) -> bool:
-    return range_text_equals(source, start, length, "print") or range_text_equals(source, start, length, "len") or range_text_equals(source, start, length, "open")
+    return range_text_equals(source, start, length, "print") or range_text_equals(source, start, length, "len") or range_text_equals(source, start, length, "open") or range_text_equals(source, start, length, "range") or range_text_equals(source, start, length, "String") or range_text_equals(source, start, length, "StringBuilder")
 
 
 def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:

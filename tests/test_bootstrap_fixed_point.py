@@ -155,3 +155,32 @@ def test_gen1_emit_project_build_and_run(
 
     ran = run_gen1(gen1_compiler, "run", str(manifest))
     assert ran.returncode == 42
+
+
+def test_gen1_builds_compiler_sources_into_gen2(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    gen2 = tmp_path / ("cinder-gen2.exe" if shutil.which("cl") and not shutil.which("cc") else "cinder-gen2")
+    build_dir = tmp_path / "gen2-build"
+
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(ROOT / "compiler_selfhost"),
+        "-o",
+        str(gen2),
+        "--build-dir",
+        str(build_dir),
+    )
+
+    assert built.returncode == 0, built.stderr
+    assert built.stdout.strip() == str(gen2.resolve())
+    assert gen2.is_file()
+    assert (build_dir / "cinder_gen" / "compiler_main.c").is_file()
+    assert (build_dir / "cinder_gen" / "checker.c").is_file()
+
+    source = write_single_source(tmp_path)
+    checked = run_gen1_without_python_on_path(gen2, tmp_path, "check", str(source))
+    assert checked.returncode == 0, checked.stderr
+    assert checked.stdout.strip() == f"ok: {source}"
