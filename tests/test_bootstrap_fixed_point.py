@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -38,6 +39,23 @@ def run_gen1(gen1: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
         check=False,
         text=True,
         capture_output=True,
+    )
+
+
+def run_gen1_without_python_on_path(
+    gen1: Path,
+    tmp_path: Path,
+    *arguments: str,
+) -> subprocess.CompletedProcess[str]:
+    empty_path = tmp_path / "empty-bin"
+    empty_path.mkdir()
+    env = {**os.environ, "PATH": str(empty_path)}
+    return subprocess.run(
+        [str(gen1), *arguments],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
     )
 
 
@@ -85,6 +103,23 @@ def test_gen1_check_and_emit_c(
     assert emitted.returncode == 0, emitted.stderr
     assert "int main(void)" in emitted.stdout
     assert "return 42;" in emitted.stdout
+
+
+def test_gen1_check_is_native_and_does_not_require_python_on_path(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = write_single_source(tmp_path)
+
+    checked = run_gen1_without_python_on_path(
+        gen1_compiler,
+        tmp_path,
+        "check",
+        str(source),
+    )
+
+    assert checked.returncode == 0, checked.stderr
+    assert checked.stdout.strip() == f"ok: {source}"
 
 
 def test_gen1_emit_project_build_and_run(

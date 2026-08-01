@@ -1,0 +1,169 @@
+import fs
+
+
+struct NativeConfig:
+    include_dirs: List[String]
+    library_dirs: List[String]
+    libraries: List[String]
+    link_files: List[String]
+    cflags: List[String]
+    ldflags: List[String]
+
+
+struct ProjectConfig:
+    name: String
+    root: String
+    source_root: String
+    entry: String
+    manifest: String
+    native: NativeConfig
+
+
+def empty_native() -> NativeConfig:
+    include_dirs: List[String] = []
+    library_dirs: List[String] = []
+    libraries: List[String] = []
+    link_files: List[String] = []
+    cflags: List[String] = []
+    ldflags: List[String] = []
+    return NativeConfig(
+        include_dirs=include_dirs,
+        library_dirs=library_dirs,
+        libraries=libraries,
+        link_files=link_files,
+        cflags=cflags,
+        ldflags=ldflags,
+    )
+
+
+def empty_config() -> ProjectConfig:
+    return ProjectConfig(name="", root="", source_root="", entry="", manifest="", native=empty_native())
+
+
+def read_manifest(path: String) -> ProjectConfig:
+    root = fs.parent_dir(&path)
+    name = fs.basename(&root)
+    source_root_value: String = "src"
+    entry_value: String = "main.ci"
+    native = empty_native()
+    current_table: String = ""
+
+    with open(path, "rb") as file:
+        content = file.read_text()
+        start: usize = 0
+        while start <= len(content):
+            end = start
+            while end < len(content) and content.byte_at(end) != 10 and content.byte_at(end) != 13:
+                end += 1
+            raw = content[start:end]
+            line = strip_comment(&raw)
+            trimmed = fs.trim(&line)
+            if len(trimmed) > 0:
+                if fs.starts_with(&trimmed, "[") and fs.ends_with(&trimmed, "]"):
+                    current_table = trimmed[1:len(trimmed) - 1]
+                else:
+                    eq = find_byte(&trimmed, 61)
+                    if eq >= 0:
+                        key_part = trimmed[0:cast[usize](eq)]
+                        value_part = trimmed[cast[usize](eq + 1):len(trimmed)]
+                        key = fs.trim(&key_part)
+                        value = fs.trim(&value_part)
+                        if current_table == "project":
+                            handled = false
+                            if key == "name":
+                                name = fs.strip_quotes(&value)
+                                handled = true
+                            if not handled and key == "source-root":
+                                source_root_value = fs.strip_quotes(&value)
+                                handled = true
+                            if not handled and key == "entry":
+                                entry_value = fs.strip_quotes(&value)
+                                handled = true
+                        if current_table == "native":
+                            handled = false
+                            if key == "include-dirs":
+                                native.include_dirs = resolve_paths(&root, parse_string_array(&value))
+                                handled = true
+                            if not handled and key == "library-dirs":
+                                native.library_dirs = resolve_paths(&root, parse_string_array(&value))
+                                handled = true
+                            if not handled and key == "libraries":
+                                native.libraries = parse_string_array(&value)
+                                handled = true
+                            if not handled and key == "link-files":
+                                native.link_files = resolve_paths(&root, parse_string_array(&value))
+                                handled = true
+                            if not handled and key == "cflags":
+                                native.cflags = parse_string_array(&value)
+                                handled = true
+                            if not handled and key == "ldflags":
+                                native.ldflags = parse_string_array(&value)
+                                handled = true
+            if end >= len(content):
+                break
+            start = end + 1
+            if start < len(content) and content.byte_at(end) == 13 and content.byte_at(start) == 10:
+                start += 1
+
+    source_root = fs.join_path(&root, &source_root_value)
+    entry = fs.join_path(&source_root, &entry_value)
+    return ProjectConfig(
+        name=name,
+        root=root,
+        source_root=source_root,
+        entry=entry,
+        manifest=path,
+        native=native,
+    )
+
+
+def strip_comment(line: &const String) -> String:
+    in_string = false
+    index: usize = 0
+    while index < len(line):
+        byte = line.byte_at(index)
+        if byte == 34:
+            in_string = not in_string
+        elif byte == 35 and not in_string:
+            return line[0:index]
+        index += 1
+    return line[0:len(line)]
+
+
+def parse_string_array(value: &const String) -> List[String]:
+    items: List[String] = []
+    trimmed = fs.trim(value)
+    if len(trimmed) >= 2:
+        index: usize = 1
+        while index < len(trimmed) - 1:
+            while index < len(trimmed) - 1 and (trimmed.byte_at(index) == 32 or trimmed.byte_at(index) == 9 or trimmed.byte_at(index) == 44):
+                index += 1
+            if index >= len(trimmed) - 1:
+                break
+            if trimmed.byte_at(index) != 34:
+                break
+            index += 1
+            item_start = index
+            while index < len(trimmed) and trimmed.byte_at(index) != 34:
+                index += 1
+            items.append(trimmed[item_start:index])
+            if index < len(trimmed):
+                index += 1
+    return items
+
+
+def resolve_paths(root: &const String, paths: List[String]) -> List[String]:
+    resolved: List[String] = []
+    for path in paths:
+        if len(path) > 0 and path.byte_at(0) == 47:
+            resolved.append(path[0:len(path)])
+        else:
+            resolved.append(fs.join_path(root, &path))
+    return resolved
+
+
+def find_byte(value: &const String, byte: u8) -> i32:
+    for index in range(0, len(value)):
+        if value.byte_at(index) == byte:
+            return cast[i32](index)
+    return -1

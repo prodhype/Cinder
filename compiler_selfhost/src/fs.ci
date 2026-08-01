@@ -1,0 +1,146 @@
+import process
+
+extern import "unistd.h"
+
+extern "C":
+    def access(path: const char*, mode: c_int) -> c_int
+
+
+def file_exists(path: &const String) -> bool:
+    return access(path, 0) == 0
+
+
+def ensure_dir(path: &const String) -> bool:
+    if len(path) == 0:
+        return true
+    command: List[String] = ["mkdir", "-p", path[0:len(path)]]
+    result = process.run(command)
+    return result.exit_code == 0
+
+
+def parent_dir(path: &const String) -> String:
+    index = last_slash(path)
+    if index < 0:
+        return "."
+    if index == 0:
+        return "/"
+    return path[0:cast[usize](index)]
+
+
+def basename(path: &const String) -> String:
+    index = last_slash(path)
+    if index < 0:
+        return path[0:len(path)]
+    return path[cast[usize](index + 1):len(path)]
+
+
+def stem(path: &const String) -> String:
+    base = basename(path)
+    dot = last_dot(&base)
+    if dot < 0:
+        return base[0:len(base)]
+    return base[0:cast[usize](dot)]
+
+
+def join_path(left: &const String, right: &const String) -> String:
+    if len(left) == 0 or left == ".":
+        return right[0:len(right)]
+    if len(right) == 0:
+        return left[0:len(left)]
+    if right.byte_at(0) == 47:
+        return right[0:len(right)]
+    if left.byte_at(len(left) - 1) == 47:
+        return left + right
+    return left + "/" + right
+
+
+def with_suffix(path: &const String, suffix: String) -> String:
+    dot = last_dot(path)
+    slash = last_slash(path)
+    if dot >= 0 and dot > slash:
+        return path[0:cast[usize](dot)] + suffix
+    return path + suffix
+
+
+def replace_char(value: &const String, old: u8, new: u8) -> String:
+    builder = StringBuilder()
+    for index in range(0, len(value)):
+        byte = value.byte_at(index)
+        if byte == old:
+            builder.append_char(cast[char](new))
+        else:
+            builder.append_char(cast[char](byte))
+    return builder.finish()
+
+
+def sanitize_identifier(value: &const String) -> String:
+    builder = StringBuilder()
+    for index in range(0, len(value)):
+        byte = value.byte_at(index)
+        if is_ascii_alnum(byte) or byte == 95:
+            builder.append_char(cast[char](byte))
+        else:
+            builder.append_char('_')
+    return builder.finish()
+
+
+def last_slash(path: &const String) -> i32:
+    index = cast[i32](len(path)) - 1
+    while index >= 0:
+        byte = path.byte_at(cast[usize](index))
+        if byte == 47:
+            return index
+        index -= 1
+    return -1
+
+
+def last_dot(path: &const String) -> i32:
+    index = cast[i32](len(path)) - 1
+    while index >= 0:
+        if path.byte_at(cast[usize](index)) == 46:
+            return index
+        index -= 1
+    return -1
+
+
+def starts_with(value: &const String, prefix: String) -> bool:
+    if len(prefix) > len(value):
+        return false
+    for index in range(0, len(prefix)):
+        if value.byte_at(index) != prefix.byte_at(index):
+            return false
+    return true
+
+
+def ends_with(value: &const String, suffix: String) -> bool:
+    if len(suffix) > len(value):
+        return false
+    start = len(value) - len(suffix)
+    for index in range(0, len(suffix)):
+        if value.byte_at(start + index) != suffix.byte_at(index):
+            return false
+    return true
+
+
+def trim(value: &const String) -> String:
+    start: usize = 0
+    end = len(value)
+    while start < end and is_space(value.byte_at(start)):
+        start += 1
+    while end > start and is_space(value.byte_at(end - 1)):
+        end -= 1
+    return value[start:end]
+
+
+def strip_quotes(value: &const String) -> String:
+    if len(value) >= 2 and value.byte_at(0) == 34 and value.byte_at(len(value) - 1) == 34:
+        return value[1:len(value) - 1]
+    return value[0:len(value)]
+
+
+def is_space(byte: u8) -> bool:
+    return byte == 32 or byte == 9 or byte == 10 or byte == 13
+
+
+def is_ascii_alnum(byte: u8) -> bool:
+    return (byte >= 48 and byte <= 57) or (byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122)
