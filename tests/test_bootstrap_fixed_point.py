@@ -33,6 +33,28 @@ def gen1_compiler(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return artifact.executable
 
 
+@pytest.fixture(scope="module")
+def gen2_compiler(gen1_compiler: Path, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    build_root = tmp_path_factory.mktemp("bootstrap_gen2_build")
+    gen2 = build_root / (
+        "cinder-gen2.exe" if shutil.which("cl") and not shutil.which("cc") else "cinder-gen2"
+    )
+    build_dir = build_root / "build"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(ROOT / "compiler_selfhost"),
+        "-o",
+        str(gen2),
+        "--build-dir",
+        str(build_dir),
+    )
+    assert built.returncode == 0, built.stderr
+    assert built.stdout.strip() == str(gen2.resolve())
+    assert gen2.is_file()
+    return gen2, build_dir
+
+
 def run_gen1(gen1: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(gen1), *arguments],
@@ -87,6 +109,21 @@ def write_project(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return tmp_path / "cinder.toml"
+
+
+def collect_normalized_tree(root: Path) -> dict[str, str]:
+    generated_root = root / "cinder_gen"
+    assert generated_root.is_dir()
+    result: dict[str, str] = {}
+    for path in sorted(generated_root.rglob("*")):
+        if path.is_file():
+            relative = path.relative_to(generated_root).as_posix()
+            result[relative] = normalize_generated_text(path.read_text(encoding="utf-8"))
+    return result
+
+
+def normalize_generated_text(text: str) -> str:
+    return text.replace("\r\n", "\n").rstrip() + "\n"
 
 
 def test_gen1_check_and_emit_c(
@@ -158,24 +195,11 @@ def test_gen1_emit_project_build_and_run(
 
 
 def test_gen1_builds_compiler_sources_into_gen2(
-    gen1_compiler: Path,
+    gen2_compiler: tuple[Path, Path],
     tmp_path: Path,
 ) -> None:
-    gen2 = tmp_path / ("cinder-gen2.exe" if shutil.which("cl") and not shutil.which("cc") else "cinder-gen2")
-    build_dir = tmp_path / "gen2-build"
+    gen2, build_dir = gen2_compiler
 
-    built = run_gen1(
-        gen1_compiler,
-        "build",
-        str(ROOT / "compiler_selfhost"),
-        "-o",
-        str(gen2),
-        "--build-dir",
-        str(build_dir),
-    )
-
-    assert built.returncode == 0, built.stderr
-    assert built.stdout.strip() == str(gen2.resolve())
     assert gen2.is_file()
     assert (build_dir / "cinder_gen" / "compiler_main.c").is_file()
     assert (build_dir / "cinder_gen" / "checker.c").is_file()
@@ -184,3 +208,23 @@ def test_gen1_builds_compiler_sources_into_gen2(
     checked = run_gen1_without_python_on_path(gen2, tmp_path, "check", str(source))
     assert checked.returncode == 0, checked.stderr
     assert checked.stdout.strip() == f"ok: {source}"
+
+
+def test_gen1_and_gen2_emit_same_compiler_project_tree(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, gen1_generated = gen2_compiler
+    gen2_generated = tmp_path / "gen2-generated"
+
+    gen2_emitted = run_gen1(
+        gen2,
+        "emit-project",
+        str(ROOT / "compiler_selfhost"),
+        "-o",
+        str(gen2_generated),
+    )
+    assert gen2_emitted.returncode == 0, gen2_emitted.stderr
+    assert gen2_emitted.stdout.strip() == str(gen2_generated.resolve())
+
+    assert collect_normalized_tree(gen2_generated) == collect_normalized_tree(gen1_generated)
