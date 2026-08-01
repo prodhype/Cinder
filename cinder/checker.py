@@ -465,6 +465,41 @@ class Checker:
             self.global_scope.declare(symbol)
         self._install_reflection_types()
         self._install_convert_types()
+        self._install_process_types()
+
+    def _install_runtime_struct(
+        self,
+        name: str,
+        c_name: str,
+        fields: tuple[tuple[str, Type], ...],
+        *,
+        expose_name: bool = True,
+    ) -> StructSymbol:
+        span = Span.point(self.path, 1, 1)
+        type_ = StructType(name, c_name)
+        declaration = ast.StructDecl(span, name, [], [], ())
+        symbol = StructSymbol(
+            name=name,
+            span=span,
+            kind=SymbolKind.STRUCT,
+            type=type_,
+            declaration=declaration,
+            c_name=c_name,
+        )
+        for field_name, field_type in fields:
+            symbol.fields[field_name] = FieldSymbol(
+                field_name,
+                span,
+                SymbolKind.VARIABLE,
+                field_type,
+                False,
+                name,
+            )
+        self._register_nominal(type_, symbol)
+        if expose_name:
+            self.types[name] = type_
+            self.global_scope.declare(symbol)
+        return symbol
 
     def _install_convert_types(self) -> None:
         """Register ConvertError from cinder_runtime.h without re-emitting it."""
@@ -502,37 +537,8 @@ class Checker:
         checking like ordinary structs without being emitted as user types.
         """
 
-        span = Span.point(self.path, 1, 1)
-
-        def runtime_struct(
-            name: str,
-            fields: tuple[tuple[str, Type], ...],
-        ) -> StructSymbol:
-            type_ = StructType(name, name)
-            declaration = ast.StructDecl(span, name, [], [], ())
-            symbol = StructSymbol(
-                name=name,
-                span=span,
-                kind=SymbolKind.STRUCT,
-                type=type_,
-                declaration=declaration,
-                c_name=name,
-            )
-            for field_name, field_type in fields:
-                symbol.fields[field_name] = FieldSymbol(
-                    field_name,
-                    span,
-                    SymbolKind.VARIABLE,
-                    field_type,
-                    False,
-                    name,
-                )
-            self.types[name] = type_
-            self._register_nominal(type_, symbol)
-            self.global_scope.declare(symbol)
-            return symbol
-
-        field_info = runtime_struct(
+        field_info = self._install_runtime_struct(
+            "CinderFieldInfo",
             "CinderFieldInfo",
             (
                 ("name", c_string_type()),
@@ -543,7 +549,8 @@ class Checker:
                 ("is_private", BOOL),
             ),
         )
-        method_info = runtime_struct(
+        method_info = self._install_runtime_struct(
+            "CinderMethodInfo",
             "CinderMethodInfo",
             (
                 ("name", c_string_type()),
@@ -554,7 +561,8 @@ class Checker:
                 ("is_override", BOOL),
             ),
         )
-        runtime_struct(
+        self._install_runtime_struct(
+            "CinderTypeInfo",
             "CinderTypeInfo",
             (
                 ("name", c_string_type()),
@@ -567,6 +575,25 @@ class Checker:
                 ("method_count", USIZE),
             ),
         )
+
+    def _install_process_types(self) -> None:
+        """Register ProcessResult from cinder_runtime.h without re-emitting it."""
+
+        process_result = self._install_runtime_struct(
+            "ProcessResult",
+            "CinderProcessResult",
+            (
+                ("exit_code", I32),
+                ("stdout", STRING),
+                ("stderr", STRING),
+            ),
+            expose_name=False,
+        )
+        process = self.available_modules.get("process")
+        process_run = process.functions.get("run") if process is not None else None
+        if process_run is not None and self._is_process_run_function(process_run):
+            process.types["ProcessResult"] = process_result.type
+            process.type_symbols["ProcessResult"] = process_result
 
     def _collect_imports(self) -> None:
         for item in self.module.items:
@@ -5079,6 +5106,8 @@ class Checker:
                     )
                 self.name_symbols[id(expression.callee)] = symbol
                 self.expr_types[id(expression.callee)] = FunctionValueType(symbol.name)
+                if self._is_process_run_function(symbol):
+                    return self._check_process_run_call(expression)
                 self._validate_function_call(expression, symbol, skip_parameters=0)
                 return symbol.return_type
             if isinstance(symbol, TypeTemplateSymbol) or (
@@ -5166,6 +5195,8 @@ class Checker:
             self._check_expr(expression.callee, expected)
             resolution = self.attribute_resolutions.get(id(expression.callee))
             if resolution is not None and resolution.kind == "module_function" and resolution.function:
+                if self._is_process_run_function(resolution.function):
+                    return self._check_process_run_call(expression)
                 self._validate_function_call(expression, resolution.function, skip_parameters=0)
                 return resolution.function.return_type
             if (
@@ -6950,12 +6981,18 @@ class Checker:
         self,
         function: FunctionSymbol,
     ) -> FunctionPointerType | None:
+        if self._is_process_run_function(function):
+            return None
         if function.owner is not None or function.is_variadic:
             return None
         return FunctionPointerType(
             tuple(parameter.type for parameter in function.parameters),
             function.return_type,
         )
+
+    @staticmethod
+    def _is_process_run_function(function: FunctionSymbol) -> bool:
+        return function.module == "process" and function.c_name == "cinder_process_run_argv"
 
     def _check_function_pointer_call(
         self,
@@ -7259,6 +7296,44 @@ class Checker:
             expected_types=tuple(expected_types),
         )
         return FILE
+
+    def _check_process_run_call(self, call: ast.CallExpr) -> Type:
+        self.expr_types[id(call.callee)] = FunctionValueType("process.run")
+        result_type = self.available_modules["process"].types["ProcessResult"]
+        expected = SliceType(ConstType(STRING))
+        if call.type_arguments:
+            self._error("process.run is not generic", call.span, code="C358")
+        if len(call.arguments) != 1:
+            self._error(
+                f"process.run expects one positional argument, got {len(call.arguments)}",
+                call.span,
+                code="C390",
+            )
+
+        argument_order: list[int] = []
+        expected_types: list[Type | None] = []
+        for index, argument in enumerate(call.arguments):
+            if argument.name is not None:
+                self._error(
+                    "process.run does not accept named arguments",
+                    argument.span,
+                    code="C391",
+                )
+            actual = self._check_expr(argument.value, expected=expected)
+            if index == 0:
+                if self._is_list_slice_argument(expected, actual):
+                    self._validate_list_slice_argument(expected, argument.value)
+                elif not self._can_assign(expected, actual):
+                    self._type_mismatch(expected, actual, argument.value.span)
+            argument_order.append(index)
+            expected_types.append(expected if index == 0 else None)
+
+        self.call_resolutions[id(call)] = CallResolution(
+            "process_run",
+            argument_order=tuple(argument_order),
+            expected_types=tuple(expected_types),
+        )
+        return result_type
 
     def _check_print_argument(self, expression: ast.Expression) -> None:
         if isinstance(expression, ast.FStringExpr):

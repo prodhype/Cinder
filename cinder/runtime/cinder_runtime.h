@@ -81,6 +81,12 @@ typedef struct CinderStringBuilder {
     size_t capacity;
 } CinderStringBuilder;
 
+typedef struct CinderProcessResult {
+    int32_t exit_code;
+    CinderString stdout;
+    CinderString stderr;
+} CinderProcessResult;
+
 typedef int (*CinderCompareFn)(const void *left, const void *right);
 
 typedef enum CinderParseError {
@@ -148,6 +154,11 @@ void cinder_string_builder_append_char(
     char value
 );
 CinderString cinder_string_builder_finish(CinderStringBuilder *builder);
+void CinderProcessResult__drop(CinderProcessResult *self);
+CinderProcessResult cinder_process_run_argv(
+    size_t argc,
+    const char *const *argv
+);
 bool cinder_read_line(FILE *stream, CinderString *out);
 CinderString cinder_read_all_text(FILE *stream);
 CinderString cinder_input(const char *prompt);

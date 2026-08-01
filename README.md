@@ -896,6 +896,21 @@ match parse_i32(name):
 `File.read_text()` reads the remaining bytes and validates UTF-8 before returning `String`.
 Use `File.read_all()` when arbitrary bytes are required; it continues to return `List[u8]`.
 
+The builtin `process` module runs shell-free argv vectors and captures the
+child's exit status, stdout, and stderr as owned values:
+
+```python
+import process
+
+command: List[String] = ["cc", "--version"]
+result = process.run(command)
+if result.exit_code != 0:
+    print(result.stderr)
+```
+
+The initial runtime implementation supports POSIX platforms. Windows builds
+compile the API but currently return an unsupported result.
+
 `@export` keeps the C symbol name of a top-level function:
 
 ```python
