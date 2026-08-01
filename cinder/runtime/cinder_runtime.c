@@ -684,7 +684,7 @@ CinderString cinder_string_builder_finish(CinderStringBuilder *builder)
     return string;
 }
 
-static void cinder_print_repr_byte(unsigned char value)
+static void cinder_print_repr_byte(unsigned char value, bool escape_non_ascii)
 {
     switch (value) {
         case '\'':
@@ -706,7 +706,7 @@ static void cinder_print_repr_byte(unsigned char value)
             (void)fputs("\\0", stdout);
             break;
         default:
-            if (value < 32 || value >= 127) {
+            if (value < 32 || (escape_non_ascii && value >= 127)) {
                 (void)printf("\\x%02x", value);
             } else {
                 (void)putchar((int)value);
@@ -718,7 +718,7 @@ static void cinder_print_repr_byte(unsigned char value)
 void cinder_print_repr_char(char value)
 {
     (void)putchar('\'');
-    cinder_print_repr_byte((unsigned char)value);
+    cinder_print_repr_byte((unsigned char)value, true);
     (void)putchar('\'');
 }
 
@@ -727,7 +727,7 @@ void cinder_print_repr_string(const char *text)
     (void)putchar('\'');
     if (text != NULL) {
         for (const unsigned char *cursor = (const unsigned char *)text; *cursor != '\0'; ++cursor) {
-            cinder_print_repr_byte(*cursor);
+            cinder_print_repr_byte(*cursor, false);
         }
     }
     (void)putchar('\'');

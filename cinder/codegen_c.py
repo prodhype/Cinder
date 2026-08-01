@@ -1210,6 +1210,11 @@ class CGenerator:
             if isinstance(value_type(map_type.value), StringType)
             else "value->entries[value->buckets[bucket]].value"
         )
+        clear_popped_value = (
+            "memset(&entry->value, 0, sizeof(entry->value));"
+            if self._type_needs_drop(map_type.value)
+            else ""
+        )
         drop_old_value = self._drop_expression(
             map_type.value,
             "value->entries[value->buckets[bucket]].value",
@@ -1463,7 +1468,7 @@ class CGenerator:
                 if (!found) {{
                     cinder_panic("Map key not found");
                 }}
-                return value->entries[value->buckets[bucket]].value;
+                return {get_value};
             }}
 
             static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(ConstType(map_type.value)), f'{name}_lookup_ptr_or_panic')}(
@@ -1599,6 +1604,7 @@ class CGenerator:
                 {entry_name} *entry = &value->entries[value->buckets[bucket]];
                 result.tag = {option_name}_Tag_Some;
                 result.data.value = entry->value;
+                {clear_popped_value}
                 {drop_key}
                 entry->occupied = false;
                 value->buckets[bucket] = {name}_BUCKET_TOMBSTONE;

@@ -436,6 +436,25 @@ def test_string_collections_codegen_clone_and_drop_elements() -> None:
     assert "CinderSet_string_drop(&names);" in generated
 
 
+def test_string_map_index_clones_and_pop_clears_value_slots_codegen() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        '    values: Map[String, String] = {"answer": to_string(55)}\n'
+        '    if values["answer"] != "55":\n'
+        "        return 1\n"
+        '    popped = values.pop("answer")\n'
+        "    if popped.is_none:\n"
+        "        return 2\n"
+        "    return cast[i32](len(popped.value))\n"
+    )
+
+    assert (
+        "return cinder_string_clone(&(value->entries[value->buckets[bucket]].value));"
+        in generated
+    )
+    assert "memset(&entry->value, 0, sizeof(entry->value));" in generated
+
+
 @pytestmark_native
 def test_string_collections_clone_keys_sort_and_drop_run(tmp_path: Path) -> None:
     result = build_and_run(
@@ -451,6 +470,7 @@ def test_string_collections_clone_keys_sort_and_drop_run(tmp_path: Path) -> None
         "        return 2\n"
         '    words: List[String] = ["zeta", "éclair", "alpha"]\n'
         "    sort(words)\n"
+        '    print("sorted:", words)\n'
         '    if words[0] != "alpha" or words[1] != "zeta" or words[2] != "éclair":\n'
         "        return 3\n"
         "    last = words.pop()\n"
@@ -463,6 +483,7 @@ def test_string_collections_clone_keys_sort_and_drop_run(tmp_path: Path) -> None
     )
 
     assert result.returncode == 0, result.stderr
+    assert result.stdout == "sorted: ['alpha', 'zeta', 'éclair']\n"
 
 
 @pytestmark_native
