@@ -1,0 +1,226 @@
+import symbols
+import types
+from symbols import ScopeId, SymbolId
+from syntax import NodeId
+from types import TypeId
+
+
+enum ValueUseKind:
+    COPY
+    MOVE
+    BORROW
+    ADDRESS
+
+
+struct NodeTypeBinding:
+    node: NodeId
+    type_id: TypeId
+
+
+struct NodeSymbolBinding:
+    node: NodeId
+    symbol: SymbolId
+
+
+struct NodeScopeBinding:
+    node: NodeId
+    scope: ScopeId
+
+
+struct ValueUseResolution:
+    node: NodeId
+    kind: ValueUseKind
+    symbol: SymbolId
+    type_id: TypeId
+
+
+struct CleanupBinding:
+    node: NodeId
+    type_id: TypeId
+    flags: i32
+
+
+struct CallResolution:
+    node: NodeId
+    callee: SymbolId
+    return_type: TypeId
+    flags: i32
+
+
+struct SpecializationBinding:
+    node: NodeId
+    callee: SymbolId
+    first_arg: i32
+    arg_count: i32
+    suffix: String
+
+
+struct SemanticModel:
+    expr_types: List[NodeTypeBinding]
+    type_nodes: List[NodeTypeBinding]
+    name_symbols: List[NodeSymbolBinding]
+    declaration_symbols: List[NodeSymbolBinding]
+    function_symbols: List[NodeSymbolBinding]
+    struct_symbols: List[NodeSymbolBinding]
+    class_symbols: List[NodeSymbolBinding]
+    enum_symbols: List[NodeSymbolBinding]
+    union_symbols: List[NodeSymbolBinding]
+    variant_symbols: List[NodeSymbolBinding]
+    global_symbols: List[NodeSymbolBinding]
+    node_scopes: List[NodeScopeBinding]
+    call_resolutions: List[CallResolution]
+    specialization_args: List[TypeId]
+    specializations: List[SpecializationBinding]
+    cleanups: List[CleanupBinding]
+    value_use_resolutions: List[ValueUseResolution]
+
+    def record_expr_type(self: &SemanticModel, node: NodeId, type_id: TypeId) -> void:
+        record_node_type(self.expr_types, node, type_id)
+
+    def record_type_node(self: &SemanticModel, node: NodeId, type_id: TypeId) -> void:
+        record_node_type(self.type_nodes, node, type_id)
+
+    def record_name_symbol(self: &SemanticModel, node: NodeId, symbol: SymbolId) -> void:
+        record_node_symbol(self.name_symbols, node, symbol)
+
+    def record_declaration_symbol(self: &SemanticModel, node: NodeId, symbol: SymbolId) -> void:
+        record_node_symbol(self.declaration_symbols, node, symbol)
+
+    def record_scope(self: &SemanticModel, node: NodeId, scope: ScopeId) -> void:
+        index: usize = 0
+        while index < len(self.node_scopes):
+            if self.node_scopes[index].node.index == node.index:
+                self.node_scopes[index].scope = scope
+                return
+            index += 1
+        self.node_scopes.append(NodeScopeBinding(node=node, scope=scope))
+
+    def record_call(self: &SemanticModel, node: NodeId, callee: SymbolId, return_type: TypeId, flags: i32) -> void:
+        index: usize = 0
+        while index < len(self.call_resolutions):
+            if self.call_resolutions[index].node.index == node.index:
+                self.call_resolutions[index].callee = callee
+                self.call_resolutions[index].return_type = return_type
+                self.call_resolutions[index].flags = flags
+                return
+            index += 1
+        self.call_resolutions.append(CallResolution(node=node, callee=callee, return_type=return_type, flags=flags))
+
+    def record_specialization(self: &SemanticModel, node: NodeId, callee: SymbolId, args: &const List[TypeId], suffix: String) -> void:
+        first = cast[i32](len(self.specialization_args))
+        index: usize = 0
+        while index < len(args):
+            self.specialization_args.append(args[index])
+            index += 1
+        self.specializations.append(
+            SpecializationBinding(
+                node=node,
+                callee=callee,
+                first_arg=first,
+                arg_count=cast[i32](len(args)),
+                suffix=suffix,
+            )
+        )
+
+    def record_cleanup(self: &SemanticModel, node: NodeId, type_id: TypeId, flags: i32) -> void:
+        index: usize = 0
+        while index < len(self.cleanups):
+            if self.cleanups[index].node.index == node.index:
+                self.cleanups[index].type_id = type_id
+                self.cleanups[index].flags = flags
+                return
+            index += 1
+        self.cleanups.append(CleanupBinding(node=node, type_id=type_id, flags=flags))
+
+    def record_value_use(self: &SemanticModel, node: NodeId, kind: ValueUseKind, symbol: SymbolId, type_id: TypeId) -> void:
+        index: usize = 0
+        while index < len(self.value_use_resolutions):
+            if self.value_use_resolutions[index].node.index == node.index:
+                self.value_use_resolutions[index].kind = kind
+                self.value_use_resolutions[index].symbol = symbol
+                self.value_use_resolutions[index].type_id = type_id
+                return
+            index += 1
+        self.value_use_resolutions.append(ValueUseResolution(node=node, kind=kind, symbol=symbol, type_id=type_id))
+
+    def expr_type(self: &const SemanticModel, node: NodeId) -> TypeId:
+        return find_node_type(self.expr_types, node)
+
+    def type_node(self: &const SemanticModel, node: NodeId) -> TypeId:
+        return find_node_type(self.type_nodes, node)
+
+    def scope_for_node(self: &const SemanticModel, node: NodeId) -> ScopeId:
+        index: usize = 0
+        while index < len(self.node_scopes):
+            if self.node_scopes[index].node.index == node.index:
+                return self.node_scopes[index].scope
+            index += 1
+        return symbols.missing_scope()
+
+
+def new_semantic_model() -> SemanticModel:
+    expr_types: List[NodeTypeBinding] = []
+    type_nodes: List[NodeTypeBinding] = []
+    name_symbols: List[NodeSymbolBinding] = []
+    declaration_symbols: List[NodeSymbolBinding] = []
+    function_symbols: List[NodeSymbolBinding] = []
+    struct_symbols: List[NodeSymbolBinding] = []
+    class_symbols: List[NodeSymbolBinding] = []
+    enum_symbols: List[NodeSymbolBinding] = []
+    union_symbols: List[NodeSymbolBinding] = []
+    variant_symbols: List[NodeSymbolBinding] = []
+    global_symbols: List[NodeSymbolBinding] = []
+    node_scopes: List[NodeScopeBinding] = []
+    call_resolutions: List[CallResolution] = []
+    specialization_args: List[TypeId] = []
+    specializations: List[SpecializationBinding] = []
+    cleanups: List[CleanupBinding] = []
+    value_use_resolutions: List[ValueUseResolution] = []
+    return SemanticModel(
+        expr_types=expr_types,
+        type_nodes=type_nodes,
+        name_symbols=name_symbols,
+        declaration_symbols=declaration_symbols,
+        function_symbols=function_symbols,
+        struct_symbols=struct_symbols,
+        class_symbols=class_symbols,
+        enum_symbols=enum_symbols,
+        union_symbols=union_symbols,
+        variant_symbols=variant_symbols,
+        global_symbols=global_symbols,
+        node_scopes=node_scopes,
+        call_resolutions=call_resolutions,
+        specialization_args=specialization_args,
+        specializations=specializations,
+        cleanups=cleanups,
+        value_use_resolutions=value_use_resolutions,
+    )
+
+
+def record_node_type(bindings: &List[NodeTypeBinding], node: NodeId, type_id: TypeId) -> void:
+    index: usize = 0
+    while index < len(bindings):
+        if bindings[index].node.index == node.index:
+            bindings[index].type_id = type_id
+            return
+        index += 1
+    bindings.append(NodeTypeBinding(node=node, type_id=type_id))
+
+
+def record_node_symbol(bindings: &List[NodeSymbolBinding], node: NodeId, symbol: SymbolId) -> void:
+    index: usize = 0
+    while index < len(bindings):
+        if bindings[index].node.index == node.index:
+            bindings[index].symbol = symbol
+            return
+        index += 1
+    bindings.append(NodeSymbolBinding(node=node, symbol=symbol))
+
+
+def find_node_type(bindings: &const List[NodeTypeBinding], node: NodeId) -> TypeId:
+    index: usize = 0
+    while index < len(bindings):
+        if bindings[index].node.index == node.index:
+            return bindings[index].type_id
+        index += 1
+    return types.type_error()

@@ -203,6 +203,13 @@ def test_gen1_builds_compiler_sources_into_gen2(
     assert gen2.is_file()
     assert (build_dir / "cinder_gen" / "compiler_main.c").is_file()
     assert (build_dir / "cinder_gen" / "checker.c").is_file()
+    assert not (build_dir / "cinder_selfhost_gen2.c").exists()
+
+    replay_source = build_dir / "cinder_selfhost_replay.c"
+    assert replay_source.is_file()
+    replay_text = replay_source.read_text(encoding="utf-8")
+    assert "CINDER_SNAPSHOT_DIR" not in replay_text
+    assert "cp -R" not in replay_text
 
     source = write_single_source(tmp_path)
     checked = run_gen1_without_python_on_path(gen2, tmp_path, "check", str(source))
