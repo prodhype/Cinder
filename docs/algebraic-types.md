@@ -86,9 +86,26 @@ match token:
         pass
 ```
 
-The checker validates the subject type, case names, qualifiers, payload arity, duplicate cases, wildcard placement, and exhaustiveness. Each payload binding is a lexically scoped local with the declared payload field type.
+Patterns can destructure nested algebraic payloads, use `_` to discard fields,
+combine alternatives with `|`, add guards with `if`, and capture a matched value
+with `name @ pattern`:
 
-Matching lowers to a single evaluated subject temporary followed by ordinary tag comparisons. There is no visitor allocation or runtime pattern engine.
+```python
+match parsed:
+    case Some(Ok(value)) if value > 0:
+        print_integer(value)
+    case Some(Err(_)) | None:
+        pass
+```
+
+The checker validates the subject type, case names, qualifiers, payload arity,
+or-pattern binding consistency, unreachable cases, and exhaustiveness. Each payload
+binding is a lexically scoped local with the declared payload field type. Guarded
+cases can fall through to later cases and do not satisfy exhaustiveness on their own.
+
+Matching lowers to a single evaluated subject temporary followed by ordinary tag
+comparisons and a small matched flag. There is no visitor allocation or runtime
+pattern engine.
 
 ## Results
 

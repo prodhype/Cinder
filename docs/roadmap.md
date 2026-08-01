@@ -18,7 +18,7 @@ The compiler implements C-compatible enums, plain unions, tagged variants, exhau
 
 Every representation is explicit in generated C. Variants and results use a tag enum plus a payload union. Matching lowers to ordinary tag comparisons and branches. Propagation lowers to one evaluated temporary, a tag test, deferred cleanup, and an early return. There is no exception runtime or unwinding metadata.
 
-Pattern matching remains intentionally restricted. It does not include nested patterns, guards, alternatives, or literals. `Result[T, E]` was the first compiler-provided generic family.
+Pattern matching now supports recursive algebraic patterns, guards, alternatives, discards, and capture bindings. It remains intentionally restricted to enum, variant, `Result`, and `Option` subjects; literal patterns, tuple or struct destructuring, and match expressions remain future work. `Result[T, E]` was the first compiler-provided generic family.
 
 ## 0.4: Classes and explicit interfaces - complete
 

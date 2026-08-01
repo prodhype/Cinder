@@ -310,15 +310,19 @@ A `comptime` foreach is valid only with `fields_of(...)` or `methods_of(...)`. T
 
 ```text
 match_stmt         := "match" expression ":" NEWLINE INDENT match_case+ DEDENT
-match_case         := "case" match_pattern ":" suite
-match_pattern      := "_"
-                    | dotted_name ("(" binding_list? ")")?
-binding_list       := NAME ("," NAME)* ","?
+match_case         := "case" match_pattern ("if" expression)? ":" suite
+match_pattern      := capture_pattern ("|" capture_pattern)*
+capture_pattern    := pattern_atom
+                    | NAME "@" capture_pattern
+pattern_atom       := "_"
+                    | dotted_name ("(" pattern_arguments? ")")?
+                    | "(" match_pattern ")"
+pattern_arguments  := match_pattern ("," match_pattern)* ","?
 ```
 
-The subject must be an enum, variant, `Result`, or `Option`. Enum patterns have no bindings. Variant patterns bind one name for each payload field. Result patterns are `Ok`, `Ok(value)`, `Err`, or `Err(error)`, depending on whether the corresponding payload is `void`. Option patterns are `Some(value)` and `None`.
+The subject must be an enum, variant, `Result`, or `Option`. Enum patterns have no payloads. Variant, Result, and Option patterns destructure their payloads recursively. Bare names in payload positions bind the matched value; `_` discards it; `name @ pattern` captures the value while also checking `pattern`.
 
-A match must be exhaustive. A wildcard covers all remaining cases and must be final. Duplicate or unreachable cases are rejected. Patterns do not support guards, alternatives, literal patterns, nested destructuring, or ignored fields inside a payload.
+A match must be exhaustive. Unguarded patterns contribute to exhaustiveness; guarded cases can refine a case but must be followed by unguarded coverage for the same space. Or-pattern alternatives must bind the same names with the same types. Duplicate or unreachable unguarded cases are rejected. Patterns do not yet support literal patterns, tuple destructuring, struct destructuring, or match expressions.
 
 ## Expressions
 
@@ -501,4 +505,4 @@ Option values expose `.is_some`, `.is_none`, and checked `.value`.
 
 ## Deliberate omissions
 
-The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, inline closure bodies, inferred captures, bound-method closure values, exceptions, automatic ownership inference, copy or move hooks, nested match patterns, match guards, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Apart from a `const` String global backed directly by a static literal, owning globals remain intentionally rejected, as do owning union and variant payloads. Recursive AST-shaped data should use arena-owned lists with non-owning scalar indices or ranges in payloads.
+The grammar and checker do not implement multiple implementation inheritance, downcasting, runtime dynamic invocation by name, runtime field-value access, inline closure bodies, inferred captures, bound-method closure values, exceptions, automatic ownership inference, copy or move hooks, literal match patterns, tuple or struct match destructuring, match expressions, user-defined compile-time functions, AST macros, interface bounds on type parameters, or multi-root package dependency graphs. Apart from a `const` String global backed directly by a static literal, owning globals remain intentionally rejected, as do owning union and variant payloads. Recursive AST-shaped data should use arena-owned lists with non-owning scalar indices or ranges in payloads.

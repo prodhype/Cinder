@@ -1,0 +1,51 @@
+enum ParseError:
+    empty
+    invalid
+
+
+variant Shape:
+    Point(x: i32, y: i32)
+    Origin
+
+
+def parse_score(value: i32) -> Option[Result[i32, ParseError]]:
+    if value < 0:
+        return None
+    if value == 0:
+        return Some(Err(ParseError.empty))
+    if value > 100:
+        return Some(Err(ParseError.invalid))
+    return Some(Ok(value))
+
+
+def describe_score(value: Option[Result[i32, ParseError]]) -> i32:
+    match value:
+        case Some(Ok(score)) if score >= 10:
+            print(f"large score: {score}")
+            return score
+        case Some(Err(_)) | None:
+            print("no usable score")
+            return 0
+        case original @ Some(Ok(_)):
+            if original.is_some:
+                print("small captured score")
+            return 1
+
+
+def describe_shape(shape: Shape) -> void:
+    match shape:
+        case Shape.Point(_, _):
+            print("point with discarded coordinates")
+        case Shape.Origin:
+            print("origin")
+
+
+def main() -> i32:
+    describe_shape(Shape.Point(x=3, y=4))
+    describe_shape(Shape.Origin)
+
+    total = describe_score(parse_score(42))
+    total += describe_score(parse_score(4))
+    total += describe_score(parse_score(0))
+    total += describe_score(parse_score(-1))
+    return total - 43

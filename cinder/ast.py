@@ -326,14 +326,35 @@ class ForCStmt(Statement):
 
 @dataclass(slots=True)
 class MatchPattern(Node):
-    path: tuple[str, ...] | None
-    bindings: list[str] = field(default_factory=list)
-    is_wildcard: bool = False
+    pass
+
+
+@dataclass(slots=True)
+class WildcardPattern(MatchPattern):
+    pass
+
+
+@dataclass(slots=True)
+class PathPattern(MatchPattern):
+    path: tuple[str, ...]
+    arguments: list[MatchPattern] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class CapturePattern(MatchPattern):
+    name: str
+    pattern: MatchPattern
+
+
+@dataclass(slots=True)
+class OrPattern(MatchPattern):
+    alternatives: list[MatchPattern]
 
 
 @dataclass(slots=True)
 class MatchCase(Node):
     pattern: MatchPattern
+    guard: Expression | None
     body: Block
 
 

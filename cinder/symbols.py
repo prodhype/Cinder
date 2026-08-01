@@ -315,19 +315,35 @@ class RangeResolution:
 
 
 @dataclass(frozen=True, slots=True)
-class PatternBinding:
-    symbol: VariableSymbol
-    field_name: str
+class PatternAccessStep:
+    kind: str
+    case_name: str | None = None
+    field_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class MatchCaseResolution:
+class PatternBinding:
+    symbol: VariableSymbol
+    access: tuple[PatternAccessStep, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PatternResolution:
     kind: str
+    type: Type
     enum_member: EnumMemberSymbol | None = None
     variant_case: VariantCaseSymbol | None = None
     result_is_ok: bool | None = None
     option_is_some: bool | None = None
     bindings: tuple[PatternBinding, ...] = ()
+    arguments: tuple[PatternResolution, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class MatchCaseResolution:
+    patterns: tuple[PatternResolution, ...]
+    bindings: tuple[PatternBinding, ...] = ()
+    has_guard: bool = False
 
 
 @dataclass(frozen=True, slots=True)

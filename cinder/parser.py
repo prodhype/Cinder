@@ -870,51 +870,78 @@ class Parser:
             if self.match(TokenKind.NEWLINE):
                 continue
             case_start = self.expect(TokenKind.CASE, "expected 'case' in match", code="P115").span
-            pattern_start = self.current.span
-            if self.at(TokenKind.NAME) and self.current.lexeme == "_":
-                wildcard = self.advance()
-                pattern = ast.MatchPattern(wildcard.span, None, [], True)
-            else:
-                pattern_token = self.match(TokenKind.NAME, TokenKind.NONE)
-                if pattern_token is None:
-                    self.error("expected match pattern", self.current.span, code="P116")
-                parts = [pattern_token.lexeme]
-                while self.match(TokenKind.DOT):
-                    parts.append(
-                        self.expect(TokenKind.NAME, "expected pattern name after '.'", code="P117").lexeme
-                    )
-                bindings: list[str] = []
-                pattern_end = self.tokens[self.index - 1].span
-                if self.match(TokenKind.LEFT_PAREN):
-                    if not self.at(TokenKind.RIGHT_PAREN):
-                        while True:
-                            binding = self.expect(
-                                TokenKind.NAME,
-                                "pattern bindings must be names",
-                                code="P118",
-                            )
-                            bindings.append(binding.lexeme)
-                            pattern_end = binding.span
-                            if not self.match(TokenKind.COMMA):
-                                break
-                            if self.at(TokenKind.RIGHT_PAREN):
-                                break
-                    close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after pattern", code="P119")
-                    pattern_end = close.span
-                pattern = ast.MatchPattern(
-                    pattern_start.merge(pattern_end),
-                    tuple(parts),
-                    bindings,
-                    False,
-                )
+            pattern = self.parse_match_pattern()
+            guard: ast.Expression | None = None
+            if self.match(TokenKind.IF):
+                guard = self.parse_expression()
             colon = self.expect(TokenKind.COLON, "expected ':' after case pattern", code="P120")
             body = self.parse_suite_after_colon(colon.span)
-            cases.append(ast.MatchCase(case_start.merge(body.span), pattern, body))
+            cases.append(ast.MatchCase(case_start.merge(body.span), pattern, guard, body))
 
         end = self.expect(TokenKind.DEDENT, "expected end of match body", code="P121").span
         if not cases:
             self.error("match body cannot be empty", start.merge(end), code="P122")
         return ast.MatchStmt(start.merge(end), value, cases)
+
+    def parse_match_pattern(self) -> ast.MatchPattern:
+        pattern = self.parse_match_capture_pattern()
+        alternatives = [pattern]
+        while self.match(TokenKind.PIPE):
+            alternatives.append(self.parse_match_capture_pattern())
+        if len(alternatives) == 1:
+            return pattern
+        return ast.OrPattern(pattern.span.merge(alternatives[-1].span), alternatives)
+
+    def parse_match_capture_pattern(self) -> ast.MatchPattern:
+        pattern = self.parse_match_pattern_atom()
+        if (
+            isinstance(pattern, ast.PathPattern)
+            and len(pattern.path) == 1
+            and not pattern.arguments
+            and self.match(TokenKind.AT)
+        ):
+            nested = self.parse_match_capture_pattern()
+            return ast.CapturePattern(pattern.span.merge(nested.span), pattern.path[0], nested)
+        return pattern
+
+    def parse_match_pattern_atom(self) -> ast.MatchPattern:
+        if self.at(TokenKind.NAME) and self.current.lexeme == "_":
+            token = self.advance()
+            return ast.WildcardPattern(token.span)
+
+        if self.match(TokenKind.LEFT_PAREN):
+            start = self.tokens[self.index - 1].span
+            pattern = self.parse_match_pattern()
+            close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after pattern", code="P119")
+            pattern.span = start.merge(close.span)
+            return pattern
+
+        pattern_token = self.match(TokenKind.NAME, TokenKind.NONE)
+        if pattern_token is None:
+            self.error("expected match pattern", self.current.span, code="P116")
+        parts = [pattern_token.lexeme]
+        pattern_end = pattern_token.span
+        while self.match(TokenKind.DOT):
+            name = self.match(TokenKind.NAME, TokenKind.NONE)
+            if name is None:
+                self.error("expected pattern name after '.'", self.current.span, code="P117")
+            parts.append(name.lexeme)
+            pattern_end = name.span
+
+        arguments: list[ast.MatchPattern] = []
+        if self.match(TokenKind.LEFT_PAREN):
+            if not self.at(TokenKind.RIGHT_PAREN):
+                while True:
+                    argument = self.parse_match_pattern()
+                    arguments.append(argument)
+                    pattern_end = argument.span
+                    if not self.match(TokenKind.COMMA):
+                        break
+                    if self.at(TokenKind.RIGHT_PAREN):
+                        break
+            close = self.expect(TokenKind.RIGHT_PAREN, "expected ')' after pattern", code="P119")
+            pattern_end = close.span
+        return ast.PathPattern(pattern_token.span.merge(pattern_end), tuple(parts), arguments)
 
     def parse_type(self) -> ast.TypeNode:
         start = self.current.span
