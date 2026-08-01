@@ -244,7 +244,9 @@ class CGenerator:
             class_.type: class_ for class_ in self.semantic.classes.values()
         }
         self._structs_by_type = {
-            struct.type: struct for struct in self.semantic.structs.values()
+            type_: struct
+            for type_, struct in self.semantic.nominal_symbols.items()
+            if isinstance(type_, StructType) and isinstance(struct, StructSymbol)
         }
 
     def _generated_option_types(self) -> tuple[OptionType, ...]:
@@ -5120,6 +5122,8 @@ class CGenerator:
             return self._emit_input_call(expression)
         if resolution.kind == "open":
             return self._emit_open_call(expression)
+        if resolution.kind == "process_run":
+            return self._emit_process_run_call(expression, resolution)
         if resolution.kind == "to_string":
             return self._emit_to_string_call(expression, resolution)
         if resolution.kind in _PARSE_RUNTIME:
@@ -5658,6 +5662,55 @@ class CGenerator:
         path = self._borrow_string_cstr(expression.arguments[0].value, "open_path")
         mode = self._borrow_string_cstr(expression.arguments[1].value, "open_mode")
         return f"{file_c_name()}_open({path}, {mode})"
+
+    def _emit_process_run_call(
+        self,
+        expression: ast.CallExpr,
+        resolution: CallResolution,
+    ) -> str:
+        if len(expression.arguments) != 1:
+            raise AssertionError("process.run requires a command argument")
+        expected = resolution.expected_types[0]
+        if not isinstance(expected, SliceType):
+            raise AssertionError("process.run command is not a slice")
+        command_name = self._new_temp("process_command")
+        command = self._emit_with_expected(expression.arguments[0].value, expected)
+        argv_name = self._new_temp("process_argv")
+        index_name = self._new_temp("process_index")
+        result_name = self._new_temp("process_result")
+        result_type = self.semantic.expression_type(expression)
+        if not isinstance(result_type, StructType):
+            raise AssertionError("process.run result is not a struct")
+
+        self.writer.line(f"{c_decl(expected, command_name)} = {command};")
+        self.writer.line(f"const char **{argv_name} = NULL;")
+        self.writer.line(f"if ({command_name}.length > 0)")
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(
+            f"{argv_name} = (const char **)cinder_alloc("
+            f"{command_name}.length, sizeof(*{argv_name}));"
+        )
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(
+            f"for (size_t {index_name} = 0; "
+            f"{index_name} < {command_name}.length; ++{index_name})"
+        )
+        self.writer.line("{")
+        self.writer.indent += 1
+        self.writer.line(
+            f"{argv_name}[{index_name}] = "
+            f"cinder_string_cstr(&({command_name}.data[{index_name}]));"
+        )
+        self.writer.indent -= 1
+        self.writer.line("}")
+        self.writer.line(
+            f"{c_decl(result_type, result_name)} = "
+            f"cinder_process_run_argv({command_name}.length, {argv_name});"
+        )
+        self.writer.line(f"free((void *){argv_name});")
+        return result_name
 
     def _emit_file_method_call(
         self,

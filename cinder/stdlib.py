@@ -16,11 +16,14 @@ from cinder.types import (
     F32,
     F64,
     I32,
+    STRING,
     USIZE,
     VOID,
     ConstType,
     OpaqueType,
     PointerType,
+    SliceType,
+    StructType,
     Type,
     c_string_type,
 )
@@ -29,6 +32,7 @@ from cinder.types import (
 def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
     span = Span.synthetic(path)
     file_type = OpaqueType("FILE", "FILE")
+    process_result_type = StructType("ProcessResult", "CinderProcessResult")
     void_pointer = PointerType(VOID)
     const_void_pointer = PointerType(ConstType(VOID))
     char_pointer = PointerType(CHAR)
@@ -173,12 +177,30 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
         public_name="panic",
     )
 
+    process = ModuleSymbol(
+        name="process",
+        span=span,
+        kind=SymbolKind.MODULE,
+        module_name="process",
+        includes=(),
+        types={"ProcessResult": process_result_type},
+    )
+    process.functions["run"] = _function(
+        span,
+        "cinder_process_run_argv",
+        process_result_type,
+        [("command", SliceType(ConstType(STRING)))],
+        module="process",
+        public_name="run",
+    )
+
     return {
         "stdio": stdio,
         "math": math,
         "stdlib": stdlib,
         "string": string,
         "cinder": cinder,
+        "process": process,
     }
 
 

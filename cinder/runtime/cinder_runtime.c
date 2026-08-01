@@ -11,6 +11,13 @@
 #include <string.h>
 #include <time.h>
 
+#if !defined(_WIN32)
+#include <sys/select.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 CINDER_NORETURN void cinder_panic(const char *message)
 {
     const char *text = message != NULL ? message : "Cinder panic";
@@ -322,6 +329,252 @@ CinderString cinder_string_from_cstr(const char *text)
     }
     return cinder_string_from_bytes(text, strlen(text));
 }
+
+typedef struct CinderProcessBuffer {
+    char *data;
+    size_t length;
+    size_t capacity;
+} CinderProcessBuffer;
+
+static void cinder_process_buffer_drop(CinderProcessBuffer *buffer)
+{
+    if (buffer == NULL) {
+        return;
+    }
+    free(buffer->data);
+    buffer->data = NULL;
+    buffer->length = 0;
+    buffer->capacity = 0;
+}
+
+static void cinder_process_buffer_append(
+    CinderProcessBuffer *buffer,
+    const char *data,
+    size_t length
+)
+{
+    if (buffer == NULL || (data == NULL && length != 0)) {
+        cinder_panic("invalid process output buffer");
+    }
+    if (length == 0) {
+        return;
+    }
+    if (buffer->length > SIZE_MAX - length) {
+        cinder_panic("process output length overflow");
+    }
+    buffer->data = (char *)cinder_grow_array(
+        buffer->data,
+        &buffer->capacity,
+        buffer->length + length,
+        sizeof(*buffer->data)
+    );
+    (void)memcpy(buffer->data + buffer->length, data, length);
+    buffer->length += length;
+}
+
+static CinderString cinder_process_buffer_to_string(CinderProcessBuffer *buffer)
+{
+    CinderString result = cinder_string_from_bytes(buffer->data, buffer->length);
+    cinder_process_buffer_drop(buffer);
+    return result;
+}
+
+void CinderProcessResult__drop(CinderProcessResult *self)
+{
+    if (self == NULL) {
+        return;
+    }
+    cinder_string_drop(&self->stderr);
+    cinder_string_drop(&self->stdout);
+}
+
+#if defined(_WIN32)
+CinderProcessResult cinder_process_run_argv(
+    size_t argc,
+    const char *const *argv
+)
+{
+    (void)argc;
+    (void)argv;
+    CinderProcessResult result = {
+        -1,
+        {NULL, 0, 0},
+        cinder_string_from_cstr("process.run is not implemented on Windows")
+    };
+    return result;
+}
+#else
+static void cinder_close_fd(int *fd)
+{
+    if (fd == NULL || *fd < 0) {
+        return;
+    }
+    while (close(*fd) != 0) {
+        if (errno != EINTR) {
+            break;
+        }
+    }
+    *fd = -1;
+}
+
+static void cinder_process_read_once(
+    int fd,
+    CinderProcessBuffer *buffer,
+    bool *open
+)
+{
+    char chunk[4096];
+    ssize_t count = read(fd, chunk, sizeof(chunk));
+    if (count > 0) {
+        cinder_process_buffer_append(buffer, chunk, (size_t)count);
+        return;
+    }
+    if (count == 0) {
+        *open = false;
+        return;
+    }
+    if (errno == EINTR) {
+        return;
+    }
+    cinder_panic("process output read failed");
+}
+
+static int cinder_process_wait(pid_t pid)
+{
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            cinder_panic("process wait failed");
+        }
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return -1;
+}
+
+static void cinder_process_capture_output(
+    int stdout_fd,
+    int stderr_fd,
+    CinderProcessBuffer *stdout_buffer,
+    CinderProcessBuffer *stderr_buffer
+)
+{
+    bool stdout_open = true;
+    bool stderr_open = true;
+    while (stdout_open || stderr_open) {
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        int max_fd = -1;
+        if (stdout_open) {
+            FD_SET(stdout_fd, &read_fds);
+            max_fd = stdout_fd > max_fd ? stdout_fd : max_fd;
+        }
+        if (stderr_open) {
+            FD_SET(stderr_fd, &read_fds);
+            max_fd = stderr_fd > max_fd ? stderr_fd : max_fd;
+        }
+
+        int ready = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            cinder_panic("process output wait failed");
+        }
+        if (stdout_open && FD_ISSET(stdout_fd, &read_fds)) {
+            cinder_process_read_once(stdout_fd, stdout_buffer, &stdout_open);
+        }
+        if (stderr_open && FD_ISSET(stderr_fd, &read_fds)) {
+            cinder_process_read_once(stderr_fd, stderr_buffer, &stderr_open);
+        }
+    }
+}
+
+CinderProcessResult cinder_process_run_argv(
+    size_t argc,
+    const char *const *argv
+)
+{
+    if (argc == 0 || argv == NULL || argv[0] == NULL) {
+        cinder_panic("process.run requires a non-empty command");
+    }
+    if (argc == SIZE_MAX) {
+        cinder_panic("process command length overflow");
+    }
+
+    char **child_argv = cinder_alloc(argc + 1, sizeof(*child_argv));
+    for (size_t index = 0; index < argc; ++index) {
+        if (argv[index] == NULL) {
+            free(child_argv);
+            cinder_panic("process command contains null argument");
+        }
+        child_argv[index] = (char *)argv[index];
+    }
+    child_argv[argc] = NULL;
+
+    int stdout_pipe[2] = {-1, -1};
+    int stderr_pipe[2] = {-1, -1};
+    if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
+        cinder_close_fd(&stdout_pipe[0]);
+        cinder_close_fd(&stdout_pipe[1]);
+        cinder_close_fd(&stderr_pipe[0]);
+        cinder_close_fd(&stderr_pipe[1]);
+        free(child_argv);
+        cinder_panic("process pipe creation failed");
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        cinder_close_fd(&stdout_pipe[0]);
+        cinder_close_fd(&stdout_pipe[1]);
+        cinder_close_fd(&stderr_pipe[0]);
+        cinder_close_fd(&stderr_pipe[1]);
+        free(child_argv);
+        cinder_panic("process spawn failed");
+    }
+
+    if (pid == 0) {
+        cinder_close_fd(&stdout_pipe[0]);
+        cinder_close_fd(&stderr_pipe[0]);
+        if (
+            dup2(stdout_pipe[1], STDOUT_FILENO) < 0 ||
+            dup2(stderr_pipe[1], STDERR_FILENO) < 0
+        ) {
+            _exit(127);
+        }
+        cinder_close_fd(&stdout_pipe[1]);
+        cinder_close_fd(&stderr_pipe[1]);
+        execvp(child_argv[0], child_argv);
+        (void)fprintf(stderr, "exec failed: %s\n", strerror(errno));
+        _exit(127);
+    }
+
+    free(child_argv);
+    cinder_close_fd(&stdout_pipe[1]);
+    cinder_close_fd(&stderr_pipe[1]);
+
+    CinderProcessBuffer stdout_buffer = {NULL, 0, 0};
+    CinderProcessBuffer stderr_buffer = {NULL, 0, 0};
+    cinder_process_capture_output(
+        stdout_pipe[0],
+        stderr_pipe[0],
+        &stdout_buffer,
+        &stderr_buffer
+    );
+    cinder_close_fd(&stdout_pipe[0]);
+    cinder_close_fd(&stderr_pipe[0]);
+
+    CinderProcessResult result;
+    result.exit_code = cinder_process_wait(pid);
+    result.stdout = cinder_process_buffer_to_string(&stdout_buffer);
+    result.stderr = cinder_process_buffer_to_string(&stderr_buffer);
+    return result;
+}
+#endif
 
 CinderString cinder_string_clone(const CinderString *string)
 {
