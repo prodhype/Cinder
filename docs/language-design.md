@@ -285,7 +285,7 @@ for value in range(0, 20):
 last = values.pop()
 ```
 
-List ownership follows the existing explicit move-only direction. A value owns its buffer; return and by-value parameter passing transfer ownership and mark the source moved; replacement drops the previous buffer; and all normal scope exits free it. Nested lists, owning struct/class fields, and destructor-bearing elements are supported with generated drop glue. Generic element-processing functions can accept `[]T` or `[]const T`; addressable Lists, fixed arrays, and slices all pass to those parameters without copying. List-to-slice coercion is call-only so a borrowed view cannot be stored or returned implicitly. Mutable slices can update elements, while structural operations use `&List[T]`. Owning globals and owning union/variant payloads remain rejected.
+List ownership follows the existing explicit move-only direction. A value owns its buffer; return and by-value parameter passing transfer ownership and mark the source moved; replacement drops the previous buffer; and all normal scope exits free it. Nested lists, owning struct/class fields, and destructor-bearing elements are supported with generated drop glue. Generic element-processing functions can accept `[]T` or `[]const T`; addressable Lists, fixed arrays, and slices all pass to those parameters without copying. List-to-slice coercion is call-only so a borrowed view cannot be stored or returned implicitly. Mutable slices can update elements, while structural operations use `&List[T]`. Owning globals and owning union/variant payloads remain rejected; AST-like trees should keep ownership in an arena struct and put non-owning IDs or ranges in union/variant payloads.
 
 Square-bracket literals infer lists in untyped contexts. An explicit array type still selects fixed C storage, so `values: i32[3] = [1, 2, 3]` remains an array declaration.
 
@@ -295,7 +295,7 @@ Maps support key membership, indexed lookup/upsert, optional `get`/`pop`, live `
 
 Hashable values are integer primitives, `bool`, `char`, enums, `String`, and low-level `const char*`. Maps and Sets hash and compare String keys or elements by UTF-8 byte content rather than allocation identity. Insertion clones a String key or element so later mutation of the source cannot change table membership. Outside that documented collection operation, keeping an independent String requires an explicit clone.
 
-All three owning homogeneous collections remain move-only. Nested owning collections, struct/class fields, and by-value parameters/returns are supported. List elements and Map values may be destructor-bearing; Set elements may include String and the other supported hashable types. Sorting a mutable sequence of Strings uses lexicographic UTF-8 byte-content order. Owning globals and union/variant payloads remain rejected. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
+All three owning homogeneous collections remain move-only. Nested owning collections, struct/class fields, and by-value parameters/returns are supported. List elements and Map values may be destructor-bearing; Set elements may include String and the other supported hashable types. Sorting a mutable sequence of Strings uses lexicographic UTF-8 byte-content order. Owning globals and union/variant payloads remain rejected; use arena-owned lists plus non-owning scalar handles for recursive AST-shaped data. Known iterator aliases are diagnosed statically; generated Map/Set mutation helpers also guard active iterators at runtime.
 
 ## Structs
 
@@ -374,8 +374,9 @@ passing transfer ownership and mark the source moved. Match payload bindings of
 owning `Option` or `Result` values are not transferable; use a transferable
 local or a returning call instead of moving the binding. Struct/class fields,
 nested collections, and `Option`/`Result`/`Tuple` wrappers may own them.
-Owning globals and owning union/variant payloads remain rejected. `__del__`
-cannot be called directly.
+Owning globals and owning union/variant payloads remain rejected. For
+AST-shaped data, use an arena object with owning fields and store non-owning
+indices or ranges in variant payloads. `__del__` cannot be called directly.
 
 Cinder supports one implementation base. A stateful abstract base counts as that
 base; additional abstract bases must be interface-only, with no fields, constructor,

@@ -14,6 +14,106 @@ def compile_source(source: str) -> str:
     return Compiler().compile_source(source, Path("collections_test.ci")).c_source
 
 
+AST_ARENA_SOURCE = (
+    "struct NodeId:\n"
+    "    index: i32\n"
+    "\n"
+    "\n"
+    "struct StringId:\n"
+    "    index: i32\n"
+    "\n"
+    "\n"
+    "struct ChildRange:\n"
+    "    start: i32\n"
+    "    length: i32\n"
+    "\n"
+    "\n"
+    "variant ExprKind:\n"
+    "    Literal(value: i32)\n"
+    "    Binary(op: char, left: NodeId, right: NodeId)\n"
+    "    Call(name: StringId, args: ChildRange)\n"
+    "\n"
+    "\n"
+    "struct Expr:\n"
+    "    kind: ExprKind\n"
+    "\n"
+    "\n"
+    "struct AstArena:\n"
+    "    nodes: List[Expr]\n"
+    "    children: List[NodeId]\n"
+    "    strings: List[String]\n"
+    "\n"
+    "    def next_node_id(self: &const AstArena) -> NodeId:\n"
+    "        return NodeId(index=cast[i32](len(self.nodes)))\n"
+    "\n"
+    "    def intern(self: &AstArena, text: String) -> StringId:\n"
+    "        id = StringId(index=cast[i32](len(self.strings)))\n"
+    "        self.strings.append(text)\n"
+    "        return id\n"
+    "\n"
+    "    def add_literal(self: &AstArena, value: i32) -> NodeId:\n"
+    "        id = self.next_node_id()\n"
+    "        self.nodes.append(Expr(kind=ExprKind.Literal(value=value)))\n"
+    "        return id\n"
+    "\n"
+    "    def add_binary(self: &AstArena, op: char, left: NodeId, right: NodeId) -> NodeId:\n"
+    "        id = self.next_node_id()\n"
+    "        self.nodes.append(Expr(kind=ExprKind.Binary(op=op, left=left, right=right)))\n"
+    "        return id\n"
+    "\n"
+    "    def add_call(self: &AstArena, name: String, first: NodeId, second: NodeId) -> NodeId:\n"
+    "        name_id = self.intern(name)\n"
+    "        arg_range = ChildRange(start=cast[i32](len(self.children)), length=2)\n"
+    "        self.children.append(first)\n"
+    "        self.children.append(second)\n"
+    "        id = self.next_node_id()\n"
+    "        self.nodes.append(Expr(kind=ExprKind.Call(name=name_id, args=arg_range)))\n"
+    "        return id\n"
+    "\n"
+    "    def evaluate(self: &const AstArena, node_id: NodeId) -> i32:\n"
+    "        node = self.nodes[node_id.index]\n"
+    "        match node.kind:\n"
+    "            case ExprKind.Literal(value):\n"
+    "                return value\n"
+    "            case ExprKind.Binary(_, left, right):\n"
+    "                return self.evaluate(left) + self.evaluate(right)\n"
+    "            case ExprKind.Call(_, args):\n"
+    "                total = 0\n"
+    "                for offset in range(0, args.length):\n"
+    "                    total += self.evaluate(self.children[args.start + offset])\n"
+    "                return total\n"
+    "\n"
+    "    def child_count(self: &const AstArena, node_id: NodeId) -> i32:\n"
+    "        node = self.nodes[node_id.index]\n"
+    "        match node.kind:\n"
+    "            case ExprKind.Call(_, args):\n"
+    "                return args.length\n"
+    "            case ExprKind.Literal(_):\n"
+    "                return 0\n"
+    "            case ExprKind.Binary(op, left, right):\n"
+    "                if op == '?' and left.index == right.index:\n"
+    "                    return 0\n"
+    "                return 2\n"
+    "\n"
+    "\n"
+    "def main() -> i32:\n"
+    "    arena = AstArena(nodes=[], children=[], strings=[])\n"
+    "    left = arena.add_literal(2)\n"
+    "    right = arena.add_literal(40)\n"
+    "    sum = arena.add_binary('+', left, right)\n"
+    "    call = arena.add_call(\"root\", left, sum)\n"
+    "    if arena.evaluate(sum) != 42:\n"
+    "        return 1\n"
+    "    if arena.evaluate(call) != 44:\n"
+    "        return 2\n"
+    "    if arena.child_count(call) != 2:\n"
+    "        return 3\n"
+    "    if len(arena.nodes) != 4 or len(arena.children) != 2 or len(arena.strings) != 1:\n"
+    "        return 4\n"
+    "    return 0\n"
+)
+
+
 def test_lists_are_inferred_while_contextual_fixed_arrays_are_preserved() -> None:
     generated = compile_source(
         "def main() -> i32:\n"
@@ -225,6 +325,15 @@ def test_class_constructor_move_excludes_source_cleanup() -> None:
     assert "CinderList_i32_drop(&values);" not in generated
     assert "Holder__drop(&holder);" in generated
 
+
+def test_ast_arena_uses_non_owning_variant_payload_indices() -> None:
+    generated = compile_source(AST_ARENA_SOURCE)
+
+    assert "typedef enum ExprKind_Tag" in generated
+    assert "struct AstArena" in generated
+    assert "AstArena__drop" in generated
+    assert "CinderList_n_Expr" in generated
+    assert "CinderList_n_NodeId" in generated
 
 
 def test_const_list_reference_rejects_mutation() -> None:
@@ -536,6 +645,30 @@ def test_native_tuples_and_lists_run_end_to_end(tmp_path: Path) -> None:
     source_path.write_text(source, encoding="utf-8")
     executable = tmp_path / (
         "collections.exe" if shutil.which("cl") and not shutil.which("cc") else "collections"
+    )
+    artifact = Compiler().build(
+        source_path,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(
+    not any(shutil.which(name) for name in ("cc", "clang", "gcc", "cl")),
+    reason="no supported C compiler is available",
+)
+def test_ast_arena_runs_end_to_end(tmp_path: Path) -> None:
+    source_path = tmp_path / "ast_arena.ci"
+    source_path.write_text(AST_ARENA_SOURCE, encoding="utf-8")
+    executable = tmp_path / (
+        "ast_arena.exe" if shutil.which("cl") and not shutil.which("cc") else "ast_arena"
     )
     artifact = Compiler().build(
         source_path,

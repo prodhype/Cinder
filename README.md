@@ -301,6 +301,7 @@ You can pass them by value.
 The checker looks for use after move.
 Owning globals stay unsupported.
 Owning union and variant payloads stay unsupported.
+For AST-shaped ownership, store nodes and side tables in an arena struct and put non-owning IDs or ranges in variant payloads.
 
 ## Reflection
 
@@ -680,6 +681,7 @@ You can also pass addressable Lists without a copy to `[]T` and `[]const T` para
 This coercion is for calls only.
 Structural operations still use `&List[T]`.
 Owning globals stay unsupported.
+Use arena-owned lists plus non-owning IDs/ranges for AST-like recursive data.
 
 Maps use `{key: value}` literals and keep insertion order.
 Sets use `{value, ...}`.
@@ -715,6 +717,7 @@ Maps and Sets use the same move-only ownership model as Lists.
 This includes nested and aggregate ownership and by-value parameters.
 Owning globals stay unsupported.
 Owning union and variant payloads stay unsupported.
+AST-shaped data should use arena-owned storage with non-owning payload handles.
 Map views are borrowed values with slice-like lifetime duty.
 Structural mutation is rejected or guarded while an iterator is active.
 

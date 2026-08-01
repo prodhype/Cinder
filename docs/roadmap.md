@@ -42,7 +42,7 @@ Runtime metadata is inspectable in `cinder_runtime.h`, has no startup registrati
 
 Cinder implements specialized heterogeneous `Tuple[...]` values and homogeneous owning `List[T]`, `Map[K, V]`, and `Set[T]` collections. Maps preserve insertion order and expose live non-owning views; Sets provide membership and algebra. Optional collection lookups use the general tagged `Option[T]` family.
 
-Collection ownership is explicit and move-only. Owning collections and destructor-bearing classes may nest, live in struct/class fields, and pass by value with use-after-move checking. Owning globals and union/variant payloads remain rejected. Hashable keys are integers, booleans, characters, enums, and copied `const char*` strings with content equality.
+Collection ownership is explicit and move-only. Owning collections and destructor-bearing classes may nest, live in struct/class fields, and pass by value with use-after-move checking. Owning globals and union/variant payloads remain rejected. AST-shaped data should use arena-owned lists plus non-owning IDs/ranges in payloads. Hashable keys are integers, booleans, characters, enums, and copied `const char*` strings with content equality.
 
 ## 0.6 candidates
 

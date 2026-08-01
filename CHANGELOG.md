@@ -35,7 +35,7 @@ Maps and Sets extend the native collection phase with specialized deterministic 
 
 The release also adds general `Option[T]` values with `Some`, contextual `None`, exhaustive matching, state attributes, and checked payload access. Maps and Sets follow Lists' move-only ownership model, including direct return transfer, cleanup on all exits, and mutation guards during active iteration.
 
-Aggregate ownership is now first-class for `List`/`Map`/`Set`/`File` and destructor-bearing classes: struct/class by-value owning fields, nested owning collections and owning elements, by-value owning parameters with use-after-move diagnostics, and `Option`/`Result`/`Tuple`(/array) drop glue. Runtime-initialized owning globals and unions/user variants with owning members remain rejected; a `const` String initialized directly from a static literal is the narrow global exception.
+Aggregate ownership is now first-class for `List`/`Map`/`Set`/`File` and destructor-bearing classes: struct/class by-value owning fields, nested owning collections and owning elements, by-value owning parameters with use-after-move diagnostics, and `Option`/`Result`/`Tuple`(/array) drop glue. Runtime-initialized owning globals and unions/user variants with owning members remain rejected; a `const` String initialized directly from a static literal is the narrow global exception. AST-shaped data can use arena-owned lists with non-owning IDs or ranges in variant payloads.
 
 `Owned[T]` adds Box-style heap ownership: `Owned(value)` allocates and moves a value onto the heap, unary `*` yields an addressable payload, and drop frees after dropping `T`. Values are move-only, nest in aggregates and `Option`/`List`, and support recursive layouts such as `Option[Owned[Node]]`.
 
