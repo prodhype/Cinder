@@ -470,7 +470,9 @@ token = Token.Integer(42)
 ```
 
 `match` accepts enums, variants, Results, and Options.
-Matches must be exhaustive unless the final case is a wildcard.
+Matches must be exhaustive unless the remaining cases are covered by an
+unguarded wildcard or equivalent pattern. Guards refine a case but do not count
+toward exhaustiveness on their own.
 
 ```python
 match token:
@@ -484,7 +486,22 @@ match token:
         pass
 ```
 
-Patterns do not yet support guards, alternatives, literals, or nested destructuring.
+Patterns can destructure nested algebraic payloads, use `_` discards, combine
+alternatives with `|`, guard a case with `if`, and capture a value with
+`name @ pattern`:
+
+```python
+match parsed:
+    case Some(Ok(score)) if score > 0:
+        consume_score(score)
+    case Some(Err(_)) | None:
+        recover()
+    case original @ Some(Ok(_)):
+        inspect(original)
+```
+
+Patterns do not yet support literals, tuple destructuring, struct destructuring,
+or match expressions.
 
 ## Typed Results, Options, and propagation
 

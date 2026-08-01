@@ -4,6 +4,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from itertools import product
 
 from cinder import ast
 from cinder.diagnostics import CompilationFailed, DiagnosticBag, Span
@@ -49,7 +50,9 @@ from cinder.symbols import (
     ModuleSymbol,
     NominalSymbol,
     ParameterSymbol,
+    PatternAccessStep,
     PatternBinding,
+    PatternResolution,
     PropagateResolution,
     RangeResolution,
     Scope,
@@ -3698,207 +3701,94 @@ class Checker:
 
     def _check_match(self, statement: ast.MatchStmt) -> None:
         subject_type = value_type(self._check_expr(statement.value))
-        nominal = self.nominal_symbols.get(subject_type)
-        enum = nominal if isinstance(nominal, EnumSymbol) else None
-        variant = nominal if isinstance(nominal, VariantSymbol) else None
-        is_result = isinstance(subject_type, ResultType)
-        is_option = isinstance(subject_type, OptionType)
-
-        if enum is None and variant is None and not is_result and not is_option:
+        if not self._match_case_names(subject_type):
             self._error(
                 f"match requires an enum, variant, Result, or Option value, got {type_name(subject_type)}",
                 statement.value.span,
                 code="C119",
             )
 
-        if enum is not None:
-            required = set(enum.members)
-        elif variant is not None:
-            required = set(variant.cases)
-        elif is_result:
-            required = {"Ok", "Err"}
-        elif is_option:
-            required = {"Some", "None"}
-        else:
-            required = set()
-
-        seen: set[str] = set()
-        wildcard_seen = False
         case_resolutions: list[MatchCaseResolution] = []
+        covered_patterns: list[PatternResolution] = []
 
         for case_index, case in enumerate(statement.cases):
-            pattern = case.pattern
-            if pattern.is_wildcard:
-                if wildcard_seen:
-                    self._error("match contains more than one wildcard case", pattern.span, code="C120")
-                if case_index != len(statement.cases) - 1:
-                    self._error("wildcard match case must be last", pattern.span, code="C121")
-                if pattern.bindings:
-                    self._error("wildcard case cannot bind values", pattern.span, code="C122")
-                wildcard_seen = True
-                case_resolutions.append(MatchCaseResolution("wildcard"))
-                self._check_block(case.body, self.current_scope)
+            case_scope = Scope(self.current_scope)
+            binding_symbols: dict[str, VariableSymbol] = {}
+            pattern_resolutions: list[PatternResolution] = []
+            expected_names: set[str] | None = None
+
+            alternatives = self._expand_pattern_alternatives(case.pattern)
+            for alternative in alternatives:
+                current_names: set[str] = set()
+                resolution = self._resolve_match_pattern(
+                    alternative,
+                    subject_type,
+                    case_scope,
+                    binding_symbols,
+                    current_names,
+                    (),
+                    root=True,
+                )
+                pattern_resolutions.append(resolution)
+                names = {binding.symbol.name for binding in resolution.bindings}
+                if expected_names is None:
+                    expected_names = names
+                elif names != expected_names:
+                    self._error(
+                        "or-pattern alternatives must bind the same names",
+                        case.pattern.span,
+                        code="C316",
+                    )
+
+            bindings = tuple(binding for resolution in pattern_resolutions for binding in resolution.bindings)
+            case_resolution = MatchCaseResolution(
+                tuple(pattern_resolutions),
+                bindings,
+                case.guard is not None,
+            )
+            case_resolutions.append(case_resolution)
+
+            previous = self.current_scope
+            self.current_scope = case_scope
+            try:
+                if case.guard is not None:
+                    guard_type = self._check_expr(case.guard)
+                    if not is_condition_type(value_type(guard_type)):
+                        self._error("match guard is not scalar", case.guard.span, code="C317")
+                    if _contains_propagate(case.guard):
+                        self._error(
+                            "'?' is not supported in match guards",
+                            case.guard.span,
+                            code="C318",
+                            note="evaluate the Result before the match",
+                        )
+                self._check_block(case.body, case_scope, create_scope=False)
+            finally:
+                self.current_scope = previous
+
+            if case.guard is not None:
                 continue
 
-            assert pattern.path is not None
-            pattern_name = pattern.path[-1]
-            if pattern_name in seen:
-                self._error(f"duplicate match case {pattern_name!r}", pattern.span, code="C123")
-            seen.add(pattern_name)
-            case_scope = Scope(self.current_scope)
-            bindings: list[PatternBinding] = []
+            covered_alternatives = [
+                resolution
+                for resolution in pattern_resolutions
+                if self._pattern_covered_by_patterns(subject_type, resolution, covered_patterns)
+            ]
+            if len(covered_alternatives) == len(pattern_resolutions):
+                self._error("unreachable match case", case.pattern.span, code="C123")
+            for resolution in pattern_resolutions:
+                covered_patterns.append(resolution)
 
-            if enum is not None:
-                self._validate_pattern_owner_type(pattern, subject_type)
-                member = enum.members.get(pattern_name)
-                if member is None:
-                    self._error(
-                        f"enum {enum.name!r} has no member {pattern_name!r}",
-                        pattern.span,
-                        code="C124",
-                    )
-                    case_resolutions.append(MatchCaseResolution("invalid"))
-                else:
-                    if pattern.bindings:
-                        self._error("enum match cases cannot bind payload values", pattern.span, code="C125")
-                    case_resolutions.append(MatchCaseResolution("enum", enum_member=member))
+            if (
+                isinstance(case.pattern, ast.WildcardPattern)
+                and case.guard is None
+                and case_index != len(statement.cases) - 1
+            ):
+                self._error("wildcard match case must be last", case.pattern.span, code="C121")
 
-            elif variant is not None:
-                self._validate_pattern_owner_type(pattern, subject_type)
-                variant_case = variant.cases.get(pattern_name)
-                if variant_case is None:
-                    self._error(
-                        f"variant {variant.name!r} has no case {pattern_name!r}",
-                        pattern.span,
-                        code="C126",
-                    )
-                    case_resolutions.append(MatchCaseResolution("invalid"))
-                else:
-                    fields = list(variant_case.fields.values())
-                    if len(pattern.bindings) != len(fields):
-                        self._error(
-                            f"case {variant.name}.{variant_case.name} expects {len(fields)} bindings, "
-                            f"got {len(pattern.bindings)}",
-                            pattern.span,
-                            code="C127",
-                        )
-                    for index, binding_name in enumerate(pattern.bindings):
-                        binding_type = fields[index].type if index < len(fields) else ERROR
-                        symbol = VariableSymbol(
-                            binding_name,
-                            pattern.span,
-                            SymbolKind.VARIABLE,
-                            binding_type,
-                            True,
-                            False,
-                            binding_name,
-                            is_match_binding=True,
-                        )
-                        previous = case_scope.declare(symbol)
-                        if previous is not None:
-                            self._duplicate_symbol(symbol, previous)
-                        field_name = fields[index].name if index < len(fields) else binding_name
-                        bindings.append(PatternBinding(symbol, field_name))
-                    case_resolutions.append(
-                        MatchCaseResolution(
-                            "variant",
-                            variant_case=variant_case,
-                            bindings=tuple(bindings),
-                        )
-                    )
-
-            elif isinstance(subject_type, ResultType):
-                self._validate_result_pattern_owner(pattern)
-                if pattern_name not in {"Ok", "Err"}:
-                    self._error(
-                        "Result match cases must be Ok or Err",
-                        pattern.span,
-                        code="C128",
-                    )
-                    case_resolutions.append(MatchCaseResolution("invalid"))
-                else:
-                    is_ok = pattern_name == "Ok"
-                    payload_type = subject_type.ok if is_ok else subject_type.error
-                    expected_bindings = 0 if is_void(payload_type) else 1
-                    if len(pattern.bindings) != expected_bindings:
-                        self._error(
-                            f"{pattern_name} expects {expected_bindings} bindings, got {len(pattern.bindings)}",
-                            pattern.span,
-                            code="C129",
-                        )
-                    if pattern.bindings:
-                        binding_name = pattern.bindings[0]
-                        symbol = VariableSymbol(
-                            binding_name,
-                            pattern.span,
-                            SymbolKind.VARIABLE,
-                            payload_type,
-                            True,
-                            False,
-                            binding_name,
-                            is_match_binding=True,
-                        )
-                        previous = case_scope.declare(symbol)
-                        if previous is not None:
-                            self._duplicate_symbol(symbol, previous)
-                        bindings.append(PatternBinding(symbol, "value" if is_ok else "error"))
-                    case_resolutions.append(
-                        MatchCaseResolution(
-                            "result",
-                            result_is_ok=is_ok,
-                            bindings=tuple(bindings),
-                        )
-                    )
-            elif isinstance(subject_type, OptionType):
-                self._validate_option_pattern_owner(pattern)
-                if pattern_name not in {"Some", "None"}:
-                    self._error(
-                        "Option match cases must be Some or None",
-                        pattern.span,
-                        code="C313",
-                    )
-                    case_resolutions.append(MatchCaseResolution("invalid"))
-                else:
-                    is_some = pattern_name == "Some"
-                    expected_bindings = 1 if is_some else 0
-                    if len(pattern.bindings) != expected_bindings:
-                        self._error(
-                            f"{pattern_name} expects {expected_bindings} bindings, "
-                            f"got {len(pattern.bindings)}",
-                            pattern.span,
-                            code="C314",
-                        )
-                    if is_some and pattern.bindings:
-                        binding_name = pattern.bindings[0]
-                        symbol = VariableSymbol(
-                            binding_name,
-                            pattern.span,
-                            SymbolKind.VARIABLE,
-                            subject_type.inner,
-                            True,
-                            False,
-                            binding_name,
-                            is_match_binding=True,
-                        )
-                        previous = case_scope.declare(symbol)
-                        if previous is not None:
-                            self._duplicate_symbol(symbol, previous)
-                        bindings.append(PatternBinding(symbol, "value"))
-                    case_resolutions.append(
-                        MatchCaseResolution(
-                            "option",
-                            option_is_some=is_some,
-                            bindings=tuple(bindings),
-                        )
-                    )
-            else:
-                case_resolutions.append(MatchCaseResolution("invalid"))
-
-            self._check_block(case.body, case_scope, create_scope=False)
-
-        missing = required - seen
-        exhaustive = wildcard_seen or not missing
-        if required and not exhaustive:
+        missing = self._missing_match_cases(subject_type, covered_patterns)
+        exhaustive = not missing
+        if self._match_case_names(subject_type) and not exhaustive:
             self._error(
                 "non-exhaustive match; missing " + ", ".join(sorted(missing)),
                 statement.span,
@@ -3910,14 +3800,330 @@ class Checker:
             exhaustive,
         )
 
-    def _validate_pattern_owner_type(
+    def _expand_pattern_alternatives(self, pattern: ast.MatchPattern) -> list[ast.MatchPattern]:
+        if isinstance(pattern, ast.OrPattern):
+            expanded: list[ast.MatchPattern] = []
+            for alternative in pattern.alternatives:
+                expanded.extend(self._expand_pattern_alternatives(alternative))
+            return expanded
+        if isinstance(pattern, ast.CapturePattern):
+            return [
+                ast.CapturePattern(pattern.span, pattern.name, alternative)
+                for alternative in self._expand_pattern_alternatives(pattern.pattern)
+            ]
+        if isinstance(pattern, ast.PathPattern) and pattern.arguments:
+            expanded_arguments = [
+                self._expand_pattern_alternatives(argument)
+                for argument in pattern.arguments
+            ]
+            return [
+                ast.PathPattern(pattern.span, pattern.path, list(arguments))
+                for arguments in product(*expanded_arguments)
+            ]
+        return [pattern]
+
+    def _resolve_match_pattern(
         self,
         pattern: ast.MatchPattern,
+        expected_type: Type,
+        case_scope: Scope,
+        binding_symbols: dict[str, VariableSymbol],
+        current_names: set[str],
+        access: tuple[PatternAccessStep, ...],
+        *,
+        root: bool = False,
+    ) -> PatternResolution:
+        if isinstance(pattern, ast.WildcardPattern):
+            return PatternResolution("wildcard", expected_type)
+        if isinstance(pattern, ast.CapturePattern):
+            if pattern.name == "_":
+                self._error("capture binding cannot be '_'", pattern.span, code="C319")
+            binding = self._match_binding(
+                pattern.name,
+                expected_type,
+                pattern.span,
+                case_scope,
+                binding_symbols,
+                current_names,
+                access,
+            )
+            inner = self._resolve_match_pattern(
+                pattern.pattern,
+                expected_type,
+                case_scope,
+                binding_symbols,
+                current_names,
+                access,
+                root=root,
+            )
+            bindings = ((binding,) if binding is not None else ()) + inner.bindings
+            return PatternResolution(
+                "capture",
+                expected_type,
+                bindings=bindings,
+                arguments=(inner,),
+            )
+        if isinstance(pattern, ast.OrPattern):
+            self._error("nested or-pattern was not expanded", pattern.span, code="C320")
+            return PatternResolution("invalid", ERROR)
+        if not isinstance(pattern, ast.PathPattern):
+            raise AssertionError(f"unhandled match pattern: {pattern!r}")
+
+        if (
+            len(pattern.path) == 1
+            and not pattern.arguments
+            and not root
+            and not self._path_matches_constructor(pattern.path, expected_type)
+        ):
+            binding = self._match_binding(
+                pattern.path[0],
+                expected_type,
+                pattern.span,
+                case_scope,
+                binding_symbols,
+                current_names,
+                access,
+            )
+            return PatternResolution(
+                "binding",
+                expected_type,
+                bindings=(binding,) if binding is not None else (),
+            )
+
+        return self._resolve_constructor_pattern(
+            pattern,
+            expected_type,
+            case_scope,
+            binding_symbols,
+            current_names,
+            access,
+        )
+
+    def _resolve_constructor_pattern(
+        self,
+        pattern: ast.PathPattern,
+        expected_type: Type,
+        case_scope: Scope,
+        binding_symbols: dict[str, VariableSymbol],
+        current_names: set[str],
+        access: tuple[PatternAccessStep, ...],
+    ) -> PatternResolution:
+        pattern_name = pattern.path[-1]
+        nominal = self.nominal_symbols.get(expected_type)
+        enum = nominal if isinstance(nominal, EnumSymbol) else None
+        variant = nominal if isinstance(nominal, VariantSymbol) else None
+
+        if enum is not None:
+            self._validate_pattern_owner_type(pattern.path, pattern.span, expected_type)
+            member = enum.members.get(pattern_name)
+            if member is None:
+                self._error(
+                    f"enum {enum.name!r} has no member {pattern_name!r}",
+                    pattern.span,
+                    code="C124",
+                )
+                return PatternResolution("invalid", ERROR)
+            if pattern.arguments:
+                self._error("enum match cases cannot bind payload values", pattern.span, code="C125")
+            return PatternResolution("enum", expected_type, enum_member=member)
+
+        if variant is not None:
+            self._validate_pattern_owner_type(pattern.path, pattern.span, expected_type)
+            variant_case = variant.cases.get(pattern_name)
+            if variant_case is None:
+                self._error(
+                    f"variant {variant.name!r} has no case {pattern_name!r}",
+                    pattern.span,
+                    code="C126",
+                )
+                return PatternResolution("invalid", ERROR)
+            fields = list(variant_case.fields.values())
+            if len(pattern.arguments) != len(fields):
+                self._error(
+                    f"case {variant.name}.{variant_case.name} expects {len(fields)} bindings, "
+                    f"got {len(pattern.arguments)}",
+                    pattern.span,
+                    code="C127",
+                )
+            arguments: list[PatternResolution] = []
+            bindings: list[PatternBinding] = []
+            for index, argument in enumerate(pattern.arguments):
+                field = fields[index] if index < len(fields) else None
+                field_type = field.type if field is not None else ERROR
+                field_name = field.name if field is not None else f"field{index}"
+                argument_access = access + (
+                    PatternAccessStep("variant_field", variant_case.name, field_name),
+                )
+                resolution = self._resolve_match_pattern(
+                    argument,
+                    field_type,
+                    case_scope,
+                    binding_symbols,
+                    current_names,
+                    argument_access,
+                )
+                arguments.append(resolution)
+                bindings.extend(resolution.bindings)
+            return PatternResolution(
+                "variant",
+                expected_type,
+                variant_case=variant_case,
+                bindings=tuple(bindings),
+                arguments=tuple(arguments),
+            )
+
+        if isinstance(expected_type, ResultType):
+            self._validate_result_pattern_owner(pattern.path, pattern.span)
+            if pattern_name not in {"Ok", "Err"}:
+                self._error("Result match cases must be Ok or Err", pattern.span, code="C128")
+                return PatternResolution("invalid", ERROR)
+            is_ok = pattern_name == "Ok"
+            payload_type = expected_type.ok if is_ok else expected_type.error
+            expected_arguments = 0 if is_void(payload_type) else 1
+            if len(pattern.arguments) != expected_arguments:
+                self._error(
+                    f"{pattern_name} expects {expected_arguments} bindings, got {len(pattern.arguments)}",
+                    pattern.span,
+                    code="C129",
+                )
+            arguments = []
+            bindings = []
+            if pattern.arguments:
+                step = PatternAccessStep("result_ok" if is_ok else "result_err")
+                resolution = self._resolve_match_pattern(
+                    pattern.arguments[0],
+                    payload_type,
+                    case_scope,
+                    binding_symbols,
+                    current_names,
+                    access + (step,),
+                )
+                arguments.append(resolution)
+                bindings.extend(resolution.bindings)
+            return PatternResolution(
+                "result",
+                expected_type,
+                result_is_ok=is_ok,
+                bindings=tuple(bindings),
+                arguments=tuple(arguments),
+            )
+
+        if isinstance(expected_type, OptionType):
+            self._validate_option_pattern_owner(pattern.path, pattern.span)
+            if pattern_name not in {"Some", "None"}:
+                self._error("Option match cases must be Some or None", pattern.span, code="C313")
+                return PatternResolution("invalid", ERROR)
+            is_some = pattern_name == "Some"
+            expected_arguments = 1 if is_some else 0
+            if len(pattern.arguments) != expected_arguments:
+                self._error(
+                    f"{pattern_name} expects {expected_arguments} bindings, got {len(pattern.arguments)}",
+                    pattern.span,
+                    code="C314",
+                )
+            arguments = []
+            bindings = []
+            if is_some and pattern.arguments:
+                resolution = self._resolve_match_pattern(
+                    pattern.arguments[0],
+                    expected_type.inner,
+                    case_scope,
+                    binding_symbols,
+                    current_names,
+                    access + (PatternAccessStep("option_value"),),
+                )
+                arguments.append(resolution)
+                bindings.extend(resolution.bindings)
+            return PatternResolution(
+                "option",
+                expected_type,
+                option_is_some=is_some,
+                bindings=tuple(bindings),
+                arguments=tuple(arguments),
+            )
+
+        if len(pattern.path) == 1 and not pattern.arguments:
+            binding = self._match_binding(
+                pattern.path[0],
+                expected_type,
+                pattern.span,
+                case_scope,
+                binding_symbols,
+                current_names,
+                access,
+            )
+            return PatternResolution(
+                "binding",
+                expected_type,
+                bindings=(binding,) if binding is not None else (),
+            )
+
+        self._error(
+            f"cannot destructure {type_name(expected_type)} with a match pattern",
+            pattern.span,
+            code="C321",
+        )
+        return PatternResolution("invalid", ERROR)
+
+    def _match_binding(
+        self,
+        name: str,
+        type_: Type,
+        span: Span,
+        case_scope: Scope,
+        binding_symbols: dict[str, VariableSymbol],
+        current_names: set[str],
+        access: tuple[PatternAccessStep, ...],
+    ) -> PatternBinding | None:
+        if name == "_":
+            return None
+        if name in current_names:
+            previous = binding_symbols.get(name)
+            duplicate = previous if previous is not None else VariableSymbol(
+                name,
+                span,
+                SymbolKind.VARIABLE,
+                type_,
+            )
+            self._duplicate_symbol(
+                VariableSymbol(name, span, SymbolKind.VARIABLE, type_),
+                duplicate,
+            )
+        current_names.add(name)
+        symbol = binding_symbols.get(name)
+        if symbol is None:
+            symbol = VariableSymbol(
+                name,
+                span,
+                SymbolKind.VARIABLE,
+                type_,
+                True,
+                False,
+                name,
+                is_match_binding=True,
+            )
+            previous = case_scope.declare(symbol)
+            if previous is not None:
+                self._duplicate_symbol(symbol, previous)
+            binding_symbols[name] = symbol
+        elif symbol.type != type_:
+            self._error(
+                f"or-pattern binding {name!r} has inconsistent types "
+                f"{type_name(symbol.type)} and {type_name(type_)}",
+                span,
+                code="C322",
+            )
+        return PatternBinding(symbol, access)
+
+    def _validate_pattern_owner_type(
+        self,
+        path: tuple[str, ...],
+        span: Span,
         subject_type: Type,
     ) -> None:
-        if pattern.path is None or len(pattern.path) < 2:
+        if len(path) < 2:
             return
-        owner_name = ".".join(pattern.path[:-1])
+        owner_name = ".".join(path[:-1])
         owner_type = self.types.get(owner_name)
         if owner_type is None:
             template = self._lookup_type_template(owner_name)
@@ -3930,7 +4136,7 @@ class Checker:
                 return
             self._error(
                 f"unknown pattern owner {owner_name!r}",
-                pattern.span,
+                span,
                 code="C142",
             )
             return
@@ -3939,31 +4145,208 @@ class Checker:
         self._error(
             f"pattern owner {owner_name!r} has type {type_name(owner_type)}, "
             f"not {type_name(subject_type)}",
-            pattern.span,
+            span,
             code="C143",
         )
 
-    def _validate_result_pattern_owner(self, pattern: ast.MatchPattern) -> None:
-        if pattern.path is None or len(pattern.path) < 2:
+    def _validate_result_pattern_owner(self, path: tuple[str, ...], span: Span) -> None:
+        if len(path) < 2:
             return
-        owner_name = ".".join(pattern.path[:-1])
+        owner_name = ".".join(path[:-1])
         if owner_name != "Result":
             self._error(
                 f"Result pattern owner must be 'Result', not {owner_name!r}",
-                pattern.span,
+                span,
                 code="C142",
             )
 
-    def _validate_option_pattern_owner(self, pattern: ast.MatchPattern) -> None:
-        if pattern.path is None or len(pattern.path) < 2:
+    def _validate_option_pattern_owner(self, path: tuple[str, ...], span: Span) -> None:
+        if len(path) < 2:
             return
-        owner_name = ".".join(pattern.path[:-1])
+        owner_name = ".".join(path[:-1])
         if owner_name != "Option":
             self._error(
                 f"Option pattern owner must be 'Option', not {owner_name!r}",
-                pattern.span,
+                span,
                 code="C315",
             )
+
+    def _path_matches_constructor(self, path: tuple[str, ...], expected_type: Type) -> bool:
+        name = path[-1]
+        nominal = self.nominal_symbols.get(expected_type)
+        if isinstance(nominal, EnumSymbol):
+            return name in nominal.members
+        if isinstance(nominal, VariantSymbol):
+            return name in nominal.cases
+        if isinstance(expected_type, ResultType):
+            return name in {"Ok", "Err"}
+        if isinstance(expected_type, OptionType):
+            return name in {"Some", "None"}
+        return False
+
+    def _match_case_names(self, type_: Type) -> set[str]:
+        nominal = self.nominal_symbols.get(type_)
+        if isinstance(nominal, EnumSymbol):
+            return set(nominal.members)
+        if isinstance(nominal, VariantSymbol):
+            return set(nominal.cases)
+        if isinstance(type_, ResultType):
+            return {"Ok", "Err"}
+        if isinstance(type_, OptionType):
+            return {"Some", "None"}
+        return set()
+
+    def _missing_match_cases(
+        self,
+        type_: Type,
+        patterns: list[PatternResolution],
+    ) -> set[str]:
+        return {
+            case_name
+            for case_name in self._match_case_names(type_)
+            if not self._patterns_cover_case(type_, case_name, patterns)
+        }
+
+    def _patterns_cover_case(
+        self,
+        type_: Type,
+        case_name: str,
+        patterns: list[PatternResolution],
+    ) -> bool:
+        payload_types = self._case_payload_types(type_, case_name)
+        rows: list[tuple[PatternResolution, ...]] = []
+        for pattern in patterns:
+            rows.extend(self._pattern_residuals_for_case(pattern, type_, case_name))
+        return self._pattern_rows_cover_product(payload_types, rows)
+
+    def _patterns_exhaustive_for_type(
+        self,
+        type_: Type,
+        patterns: list[PatternResolution],
+    ) -> bool:
+        case_names = self._match_case_names(type_)
+        if not case_names:
+            return any(
+                self._unwrap_capture_pattern(pattern).kind in {"wildcard", "binding"}
+                for pattern in patterns
+            )
+        rows = [(pattern,) for pattern in patterns]
+        return self._pattern_rows_cover_product((type_,), rows)
+
+    def _pattern_rows_cover_product(
+        self,
+        types: tuple[Type, ...],
+        rows: list[tuple[PatternResolution, ...]],
+    ) -> bool:
+        if not rows:
+            return False
+        if not types:
+            return True
+
+        first_type = types[0]
+        remaining_types = types[1:]
+        case_names = self._match_case_names(first_type)
+        if not case_names:
+            residual_rows = [
+                row[1:]
+                for row in rows
+                if row and self._pattern_is_irrefutable(row[0])
+            ]
+            return self._pattern_rows_cover_product(remaining_types, residual_rows)
+
+        for case_name in case_names:
+            payload_types = self._case_payload_types(first_type, case_name)
+            residual_rows: list[tuple[PatternResolution, ...]] = []
+            for row in rows:
+                if not row:
+                    continue
+                for residual in self._pattern_residuals_for_case(row[0], first_type, case_name):
+                    residual_rows.append(residual + row[1:])
+            if not self._pattern_rows_cover_product(payload_types + remaining_types, residual_rows):
+                return False
+        return True
+
+    def _pattern_residuals_for_case(
+        self,
+        pattern: PatternResolution,
+        type_: Type,
+        case_name: str,
+    ) -> list[tuple[PatternResolution, ...]]:
+        unwrapped = self._unwrap_capture_pattern(pattern)
+        payload_types = self._case_payload_types(type_, case_name)
+        if unwrapped.kind in {"wildcard", "binding"}:
+            return [tuple(PatternResolution("wildcard", payload_type) for payload_type in payload_types)]
+        if self._pattern_case_name(unwrapped) != case_name:
+            return []
+        if len(unwrapped.arguments) != len(payload_types):
+            return []
+        return [unwrapped.arguments]
+
+    def _case_payload_types(self, type_: Type, case_name: str) -> tuple[Type, ...]:
+        nominal = self.nominal_symbols.get(type_)
+        if isinstance(nominal, VariantSymbol):
+            variant_case = nominal.cases.get(case_name)
+            if variant_case is None:
+                return ()
+            return tuple(field.type for field in variant_case.fields.values())
+        if isinstance(type_, ResultType):
+            payload_type = type_.ok if case_name == "Ok" else type_.error
+            return () if is_void(payload_type) else (payload_type,)
+        if isinstance(type_, OptionType):
+            return (type_.inner,) if case_name == "Some" else ()
+        return ()
+
+    def _pattern_covered_by_patterns(
+        self,
+        type_: Type,
+        pattern: PatternResolution,
+        previous: list[PatternResolution],
+    ) -> bool:
+        if not previous:
+            return False
+        unwrapped = self._unwrap_capture_pattern(pattern)
+        if unwrapped.kind in {"wildcard", "binding"}:
+            return self._patterns_exhaustive_for_type(type_, previous)
+        case_name = self._pattern_case_name(unwrapped)
+        if case_name is None:
+            return False
+        return self._patterns_cover_case(type_, case_name, previous)
+
+    def _unwrap_capture_pattern(self, pattern: PatternResolution) -> PatternResolution:
+        while pattern.kind == "capture" and pattern.arguments:
+            pattern = pattern.arguments[0]
+        return pattern
+
+    def _pattern_case_name(self, pattern: PatternResolution) -> str | None:
+        if pattern.kind == "enum" and pattern.enum_member is not None:
+            return pattern.enum_member.name
+        if pattern.kind == "variant" and pattern.variant_case is not None:
+            return pattern.variant_case.name
+        if pattern.kind == "result":
+            return "Ok" if pattern.result_is_ok else "Err"
+        if pattern.kind == "option":
+            return "Some" if pattern.option_is_some else "None"
+        return None
+
+    def _constructor_payload_is_irrefutable(self, pattern: PatternResolution) -> bool:
+        if pattern.kind == "capture" and pattern.arguments:
+            return self._constructor_payload_is_irrefutable(pattern.arguments[0])
+        if pattern.kind in {"enum", "wildcard", "binding"}:
+            return True
+        if pattern.kind not in {"variant", "result", "option"}:
+            return False
+        return all(self._pattern_is_irrefutable(argument) for argument in pattern.arguments)
+
+    def _pattern_is_irrefutable(self, pattern: PatternResolution) -> bool:
+        unwrapped = self._unwrap_capture_pattern(pattern)
+        if unwrapped.kind in {"wildcard", "binding"}:
+            return True
+        if unwrapped.kind in {"enum", "variant", "result", "option"}:
+            case_names = self._match_case_names(unwrapped.type)
+            if len(case_names) != 1:
+                return False
+            return self._constructor_payload_is_irrefutable(unwrapped)
+        return False
 
     def _check_expr(self, expression: ast.Expression, expected: Type | None = None) -> Type:
         match expression:

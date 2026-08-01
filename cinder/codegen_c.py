@@ -28,6 +28,9 @@ from cinder.symbols import (
     FunctionSymbol,
     ModuleSymbol,
     NominalSymbol,
+    PatternAccessStep,
+    PatternBinding,
+    PatternResolution,
     StructSymbol,
     SymbolKind,
     UnionSymbol,
@@ -3716,34 +3719,60 @@ class CGenerator:
         resolution = self.semantic.match_resolutions[id(statement)]
         subject_type = resolution.value_type
         subject_name = self._new_temp("match")
+        matched_name = self._new_temp("match_found")
         subject_value = self._emit_with_expected(statement.value, subject_type)
 
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line(f"{c_decl(subject_type, subject_name)} = {subject_value};")
+        self.writer.line(f"bool {matched_name} = false;")
 
-        emitted_branch = False
-        wildcard_emitted = False
         for case, case_resolution in zip(statement.cases, resolution.cases, strict=True):
-            if case_resolution.kind == "invalid":
+            patterns = [pattern for pattern in case_resolution.patterns if pattern.kind != "invalid"]
+            if not patterns:
                 continue
-            if case_resolution.kind == "wildcard":
-                wildcard_emitted = True
-                self.writer.line("else" if emitted_branch else "if (true)")
-            else:
-                condition = self._match_condition(subject_name, subject_type, case_resolution)
-                keyword = "else if" if emitted_branch else "if"
-                self.writer.line(f"{keyword} ({condition})")
-            emitted_branch = True
+            case_matched_name = self._new_temp("case_match")
+            self.writer.line(f"if (!{matched_name})")
             self.writer.line("{")
             self.writer.indent += 1
-            self._emit_match_bindings(subject_name, case_resolution)
-            self._emit_block_contents(case.body, loop_body=False)
+            self.writer.line(f"bool {case_matched_name} = false;")
+            self._emit_match_binding_declarations(case_resolution.bindings)
+            for pattern in patterns:
+                condition = self._match_pattern_condition(subject_name, pattern)
+                self.writer.line(f"if (!{case_matched_name} && {condition})")
+                self.writer.line("{")
+                self.writer.indent += 1
+                self._emit_match_binding_assignments(subject_name, pattern)
+                self.writer.line(f"{case_matched_name} = true;")
+                self.writer.indent -= 1
+                self.writer.line("}")
+            self.writer.line(f"if ({case_matched_name})")
+            self.writer.line("{")
+            self.writer.indent += 1
+            if case.guard is not None:
+                guard = self._emit_condition(case.guard)
+                self.writer.line(f"if {guard}")
+                self.writer.line("{")
+                self.writer.indent += 1
+                self.writer.line(f"{matched_name} = true;")
+                self._emit_block_contents(case.body, loop_body=False)
+                self.writer.indent -= 1
+                self.writer.line("}")
+            else:
+                self.writer.line(f"{matched_name} = true;")
+                self._emit_block_contents(case.body, loop_body=False)
+            self.writer.indent -= 1
+            self.writer.line("}")
             self.writer.indent -= 1
             self.writer.line("}")
 
-        if resolution.exhaustive and emitted_branch and not wildcard_emitted:
-            self.writer.line("else")
+        final_wildcard = (
+            bool(statement.cases)
+            and statement.cases[-1].guard is None
+            and isinstance(statement.cases[-1].pattern, ast.WildcardPattern)
+        )
+        if resolution.exhaustive and not final_wildcard:
+            self.writer.line(f"if (!{matched_name})")
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line('cinder_panic("invalid tag in exhaustive match");')
@@ -3753,55 +3782,95 @@ class CGenerator:
         self.writer.indent -= 1
         self.writer.line("}")
 
-    def _match_condition(
-        self,
-        subject_name: str,
-        subject_type: Type,
-        case_resolution: object,
-    ) -> str:
-        from cinder.symbols import MatchCaseResolution
+    def _match_pattern_condition(self, source: str, pattern: PatternResolution) -> str:
+        if pattern.kind in {"wildcard", "binding"}:
+            return "true"
+        if pattern.kind == "capture":
+            if not pattern.arguments:
+                return "true"
+            return self._match_pattern_condition(source, pattern.arguments[0])
+        if pattern.kind == "enum":
+            assert pattern.enum_member is not None
+            return f"{source} == {c_identifier(pattern.enum_member.c_name)}"
+        if pattern.kind == "variant":
+            assert pattern.variant_case is not None
+            parts = [f"{source}.tag == {c_identifier(pattern.variant_case.c_name)}"]
+            fields = list(pattern.variant_case.fields.values())
+            for argument, field in zip(pattern.arguments, fields, strict=False):
+                nested = (
+                    f"{source}.data.{c_identifier(pattern.variant_case.name)}."
+                    f"{c_identifier(field.name)}"
+                )
+                parts.append(self._match_pattern_condition(nested, argument))
+            return "(" + " && ".join(parts) + ")"
+        if pattern.kind == "result":
+            assert isinstance(pattern.type, ResultType)
+            suffix = "Ok" if pattern.result_is_ok else "Err"
+            parts = [f"{source}.tag == {self._result_tag(pattern.type, suffix)}"]
+            if pattern.arguments:
+                nested = f"{source}.data.{'ok' if pattern.result_is_ok else 'err'}"
+                parts.append(self._match_pattern_condition(nested, pattern.arguments[0]))
+            return "(" + " && ".join(parts) + ")"
+        if pattern.kind == "option":
+            assert isinstance(pattern.type, OptionType)
+            suffix = "Some" if pattern.option_is_some else "None"
+            name = c_identifier(option_c_name(pattern.type))
+            parts = [f"{source}.tag == {name}_Tag_{suffix}"]
+            if pattern.arguments:
+                parts.append(self._match_pattern_condition(f"{source}.data.value", pattern.arguments[0]))
+            return "(" + " && ".join(parts) + ")"
+        raise AssertionError(f"invalid match pattern resolution {pattern.kind!r}")
 
-        assert isinstance(case_resolution, MatchCaseResolution)
-        if case_resolution.kind == "enum":
-            assert case_resolution.enum_member is not None
-            return f"{subject_name} == {c_identifier(case_resolution.enum_member.c_name)}"
-        if case_resolution.kind == "variant":
-            assert case_resolution.variant_case is not None
-            return f"{subject_name}.tag == {c_identifier(case_resolution.variant_case.c_name)}"
-        if case_resolution.kind == "result":
-            assert isinstance(subject_type, ResultType)
-            suffix = "Ok" if case_resolution.result_is_ok else "Err"
-            return f"{subject_name}.tag == {self._result_tag(subject_type, suffix)}"
-        if case_resolution.kind == "option":
-            assert isinstance(subject_type, OptionType)
-            suffix = "Some" if case_resolution.option_is_some else "None"
-            name = c_identifier(option_c_name(subject_type))
-            return f"{subject_name}.tag == {name}_Tag_{suffix}"
-        raise AssertionError(f"invalid match case resolution {case_resolution.kind!r}")
-
-    def _emit_match_bindings(
+    def _emit_match_binding_declarations(
         self,
-        subject_name: str,
-        case_resolution: object,
+        bindings: tuple[PatternBinding, ...],
     ) -> None:
-        from cinder.symbols import MatchCaseResolution
+        emitted: set[str] = set()
+        for binding in bindings:
+            binding_name = c_identifier(binding.symbol.c_name or binding.symbol.name)
+            if binding_name in emitted:
+                continue
+            emitted.add(binding_name)
+            self.writer.line(f"{c_decl(binding.symbol.type, binding_name)};")
 
-        assert isinstance(case_resolution, MatchCaseResolution)
-        for binding in case_resolution.bindings:
+    def _emit_match_binding_assignments(
+        self,
+        subject_name: str,
+        pattern: PatternResolution,
+    ) -> None:
+        emitted: set[str] = set()
+        for binding in pattern.bindings:
             if binding.symbol.name == "_":
                 continue
             binding_name = c_identifier(binding.symbol.c_name or binding.symbol.name)
-            if case_resolution.kind == "variant":
-                assert case_resolution.variant_case is not None
-                case_name = c_identifier(case_resolution.variant_case.name)
-                source = f"{subject_name}.data.{case_name}.{c_identifier(binding.field_name)}"
-            elif case_resolution.kind == "result":
-                source = f"{subject_name}.data.{'ok' if case_resolution.result_is_ok else 'err'}"
-            elif case_resolution.kind == "option":
-                source = f"{subject_name}.data.value"
+            if binding_name in emitted:
+                continue
+            emitted.add(binding_name)
+            source = self._pattern_access_expr(subject_name, binding.access)
+            self.writer.line(f"{binding_name} = {source};")
+
+    def _pattern_access_expr(
+        self,
+        subject_name: str,
+        access: tuple[PatternAccessStep, ...],
+    ) -> str:
+        source = subject_name
+        for step in access:
+            if step.kind == "variant_field":
+                assert step.case_name is not None and step.field_name is not None
+                source = (
+                    f"{source}.data.{c_identifier(step.case_name)}."
+                    f"{c_identifier(step.field_name)}"
+                )
+            elif step.kind == "result_ok":
+                source = f"{source}.data.ok"
+            elif step.kind == "result_err":
+                source = f"{source}.data.err"
+            elif step.kind == "option_value":
+                source = f"{source}.data.value"
             else:
-                raise AssertionError("only payload cases may bind values")
-            self.writer.line(f"{c_decl(ConstType(binding.symbol.type), binding_name)} = {source};")
+                raise AssertionError(f"unknown pattern access step {step.kind!r}")
+        return source
     def _emit_for_each(self, statement: ast.ForEachStmt) -> None:
         if statement.is_comptime:
             self._emit_comptime_for_each(statement)

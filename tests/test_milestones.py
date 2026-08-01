@@ -106,6 +106,96 @@ def test_variant_pattern_payload_arity_is_checked() -> None:
     assert "expects 2 bindings, got 1" in str(captured.value)
 
 
+def test_match_supports_nested_patterns_guards_or_patterns_and_captures() -> None:
+    generated = compile_source(
+        "enum Error:\n"
+        "    invalid\n"
+        "\n"
+        "def consume(value: Option[Result[i32, Error]]) -> i32:\n"
+        "    match value:\n"
+        "        case Some(Ok(score)) if score > 0:\n"
+        "            return score\n"
+        "        case Some(Err(_)) | None:\n"
+        "            return 0\n"
+        "        case whole @ Some(Ok(fallback)):\n"
+        "            if whole.is_some:\n"
+        "                return fallback\n"
+        "            return 1\n"
+    )
+    assert "bool __cinder_match_found" in generated
+    assert ".data.value.data.ok" in generated
+    assert "Tag_Err" in generated
+
+
+def test_match_allows_repeated_discards_in_payloads() -> None:
+    generated = compile_source(
+        "variant Pair:\n"
+        "    Values(left: i32, right: i32)\n"
+        "\n"
+        "def consume(pair: Pair) -> i32:\n"
+        "    match pair:\n"
+        "        case Values(_, _):\n"
+        "            return 1\n"
+    )
+    assert "Pair_Tag_Values" in generated
+
+
+def test_match_exhaustiveness_covers_cartesian_payload_products() -> None:
+    generated = compile_source(
+        "variant PairOptions:\n"
+        "    Both(left: Option[i32], right: Option[i32])\n"
+        "\n"
+        "def consume(value: PairOptions) -> i32:\n"
+        "    match value:\n"
+        "        case Both(Some(left), Some(right)):\n"
+        "            return left + right\n"
+        "        case Both(Some(left), None):\n"
+        "            return left\n"
+        "        case Both(None, Some(right)):\n"
+        "            return right\n"
+        "        case Both(None, None):\n"
+        "            return 0\n"
+    )
+    assert "PairOptions_Tag_Both" in generated
+
+
+def test_match_guarded_cases_do_not_satisfy_exhaustiveness() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def consume(value: Option[i32]) -> i32:\n"
+            "    match value:\n"
+            "        case Some(number) if number > 0:\n"
+            "            return number\n"
+            "        case None:\n"
+            "            return 0\n"
+        )
+    assert "non-exhaustive match; missing Some" in str(captured.value)
+
+
+def test_or_pattern_alternatives_must_bind_the_same_names() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "def consume(value: Option[i32]) -> i32:\n"
+            "    match value:\n"
+            "        case Some(number) | None:\n"
+            "            return number\n"
+        )
+    assert "or-pattern alternatives must bind the same names" in str(captured.value)
+
+
+def test_partially_covered_or_pattern_case_remains_reachable() -> None:
+    generated = compile_source(
+        "def consume(result: Result[i32, i32]) -> i32:\n"
+        "    match result:\n"
+        "        case Ok(_):\n"
+        "            return 0\n"
+        "        case Ok(value) | Err(value):\n"
+        "            return value\n"
+    )
+    assert "Tag_Ok" in generated
+    assert "Tag_Err" in generated
+
+
 def test_result_propagation_requires_a_result_return_type() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(

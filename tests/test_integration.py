@@ -83,6 +83,44 @@ def test_c_header_interop(tmp_path: Path) -> None:
     assert result.stdout == "A\n"
 
 
+def test_expressive_match_program(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "enum Error:\n"
+        "    invalid\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    value: Option[Result[i32, Error]] = Some(Ok(4))\n"
+        "    match value:\n"
+        "        case Some(Ok(score)) if score > 3:\n"
+        "            return score - 4\n"
+        "        case Some(Ok(_)):\n"
+        "            return 1\n"
+        "        case Some(Err(_)) | None:\n"
+        "            return 2\n",
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_guarded_or_pattern_evaluates_guard_once(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "variant Pair:\n"
+        "    Both(left: Option[i32], right: Option[i32])\n"
+        "\n"
+        "def classify(pair: Pair) -> i32:\n"
+        "    match pair:\n"
+        "        case Both(Some(x), _) | Both(_, Some(x)) if x == 2:\n"
+        "            return 10\n"
+        "        case Both(_, _):\n"
+        "            return 1\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return classify(Pair.Both(left=Some(1), right=Some(2))) - 1\n",
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_runtime_wall_time_returns_fractional_seconds(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

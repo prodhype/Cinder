@@ -694,7 +694,21 @@ match result:
 ```
 
 Every case must be covered. A final `_` wildcard can cover the remaining cases;
-guards, literal patterns, and nested patterns are not implemented.
+guards can refine a case but do not count toward exhaustiveness by themselves.
+Patterns can destructure nested algebraic values, combine alternatives with `|`,
+discard payload fields with `_`, and capture a value with `name @ pattern`.
+Literal patterns, tuple destructuring, struct destructuring, and match expressions
+are not implemented.
+
+```python
+match value:
+    case Some(Ok(score)) if score > 0:
+        use(score)
+    case Some(Err(_)) | None:
+        recover()
+    case original @ Some(Ok(_)):
+        inspect(original)
+```
 
 Enums use distinct integer values:
 
