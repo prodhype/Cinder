@@ -140,6 +140,25 @@ def test_match_allows_repeated_discards_in_payloads() -> None:
     assert "Pair_Tag_Values" in generated
 
 
+def test_match_exhaustiveness_covers_cartesian_payload_products() -> None:
+    generated = compile_source(
+        "variant PairOptions:\n"
+        "    Both(left: Option[i32], right: Option[i32])\n"
+        "\n"
+        "def consume(value: PairOptions) -> i32:\n"
+        "    match value:\n"
+        "        case Both(Some(left), Some(right)):\n"
+        "            return left + right\n"
+        "        case Both(Some(left), None):\n"
+        "            return left\n"
+        "        case Both(None, Some(right)):\n"
+        "            return right\n"
+        "        case Both(None, None):\n"
+        "            return 0\n"
+    )
+    assert "PairOptions_Tag_Both" in generated
+
+
 def test_match_guarded_cases_do_not_satisfy_exhaustiveness() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(

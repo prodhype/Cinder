@@ -4208,23 +4208,11 @@ class Checker:
         case_name: str,
         patterns: list[PatternResolution],
     ) -> bool:
-        matching: list[PatternResolution] = []
+        payload_types = self._case_payload_types(type_, case_name)
+        rows: list[tuple[PatternResolution, ...]] = []
         for pattern in patterns:
-            unwrapped = self._unwrap_capture_pattern(pattern)
-            if unwrapped.kind in {"wildcard", "binding"}:
-                return True
-            if self._pattern_case_name(unwrapped) == case_name:
-                matching.append(unwrapped)
-
-        if any(self._constructor_payload_is_irrefutable(pattern) for pattern in matching):
-            return True
-        if not matching:
-            return False
-        if len(matching[0].arguments) != 1:
-            return False
-        nested_type = matching[0].arguments[0].type
-        nested_patterns = [pattern.arguments[0] for pattern in matching if pattern.arguments]
-        return self._patterns_exhaustive_for_type(nested_type, nested_patterns)
+            rows.extend(self._pattern_residuals_for_case(pattern, type_, case_name))
+        return self._pattern_rows_cover_product(payload_types, rows)
 
     def _patterns_exhaustive_for_type(
         self,
@@ -4237,7 +4225,71 @@ class Checker:
                 self._unwrap_capture_pattern(pattern).kind in {"wildcard", "binding"}
                 for pattern in patterns
             )
-        return all(self._patterns_cover_case(type_, case_name, patterns) for case_name in case_names)
+        rows = [(pattern,) for pattern in patterns]
+        return self._pattern_rows_cover_product((type_,), rows)
+
+    def _pattern_rows_cover_product(
+        self,
+        types: tuple[Type, ...],
+        rows: list[tuple[PatternResolution, ...]],
+    ) -> bool:
+        if not rows:
+            return False
+        if not types:
+            return True
+
+        first_type = types[0]
+        remaining_types = types[1:]
+        case_names = self._match_case_names(first_type)
+        if not case_names:
+            residual_rows = [
+                row[1:]
+                for row in rows
+                if row and self._pattern_is_irrefutable(row[0])
+            ]
+            return self._pattern_rows_cover_product(remaining_types, residual_rows)
+
+        for case_name in case_names:
+            payload_types = self._case_payload_types(first_type, case_name)
+            residual_rows: list[tuple[PatternResolution, ...]] = []
+            for row in rows:
+                if not row:
+                    continue
+                for residual in self._pattern_residuals_for_case(row[0], first_type, case_name):
+                    residual_rows.append(residual + row[1:])
+            if not self._pattern_rows_cover_product(payload_types + remaining_types, residual_rows):
+                return False
+        return True
+
+    def _pattern_residuals_for_case(
+        self,
+        pattern: PatternResolution,
+        type_: Type,
+        case_name: str,
+    ) -> list[tuple[PatternResolution, ...]]:
+        unwrapped = self._unwrap_capture_pattern(pattern)
+        payload_types = self._case_payload_types(type_, case_name)
+        if unwrapped.kind in {"wildcard", "binding"}:
+            return [tuple(PatternResolution("wildcard", payload_type) for payload_type in payload_types)]
+        if self._pattern_case_name(unwrapped) != case_name:
+            return []
+        if len(unwrapped.arguments) != len(payload_types):
+            return []
+        return [unwrapped.arguments]
+
+    def _case_payload_types(self, type_: Type, case_name: str) -> tuple[Type, ...]:
+        nominal = self.nominal_symbols.get(type_)
+        if isinstance(nominal, VariantSymbol):
+            variant_case = nominal.cases.get(case_name)
+            if variant_case is None:
+                return ()
+            return tuple(field.type for field in variant_case.fields.values())
+        if isinstance(type_, ResultType):
+            payload_type = type_.ok if case_name == "Ok" else type_.error
+            return () if is_void(payload_type) else (payload_type,)
+        if isinstance(type_, OptionType):
+            return (type_.inner,) if case_name == "Some" else ()
+        return ()
 
     def _pattern_covered_by_patterns(
         self,

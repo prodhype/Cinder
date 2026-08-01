@@ -102,6 +102,25 @@ def test_expressive_match_program(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_guarded_or_pattern_evaluates_guard_once(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "variant Pair:\n"
+        "    Both(left: Option[i32], right: Option[i32])\n"
+        "\n"
+        "def classify(pair: Pair) -> i32:\n"
+        "    match pair:\n"
+        "        case Both(Some(x), _) | Both(_, Some(x)) if x == 2:\n"
+        "            return 10\n"
+        "        case Both(_, _):\n"
+        "            return 1\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return classify(Pair.Both(left=Some(1), right=Some(2))) - 1\n",
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_runtime_wall_time_returns_fractional_seconds(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

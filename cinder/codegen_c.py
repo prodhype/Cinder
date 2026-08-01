@@ -29,6 +29,7 @@ from cinder.symbols import (
     ModuleSymbol,
     NominalSymbol,
     PatternAccessStep,
+    PatternBinding,
     PatternResolution,
     StructSymbol,
     SymbolKind,
@@ -3727,28 +3728,43 @@ class CGenerator:
         self.writer.line(f"bool {matched_name} = false;")
 
         for case, case_resolution in zip(statement.cases, resolution.cases, strict=True):
-            for pattern in case_resolution.patterns:
-                if pattern.kind == "invalid":
-                    continue
+            patterns = [pattern for pattern in case_resolution.patterns if pattern.kind != "invalid"]
+            if not patterns:
+                continue
+            case_matched_name = self._new_temp("case_match")
+            self.writer.line(f"if (!{matched_name})")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(f"bool {case_matched_name} = false;")
+            self._emit_match_binding_declarations(case_resolution.bindings)
+            for pattern in patterns:
                 condition = self._match_pattern_condition(subject_name, pattern)
-                self.writer.line(f"if (!{matched_name} && {condition})")
+                self.writer.line(f"if (!{case_matched_name} && {condition})")
                 self.writer.line("{")
                 self.writer.indent += 1
-                self._emit_match_bindings(subject_name, pattern)
-                if case.guard is not None:
-                    guard = self._emit_condition(case.guard)
-                    self.writer.line(f"if {guard}")
-                    self.writer.line("{")
-                    self.writer.indent += 1
-                    self.writer.line(f"{matched_name} = true;")
-                    self._emit_block_contents(case.body, loop_body=False)
-                    self.writer.indent -= 1
-                    self.writer.line("}")
-                else:
-                    self.writer.line(f"{matched_name} = true;")
-                    self._emit_block_contents(case.body, loop_body=False)
+                self._emit_match_binding_assignments(subject_name, pattern)
+                self.writer.line(f"{case_matched_name} = true;")
                 self.writer.indent -= 1
                 self.writer.line("}")
+            self.writer.line(f"if ({case_matched_name})")
+            self.writer.line("{")
+            self.writer.indent += 1
+            if case.guard is not None:
+                guard = self._emit_condition(case.guard)
+                self.writer.line(f"if {guard}")
+                self.writer.line("{")
+                self.writer.indent += 1
+                self.writer.line(f"{matched_name} = true;")
+                self._emit_block_contents(case.body, loop_body=False)
+                self.writer.indent -= 1
+                self.writer.line("}")
+            else:
+                self.writer.line(f"{matched_name} = true;")
+                self._emit_block_contents(case.body, loop_body=False)
+            self.writer.indent -= 1
+            self.writer.line("}")
+            self.writer.indent -= 1
+            self.writer.line("}")
 
         final_wildcard = (
             bool(statement.cases)
@@ -3805,7 +3821,19 @@ class CGenerator:
             return "(" + " && ".join(parts) + ")"
         raise AssertionError(f"invalid match pattern resolution {pattern.kind!r}")
 
-    def _emit_match_bindings(
+    def _emit_match_binding_declarations(
+        self,
+        bindings: tuple[PatternBinding, ...],
+    ) -> None:
+        emitted: set[str] = set()
+        for binding in bindings:
+            binding_name = c_identifier(binding.symbol.c_name or binding.symbol.name)
+            if binding_name in emitted:
+                continue
+            emitted.add(binding_name)
+            self.writer.line(f"{c_decl(binding.symbol.type, binding_name)};")
+
+    def _emit_match_binding_assignments(
         self,
         subject_name: str,
         pattern: PatternResolution,
@@ -3819,7 +3847,7 @@ class CGenerator:
                 continue
             emitted.add(binding_name)
             source = self._pattern_access_expr(subject_name, binding.access)
-            self.writer.line(f"{c_decl(ConstType(binding.symbol.type), binding_name)} = {source};")
+            self.writer.line(f"{binding_name} = {source};")
 
     def _pattern_access_expr(
         self,
