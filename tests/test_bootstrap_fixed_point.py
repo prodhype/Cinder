@@ -9,7 +9,6 @@ import pytest
 
 from cinder.compiler import Compiler
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -173,6 +172,28 @@ def test_gen1_check_and_emit_c(
     assert emitted.returncode == 0, emitted.stderr
     assert "int main(void)" in emitted.stdout
     assert "return 42;" in emitted.stdout
+
+
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        'def main() -> i32:\n    return "unterminated\n',
+        "def main() -> i32\n",
+    ],
+)
+def test_gen1_check_rejects_lexer_and_parser_diagnostics(
+    gen1_compiler: Path,
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "invalid.ci"
+    source.write_text(source_text, encoding="utf-8")
+
+    checked = run_gen1(gen1_compiler, "check", str(source))
+
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E ")
+    assert "ok:" not in checked.stdout
 
 
 def test_gen1_check_is_native_and_does_not_require_python_on_path(

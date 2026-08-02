@@ -53,6 +53,10 @@ struct Parser:
             )
         self.failed = true
 
+    def dump_diagnostics(self: &const Parser) -> void:
+        for diagnostic in self.diagnostics:
+            print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+
     def expect(self: &Parser, kind: TokenKind, code: i32) -> Token:
         if self.at(kind):
             return self.advance()
@@ -1057,8 +1061,7 @@ def parse_and_dump(source: String) -> i32:
     parser = new_parser(scan)
     root = parser.parse_module()
     if len(parser.diagnostics) > 0:
-        for diagnostic in parser.diagnostics:
-            print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+        parser.dump_diagnostics()
         return 1
     parser.arena.dump(root)
     return 0

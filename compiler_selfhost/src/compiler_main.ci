@@ -149,8 +149,14 @@ def check_graph(graph: &const project.ProjectGraph) -> bool:
     while index < len(graph.modules):
         scan = lexer.new_lexer(graph.modules[index].source[0:len(graph.modules[index].source)])
         scan.tokenize()
+        if len(scan.diagnostics) > 0:
+            scan.dump()
+            return false
         parsed = parser.new_parser(scan)
         root = parsed.parse_module()
+        if len(parsed.diagnostics) > 0:
+            parsed.dump_diagnostics()
+            return false
         check = checker.new_checker()
         checker.collect_symbols(check, parsed.arena, root, graph.modules[index].source)
         checker.validate_names(check, parsed.arena, root, graph.modules[index].source)
