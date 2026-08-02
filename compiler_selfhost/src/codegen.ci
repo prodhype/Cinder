@@ -1002,14 +1002,41 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &const ModuleCo
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
         return true
+    if node.kind == SyntaxKind.EXPR_SLICE:
+        return true
+    if node.kind == SyntaxKind.EXPR_BINARY and node.flags == cast[i32](token.TokenKind.PLUS):
+        return expression_may_be_string(arena, context, first_child(arena, id), source) or expression_may_be_string(arena, context, second_child(arena, id), source)
     expr_type = context_expression_type(arena, context, id, source)
     if expr_type.index >= 0:
         type_node = arena.nodes[expr_type.index]
         if type_node.kind == SyntaxKind.TYPE_NAME and range_text_equals(source, type_node.value_start, type_node.value_length, "String"):
             return true
     if node.kind == SyntaxKind.EXPR_NAME:
-        return range_text_equals(source, node.value_start, node.value_length, "command") or range_text_equals(source, node.value_start, node.value_length, "output") or range_text_equals(source, node.value_start, node.value_length, "path") or range_text_equals(source, node.value_start, node.value_length, "source") or range_text_equals(source, node.value_start, node.value_length, "message") or range_text_equals(source, node.value_start, node.value_length, "text")
+        return range_text_equals(source, node.value_start, node.value_length, "command") or range_text_equals(source, node.value_start, node.value_length, "output") or range_text_equals(source, node.value_start, node.value_length, "path") or range_text_equals(source, node.value_start, node.value_length, "source") or range_text_equals(source, node.value_start, node.value_length, "message") or range_text_equals(source, node.value_start, node.value_length, "text") or range_text_equals(source, node.value_start, node.value_length, "alias") or range_text_equals(source, node.value_start, node.value_length, "module_name") or range_text_equals(source, node.value_start, node.value_length, "member")
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        member = second_child(arena, id)
+        if member.index >= 0:
+            member_node = arena.nodes[member.index]
+            return range_text_equals(source, member_node.value_start, member_node.value_length, "alias") or range_text_equals(source, member_node.value_start, member_node.value_length, "module_name") or range_text_equals(source, member_node.value_start, member_node.value_length, "member") or range_text_equals(source, member_node.value_start, member_node.value_length, "name") or range_text_equals(source, member_node.value_start, member_node.value_length, "source") or range_text_equals(source, member_node.value_start, member_node.value_length, "path")
     return false
+
+
+def emit_string_value_expression(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &ModuleCodegenContext,
+) -> void:
+    if context_expression_is_pointer_like(arena, context, id, source):
+        builder.append("*(")
+        emit_module_expression(arena, id, source, builder, prefix, project_name, imports, context)
+        builder.append(")")
+        return
+    emit_module_expression(arena, id, source, builder, prefix, project_name, imports, context)
 
 
 def is_type_kind(kind: SyntaxKind) -> bool:
@@ -1485,6 +1512,11 @@ def emit_module_for_each(
     if element_type.index >= 0:
         register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, element_type)
     emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+    if element_type.index >= 0:
+        target_name = source[target_node.value_start:target_node.value_start + target_node.value_length]
+        emit_context_drop(arena, element_type, source, builder, &target_name)
+        if len(context.local_types) > 0:
+            context.local_types.pop()
     builder.append("    }\n")
 
 
@@ -1603,9 +1635,9 @@ def emit_module_expression(
         if node.flags == cast[i32](token.TokenKind.EQUAL):
             if expression_may_be_string(arena, context, first_child(arena, id), source) or expression_may_be_string(arena, context, second_child(arena, id), source):
                 builder.append("cinder_selfhost_string_equal(")
-                emit_module_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
+                emit_string_value_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
                 builder.append(", ")
-                emit_module_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
+                emit_string_value_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
                 builder.append(")")
                 return
             builder.append("(")
@@ -1616,9 +1648,9 @@ def emit_module_expression(
             return
         if node.flags == cast[i32](token.TokenKind.PLUS) and (expression_may_be_string(arena, context, first_child(arena, id), source) or expression_may_be_string(arena, context, second_child(arena, id), source)):
             builder.append("cinder_selfhost_string_concat(")
-            emit_module_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
+            emit_string_value_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
             builder.append(", ")
-            emit_module_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
+            emit_string_value_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
             builder.append(")")
             return
         emit_module_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
@@ -1727,7 +1759,7 @@ def emit_module_call(
             if emitted_argument:
                 builder.append(", ")
             arg = last_child(arena, child_id)
-            if should_borrow_named_argument(arena, context, arg, source):
+            if (should_borrow_named_argument(arena, context, arg, source) or should_borrow_for_callee(arena, callee, arg, source)) and not call_is_name(arena, callee, source, "dump_summary"):
                 builder.append("&")
             emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
             emitted_argument = true
@@ -1855,6 +1887,15 @@ def emit_open_call(
 ) -> void:
     path = first_call_argument(arena, id)
     mode = second_call_argument(arena, id)
+    if path.index >= 0:
+        path_node = arena.nodes[path.index]
+        if path_node.kind == SyntaxKind.EXPR_LITERAL and path_node.flags == cast[i32](token.TokenKind.STRING):
+            builder.append("fopen(")
+            append_source(builder, source, path_node.value_start, path_node.value_length)
+            builder.append(", ")
+            emit_c_string_argument(arena, mode, source, builder, prefix, project_name, imports, context)
+            builder.append(")")
+            return
     builder.append("fopen(cinder_string_cstr(")
     if not context_expression_is_pointer_like(arena, context, path, source):
         builder.append("&")
@@ -1908,7 +1949,10 @@ def emit_attribute_call(
                 builder.append(c_prefix(project_name, &imported.module_name))
                 append_source(builder, source, member_node.value_start, member_node.value_length)
                 builder.append("(")
-                emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context)
+                if member_name == "dump_summary":
+                    emit_module_expression(arena, first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context)
+                else:
+                    emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context)
                 builder.append(")")
                 return
     if member_name == "append":
@@ -1969,15 +2013,19 @@ def emit_builder_append_call(
 ) -> void:
     arg_node = arena.nodes[arg.index]
     if arg_node.kind == SyntaxKind.EXPR_LITERAL and arg_node.flags == cast[i32](token.TokenKind.STRING):
-        builder.append("cinder_selfhost_string_builder_append_cstr(&")
+        builder.append("cinder_selfhost_string_builder_append_cstr(")
+        if not context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
         emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
         builder.append(", ")
         append_source(builder, source, arg_node.value_start, arg_node.value_length)
         builder.append(")")
     else:
-        builder.append("cinder_string_builder_append(&")
+        builder.append("cinder_selfhost_string_builder_append_value(")
+        if not context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
         emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
-        builder.append(", &")
+        builder.append(", ")
         emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
         builder.append(")")
 
@@ -2100,9 +2148,17 @@ def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source:
         return "cinder_cinder_selfhost_types__TypeRecord"
     if owner == "TypeTable" and member_name == "type_args":
         return "cinder_cinder_selfhost_types__TypeId"
+    if member_name == "types":
+        return "cinder_cinder_selfhost_types__TypeRecord"
+    if member_name == "type_args":
+        return "cinder_cinder_selfhost_types__TypeId"
     if owner == "SymbolTable" and member_name == "symbols":
         return "cinder_cinder_selfhost_symbols__SymbolRecord"
     if owner == "SymbolTable" and member_name == "scopes":
+        return "cinder_cinder_selfhost_symbols__ScopeRecord"
+    if member_name == "symbols":
+        return "cinder_cinder_selfhost_symbols__SymbolRecord"
+    if member_name == "scopes":
         return "cinder_cinder_selfhost_symbols__ScopeRecord"
     if owner == "Lexer" and member_name == "tokens":
         return "cinder_cinder_selfhost_token__Token"
@@ -2260,14 +2316,32 @@ def should_borrow_named_argument(arena: &const SyntaxArena, context: &const Modu
     if context_expression_is_pointer_like(arena, context, id, source):
         return false
     if node.kind == SyntaxKind.EXPR_NAME:
-        return range_text_equals(source, node.value_start, node.value_length, "summary") or range_text_equals(source, node.value_start, node.value_length, "module") or range_text_equals(source, node.value_start, node.value_length, "args") or range_text_equals(source, node.value_start, node.value_length, "child_nodes") or range_text_equals(source, node.value_start, node.value_length, "builder") or range_text_equals(source, node.value_start, node.value_length, "context") or range_text_equals(source, node.value_start, node.value_length, "check") or range_text_equals(source, node.value_start, node.value_length, "scan") or range_text_equals(source, node.value_start, node.value_length, "parsed")
+        return range_text_equals(source, node.value_start, node.value_length, "summary") or range_text_equals(source, node.value_start, node.value_length, "module") or range_text_equals(source, node.value_start, node.value_length, "child_nodes") or range_text_equals(source, node.value_start, node.value_length, "builder") or range_text_equals(source, node.value_start, node.value_length, "context") or range_text_equals(source, node.value_start, node.value_length, "check") or range_text_equals(source, node.value_start, node.value_length, "checker") or range_text_equals(source, node.value_start, node.value_length, "ir") or range_text_equals(source, node.value_start, node.value_length, "scan") or range_text_equals(source, node.value_start, node.value_length, "parsed")
     if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
         member = second_child(arena, id)
         if member.index < 0:
             return false
         member_node = arena.nodes[member.index]
-        return range_text_equals(source, member_node.value_start, member_node.value_length, "type_table") or range_text_equals(source, member_node.value_start, member_node.value_length, "symbols") or range_text_equals(source, member_node.value_start, member_node.value_length, "model") or range_text_equals(source, member_node.value_start, member_node.value_length, "arena") or range_text_equals(source, member_node.value_start, member_node.value_length, "native")
+        return range_text_equals(source, member_node.value_start, member_node.value_length, "type_table") or range_text_equals(source, member_node.value_start, member_node.value_length, "symbols") or range_text_equals(source, member_node.value_start, member_node.value_length, "model") or range_text_equals(source, member_node.value_start, member_node.value_length, "arena") or range_text_equals(source, member_node.value_start, member_node.value_length, "native") or range_text_equals(source, member_node.value_start, member_node.value_length, "source")
     return false
+
+
+def call_is_name(arena: &const SyntaxArena, callee: NodeId, source: &const String, name: String) -> bool:
+    if callee.index < 0:
+        return false
+    node = arena.nodes[callee.index]
+    return node.kind == SyntaxKind.EXPR_NAME and range_text_equals(source, node.value_start, node.value_length, name)
+
+
+def should_borrow_for_callee(arena: &const SyntaxArena, callee: NodeId, arg: NodeId, source: &const String) -> bool:
+    if arg.index < 0:
+        return false
+    arg_node = arena.nodes[arg.index]
+    if arg_node.kind != SyntaxKind.EXPR_NAME:
+        return false
+    if not range_text_equals(source, arg_node.value_start, arg_node.value_length, "args"):
+        return false
+    return call_is_name(arena, callee, source, "tuple_from_args") or call_is_name(arena, callee, source, "function_from_args") or call_is_name(arena, callee, source, "closure_from_args")
 
 
 def emit_remaining_call_arguments(
