@@ -238,14 +238,15 @@ struct TypeTable:
         node = arena.nodes[id.index]
         args: List[TypeId] = []
         offset: i32 = 0
+        environment = type_error()
+        if is_closure and node.child_count > 0:
+            environment = self.resolve_type_node(arena, child_at(arena, id, 0), source)
+            offset = 1
         while offset < node.child_count:
             child_id = child_at(arena, id, offset)
             if offset + 1 == node.child_count:
                 return_type = self.resolve_type_node(arena, child_id, source)
                 if is_closure:
-                    environment = type_error()
-                    if node.child_count > 0:
-                        environment = self.resolve_type_node(arena, child_at(arena, id, 0), source)
                     return self.closure_from_args(environment, args, return_type)
                 return self.function_from_args(args, return_type)
             args.append(self.resolve_type_node(arena, child_id, source))

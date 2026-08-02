@@ -75,6 +75,7 @@ def compile_c11(
     while index < len(ldflags):
         command.append(ldflags[index][0:len(ldflags[index])])
         index += 1
+    command.append("-lm")
 
     result = process.run(command)
     return ToolchainResult(
@@ -86,10 +87,37 @@ def compile_c11(
     )
 
 
-def runtime_root() -> String:
+def runtime_root(executable_path: &const String) -> String:
     relative: String = "cinder/runtime"
+    if has_runtime(&relative):
+        return relative[0:len(relative)]
+
+    binary_dir = fs.parent_dir(executable_path)
+    candidate = fs.join_path(&binary_dir, &relative)
+    if has_runtime(&candidate):
+        return candidate[0:len(candidate)]
+
+    parent = fs.parent_dir(&binary_dir)
+    candidate = fs.join_path(&parent, &relative)
+    if has_runtime(&candidate):
+        return candidate[0:len(candidate)]
+
+    grandparent = fs.parent_dir(&parent)
+    candidate = fs.join_path(&grandparent, &relative)
+    if has_runtime(&candidate):
+        return candidate[0:len(candidate)]
+
+    great_grandparent = fs.parent_dir(&grandparent)
+    candidate = fs.join_path(&great_grandparent, &relative)
+    if has_runtime(&candidate):
+        return candidate[0:len(candidate)]
+
+    return relative[0:len(relative)]
+
+
+def has_runtime(root: &const String) -> bool:
     runtime_c_name: String = "cinder_runtime.c"
-    runtime_c = fs.join_path(&relative, &runtime_c_name)
-    if fs.file_exists(&runtime_c):
-        return relative
-    return "/Volumes/Shelfy/Code/Cinder/cinder/runtime"
+    runtime_h_name: String = "cinder_runtime.h"
+    runtime_c = fs.join_path(root, &runtime_c_name)
+    runtime_h = fs.join_path(root, &runtime_h_name)
+    return fs.file_exists(&runtime_c) and fs.file_exists(&runtime_h)

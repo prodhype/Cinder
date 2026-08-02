@@ -29,6 +29,7 @@ def main(argc: i32, argv: **char) -> i32:
     for index in range(2, argc):
         args.append(String(argv[index]))
 
+    executable_path = String(argv[0])
     options = parse_options(args)
     if len(options.source) == 0:
         stderr("project error: missing source path\n")
@@ -70,10 +71,10 @@ def main(argc: i32, argv: **char) -> i32:
         return 0
 
     if command == "build":
-        return build_command(&loaded, &options, false)
+        return build_command(&loaded, &options, false, &executable_path)
 
     if command == "run":
-        return build_command(&loaded, &options, true)
+        return build_command(&loaded, &options, true, &executable_path)
 
     stderr("project error: unknown command " + command + "\n")
     return 2
@@ -175,7 +176,12 @@ def check_graph(graph: &const project.ProjectGraph) -> bool:
     return true
 
 
-def build_command(graph: &const project.ProjectGraph, options: &const DriverOptions, run_after: bool) -> i32:
+def build_command(
+    graph: &const project.ProjectGraph,
+    options: &const DriverOptions,
+    run_after: bool,
+    executable_path: &const String,
+) -> i32:
     if not check_graph(graph):
         return 1
     output = options.output[0:len(options.output)]
@@ -190,7 +196,7 @@ def build_command(graph: &const project.ProjectGraph, options: &const DriverOpti
     if not emitted.ok:
         stderr("project error: " + emitted.error + "\n")
         return 2
-    runtime = toolchain.runtime_root()
+    runtime = toolchain.runtime_root(executable_path)
     result = toolchain.compile_c11(
         options.compiler[0:len(options.compiler)],
         &emitted.sources,
