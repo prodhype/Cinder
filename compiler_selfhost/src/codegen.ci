@@ -9,6 +9,7 @@ from syntax import NodeId, SyntaxArena, SyntaxKind
 struct ModuleNameTypeBinding:
     name: String
     type_id: NodeId
+    moved: bool
 
 
 struct ModuleFieldTypeBinding:
@@ -105,6 +106,9 @@ def emit_common_support(builder: &StringBuilder) -> void:
     builder.append("    return builder;\n")
     builder.append("}\n")
     builder.append("#define cinder_selfhost_string_builder_append_value(builder, value) do { __auto_type cinder_value = (value); cinder_string_builder_append((builder), &cinder_value); } while (0)\n")
+    builder.append("static inline uint8_t cinder_selfhost_string_byte_at_value(CinderString value, size_t index) { return cinder_string_byte_at(&value, index); }\n")
+    builder.append("static inline void cinder_selfhost_print_string_value(CinderString value, bool first) { printf(first ? \"%s\" : \" %s\", cinder_string_cstr(&value)); }\n")
+    builder.append("static inline void cinder_selfhost_print_integer_value(long long value, bool first) { printf(first ? \"%lld\" : \" %lld\", value); }\n")
     builder.append("static inline CinderString cinder_selfhost_string_concat(CinderString left, CinderString right) {\n")
     builder.append("    CinderStringBuilder builder;\n")
     builder.append("    cinder_string_builder_init(&builder);\n")
@@ -806,10 +810,9 @@ def register_context_name_type(arena: &const SyntaxArena, context: &ModuleCodege
     if length == 0:
         return
     name = source[start:start + length]
-    if type_id.index >= 0:
-        context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id))
-        if context_type_is_pointer_like(arena, type_id):
-            context.pointer_names.append(name[0:len(name)])
+    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false))
+    if type_id.index >= 0 and context_type_is_pointer_like(arena, type_id):
+        context.pointer_names.append(name[0:len(name)])
 
 
 def register_context_pointer_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
@@ -836,6 +839,71 @@ def context_name_type(context: &const ModuleCodegenContext, name: &const String)
     return syntax.missing_node()
 
 
+def context_type_needs_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return false
+    if node.kind == SyntaxKind.TYPE_NAME:
+        return range_text_equals(source, node.value_start, node.value_length, "String") or range_text_equals(source, node.value_start, node.value_length, "StringBuilder")
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = first_child(arena, type_id)
+        if base.index < 0:
+            return false
+        base_node = arena.nodes[base.index]
+        return range_text_equals(source, base_node.value_start, base_node.value_length, "List")
+    return false
+
+
+def mark_context_expression_moved(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_NAME:
+        return
+    name = source[node.value_start:node.value_start + node.value_length]
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if context.local_types[index].name == name[0:len(name)]:
+            if context_type_needs_drop(arena, context.local_types[index].type_id, source):
+                context.local_types[index].moved = true
+            return
+
+
+def mark_context_expression_live(context: &ModuleCodegenContext, id: NodeId, arena: &const SyntaxArena, source: &const String) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_NAME:
+        return
+    name = source[node.value_start:node.value_start + node.value_length]
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if context.local_types[index].name == name[0:len(name)]:
+            context.local_types[index].moved = false
+            return
+
+
+def context_has_name(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> bool:
+    if length == 0:
+        return false
+    name = source[start:start + length]
+    local_index = len(context.local_types)
+    while local_index > context.local_start:
+        local_index -= 1
+        if context.local_types[local_index].name == name[0:len(name)]:
+            return true
+    pointer_index = len(context.pointer_names)
+    while pointer_index > context.pointer_start:
+        pointer_index -= 1
+        if context.pointer_names[pointer_index] == name[0:len(name)]:
+            return true
+    return false
+
+
 def context_name_is_pointer(arena: &const SyntaxArena, context: &const ModuleCodegenContext, name: &const String) -> bool:
     pointer_index = len(context.pointer_names)
     while pointer_index > context.pointer_start:
@@ -851,6 +919,21 @@ def context_type_is_pointer_like(arena: &const SyntaxArena, type_id: NodeId) -> 
         return false
     kind = arena.nodes[type_id.index].kind
     return kind == SyntaxKind.TYPE_POINTER or kind == SyntaxKind.TYPE_REFERENCE
+
+
+def context_type_is_list(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_type_is_list(arena, first_child(arena, type_id), source)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return false
+    base = first_child(arena, type_id)
+    if base.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
+    return range_text_equals(source, base_node.value_start, base_node.value_length, "List") or range_text_equals(source, base_node.value_start, base_node.value_length, "Slice")
 
 
 def context_list_element_type(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> NodeId:
@@ -913,10 +996,10 @@ def context_field_type_for_receiver(
         receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
         if receiver_name == "self" and len(context.current_owner) > 0:
             return context_field_type(context, &context.current_owner, &field_name)
-        receiver_type = context_name_type(context, &receiver_name)
-        owner = context_type_owner_name(arena, receiver_type, source)
-        if len(owner) > 0:
-            return context_field_type(context, &owner, &field_name)
+    receiver_type = context_expression_type(arena, context, receiver, source)
+    owner = context_type_owner_name(arena, receiver_type, source)
+    if len(owner) > 0:
+        return context_field_type(context, &owner, &field_name)
     return syntax.missing_node()
 
 
@@ -964,7 +1047,8 @@ def emit_context_drops(arena: &const SyntaxArena, context: &const ModuleCodegenC
     index = len(context.local_types)
     while index > local_start:
         index -= 1
-        emit_context_drop(arena, context.local_types[index].type_id, source, builder, &context.local_types[index].name)
+        if not context.local_types[index].moved:
+            emit_context_drop(arena, context.local_types[index].type_id, source, builder, &context.local_types[index].name)
 
 
 def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String, builder: &StringBuilder, name: &const String) -> void:
@@ -996,6 +1080,15 @@ def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const
                 return
 
 
+def context_type_is_string(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_type_is_string(arena, first_child(arena, type_id), source)
+    return node.kind == SyntaxKind.TYPE_NAME and range_text_equals(source, node.value_start, node.value_length, "String")
+
+
 def expression_may_be_string(arena: &const SyntaxArena, context: &const ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
     if id.index < 0:
         return false
@@ -1007,17 +1100,15 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &const ModuleCo
     if node.kind == SyntaxKind.EXPR_BINARY and node.flags == cast[i32](token.TokenKind.PLUS):
         return expression_may_be_string(arena, context, first_child(arena, id), source) or expression_may_be_string(arena, context, second_child(arena, id), source)
     expr_type = context_expression_type(arena, context, id, source)
-    if expr_type.index >= 0:
-        type_node = arena.nodes[expr_type.index]
-        if type_node.kind == SyntaxKind.TYPE_NAME and range_text_equals(source, type_node.value_start, type_node.value_length, "String"):
-            return true
+    if context_type_is_string(arena, expr_type, source):
+        return true
     if node.kind == SyntaxKind.EXPR_NAME:
-        return range_text_equals(source, node.value_start, node.value_length, "command") or range_text_equals(source, node.value_start, node.value_length, "output") or range_text_equals(source, node.value_start, node.value_length, "path") or range_text_equals(source, node.value_start, node.value_length, "source") or range_text_equals(source, node.value_start, node.value_length, "message") or range_text_equals(source, node.value_start, node.value_length, "text") or range_text_equals(source, node.value_start, node.value_length, "alias") or range_text_equals(source, node.value_start, node.value_length, "module_name") or range_text_equals(source, node.value_start, node.value_length, "member")
+        return range_text_equals(source, node.value_start, node.value_length, "command") or range_text_equals(source, node.value_start, node.value_length, "output") or range_text_equals(source, node.value_start, node.value_length, "c_source") or range_text_equals(source, node.value_start, node.value_length, "path") or range_text_equals(source, node.value_start, node.value_length, "source") or range_text_equals(source, node.value_start, node.value_length, "message") or range_text_equals(source, node.value_start, node.value_length, "text") or range_text_equals(source, node.value_start, node.value_length, "alias") or range_text_equals(source, node.value_start, node.value_length, "module_name") or range_text_equals(source, node.value_start, node.value_length, "member")
     if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
         member = second_child(arena, id)
         if member.index >= 0:
             member_node = arena.nodes[member.index]
-            return range_text_equals(source, member_node.value_start, member_node.value_length, "alias") or range_text_equals(source, member_node.value_start, member_node.value_length, "module_name") or range_text_equals(source, member_node.value_start, member_node.value_length, "member") or range_text_equals(source, member_node.value_start, member_node.value_length, "name") or range_text_equals(source, member_node.value_start, member_node.value_length, "source") or range_text_equals(source, member_node.value_start, member_node.value_length, "path")
+            return range_text_equals(source, member_node.value_start, member_node.value_length, "alias") or range_text_equals(source, member_node.value_start, member_node.value_length, "module_name") or range_text_equals(source, member_node.value_start, member_node.value_length, "member") or range_text_equals(source, member_node.value_start, member_node.value_length, "name") or range_text_equals(source, member_node.value_start, member_node.value_length, "source") or range_text_equals(source, member_node.value_start, member_node.value_length, "output") or range_text_equals(source, member_node.value_start, member_node.value_length, "path")
     return false
 
 
@@ -1107,7 +1198,7 @@ def emit_module_declarations(
         if node.flags == 1:
             append_source(builder, source, node.value_start, node.value_length)
         else:
-            emit_module_function_name(arena, id, source, builder, &prefix, is_entry)
+            emit_module_function_name(arena, id, source, builder, prefix, is_entry)
         builder.append("(")
         emitted_parameter = false
         for offset in range(0, node.child_count):
@@ -1300,7 +1391,6 @@ def emit_module_statement(
         return
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
-        emit_context_drops(arena, context, source, builder, context.local_start)
         builder.append("    return")
         expr = first_child(arena, id)
         if expr.index >= 0:
@@ -1323,6 +1413,7 @@ def emit_module_statement(
         if expr.index >= 0 and not is_type_kind(arena.nodes[expr.index].kind):
             builder.append(" = ")
             emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+            mark_context_expression_moved(arena, context, expr, source)
         builder.append(";\n")
         if annotation.index >= 0:
             register_context_name_type(arena, context, source, node.value_start, node.value_length, annotation)
@@ -1336,24 +1427,29 @@ def emit_module_statement(
         builder.append("    ")
         target = first_child(arena, id)
         if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
-            builder.append("__auto_type ")
-            emit_module_expression(arena, target, source, builder, prefix, project_name, imports, context)
-            builder.append(" = ")
-            value = second_child(arena, id)
-            emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
-            builder.append(";\n")
             target_node = arena.nodes[target.index]
-            if context_expression_is_pointer_initializer(arena, context, value, source):
-                register_context_pointer_name(context, source, target_node.value_start, target_node.value_length)
-            else:
-                inferred_type = context_expression_type(arena, context, value, source)
-                register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, inferred_type)
-            return
+            if not context_has_name(context, source, target_node.value_start, target_node.value_length):
+                builder.append("__auto_type ")
+                emit_module_expression(arena, target, source, builder, prefix, project_name, imports, context)
+                builder.append(" = ")
+                value = second_child(arena, id)
+                emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+                mark_context_expression_moved(arena, context, value, source)
+                builder.append(";\n")
+                if context_expression_is_pointer_initializer(arena, context, value, source):
+                    register_context_pointer_name(context, source, target_node.value_start, target_node.value_length)
+                else:
+                    inferred_type = context_expression_type(arena, context, value, source)
+                    register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, inferred_type)
+                return
         emit_module_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
         builder.append(" ")
         append_assignment_operator(builder, node.flags)
         builder.append(" ")
-        emit_module_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
+        value = second_child(arena, id)
+        emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+        mark_context_expression_moved(arena, context, value, source)
+        mark_context_expression_live(context, first_child(arena, id), arena, source)
         builder.append(";\n")
         return
     if node.kind == SyntaxKind.IF_STMT:
@@ -1484,6 +1580,9 @@ def emit_module_for_each(
     element_type = context_expression_list_element_type(arena, context, iterable, source)
     if element_type.index < 0:
         element_type = find_child_type(arena, id)
+    element_name = ""
+    if element_type.index < 0:
+        element_name = known_list_element_name(arena, iterable, source, context)
     builder.append("    for (size_t cinder_index = 0; cinder_index < ")
     emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
     if context_expression_is_pointer_like(arena, context, iterable, source):
@@ -1494,6 +1593,8 @@ def emit_module_for_each(
     builder.append("    ")
     if element_type.index >= 0:
         emit_module_c_type(arena, element_type, source, builder, prefix, project_name, imports)
+    elif len(element_name) > 0:
+        builder.append(element_name)
     else:
         builder.append("__auto_type")
     builder.append(" ")
@@ -1501,6 +1602,8 @@ def emit_module_for_each(
     builder.append(" = ((")
     if element_type.index >= 0:
         emit_module_c_type(arena, element_type, source, builder, prefix, project_name, imports)
+    elif len(element_name) > 0:
+        builder.append(element_name)
     else:
         builder.append("char")
     builder.append(" *)")
@@ -1513,8 +1616,6 @@ def emit_module_for_each(
         register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, element_type)
     emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
     if element_type.index >= 0:
-        target_name = source[target_node.value_start:target_node.value_start + target_node.value_length]
-        emit_context_drop(arena, element_type, source, builder, &target_name)
         if len(context.local_types) > 0:
             context.local_types.pop()
     builder.append("    }\n")
@@ -1616,21 +1717,32 @@ def emit_module_expression(
             append_source(builder, source, node.value_start, node.value_length)
         return
     if node.kind == SyntaxKind.EXPR_LIST:
-        builder.append("(CinderList){0}")
+        builder.append("({ CinderList cinder_list = (CinderList){0};")
+        for offset in range(0, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            if child_id.index >= 0 and not is_type_kind(arena.nodes[child_id.index].kind):
+                builder.append(" cinder_selfhost_list_append_value(&cinder_list, (")
+                emit_module_expression(arena, child_id, source, builder, prefix, project_name, imports, context)
+                builder.append("));")
+        builder.append(" cinder_list; })")
         return
     if node.kind == SyntaxKind.EXPR_NAME:
         append_source(builder, source, node.value_start, node.value_length)
         return
     if node.kind == SyntaxKind.EXPR_BINARY:
         if node.flags == cast[i32](token.TokenKind.AND):
+            builder.append("(")
             emit_module_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
             builder.append(" && ")
             emit_module_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
+            builder.append(")")
             return
         if node.flags == cast[i32](token.TokenKind.OR):
+            builder.append("(")
             emit_module_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
             builder.append(" || ")
             emit_module_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
+            builder.append(")")
             return
         if node.flags == cast[i32](token.TokenKind.EQUAL):
             if expression_may_be_string(arena, context, first_child(arena, id), source) or expression_may_be_string(arena, context, second_child(arena, id), source):
@@ -1653,11 +1765,13 @@ def emit_module_expression(
             emit_string_value_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
             builder.append(")")
             return
+        builder.append("(")
         emit_module_expression(arena, first_child(arena, id), source, builder, prefix, project_name, imports, context)
         builder.append(" ")
         append_source(builder, source, node.value_start, node.value_length)
         builder.append(" ")
         emit_module_expression(arena, second_child(arena, id), source, builder, prefix, project_name, imports, context)
+        builder.append(")")
         return
     if node.kind == SyntaxKind.EXPR_INDEX:
         emit_module_index(arena, id, source, builder, prefix, project_name, imports, context)
@@ -1727,13 +1841,14 @@ def emit_module_call(
                 emit_len_call(arena, id, source, builder, prefix, project_name, imports, context)
                 return
             if name == "print":
-                builder.append("printf(\"\\n\")")
+                emit_print_call(arena, id, source, builder, prefix, project_name, imports, context)
                 return
             if name == "open":
                 emit_open_call(arena, id, source, builder, prefix, project_name, imports, context)
                 return
             if name == "access":
-                builder.append("access")
+                emit_access_call(arena, id, source, builder, prefix, project_name, imports, context)
+                return
             else:
                 if is_uppercase_start(source, callee_node.value_start):
                     emit_nominal_constructor(arena, id, source, builder, prefix, project_name, imports, &name, context)
@@ -1759,9 +1874,14 @@ def emit_module_call(
             if emitted_argument:
                 builder.append(", ")
             arg = last_child(arena, child_id)
-            if (should_borrow_named_argument(arena, context, arg, source) or should_borrow_for_callee(arena, callee, arg, source)) and not call_is_name(arena, callee, source, "dump_summary"):
+            borrow_argument = should_borrow_named_argument(arena, context, arg, source)
+            if not borrow_argument:
+                borrow_argument = should_borrow_for_callee(arena, context, callee, arg, source)
+            if borrow_argument and not call_is_name(arena, callee, source, "dump_summary"):
                 builder.append("&")
             emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
+            if not borrow_argument:
+                mark_context_expression_moved(arena, context, arg, source)
             emitted_argument = true
     builder.append(")")
     return
@@ -1801,7 +1921,9 @@ def emit_nominal_constructor(
                 builder.append(".")
                 append_source(builder, source, named_node.value_start, named_node.value_length)
                 builder.append(" = ")
-            emit_module_expression(arena, last_child(arena, child_id), source, builder, prefix, project_name, imports, context)
+            value = last_child(arena, child_id)
+            emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+            mark_context_expression_moved(arena, context, value, source)
             emitted = true
     builder.append("}")
 
@@ -1836,7 +1958,9 @@ def emit_imported_nominal_constructor(
                 builder.append(".")
                 append_source(builder, source, named_node.value_start, named_node.value_length)
                 builder.append(" = ")
-            emit_module_expression(arena, last_child(arena, child_id), source, builder, prefix, project_name, imports, context)
+            value = last_child(arena, child_id)
+            emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+            mark_context_expression_moved(arena, context, value, source)
             emitted = true
     builder.append("}")
 
@@ -1873,6 +1997,60 @@ def emit_len_call(
         builder.append("->length")
     else:
         builder.append(".length")
+
+
+def emit_print_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &ModuleCodegenContext,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("({ ")
+    first = true
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            arg = last_child(arena, child_id)
+            if expression_may_be_string(arena, context, arg, source):
+                builder.append("cinder_selfhost_print_string_value(")
+                emit_string_value_expression(arena, arg, source, builder, prefix, project_name, imports, context)
+            else:
+                builder.append("cinder_selfhost_print_integer_value((long long)(")
+                emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
+                builder.append(")")
+            if first:
+                builder.append(", true); ")
+            else:
+                builder.append(", false); ")
+            first = false
+    builder.append("printf(\"\\n\"); 0; })")
+
+
+def emit_access_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &ModuleCodegenContext,
+) -> void:
+    path = first_call_argument(arena, id)
+    mode = second_call_argument(arena, id)
+    builder.append("access(cinder_string_cstr(")
+    if not context_expression_is_pointer_like(arena, context, path, source):
+        builder.append("&")
+    emit_module_expression(arena, path, source, builder, prefix, project_name, imports, context)
+    builder.append("), ")
+    emit_module_expression(arena, mode, source, builder, prefix, project_name, imports, context)
+    builder.append(")")
 
 
 def emit_open_call(
@@ -1955,19 +2133,43 @@ def emit_attribute_call(
                     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context)
                 builder.append(")")
                 return
+    if member_name == "dump" and receiver.index >= 0:
+        receiver_node = arena.nodes[receiver.index]
+        if receiver_node.kind == SyntaxKind.EXPR_NAME and range_text_equals(source, receiver_node.value_start, receiver_node.value_length, "scan"):
+            lexer_module = "lexer"
+            builder.append(c_prefix(project_name, &lexer_module))
+            builder.append("Lexer_dump(")
+            emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context)
+            emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context)
+            builder.append(")")
+            return
     if member_name == "append":
         arg = first_call_argument(arena, call_id)
         if receiver_is_builder(arena, receiver, source):
             emit_builder_append_call(arena, receiver, arg, source, builder, prefix, project_name, imports, context)
         else:
-            builder.append("cinder_selfhost_list_append_value(&")
+            builder.append("cinder_selfhost_list_append_value(")
+            if not context_expression_is_pointer_like(arena, context, receiver, source):
+                builder.append("&")
             emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
             builder.append(", (")
             emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
+            mark_context_expression_moved(arena, context, arg, source)
             builder.append("))")
         return
+    if member_name == "append_char":
+        builder.append("cinder_string_builder_append_char(")
+        if not context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+        builder.append(", ")
+        emit_module_expression(arena, first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context)
+        builder.append(")")
+        return
     if member_name == "pop":
-        builder.append("cinder_selfhost_list_pop(&")
+        builder.append("cinder_selfhost_list_pop(")
+        if not context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
         emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
         builder.append(")")
         return
@@ -1977,9 +2179,10 @@ def emit_attribute_call(
         builder.append(")")
         return
     if member_name == "byte_at":
-        builder.append("cinder_string_byte_at(")
-        if not context_expression_is_pointer_like(arena, context, receiver, source):
-            builder.append("&")
+        if context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("cinder_string_byte_at(")
+        else:
+            builder.append("cinder_selfhost_string_byte_at_value(")
         emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
         builder.append(", ")
         emit_module_expression(arena, first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context)
@@ -2132,8 +2335,10 @@ def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source:
             owner = "SyntaxArena"
         if object_name == "scan":
             owner = "Lexer"
-        if object_name == "parser":
+        if object_name == "parser" or object_name == "parsed":
             owner = "Parser"
+        if object_name == "checker" or object_name == "check":
+            owner = "Checker"
         if len(owner) == 0:
             owner = context_type_owner_name(arena, context_name_type(context, &object_name), source)
     if owner == "SyntaxArena" and member_name == "nodes":
@@ -2162,8 +2367,14 @@ def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source:
         return "cinder_cinder_selfhost_symbols__ScopeRecord"
     if owner == "Lexer" and member_name == "tokens":
         return "cinder_cinder_selfhost_token__Token"
+    if member_name == "tokens":
+        return "cinder_cinder_selfhost_token__Token"
+    if owner == "Lexer" and member_name == "diagnostics":
+        return "cinder_cinder_selfhost_token__LexerDiagnostic"
     if owner == "Parser" and member_name == "diagnostics":
         return "cinder_cinder_selfhost_syntax__ParseDiagnostic"
+    if owner == "Checker" and member_name == "diagnostics":
+        return "cinder_cinder_selfhost_checker__CheckerDiagnostic"
     if owner == "ProjectGraph" and member_name == "modules":
         return "cinder_cinder_selfhost_project__ParsedModule"
     if owner == "DriverOptions" and member_name == "program_args":
@@ -2204,7 +2415,10 @@ def emit_module_slice(
     receiver = first_child(arena, id)
     start = second_child(arena, id)
     stop = last_child(arena, id)
-    builder.append("cinder_string_slice(&")
+    builder.append("cinder_string_slice(")
+    receiver_is_pointer = context_expression_is_pointer_like(arena, context, receiver, source)
+    if not receiver_is_pointer:
+        builder.append("&")
     emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
     builder.append(", ")
     if start.index >= 0 and start.index != stop.index:
@@ -2216,7 +2430,10 @@ def emit_module_slice(
         emit_module_expression(arena, stop, source, builder, prefix, project_name, imports, context)
     else:
         emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
-        builder.append(".length")
+        if receiver_is_pointer:
+            builder.append("->length")
+        else:
+            builder.append(".length")
     builder.append(")")
 
 
@@ -2273,7 +2490,10 @@ def emit_module_attribute(
             append_source(builder, source, member_node.value_start, member_node.value_length)
             return
         emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
-        builder.append(".")
+        if context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("->")
+        else:
+            builder.append(".")
         append_source(builder, source, member_node.value_start, member_node.value_length)
         return
     append_source(builder, source, node_start(arena, id), node_length(arena, id))
@@ -2316,7 +2536,7 @@ def should_borrow_named_argument(arena: &const SyntaxArena, context: &const Modu
     if context_expression_is_pointer_like(arena, context, id, source):
         return false
     if node.kind == SyntaxKind.EXPR_NAME:
-        return range_text_equals(source, node.value_start, node.value_length, "summary") or range_text_equals(source, node.value_start, node.value_length, "module") or range_text_equals(source, node.value_start, node.value_length, "child_nodes") or range_text_equals(source, node.value_start, node.value_length, "builder") or range_text_equals(source, node.value_start, node.value_length, "context") or range_text_equals(source, node.value_start, node.value_length, "check") or range_text_equals(source, node.value_start, node.value_length, "checker") or range_text_equals(source, node.value_start, node.value_length, "ir") or range_text_equals(source, node.value_start, node.value_length, "scan") or range_text_equals(source, node.value_start, node.value_length, "parsed")
+        return range_text_equals(source, node.value_start, node.value_length, "summary") or range_text_equals(source, node.value_start, node.value_length, "module") or range_text_equals(source, node.value_start, node.value_length, "child_nodes") or range_text_equals(source, node.value_start, node.value_length, "builder") or range_text_equals(source, node.value_start, node.value_length, "context") or range_text_equals(source, node.value_start, node.value_length, "check") or range_text_equals(source, node.value_start, node.value_length, "checker") or range_text_equals(source, node.value_start, node.value_length, "checked") or range_text_equals(source, node.value_start, node.value_length, "ir") or range_text_equals(source, node.value_start, node.value_length, "scan") or range_text_equals(source, node.value_start, node.value_length, "parsed")
     if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
         member = second_child(arena, id)
         if member.index < 0:
@@ -2330,18 +2550,38 @@ def call_is_name(arena: &const SyntaxArena, callee: NodeId, source: &const Strin
     if callee.index < 0:
         return false
     node = arena.nodes[callee.index]
-    return node.kind == SyntaxKind.EXPR_NAME and range_text_equals(source, node.value_start, node.value_length, name)
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return range_text_equals(source, node.value_start, node.value_length, name[0:len(name)])
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        member = second_child(arena, callee)
+        if member.index >= 0:
+            member_node = arena.nodes[member.index]
+            return range_text_equals(source, member_node.value_start, member_node.value_length, name[0:len(name)])
+    return false
 
 
-def should_borrow_for_callee(arena: &const SyntaxArena, callee: NodeId, arg: NodeId, source: &const String) -> bool:
-    if arg.index < 0:
+def should_borrow_for_callee(
+    arena: &const SyntaxArena,
+    context: &const ModuleCodegenContext,
+    callee: NodeId,
+    arg: NodeId,
+    source: &const String,
+) -> bool:
+    if arg.index < 0 or context_expression_is_pointer_like(arena, context, arg, source):
         return false
     arg_node = arena.nodes[arg.index]
+    if arg_node.kind == SyntaxKind.EXPR_NAME and (range_text_equals(source, arg_node.value_start, arg_node.value_length, "decorators") or range_text_equals(source, arg_node.value_start, arg_node.value_length, "member_decorators")):
+        return true
+    arg_type = context_expression_type(arena, context, arg, source)
+    if context_type_is_list(arena, arg_type, source):
+        if call_is_name(arena, callee, source, "parse_options") or call_is_name(arena, callee, source, "emit_ok") or call_is_name(arena, callee, source, "resolve_paths"):
+            return false
+        return true
     if arg_node.kind != SyntaxKind.EXPR_NAME:
         return false
     if not range_text_equals(source, arg_node.value_start, arg_node.value_length, "args"):
         return false
-    return call_is_name(arena, callee, source, "tuple_from_args") or call_is_name(arena, callee, source, "function_from_args") or call_is_name(arena, callee, source, "closure_from_args")
+    return call_is_name(arena, callee, source, "tuple_from_args") or call_is_name(arena, callee, source, "function_from_args") or call_is_name(arena, callee, source, "closure_from_args") or call_is_name(arena, callee, source, "specialization_suffix") or call_is_name(arena, callee, source, "record_specialization")
 
 
 def emit_remaining_call_arguments(
@@ -2364,9 +2604,15 @@ def emit_remaining_call_arguments(
             if emitted_argument:
                 builder.append(", ")
             arg = last_child(arena, child_id)
-            if should_borrow_named_argument(arena, context, arg, source):
+            callee = first_child(arena, id)
+            borrow_argument = should_borrow_named_argument(arena, context, arg, source)
+            if not borrow_argument:
+                borrow_argument = should_borrow_for_callee(arena, context, callee, arg, source)
+            if borrow_argument and not call_is_name(arena, callee, source, "dump_summary"):
                 builder.append("&")
             emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
+            if not borrow_argument:
+                mark_context_expression_moved(arena, context, arg, source)
             emitted_argument = true
 
 

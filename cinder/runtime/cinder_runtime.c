@@ -222,7 +222,7 @@ static bool cinder_utf8_is_valid(const char *data, size_t length)
     return true;
 }
 
-static void cinder_validate_string(const CinderString *string)
+static void cinder_validate_string_structure(const CinderString *string)
 {
     if (string == NULL) {
         cinder_panic("invalid string argument");
@@ -239,7 +239,13 @@ static void cinder_validate_string(const CinderString *string)
     if (string->data[string->length] != '\0') {
         cinder_panic("string is not NUL-terminated");
     }
-    if (!cinder_utf8_is_valid(string->data, string->length)) {
+}
+
+static void cinder_validate_string(const CinderString *string)
+{
+    cinder_validate_string_structure(string);
+    if (string->data != NULL &&
+        !cinder_utf8_is_valid(string->data, string->length)) {
         cinder_panic("invalid UTF-8 string");
     }
 }
@@ -745,7 +751,7 @@ CinderString cinder_string_concat(
 
 uint8_t cinder_string_byte_at(const CinderString *string, size_t index)
 {
-    cinder_validate_string(string);
+    cinder_validate_string_structure(string);
     if (index >= string->length) {
         cinder_panic("string byte index out of bounds");
     }
@@ -770,7 +776,7 @@ CinderString cinder_string_slice(
     size_t end
 )
 {
-    cinder_validate_string(string);
+    cinder_validate_string_structure(string);
     if (start > end || end > string->length) {
         cinder_panic("string slice bounds are invalid");
     }
@@ -928,8 +934,8 @@ void cinder_string_builder_append(
     const CinderString *string
 )
 {
-    cinder_validate_builder(builder);
-    cinder_validate_string(string);
+    cinder_validate_builder_structure(builder);
+    cinder_validate_string_structure(string);
     cinder_string_builder_append_raw(builder, string->data, string->length);
 }
 
@@ -938,7 +944,7 @@ void cinder_string_builder_append_char(
     char value
 )
 {
-    cinder_validate_builder(builder);
+    cinder_validate_builder_structure(builder);
     if (value == '\0' || (unsigned char)value > UINT8_C(0x7f)) {
         cinder_panic("string character must be non-NUL ASCII");
     }

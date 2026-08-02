@@ -29,8 +29,6 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
         return emit_error("failed to create output directory: " + output_dir)
     sources: List[String] = []
     headers: List[String] = []
-    replay_paths: List[String] = []
-    replay_contents: List[String] = []
     index: usize = 0
     while index < len(graph.modules):
         header_name = codegen.generated_header_name(&graph.modules[index].name)
@@ -69,20 +67,9 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
         )
         headers.append(header_path[0:len(header_path)])
         sources.append(source_path[0:len(source_path)])
-        replay_paths.append(header_name[0:len(header_name)])
-        replay_contents.append(header[0:len(header)])
-        replay_paths.append(source_name[0:len(source_name)])
-        replay_contents.append(source[0:len(source)])
         write_text(header_path, header)
         write_text(source_path, source)
         index += 1
-    if graph.project_name == "cinder_selfhost":
-        replay_name: String = "cinder_selfhost_replay.c"
-        replay_path = fs.join_path(&output_dir, &replay_name)
-        write_text(replay_path[0:len(replay_path)], emit_selfhost_replay(&replay_paths, &replay_contents))
-        replay_sources: List[String] = [replay_path[0:len(replay_path)]]
-        replay_headers: List[String] = []
-        return emit_ok(replay_sources, replay_headers)
     return emit_ok(sources, headers)
 
 
@@ -145,158 +132,6 @@ def write_text(path: String, content: String) -> void:
     with open(path, "wb") as file:
         file.write(content)
 
-
-def emit_selfhost_replay(paths: &const List[String], contents: &const List[String]) -> String:
-    builder = StringBuilder()
-    builder.append("#include <errno.h>\n")
-    builder.append("#include <stdio.h>\n")
-    builder.append("#include <stdlib.h>\n")
-    builder.append("#include <string.h>\n")
-    builder.append("#ifdef _WIN32\n")
-    builder.append("#include <direct.h>\n")
-    builder.append("#define CINDER_MKDIR(path) _mkdir(path)\n")
-    builder.append("#else\n")
-    builder.append("#include <sys/stat.h>\n")
-    builder.append("#define CINDER_MKDIR(path) mkdir(path, 0777)\n")
-    builder.append("#endif\n\n")
-    builder.append("static const char *CINDER_PATHS[] = {\n")
-    for path in paths:
-        builder.append("    ")
-        append_c_string_literal(builder, &path)
-        builder.append(",\n")
-    builder.append("};\n\n")
-    builder.append("static const char *CINDER_CONTENTS[] = {\n")
-    for content in contents:
-        builder.append("    ")
-        append_c_string_literal(builder, &content)
-        builder.append(",\n")
-    builder.append("};\n\n")
-    builder.append("static const int CINDER_FILE_COUNT = ")
-    append_usize_decimal(builder, len(paths))
-    builder.append(";\n\n")
-    builder.append("static const char *find_output(int argc, char **argv) {\n")
-    builder.append("    for (int index = 1; index + 1 < argc; ++index) {\n")
-    builder.append("        if (strcmp(argv[index], \"-o\") == 0 || strcmp(argv[index], \"--output\") == 0) {\n")
-    builder.append("            return argv[index + 1];\n")
-    builder.append("        }\n")
-    builder.append("    }\n")
-    builder.append("    return NULL;\n")
-    builder.append("}\n\n")
-    builder.append("static int ensure_parent(const char *path) {\n")
-    builder.append("    char buffer[16384];\n")
-    builder.append("    size_t length = strlen(path);\n")
-    builder.append("    if (length >= sizeof(buffer)) return 2;\n")
-    builder.append("    memcpy(buffer, path, length + 1);\n")
-    builder.append("    for (size_t index = 1; index < length; ++index) {\n")
-    builder.append("        if (buffer[index] == '/' || buffer[index] == '\\\\') {\n")
-    builder.append("            char saved = buffer[index];\n")
-    builder.append("            buffer[index] = '\\0';\n")
-    builder.append("            if (CINDER_MKDIR(buffer) != 0 && errno != EEXIST) return 2;\n")
-    builder.append("            buffer[index] = saved;\n")
-    builder.append("        }\n")
-    builder.append("    }\n")
-    builder.append("    return 0;\n")
-    builder.append("}\n\n")
-    builder.append("static int write_file(const char *root, const char *relative, const char *content) {\n")
-    builder.append("    char path[16384];\n")
-    builder.append("    int written = snprintf(path, sizeof(path), \"%s/%s\", root, relative);\n")
-    builder.append("    if (written < 0 || written >= (int)sizeof(path)) return 2;\n")
-    builder.append("    if (ensure_parent(path) != 0) return 2;\n")
-    builder.append("    FILE *file = fopen(path, \"wb\");\n")
-    builder.append("    if (file == NULL) return 2;\n")
-    builder.append("    size_t length = strlen(content);\n")
-    builder.append("    if (fwrite(content, 1, length, file) != length) {\n")
-    builder.append("        fclose(file);\n")
-    builder.append("        return 2;\n")
-    builder.append("    }\n")
-    builder.append("    fclose(file);\n")
-    builder.append("    return 0;\n")
-    builder.append("}\n\n")
-    builder.append("static int emit_project(const char *output) {\n")
-    builder.append("    if (CINDER_MKDIR(output) != 0 && errno != EEXIST) return 2;\n")
-    builder.append("    for (int index = 0; index < CINDER_FILE_COUNT; ++index) {\n")
-    builder.append("        if (write_file(output, CINDER_PATHS[index], CINDER_CONTENTS[index]) != 0) return 2;\n")
-    builder.append("    }\n")
-    builder.append("    return 0;\n")
-    builder.append("}\n\n")
-    builder.append("int main(int argc, char **argv) {\n")
-    builder.append("    if (argc < 3) {\n")
-    builder.append("        fprintf(stderr, \"usage: cinder <check|emit-project> <source>\\n\");\n")
-    builder.append("        return 2;\n")
-    builder.append("    }\n")
-    builder.append("    if (strcmp(argv[1], \"check\") == 0) {\n")
-    builder.append("        printf(\"ok: %s\\n\", argv[2]);\n")
-    builder.append("        return 0;\n")
-    builder.append("    }\n")
-    builder.append("    if (strcmp(argv[1], \"emit-project\") == 0) {\n")
-    builder.append("        const char *output = find_output(argc, argv);\n")
-    builder.append("        if (output == NULL) {\n")
-    builder.append("            fprintf(stderr, \"project error: emit-project requires -o/--output\\n\");\n")
-    builder.append("            return 2;\n")
-    builder.append("        }\n")
-    builder.append("        if (emit_project(output) != 0) {\n")
-    builder.append("            fprintf(stderr, \"project error: failed to write embedded compiler tree\\n\");\n")
-    builder.append("            return 2;\n")
-    builder.append("        }\n")
-    builder.append("        printf(\"%s\\n\", output);\n")
-    builder.append("        return 0;\n")
-    builder.append("    }\n")
-    builder.append("    fprintf(stderr, \"project error: unsupported replay command %s\\n\", argv[1]);\n")
-    builder.append("    return 2;\n")
-    builder.append("}\n")
-    return builder.finish()
-
-
-def append_c_string_literal(builder: &StringBuilder, value: &const String) -> void:
-    builder.append("\"")
-    index: usize = 0
-    while index < len(value):
-        byte = value.byte_at(index)
-        if byte == 34:
-            builder.append("\\\"")
-        elif byte == 92:
-            builder.append("\\\\")
-        elif byte == 10:
-            builder.append("\\n")
-        elif byte == 13:
-            builder.append("\\r")
-        else:
-            builder.append(value[index:index + 1])
-        index += 1
-    builder.append("\"")
-
-
-def append_usize_decimal(builder: &StringBuilder, value: usize) -> void:
-    if value >= 100:
-        append_usize_decimal(builder, value / 10)
-        builder.append(digit_string(value % 10))
-    elif value >= 10:
-        builder.append(digit_string(value / 10))
-        builder.append(digit_string(value % 10))
-    else:
-        builder.append(digit_string(value))
-
-
-def digit_string(value: usize) -> String:
-    if value == 0:
-        return "0"
-    if value == 1:
-        return "1"
-    if value == 2:
-        return "2"
-    if value == 3:
-        return "3"
-    if value == 4:
-        return "4"
-    if value == 5:
-        return "5"
-    if value == 6:
-        return "6"
-    if value == 7:
-        return "7"
-    if value == 8:
-        return "8"
-    return "9"
 
 
 def strip_generated_includes(source: &const String) -> String:

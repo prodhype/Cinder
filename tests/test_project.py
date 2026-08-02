@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -745,6 +746,23 @@ def test_native_link_files_and_libraries_build(tmp_path: Path) -> None:
 def test_cli_cflags_and_ldflags_append_after_manifest(tmp_path: Path) -> None:
     from cinder.compiler import CompilerOptions
 
+    is_msvc = bool(shutil.which("cl") and not any(shutil.which(name) for name in ("cc", "clang", "gcc")))
+    if is_msvc:
+        manifest_cflag = "/DCINDER_NATIVE_FLAG"
+        cli_cflag = "/DCINDER_CLI_FLAG"
+        manifest_ldflag = "/OPT:REF"
+        cli_ldflag = "/OPT:ICF"
+    elif sys.platform == "darwin":
+        manifest_cflag = "-DCINDER_NATIVE_FLAG"
+        cli_cflag = "-DCINDER_CLI_FLAG"
+        manifest_ldflag = "-Wl,-dead_strip"
+        cli_ldflag = "-Wl,-x"
+    else:
+        manifest_cflag = "-DCINDER_NATIVE_FLAG"
+        cli_cflag = "-DCINDER_CLI_FLAG"
+        manifest_ldflag = "-Wl,--as-needed"
+        cli_ldflag = "-Wl,--no-as-needed"
+
     source_root = tmp_path / "src"
     source_root.mkdir()
     (source_root / "main.ci").write_text(
@@ -758,15 +776,15 @@ def test_cli_cflags_and_ldflags_append_after_manifest(tmp_path: Path) -> None:
         "entry = \"main.ci\"\n"
         "\n"
         "[native]\n"
-        "cflags = [\"-DCINDER_NATIVE_FLAG\"]\n"
-        "ldflags = [\"-Wl,-dead_strip\"]\n",
+        f"cflags = [\"{manifest_cflag}\"]\n"
+        f"ldflags = [\"{manifest_ldflag}\"]\n",
         encoding="utf-8",
     )
 
     artifact = Compiler(
         CompilerOptions(
-            c_flags=("-DCINDER_CLI_FLAG",),
-            linker_flags=("-Wl,-x",),
+            c_flags=(cli_cflag,),
+            linker_flags=(cli_ldflag,),
         )
     ).build(
         tmp_path,
@@ -774,5 +792,5 @@ def test_cli_cflags_and_ldflags_append_after_manifest(tmp_path: Path) -> None:
         build_dir=tmp_path / "build",
     )
     command = list(artifact.toolchain.command)
-    assert command.index("-DCINDER_NATIVE_FLAG") < command.index("-DCINDER_CLI_FLAG")
-    assert command.index("-Wl,-dead_strip") < command.index("-Wl,-x")
+    assert command.index(manifest_cflag) < command.index(cli_cflag)
+    assert command.index(manifest_ldflag) < command.index(cli_ldflag)
