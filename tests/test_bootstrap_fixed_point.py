@@ -425,6 +425,26 @@ def test_gen1_emit_project_build_and_run(
     assert ran.returncode == 42
 
 
+def test_gen1_build_accepts_equals_form_ldflag(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = write_single_source(tmp_path)
+    missing_link_input = tmp_path / "missing-link-input.o"
+
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        f"--ldflag={missing_link_input}",
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+
+    assert built.returncode == 2
+    assert "toolchain error: C compiler failed" in built.stderr
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX execvp pathname regression")
 def test_gen1_run_executes_default_artifact_from_current_directory(
     gen1_compiler: Path,

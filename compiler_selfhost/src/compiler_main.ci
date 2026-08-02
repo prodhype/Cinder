@@ -131,6 +131,9 @@ def parse_options(args: List[String]) -> DriverOptions:
                 index += 1
                 options.ldflags.append(args[index][0:len(args[index])])
             handled = true
+        if not handled and fs.starts_with(&args[index], "--ldflag="):
+            options.ldflags.append(args[index][9:len(args[index])])
+            handled = true
         if not handled and len(args[index]) >= 2 and args[index].byte_at(0) == 45 and args[index].byte_at(1) == 73:
             if len(args[index]) > 2:
                 options.cflags.append(args[index][0:len(args[index])])
