@@ -94,6 +94,20 @@ def test_string_move_reports_use_after_move() -> None:
     assert "use of moved value text" in str(captured.value)
 
 
+def test_string_constructs_from_argv_c_string() -> None:
+    generated = compile_source(
+        "import cinder\n"
+        "\n"
+        "def main(argc: i32, argv: **char) -> i32:\n"
+        "    text = String(argv[0])\n"
+        "    cinder.write_stdout(text)\n"
+        "    return 0\n"
+    )
+
+    assert "cinder_string_from_cstr((argv)[0])" in generated
+    assert "cinder_write_stdout" in generated
+
+
 def test_string_self_move_assignment_is_rejected() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(

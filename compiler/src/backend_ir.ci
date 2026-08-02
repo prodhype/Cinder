@@ -1,0 +1,96 @@
+import syntax
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+struct BackendSummary:
+    function_count: i32
+    struct_count: i32
+    class_count: i32
+    enum_count: i32
+    union_count: i32
+    variant_count: i32
+    extern_count: i32
+    global_count: i32
+    statement_count: i32
+    expression_count: i32
+    type_count: i32
+    node_count: i32
+
+
+def summarize(arena: &const SyntaxArena, root: NodeId) -> BackendSummary:
+    summary = BackendSummary(
+        function_count=0,
+        struct_count=0,
+        class_count=0,
+        enum_count=0,
+        union_count=0,
+        variant_count=0,
+        extern_count=0,
+        global_count=0,
+        statement_count=0,
+        expression_count=0,
+        type_count=0,
+        node_count=cast[i32](len(arena.nodes)),
+    )
+    visit_summary(arena, root, summary)
+    return summary
+
+
+def visit_summary(arena: &const SyntaxArena, id: NodeId, summary: &BackendSummary) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.FUNCTION_DECL:
+        summary.function_count += 1
+    elif node.kind == SyntaxKind.STRUCT_DECL:
+        summary.struct_count += 1
+    elif node.kind == SyntaxKind.CLASS_DECL:
+        summary.class_count += 1
+    elif node.kind == SyntaxKind.ENUM_DECL:
+        summary.enum_count += 1
+    elif node.kind == SyntaxKind.UNION_DECL:
+        summary.union_count += 1
+    elif node.kind == SyntaxKind.VARIANT_DECL:
+        summary.variant_count += 1
+    elif node.kind == SyntaxKind.EXTERN_BLOCK or node.kind == SyntaxKind.EXTERN_IMPORT_DECL:
+        summary.extern_count += 1
+    elif node.kind == SyntaxKind.GLOBAL_DECL:
+        summary.global_count += 1
+    elif is_statement_kind(node.kind):
+        summary.statement_count += 1
+    elif is_expression_kind(node.kind):
+        summary.expression_count += 1
+    elif is_type_kind(node.kind):
+        summary.type_count += 1
+    for offset in range(0, node.child_count):
+        visit_summary(arena, arena.children[node.first_child + offset], summary)
+
+
+def dump_summary(summary: BackendSummary) -> void:
+    print(
+        "B",
+        summary.function_count,
+        summary.struct_count,
+        summary.class_count,
+        summary.enum_count,
+        summary.union_count,
+        summary.variant_count,
+        summary.extern_count,
+        summary.global_count,
+        summary.statement_count,
+        summary.expression_count,
+        summary.type_count,
+        summary.node_count,
+    )
+
+
+def is_statement_kind(kind: SyntaxKind) -> bool:
+    return kind == SyntaxKind.VAR_DECL_STMT or kind == SyntaxKind.ASSIGN_STMT or kind == SyntaxKind.EXPR_STMT or kind == SyntaxKind.IF_STMT or kind == SyntaxKind.IF_BRANCH or kind == SyntaxKind.WHILE_STMT or kind == SyntaxKind.FOR_EACH_STMT or kind == SyntaxKind.FOR_C_STMT or kind == SyntaxKind.MATCH_STMT or kind == SyntaxKind.MATCH_CASE or kind == SyntaxKind.RETURN_STMT or kind == SyntaxKind.BREAK_STMT or kind == SyntaxKind.CONTINUE_STMT or kind == SyntaxKind.PASS_STMT or kind == SyntaxKind.DEFER_STMT or kind == SyntaxKind.WITH_STMT or kind == SyntaxKind.UNSAFE_STMT
+
+
+def is_expression_kind(kind: SyntaxKind) -> bool:
+    return kind == SyntaxKind.EXPR_NAME or kind == SyntaxKind.EXPR_LITERAL or kind == SyntaxKind.EXPR_UNARY or kind == SyntaxKind.EXPR_BINARY or kind == SyntaxKind.EXPR_CALL or kind == SyntaxKind.EXPR_ARGUMENT or kind == SyntaxKind.EXPR_ATTRIBUTE or kind == SyntaxKind.EXPR_INDEX or kind == SyntaxKind.EXPR_SLICE or kind == SyntaxKind.EXPR_PROPAGATE or kind == SyntaxKind.EXPR_TUPLE or kind == SyntaxKind.EXPR_LIST or kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_MAP_ENTRY or kind == SyntaxKind.EXPR_SET or kind == SyntaxKind.EXPR_CAST or kind == SyntaxKind.EXPR_ALLOC or kind == SyntaxKind.EXPR_FSTRING
+
+
+def is_type_kind(kind: SyntaxKind) -> bool:
+    return kind == SyntaxKind.TYPE_NAME or kind == SyntaxKind.TYPE_GENERIC or kind == SyntaxKind.TYPE_CONST or kind == SyntaxKind.TYPE_POINTER or kind == SyntaxKind.TYPE_REFERENCE or kind == SyntaxKind.TYPE_ARRAY or kind == SyntaxKind.TYPE_SLICE or kind == SyntaxKind.TYPE_DYN or kind == SyntaxKind.TYPE_FUNCTION or kind == SyntaxKind.TYPE_CLOSURE

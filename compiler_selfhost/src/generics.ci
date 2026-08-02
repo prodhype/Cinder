@@ -1,0 +1,103 @@
+import syntax
+import types
+from syntax import NodeId
+from types import TypeId
+
+
+enum TemplateKind:
+    TYPE
+    FUNCTION
+
+
+struct TemplateRecord:
+    kind: TemplateKind
+    declaration: NodeId
+    type_params: List[NodeId]
+    specialized_count: i32
+
+
+struct SpecializationRecord:
+    template: NodeId
+    type_args: List[TypeId]
+    suffix: String
+
+
+def type_param_count(arena: &const syntax.SyntaxArena, declaration: NodeId) -> i32:
+    params = find_child_kind(arena, declaration, syntax.SyntaxKind.TYPE_PARAMS)
+    if params.index < 0:
+        return 0
+    return arena.nodes[params.index].child_count
+
+
+def has_type_params(arena: &const syntax.SyntaxArena, declaration: NodeId) -> bool:
+    return type_param_count(arena, declaration) > 0
+
+
+def collect_type_params(arena: &const syntax.SyntaxArena, declaration: NodeId) -> List[NodeId]:
+    result: List[NodeId] = []
+    return result
+
+
+def specialization_suffix(table: &const types.TypeTable, args: &const List[TypeId], source: &const String) -> String:
+    builder = StringBuilder()
+    index: usize = 0
+    while index < len(args):
+        builder.append("_")
+        append_type_key(builder, table, args[index], source)
+        index += 1
+    return builder.finish()
+
+
+def append_type_key(builder: &StringBuilder, table: &const types.TypeTable, type_id: TypeId, source: &const String) -> void:
+    if type_id.index < 0:
+        builder.append("error")
+        return
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.VOID:
+        builder.append("void")
+    elif record.kind == types.TypeKind.BOOL:
+        builder.append("bool")
+    elif record.kind == types.TypeKind.I32:
+        builder.append("i32")
+    elif record.kind == types.TypeKind.I64:
+        builder.append("i64")
+    elif record.kind == types.TypeKind.F64:
+        builder.append("f64")
+    elif record.kind == types.TypeKind.CHAR:
+        builder.append("char")
+    elif record.kind == types.TypeKind.STRING:
+        builder.append("String")
+    elif record.kind == types.TypeKind.POINTER:
+        builder.append("ptr")
+        append_type_key(builder, table, record.inner, source)
+    elif record.kind == types.TypeKind.REFERENCE:
+        builder.append("ref")
+        append_type_key(builder, table, record.inner, source)
+    elif record.kind == types.TypeKind.SLICE:
+        builder.append("slice")
+        append_type_key(builder, table, record.inner, source)
+    elif record.name_length > 0:
+        append_source_identifier(builder, source, record.name_start, record.name_length)
+    else:
+        builder.append("T")
+
+
+def append_source_identifier(builder: &StringBuilder, source: &const String, start: usize, length: usize) -> void:
+    offset: usize = 0
+    while offset < length:
+        byte = source.byte_at(start + offset)
+        if byte == ".".byte_at(0):
+            builder.append("_")
+        else:
+            builder.append(source[start + offset:start + offset + 1])
+        offset += 1
+
+
+def find_child_kind(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == kind:
+            return child_id
+    return syntax.missing_node()

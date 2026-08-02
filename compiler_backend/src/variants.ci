@@ -1,0 +1,104 @@
+import syntax
+from syntax import NodeId
+
+
+struct VariantSummary:
+    declaration: NodeId
+    case_count: i32
+    payload_field_count: i32
+
+
+struct MatchSummary:
+    declaration: NodeId
+    case_count: i32
+    has_wildcard: bool
+
+
+def summarize_variant(arena: &const syntax.SyntaxArena, declaration: NodeId) -> VariantSummary:
+    node = arena.nodes[declaration.index]
+    case_count: i32 = 0
+    payload_field_count: i32 = 0
+    offset: i32 = 0
+    while offset < node.child_count:
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.VARIANT_CASE_DECL:
+            case_count += 1
+            payload_field_count += count_payload_fields(arena, child_id)
+        offset += 1
+    return VariantSummary(declaration=declaration, case_count=case_count, payload_field_count=payload_field_count)
+
+
+def summarize_match(arena: &const syntax.SyntaxArena, declaration: NodeId) -> MatchSummary:
+    node = arena.nodes[declaration.index]
+    case_count: i32 = 0
+    has_wildcard = false
+    offset: i32 = 0
+    while offset < node.child_count:
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.MATCH_CASE:
+            case_count += 1
+            if case_has_wildcard(arena, child_id):
+                has_wildcard = true
+        offset += 1
+    return MatchSummary(declaration=declaration, case_count=case_count, has_wildcard=has_wildcard)
+
+
+def first_wildcard_before_last(arena: &const syntax.SyntaxArena, declaration: NodeId) -> NodeId:
+    node = arena.nodes[declaration.index]
+    offset: i32 = 0
+    while offset < node.child_count:
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.MATCH_CASE and case_has_wildcard(arena, child_id) and has_later_match_case(arena, declaration, offset + 1):
+            return child_id
+        offset += 1
+    return syntax.missing_node()
+
+
+def has_later_match_case(arena: &const syntax.SyntaxArena, declaration: NodeId, start_offset: i32) -> bool:
+    node = arena.nodes[declaration.index]
+    offset = start_offset
+    while offset < node.child_count:
+        child = arena.nodes[arena.children[node.first_child + offset].index]
+        if child.kind == syntax.SyntaxKind.MATCH_CASE:
+            return true
+        offset += 1
+    return false
+
+
+def count_payload_fields(arena: &const syntax.SyntaxArena, case_id: NodeId) -> i32:
+    node = arena.nodes[case_id.index]
+    count: i32 = 0
+    offset: i32 = 0
+    while offset < node.child_count:
+        child = arena.nodes[arena.children[node.first_child + offset].index]
+        if child.kind == syntax.SyntaxKind.FIELD_DECL:
+            count += 1
+        offset += 1
+    return count
+
+
+def case_has_wildcard(arena: &const syntax.SyntaxArena, case_id: NodeId) -> bool:
+    node = arena.nodes[case_id.index]
+    offset: i32 = 0
+    while offset < node.child_count:
+        if contains_wildcard(arena, arena.children[node.first_child + offset]):
+            return true
+        offset += 1
+    return false
+
+
+def contains_wildcard(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.PATTERN_WILDCARD:
+        return true
+    offset: i32 = 0
+    while offset < node.child_count:
+        if contains_wildcard(arena, arena.children[node.first_child + offset]):
+            return true
+        offset += 1
+    return false

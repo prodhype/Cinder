@@ -1,0 +1,4 @@
+[project]
+name = "bootstrap_backend"
+source-root = "src"
+entry = "backend_main.ci"

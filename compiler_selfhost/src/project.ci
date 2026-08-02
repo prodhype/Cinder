@@ -1,0 +1,370 @@
+import fs
+import lexer
+import manifest
+import parser
+import syntax
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+struct ImportBinding:
+    alias: String
+    module_name: String
+    member: String
+
+
+struct ParsedModule:
+    name: String
+    path: String
+    source: String
+    dependencies: List[String]
+    imports: List[ImportBinding]
+
+
+struct ProjectGraph:
+    config: manifest.ProjectConfig
+    project_name: String
+    root: String
+    source_root: String
+    native: manifest.NativeConfig
+    modules: List[ParsedModule]
+    entry_module: String
+    error: String
+
+
+def load_project(path: String) -> ProjectGraph:
+    error_parts: List[String] = []
+    config = manifest.empty_config()
+    if fs.ends_with(&path, "cinder.toml") and not fs.file_exists(&path):
+        error_parts.append("manifest file not found: ")
+        error_parts.append(path[0:len(path)])
+    else:
+        config = resolve_project(path)
+    modules: List[ParsedModule] = []
+    names: List[String] = []
+    visiting: List[String] = []
+    entry_module = module_name_for_path(&config.entry, &config.source_root)
+    entry_path = config.entry[0:len(config.entry)]
+    if len(error_parts) == 0 and not fs.file_exists(&entry_path):
+        error_parts.append("entry file not found: ")
+        error_parts.append(entry_path[0:len(entry_path)])
+    elif len(error_parts) == 0:
+        visit_module(&config, modules, names, visiting, entry_module[0:len(entry_module)], entry_path, error_parts)
+    graph_name = config.name[0:len(config.name)]
+    graph_root = config.root[0:len(config.root)]
+    graph_source_root = config.source_root[0:len(config.source_root)]
+    graph_native = clone_native(&config.native)
+    return ProjectGraph(
+        config=config,
+        project_name=graph_name,
+        root=graph_root,
+        source_root=graph_source_root,
+        native=graph_native,
+        modules=modules,
+        entry_module=entry_module,
+        error=join_strings(&error_parts),
+    )
+
+
+def resolve_project(path: String) -> manifest.ProjectConfig:
+    if fs.ends_with(&path, "cinder.toml"):
+        return manifest.read_manifest(path[0:len(path)])
+
+    if fs.ends_with(&path, ".ci"):
+        parent = fs.parent_dir(&path)
+        found = find_manifest(parent[0:len(parent)])
+        if len(found) > 0:
+            loaded = manifest.read_manifest(found)
+            return manifest.ProjectConfig(
+                name=loaded.name[0:len(loaded.name)],
+                root=loaded.root[0:len(loaded.root)],
+                source_root=loaded.source_root[0:len(loaded.source_root)],
+                entry=path[0:len(path)],
+                manifest=loaded.manifest[0:len(loaded.manifest)],
+                native=clone_native(&loaded.native),
+            )
+        native = manifest.empty_native()
+        parent_root = parent[0:len(parent)]
+        parent_source = parent[0:len(parent)]
+        return manifest.ProjectConfig(
+            name=fs.stem(&path),
+            root=parent_root,
+            source_root=parent_source,
+            entry=path[0:len(path)],
+            manifest="",
+            native=native,
+        )
+
+    manifest_name: String = "cinder.toml"
+    manifest_path = fs.join_path(&path, &manifest_name)
+    if fs.file_exists(&manifest_path):
+        return manifest.read_manifest(manifest_path)
+
+    main_name: String = "main.ci"
+    src_name: String = "src"
+    main = fs.join_path(&path, &main_name)
+    src = fs.join_path(&path, &src_name)
+    src_main = fs.join_path(&src, &main_name)
+    if fs.file_exists(&main):
+        return manifest.ProjectConfig(
+            name=fs.basename(&path),
+            root=path[0:len(path)],
+            source_root=path[0:len(path)],
+            entry=main,
+            manifest="",
+            native=manifest.empty_native(),
+        )
+    return manifest.ProjectConfig(
+        name=fs.basename(&path),
+        root=path[0:len(path)],
+        source_root=src,
+        entry=src_main,
+        manifest="",
+        native=manifest.empty_native(),
+    )
+
+
+def clone_native(native: &const manifest.NativeConfig) -> manifest.NativeConfig:
+    return manifest.NativeConfig(
+        include_dirs=clone_strings(&native.include_dirs),
+        library_dirs=clone_strings(&native.library_dirs),
+        libraries=clone_strings(&native.libraries),
+        link_files=clone_strings(&native.link_files),
+        cflags=clone_strings(&native.cflags),
+        ldflags=clone_strings(&native.ldflags),
+    )
+
+
+def clone_strings(values: &const List[String]) -> List[String]:
+    cloned: List[String] = []
+    index: usize = 0
+    while index < len(values):
+        cloned.append(values[index][0:len(values[index])])
+        index += 1
+    return cloned
+
+
+def find_manifest(start: String) -> String:
+    current = start
+    name: String = "cinder.toml"
+    while true:
+        candidate = fs.join_path(&current, &name)
+        if fs.file_exists(&candidate):
+            return candidate
+        parent = fs.parent_dir(&current)
+        if parent == current or len(parent) == 0:
+            break
+        current = parent
+    return ""
+
+
+def visit_module(
+    config: &const manifest.ProjectConfig,
+    modules: &List[ParsedModule],
+    names: &List[String],
+    visiting: &List[String],
+    module_name: String,
+    path: String,
+    error_parts: &List[String],
+) -> bool:
+    if contains_string(names, &module_name):
+        return true
+    if contains_string(visiting, &module_name):
+        error_parts.append("cyclic module dependency: ")
+        index = cast[usize](index_of_string(visiting, &module_name))
+        cycle_start = index
+        while index < len(visiting):
+            if index > cycle_start:
+                error_parts.append(" -> ")
+            error_parts.append(visiting[index][0:len(visiting[index])])
+            index += 1
+        error_parts.append(" -> ")
+        error_parts.append(module_name[0:len(module_name)])
+        return false
+    visiting.append(module_name[0:len(module_name)])
+
+    with open(path, "rb") as file:
+        source = file.read_text()
+        scan = lexer.new_lexer(source[0:len(source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+
+        dependencies: List[String] = []
+        imports: List[ImportBinding] = []
+        collect_imports(parsed.arena, root, &source, dependencies, imports)
+        index: usize = 0
+        while index < len(dependencies):
+            dependency = dependencies[index][0:len(dependencies[index])]
+            if not is_builtin_module(&dependency):
+                resolved = resolve_module_path(config, &dependency, error_parts)
+                if len(error_parts) > 0:
+                    visiting.pop()
+                    return false
+                if len(resolved) > 0:
+                    if not visit_module(config, modules, names, visiting, dependency[0:len(dependency)], resolved, error_parts):
+                        visiting.pop()
+                        return false
+            index += 1
+
+        names.append(module_name[0:len(module_name)])
+        modules.append(
+            ParsedModule(
+                name=module_name,
+                path=path,
+                source=source,
+                dependencies=dependencies,
+                imports=imports,
+            )
+        )
+        visiting.pop()
+    return true
+
+
+def resolve_module_path(
+    config: &const manifest.ProjectConfig,
+    module_name: &const String,
+    error_parts: &List[String],
+) -> String:
+    module_path = fs.replace_char(module_name, 46, 47)
+    base = fs.join_path(&config.source_root, &module_path)
+    file_candidate = fs.with_suffix(&base, ".ci")
+    init_name: String = "__init__.ci"
+    package_candidate = fs.join_path(&base, &init_name)
+    has_file = fs.file_exists(&file_candidate)
+    has_package = fs.file_exists(&package_candidate)
+    if has_file and has_package:
+        error_parts.append("module '")
+        error_parts.append(module_name[0:len(module_name)])
+        error_parts.append("' is ambiguous: both ")
+        error_parts.append(file_candidate[0:len(file_candidate)])
+        error_parts.append(" and ")
+        error_parts.append(package_candidate[0:len(package_candidate)])
+        error_parts.append(" exist")
+        return ""
+    if has_file:
+        return file_candidate
+    if has_package:
+        return package_candidate
+    return ""
+
+
+def module_name_for_path(path: &const String, source_root: &const String) -> String:
+    relative = path[0:len(path)]
+    if fs.starts_with(path, source_root[0:len(source_root)]):
+        start = len(source_root)
+        if start < len(path) and path.byte_at(start) == 47:
+            start += 1
+        relative = path[start:len(path)]
+    if fs.ends_with(&relative, ".ci"):
+        relative = relative[0:len(relative) - 3]
+    if fs.ends_with(&relative, "/__init__"):
+        relative = relative[0:len(relative) - 9]
+    if len(relative) == 0:
+        return "root"
+    return fs.replace_char(&relative, 47, 46)
+
+
+def collect_imports(arena: &const SyntaxArena, root: NodeId, source: &const String, dependencies: &List[String], imports: &List[ImportBinding]) -> void:
+    if root.index < 0:
+        return
+    node = arena.nodes[root.index]
+    if node.kind != SyntaxKind.MODULE:
+        return
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.IMPORT_DECL:
+            module_name = dotted_child_text(arena, child_id, source)
+            if len(module_name) > 0 and not contains_string(dependencies, &module_name):
+                dependencies.append(module_name[0:len(module_name)])
+            alias = import_alias(arena, child_id, source, &module_name)
+            imports.append(ImportBinding(alias=alias, module_name=module_name, member=""))
+        elif child.kind == SyntaxKind.FROM_IMPORT_DECL:
+            module_name = dotted_child_text(arena, child_id, source)
+            if len(module_name) > 0 and not contains_string(dependencies, &module_name):
+                dependencies.append(module_name[0:len(module_name)])
+            collect_from_imports(arena, child_id, source, &module_name, imports)
+
+
+def dotted_child_text(arena: &const SyntaxArena, id: NodeId, source: &const String) -> String:
+    dotted = find_child_kind(arena, id, SyntaxKind.DOTTED_NAME)
+    if dotted.index < 0:
+        return ""
+    node = arena.nodes[dotted.index]
+    return source[node.start:node.start + node.length]
+
+
+def import_alias(arena: &const SyntaxArena, id: NodeId, source: &const String, module_name: &const String) -> String:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.NAME and child.flags == 1:
+            return source[child.value_start:child.value_start + child.value_length]
+    return final_module_part(module_name)
+
+
+def collect_from_imports(arena: &const SyntaxArena, id: NodeId, source: &const String, module_name: &const String, imports: &List[ImportBinding]) -> void:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.IMPORT_NAME:
+            name: String = ""
+            alias: String = ""
+            for item_offset in range(0, child.child_count):
+                name_id = arena.children[child.first_child + item_offset]
+                name_node = arena.nodes[name_id.index]
+                if name_node.kind == SyntaxKind.NAME:
+                    text = source[name_node.value_start:name_node.value_start + name_node.value_length]
+                    if name_node.flags == 1:
+                        alias = text[0:len(text)]
+                    else:
+                        name = text[0:len(text)]
+            if len(alias) == 0:
+                alias = name[0:len(name)]
+            imports.append(ImportBinding(alias=alias, module_name=module_name[0:len(module_name)], member=name))
+
+
+def final_module_part(module_name: &const String) -> String:
+    dot = fs.last_dot(module_name)
+    if dot < 0:
+        return module_name[0:len(module_name)]
+    return module_name[cast[usize](dot + 1):len(module_name)]
+
+
+def find_child_kind(arena: &const SyntaxArena, id: NodeId, kind: SyntaxKind) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == kind:
+            return child_id
+    return syntax.missing_node()
+
+
+def contains_string(values: &const List[String], value: &const String) -> bool:
+    for item in values:
+        if item == value:
+            return true
+    return false
+
+
+def index_of_string(values: &const List[String], value: &const String) -> i32:
+    index: usize = 0
+    while index < len(values):
+        if values[index] == value:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def join_strings(values: &const List[String]) -> String:
+    builder = StringBuilder()
+    for value in values:
+        builder.append(value)
+    return builder.finish()
+
+
+def is_builtin_module(module_name: &const String) -> bool:
+    return module_name == "stdio" or module_name == "math" or module_name == "stdlib" or module_name == "string" or module_name == "cinder" or module_name == "process"

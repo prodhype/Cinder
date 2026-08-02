@@ -1,0 +1,270 @@
+import semantic
+import syntax
+import types
+from syntax import NodeId, SyntaxArena, SyntaxKind
+from types import TypeId
+
+
+enum IRNodeKind:
+    MODULE
+    FUNCTION
+    STRUCT
+    CLASS
+    ENUM
+    UNION
+    VARIANT
+    GLOBAL
+    BLOCK
+    LOCAL
+    ASSIGN
+    RETURN
+    IF
+    WHILE
+    MATCH
+    MATCH_CASE
+    BREAK
+    CONTINUE
+    DEFER
+    DROP
+    EXPR
+    CALL
+    NAME
+    LITERAL
+    BINARY
+    UNARY
+    CAST
+    PROPAGATE
+    UNSUPPORTED
+
+
+struct IRNodeId:
+    index: i32
+
+
+struct IRNode:
+    kind: IRNodeKind
+    syntax: NodeId
+    type_id: TypeId
+    first_child: i32
+    child_count: i32
+    flags: i32
+
+
+struct BackendSummary:
+    function_count: i32
+    struct_count: i32
+    class_count: i32
+    enum_count: i32
+    union_count: i32
+    variant_count: i32
+    extern_count: i32
+    global_count: i32
+    statement_count: i32
+    expression_count: i32
+    type_count: i32
+    node_count: i32
+
+
+struct IRModule:
+    nodes: List[IRNode]
+    children: List[IRNodeId]
+    root: IRNodeId
+    summary: BackendSummary
+
+    def add_node(self: &IRModule, kind: IRNodeKind, syntax_id: NodeId, type_id: TypeId, children: &const List[IRNodeId], flags: i32) -> IRNodeId:
+        first_child = cast[i32](len(self.children))
+        index: usize = 0
+        while index < len(children):
+            child = children[index]
+            if child.index >= 0:
+                self.children.append(child)
+            index += 1
+        child_count = cast[i32](len(self.children)) - first_child
+        id = IRNodeId(index=cast[i32](len(self.nodes)))
+        self.nodes.append(
+            IRNode(
+                kind=kind,
+                syntax=syntax_id,
+                type_id=type_id,
+                first_child=first_child,
+                child_count=child_count,
+                flags=flags,
+            )
+        )
+        return id
+
+
+def summarize(arena: &const SyntaxArena, root: NodeId) -> BackendSummary:
+    summary = BackendSummary(
+        function_count=0,
+        struct_count=0,
+        class_count=0,
+        enum_count=0,
+        union_count=0,
+        variant_count=0,
+        extern_count=0,
+        global_count=0,
+        statement_count=0,
+        expression_count=0,
+        type_count=0,
+        node_count=cast[i32](len(arena.nodes)),
+    )
+    visit_summary(arena, root, summary)
+    return summary
+
+
+def lower(arena: &const SyntaxArena, root: NodeId, model: &const semantic.SemanticModel) -> IRModule:
+    nodes: List[IRNode] = []
+    children: List[IRNodeId] = []
+    summary = summarize(arena, root)
+    module = IRModule(nodes=nodes, children=children, root=missing_ir_node(), summary=summary)
+    module.root = lower_node(module, arena, root, model)
+    return module
+
+
+def summarize_ir(module: &const IRModule) -> BackendSummary:
+    return module.summary
+
+
+def lower_node(module: &IRModule, arena: &const SyntaxArena, id: NodeId, model: &const semantic.SemanticModel) -> IRNodeId:
+    if id.index < 0:
+        return missing_ir_node()
+    node = arena.nodes[id.index]
+    child_nodes: List[IRNodeId] = []
+    offset: i32 = 0
+    while offset < node.child_count:
+        lowered = lower_node(module, arena, arena.children[node.first_child + offset], model)
+        if lowered.index >= 0:
+            child_nodes.append(lowered)
+        offset += 1
+    return module.add_node(ir_kind_for_syntax(node.kind), id, ir_type_for_node(node.kind, id, model), child_nodes, node.flags)
+
+
+def ir_kind_for_syntax(kind: SyntaxKind) -> IRNodeKind:
+    if kind == SyntaxKind.MODULE:
+        return IRNodeKind.MODULE
+    if kind == SyntaxKind.FUNCTION_DECL:
+        return IRNodeKind.FUNCTION
+    if kind == SyntaxKind.STRUCT_DECL:
+        return IRNodeKind.STRUCT
+    if kind == SyntaxKind.CLASS_DECL:
+        return IRNodeKind.CLASS
+    if kind == SyntaxKind.ENUM_DECL:
+        return IRNodeKind.ENUM
+    if kind == SyntaxKind.UNION_DECL:
+        return IRNodeKind.UNION
+    if kind == SyntaxKind.VARIANT_DECL:
+        return IRNodeKind.VARIANT
+    if kind == SyntaxKind.GLOBAL_DECL:
+        return IRNodeKind.GLOBAL
+    if kind == SyntaxKind.BLOCK:
+        return IRNodeKind.BLOCK
+    if kind == SyntaxKind.VAR_DECL_STMT or kind == SyntaxKind.PARAMETER:
+        return IRNodeKind.LOCAL
+    if kind == SyntaxKind.ASSIGN_STMT:
+        return IRNodeKind.ASSIGN
+    if kind == SyntaxKind.RETURN_STMT:
+        return IRNodeKind.RETURN
+    if kind == SyntaxKind.IF_STMT or kind == SyntaxKind.IF_BRANCH:
+        return IRNodeKind.IF
+    if kind == SyntaxKind.WHILE_STMT:
+        return IRNodeKind.WHILE
+    if kind == SyntaxKind.MATCH_STMT:
+        return IRNodeKind.MATCH
+    if kind == SyntaxKind.MATCH_CASE:
+        return IRNodeKind.MATCH_CASE
+    if kind == SyntaxKind.BREAK_STMT:
+        return IRNodeKind.BREAK
+    if kind == SyntaxKind.CONTINUE_STMT:
+        return IRNodeKind.CONTINUE
+    if kind == SyntaxKind.DEFER_STMT:
+        return IRNodeKind.DEFER
+    if kind == SyntaxKind.EXPR_CALL:
+        return IRNodeKind.CALL
+    if kind == SyntaxKind.EXPR_NAME:
+        return IRNodeKind.NAME
+    if kind == SyntaxKind.EXPR_LITERAL:
+        return IRNodeKind.LITERAL
+    if kind == SyntaxKind.EXPR_BINARY:
+        return IRNodeKind.BINARY
+    if kind == SyntaxKind.EXPR_UNARY:
+        return IRNodeKind.UNARY
+    if kind == SyntaxKind.EXPR_CAST:
+        return IRNodeKind.CAST
+    if kind == SyntaxKind.EXPR_PROPAGATE:
+        return IRNodeKind.PROPAGATE
+    if is_expression_kind(kind):
+        return IRNodeKind.EXPR
+    return IRNodeKind.UNSUPPORTED
+
+
+def ir_type_for_node(kind: SyntaxKind, id: NodeId, model: &const semantic.SemanticModel) -> TypeId:
+    if is_expression_kind(kind):
+        return model.expr_type(id)
+    if is_type_kind(kind):
+        return model.type_node(id)
+    return types.type_error()
+
+
+def missing_ir_node() -> IRNodeId:
+    return IRNodeId(index=-1)
+
+
+def visit_summary(arena: &const SyntaxArena, id: NodeId, summary: &BackendSummary) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.FUNCTION_DECL:
+        summary.function_count += 1
+    elif node.kind == SyntaxKind.STRUCT_DECL:
+        summary.struct_count += 1
+    elif node.kind == SyntaxKind.CLASS_DECL:
+        summary.class_count += 1
+    elif node.kind == SyntaxKind.ENUM_DECL:
+        summary.enum_count += 1
+    elif node.kind == SyntaxKind.UNION_DECL:
+        summary.union_count += 1
+    elif node.kind == SyntaxKind.VARIANT_DECL:
+        summary.variant_count += 1
+    elif node.kind == SyntaxKind.EXTERN_BLOCK or node.kind == SyntaxKind.EXTERN_IMPORT_DECL:
+        summary.extern_count += 1
+    elif node.kind == SyntaxKind.GLOBAL_DECL:
+        summary.global_count += 1
+    elif is_statement_kind(node.kind):
+        summary.statement_count += 1
+    elif is_expression_kind(node.kind):
+        summary.expression_count += 1
+    elif is_type_kind(node.kind):
+        summary.type_count += 1
+    for offset in range(0, node.child_count):
+        visit_summary(arena, arena.children[node.first_child + offset], summary)
+
+
+def dump_summary(summary: BackendSummary) -> void:
+    print(
+        "B",
+        summary.function_count,
+        summary.struct_count,
+        summary.class_count,
+        summary.enum_count,
+        summary.union_count,
+        summary.variant_count,
+        summary.extern_count,
+        summary.global_count,
+        summary.statement_count,
+        summary.expression_count,
+        summary.type_count,
+        summary.node_count,
+    )
+
+
+def is_statement_kind(kind: SyntaxKind) -> bool:
+    return kind == SyntaxKind.VAR_DECL_STMT or kind == SyntaxKind.ASSIGN_STMT or kind == SyntaxKind.EXPR_STMT or kind == SyntaxKind.IF_STMT or kind == SyntaxKind.IF_BRANCH or kind == SyntaxKind.WHILE_STMT or kind == SyntaxKind.FOR_EACH_STMT or kind == SyntaxKind.FOR_C_STMT or kind == SyntaxKind.MATCH_STMT or kind == SyntaxKind.MATCH_CASE or kind == SyntaxKind.RETURN_STMT or kind == SyntaxKind.BREAK_STMT or kind == SyntaxKind.CONTINUE_STMT or kind == SyntaxKind.PASS_STMT or kind == SyntaxKind.DEFER_STMT or kind == SyntaxKind.WITH_STMT or kind == SyntaxKind.UNSAFE_STMT
+
+
+def is_expression_kind(kind: SyntaxKind) -> bool:
+    return kind == SyntaxKind.EXPR_NAME or kind == SyntaxKind.EXPR_LITERAL or kind == SyntaxKind.EXPR_UNARY or kind == SyntaxKind.EXPR_BINARY or kind == SyntaxKind.EXPR_CALL or kind == SyntaxKind.EXPR_ARGUMENT or kind == SyntaxKind.EXPR_ATTRIBUTE or kind == SyntaxKind.EXPR_INDEX or kind == SyntaxKind.EXPR_SLICE or kind == SyntaxKind.EXPR_PROPAGATE or kind == SyntaxKind.EXPR_TUPLE or kind == SyntaxKind.EXPR_LIST or kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_MAP_ENTRY or kind == SyntaxKind.EXPR_SET or kind == SyntaxKind.EXPR_CAST or kind == SyntaxKind.EXPR_ALLOC or kind == SyntaxKind.EXPR_FSTRING
+
+
+def is_type_kind(kind: SyntaxKind) -> bool:
+    return kind == SyntaxKind.TYPE_NAME or kind == SyntaxKind.TYPE_GENERIC or kind == SyntaxKind.TYPE_CONST or kind == SyntaxKind.TYPE_POINTER or kind == SyntaxKind.TYPE_REFERENCE or kind == SyntaxKind.TYPE_ARRAY or kind == SyntaxKind.TYPE_SLICE or kind == SyntaxKind.TYPE_DYN or kind == SyntaxKind.TYPE_FUNCTION or kind == SyntaxKind.TYPE_CLOSURE

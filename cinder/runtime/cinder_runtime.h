@@ -107,6 +107,8 @@ void *cinder_grow_array(
     size_t minimum_capacity,
     size_t element_size
 );
+void cinder_write_stdout(const CinderString *text);
+void cinder_write_stderr(const CinderString *text);
 uint64_t cinder_hash_u64(uint64_t value);
 uint64_t cinder_hash_string(const char *text);
 bool cinder_string_equal(const char *left, const char *right);

@@ -22,6 +22,7 @@ from cinder.types import (
     ConstType,
     OpaqueType,
     PointerType,
+    ReferenceType,
     SliceType,
     StructType,
     Type,
@@ -175,6 +176,22 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
         [("message", c_string_type())],
         module="cinder",
         public_name="panic",
+    )
+    cinder.functions["write_stdout"] = _function(
+        span,
+        "cinder_write_stdout",
+        VOID,
+        [("text", ReferenceType(ConstType(STRING)))],
+        module="cinder",
+        public_name="write_stdout",
+    )
+    cinder.functions["write_stderr"] = _function(
+        span,
+        "cinder_write_stderr",
+        VOID,
+        [("text", ReferenceType(ConstType(STRING)))],
+        module="cinder",
+        public_name="write_stderr",
     )
 
     process = ModuleSymbol(

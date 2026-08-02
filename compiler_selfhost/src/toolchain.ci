@@ -1,0 +1,95 @@
+import process
+import fs
+import manifest
+
+
+struct ToolchainResult:
+    ok: bool
+    command: List[String]
+    stdout: String
+    stderr: String
+    exit_code: i32
+
+
+def compile_c11(
+    compiler: String,
+    generated_sources: &const List[String],
+    runtime_root: String,
+    output: String,
+    build_dir: String,
+    source_root: String,
+    native: &const manifest.NativeConfig,
+    cflags: &const List[String],
+    ldflags: &const List[String],
+) -> ToolchainResult:
+    command: List[String] = []
+    if len(compiler) == 0:
+        command.append("cc")
+    else:
+        command.append(compiler)
+    command.append("-std=c11")
+    command.append("-Wall")
+    command.append("-Wextra")
+    command.append("-Wpedantic")
+    command.append("-O2")
+    command.append("-I" + runtime_root)
+    command.append("-I" + build_dir)
+    command.append("-I" + source_root)
+    index: usize = 0
+    while index < len(native.include_dirs):
+        command.append("-I" + native.include_dirs[index])
+        index += 1
+    index = 0
+    while index < len(native.cflags):
+        command.append(native.cflags[index][0:len(native.cflags[index])])
+        index += 1
+    index = 0
+    while index < len(cflags):
+        command.append(cflags[index][0:len(cflags[index])])
+        index += 1
+    index = 0
+    while index < len(generated_sources):
+        command.append(generated_sources[index][0:len(generated_sources[index])])
+        index += 1
+    runtime_c_name: String = "cinder_runtime.c"
+    command.append(fs.join_path(&runtime_root, &runtime_c_name))
+    command.append("-o")
+    command.append(output)
+    index = 0
+    while index < len(native.link_files):
+        command.append(native.link_files[index][0:len(native.link_files[index])])
+        index += 1
+    index = 0
+    while index < len(native.library_dirs):
+        command.append("-L" + native.library_dirs[index])
+        index += 1
+    index = 0
+    while index < len(native.libraries):
+        command.append("-l" + native.libraries[index])
+        index += 1
+    index = 0
+    while index < len(native.ldflags):
+        command.append(native.ldflags[index][0:len(native.ldflags[index])])
+        index += 1
+    index = 0
+    while index < len(ldflags):
+        command.append(ldflags[index][0:len(ldflags[index])])
+        index += 1
+
+    result = process.run(command)
+    return ToolchainResult(
+        ok=result.exit_code == 0,
+        command=command,
+        stdout=result.stdout[0:len(result.stdout)],
+        stderr=result.stderr[0:len(result.stderr)],
+        exit_code=result.exit_code,
+    )
+
+
+def runtime_root() -> String:
+    relative: String = "cinder/runtime"
+    runtime_c_name: String = "cinder_runtime.c"
+    runtime_c = fs.join_path(&relative, &runtime_c_name)
+    if fs.file_exists(&runtime_c):
+        return relative
+    return "/Volumes/Shelfy/Code/Cinder/cinder/runtime"

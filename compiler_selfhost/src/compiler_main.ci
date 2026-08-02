@@ -1,0 +1,223 @@
+import cinder
+import checker
+import emit_project
+import fs
+import lexer
+import parser
+import project
+import process
+import toolchain
+
+
+struct DriverOptions:
+    compiler: String
+    output: String
+    build_dir: String
+    cflags: List[String]
+    ldflags: List[String]
+    source: String
+    program_args: List[String]
+
+
+def main(argc: i32, argv: **char) -> i32:
+    if argc < 3:
+        stderr("usage: cinder <check|emit-c|emit-project|build|run> <source>\n")
+        return 2
+
+    command = String(argv[1])
+    args: List[String] = []
+    for index in range(2, argc):
+        args.append(String(argv[index]))
+
+    options = parse_options(args)
+    if len(options.source) == 0:
+        stderr("project error: missing source path\n")
+        return 2
+
+    loaded = project.load_project(options.source[0:len(options.source)])
+    if len(loaded.error) > 0:
+        stderr("project error: " + loaded.error + "\n")
+        return 1
+
+    if command == "check":
+        if not check_graph(&loaded):
+            return 1
+        print("ok: " + options.source)
+        return 0
+
+    if command == "emit-c":
+        if not check_graph(&loaded):
+            return 1
+        generated = emit_project.amalgamated_c(&loaded)
+        if len(options.output) == 0:
+            cinder.write_stdout(generated)
+        else:
+            emit_project.write_text(options.output[0:len(options.output)], generated)
+            print(options.output)
+        return 0
+
+    if command == "emit-project":
+        if len(options.output) == 0:
+            stderr("project error: emit-project requires -o/--output\n")
+            return 2
+        if not check_graph(&loaded):
+            return 1
+        emitted = emit_project.write_project(&loaded, options.output[0:len(options.output)])
+        if not emitted.ok:
+            stderr("project error: " + emitted.error + "\n")
+            return 2
+        print(options.output)
+        return 0
+
+    if command == "build":
+        return build_command(&loaded, &options, false)
+
+    if command == "run":
+        return build_command(&loaded, &options, true)
+
+    stderr("project error: unknown command " + command + "\n")
+    return 2
+
+
+def stderr(message: String) -> void:
+    cinder.write_stderr(message)
+
+
+def parse_options(args: List[String]) -> DriverOptions:
+    cflags: List[String] = []
+    ldflags: List[String] = []
+    program_args: List[String] = []
+    options = DriverOptions(
+        compiler="",
+        output="",
+        build_dir="",
+        cflags=cflags,
+        ldflags=ldflags,
+        source="",
+        program_args=program_args,
+    )
+    index: usize = 0
+    after_separator = false
+    while index < len(args):
+        handled = false
+        if after_separator:
+            options.program_args.append(args[index][0:len(args[index])])
+            handled = true
+        if not handled and args[index] == "--":
+            after_separator = true
+            handled = true
+        if not handled and (args[index] == "-o" or args[index] == "--output"):
+            if index + 1 < len(args):
+                index += 1
+                options.output = args[index][0:len(args[index])]
+            handled = true
+        if not handled and args[index] == "--build-dir":
+            if index + 1 < len(args):
+                index += 1
+                options.build_dir = args[index][0:len(args[index])]
+            handled = true
+        if not handled and args[index] == "--cc":
+            if index + 1 < len(args):
+                index += 1
+                options.compiler = args[index][0:len(args[index])]
+            handled = true
+        if not handled and args[index] == "--cflag":
+            if index + 1 < len(args):
+                index += 1
+                options.cflags.append(args[index][0:len(args[index])])
+            handled = true
+        if not handled and args[index] == "--ldflag":
+            if index + 1 < len(args):
+                index += 1
+                options.ldflags.append(args[index][0:len(args[index])])
+            handled = true
+        if not handled and fs.starts_with(&args[index], "--ldflag="):
+            options.ldflags.append(args[index][9:len(args[index])])
+            handled = true
+        if not handled and len(args[index]) >= 2 and args[index].byte_at(0) == 45 and args[index].byte_at(1) == 73:
+            if len(args[index]) > 2:
+                options.cflags.append(args[index][0:len(args[index])])
+            if len(args[index]) <= 2 and index + 1 < len(args):
+                index += 1
+                options.cflags.append("-I" + args[index])
+            handled = true
+        if not handled and len(options.source) == 0:
+            options.source = args[index][0:len(args[index])]
+            handled = true
+        if not handled:
+            options.program_args.append(args[index][0:len(args[index])])
+        index += 1
+    return options
+
+
+def check_graph(graph: &const project.ProjectGraph) -> bool:
+    index: usize = 0
+    while index < len(graph.modules):
+        scan = lexer.new_lexer(graph.modules[index].source[0:len(graph.modules[index].source)])
+        scan.tokenize()
+        if len(scan.diagnostics) > 0:
+            scan.dump()
+            return false
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        if len(parsed.diagnostics) > 0:
+            parsed.dump_diagnostics()
+            return false
+        check = checker.new_checker()
+        checker.collect_symbols(check, parsed.arena, root, graph.modules[index].source)
+        checker.validate_import_member_calls(check, parsed.arena, root, graph.modules[index].source, &graph.modules[index].imports, &graph.modules)
+        checker.validate_names(check, parsed.arena, root, graph.modules[index].source)
+        if len(check.diagnostics) > 0:
+            for diagnostic in check.diagnostics:
+                print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+            return false
+        index += 1
+    return true
+
+
+def build_command(graph: &const project.ProjectGraph, options: &const DriverOptions, run_after: bool) -> i32:
+    if not check_graph(graph):
+        return 1
+    output = options.output[0:len(options.output)]
+    if len(output) == 0:
+        output = fs.join_path(&graph.root, &graph.project_name)
+    build_dir = options.build_dir[0:len(options.build_dir)]
+    if len(build_dir) == 0:
+        dot_name: String = ".cinder"
+        dot = fs.join_path(&graph.root, &dot_name)
+        build_dir = fs.join_path(&dot, &graph.project_name)
+    emitted = emit_project.write_project(graph, build_dir[0:len(build_dir)])
+    if not emitted.ok:
+        stderr("project error: " + emitted.error + "\n")
+        return 2
+    runtime = toolchain.runtime_root()
+    result = toolchain.compile_c11(
+        options.compiler[0:len(options.compiler)],
+        &emitted.sources,
+        runtime,
+        output[0:len(output)],
+        build_dir[0:len(build_dir)],
+        graph.source_root[0:len(graph.source_root)],
+        &graph.native,
+        &options.cflags,
+        &options.ldflags,
+    )
+    if not result.ok:
+        stderr("toolchain error: C compiler failed\n")
+        cinder.write_stderr(result.stderr)
+        return 2
+    if not run_after:
+        print(output[0:len(output)])
+        return 0
+    executable = output[0:len(output)]
+    if fs.last_slash(&executable) < 0:
+        executable = "./" + executable
+    command: List[String] = [executable[0:len(executable)]]
+    index = 0
+    while index < len(options.program_args):
+        command.append(options.program_args[index][0:len(options.program_args[index])])
+        index += 1
+    run = process.run(command)
+    cinder.write_stdout(run.stdout)
+    cinder.write_stderr(run.stderr)
+    return run.exit_code

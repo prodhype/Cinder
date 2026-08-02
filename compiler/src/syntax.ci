@@ -1,0 +1,192 @@
+enum SyntaxKind:
+    MODULE
+    MISSING
+    NAME
+    DOTTED_NAME
+    DECORATOR
+    IMPORT_DECL
+    FROM_IMPORT_DECL
+    IMPORT_NAME
+    EXTERN_IMPORT_DECL
+    EXTERN_BLOCK
+    EXTERN_TYPE_DECL
+    FUNCTION_DECL
+    PARAMETER
+    TYPE_PARAMS
+    STRUCT_DECL
+    FIELD_DECL
+    CLASS_DECL
+    ENUM_DECL
+    ENUM_MEMBER_DECL
+    UNION_DECL
+    VARIANT_DECL
+    VARIANT_CASE_DECL
+    GLOBAL_DECL
+    STATIC_ASSERT_DECL
+    BLOCK
+    VAR_DECL_STMT
+    ASSIGN_STMT
+    EXPR_STMT
+    IF_STMT
+    IF_BRANCH
+    WHILE_STMT
+    FOR_EACH_STMT
+    FOR_C_STMT
+    MATCH_STMT
+    MATCH_CASE
+    RETURN_STMT
+    BREAK_STMT
+    CONTINUE_STMT
+    PASS_STMT
+    DEFER_STMT
+    WITH_STMT
+    UNSAFE_STMT
+    TYPE_NAME
+    TYPE_GENERIC
+    TYPE_CONST
+    TYPE_POINTER
+    TYPE_REFERENCE
+    TYPE_ARRAY
+    TYPE_SLICE
+    TYPE_DYN
+    TYPE_FUNCTION
+    TYPE_CLOSURE
+    EXPR_NAME
+    EXPR_LITERAL
+    EXPR_UNARY
+    EXPR_BINARY
+    EXPR_CALL
+    EXPR_ARGUMENT
+    EXPR_ATTRIBUTE
+    EXPR_INDEX
+    EXPR_SLICE
+    EXPR_PROPAGATE
+    EXPR_TUPLE
+    EXPR_LIST
+    EXPR_MAP
+    EXPR_MAP_ENTRY
+    EXPR_SET
+    EXPR_CAST
+    EXPR_ALLOC
+    EXPR_FSTRING
+    PATTERN_WILDCARD
+    PATTERN_PATH
+    PATTERN_CAPTURE
+    PATTERN_OR
+
+
+struct NodeId:
+    index: i32
+
+
+struct StringId:
+    index: i32
+
+
+struct SyntaxNode:
+    kind: SyntaxKind
+    start: usize
+    length: usize
+    line: i32
+    column: i32
+    value_start: usize
+    value_length: usize
+    first_child: i32
+    child_count: i32
+    flags: i32
+
+
+struct ParseDiagnostic:
+    code: i32
+    start: usize
+    length: usize
+    line: i32
+    column: i32
+
+
+struct SyntaxArena:
+    nodes: List[SyntaxNode]
+    children: List[NodeId]
+    strings: List[String]
+
+    def intern(self: &SyntaxArena, value: String) -> StringId:
+        id = StringId(index=cast[i32](len(self.strings)))
+        self.strings.append(value)
+        return id
+
+    def add_node_raw(
+        self: &SyntaxArena,
+        kind: SyntaxKind,
+        start: usize,
+        end: usize,
+        line: i32,
+        column: i32,
+        value_start: usize,
+        value_length: usize,
+        first_child: i32,
+        child_count: i32,
+        flags: i32,
+    ) -> NodeId:
+        id = NodeId(index=cast[i32](len(self.nodes)))
+        self.nodes.append(
+            SyntaxNode(
+                kind=kind,
+                start=start,
+                length=end - start,
+                line=line,
+                column=column,
+                value_start=value_start,
+                value_length=value_length,
+                first_child=first_child,
+                child_count=child_count,
+                flags=flags,
+            )
+        )
+        return id
+
+    def add_token_node(self: &SyntaxArena, kind: SyntaxKind, start: usize, length: usize, line: i32, column: i32, flags: i32) -> NodeId:
+        return self.add_node_raw(kind, start, start + length, line, column, start, length, 0, 0, flags)
+
+    def dump(self: &const SyntaxArena, root: NodeId) -> void:
+        self.dump_node(root)
+
+    def dump_node(self: &const SyntaxArena, id: NodeId) -> void:
+        if id.index < 0:
+            return
+        node = self.nodes[id.index]
+        print(
+            "N",
+            cast[i32](node.kind),
+            node.start,
+            node.length,
+            node.line,
+            node.column,
+            node.value_start,
+            node.value_length,
+            node.child_count,
+            node.flags,
+        )
+        for offset in range(0, node.child_count):
+            child = self.children[node.first_child + offset]
+            self.dump_node(child)
+
+
+def new_arena() -> SyntaxArena:
+    nodes: List[SyntaxNode] = []
+    children: List[NodeId] = []
+    strings: List[String] = []
+    return SyntaxArena(nodes=nodes, children=children, strings=strings)
+
+
+def missing_node() -> NodeId:
+    return NodeId(index=-1)
+
+
+def append_valid(children: &List[NodeId], child: NodeId) -> void:
+    if child.index >= 0:
+        children.append(child)
+
+
+def append_all(children: &List[NodeId], source: &const List[NodeId]) -> void:
+    for child in source:
+        append_valid(children, child)

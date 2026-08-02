@@ -1,0 +1,4 @@
+[project]
+name = "cinder_selfhost"
+source-root = "src"
+entry = "compiler_main.ci"

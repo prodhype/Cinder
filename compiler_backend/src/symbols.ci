@@ -1,0 +1,176 @@
+import syntax
+import types
+from syntax import NodeId
+from types import TypeId
+
+
+enum SymbolKind:
+    LOCAL
+    PARAMETER
+    FUNCTION
+    FUNCTION_TEMPLATE
+    STRUCT
+    CLASS
+    ENUM
+    UNION
+    VARIANT
+    VARIANT_CASE
+    FIELD
+    METHOD
+    GLOBAL
+    CONSTANT
+    BUILTIN
+    EXTERN_FUNCTION
+    EXTERN_TYPE
+    TYPE_PARAMETER
+    MODULE
+
+
+struct SymbolId:
+    index: i32
+
+
+struct ScopeId:
+    index: i32
+
+
+struct SymbolRecord:
+    kind: SymbolKind
+    name_start: usize
+    name_length: usize
+    type_id: TypeId
+    node: NodeId
+    scope: ScopeId
+    owner: SymbolId
+    member_scope: ScopeId
+    flags: i32
+    arity: i32
+
+
+struct ScopeRecord:
+    parent: ScopeId
+    owner: SymbolId
+    first_symbol: i32
+    symbol_count: i32
+
+
+struct SymbolTable:
+    symbols: List[SymbolRecord]
+    scopes: List[ScopeRecord]
+
+    def add_scope(self: &SymbolTable, parent: ScopeId) -> ScopeId:
+        return self.add_owned_scope(parent, missing_symbol())
+
+    def add_owned_scope(self: &SymbolTable, parent: ScopeId, owner: SymbolId) -> ScopeId:
+        id = ScopeId(index=cast[i32](len(self.scopes)))
+        self.scopes.append(
+            ScopeRecord(
+                parent=parent,
+                owner=owner,
+                first_symbol=cast[i32](len(self.symbols)),
+                symbol_count=0,
+            )
+        )
+        return id
+
+    def add_symbol(
+        self: &SymbolTable,
+        kind: SymbolKind,
+        name_start: usize,
+        name_length: usize,
+        type_id: TypeId,
+        node: NodeId,
+        scope: ScopeId,
+        flags: i32,
+    ) -> SymbolId:
+        return self.add_symbol_full(kind, name_start, name_length, type_id, node, scope, missing_symbol(), missing_scope(), flags, flags)
+
+    def add_symbol_full(
+        self: &SymbolTable,
+        kind: SymbolKind,
+        name_start: usize,
+        name_length: usize,
+        type_id: TypeId,
+        node: NodeId,
+        scope: ScopeId,
+        owner: SymbolId,
+        member_scope: ScopeId,
+        flags: i32,
+        arity: i32,
+    ) -> SymbolId:
+        id = SymbolId(index=cast[i32](len(self.symbols)))
+        self.symbols.append(
+            SymbolRecord(
+                kind=kind,
+                name_start=name_start,
+                name_length=name_length,
+                type_id=type_id,
+                node=node,
+                scope=scope,
+                owner=owner,
+                member_scope=member_scope,
+                flags=flags,
+                arity=arity,
+            )
+        )
+        if scope.index >= 0:
+            self.scopes[scope.index].symbol_count += 1
+        return id
+
+    def attach_member_scope(self: &SymbolTable, symbol: SymbolId, scope: ScopeId) -> void:
+        if symbol.index < 0:
+            return
+        self.symbols[symbol.index].member_scope = scope
+        if scope.index >= 0:
+            self.scopes[scope.index].owner = symbol
+
+    def find_in_current_scope(self: &const SymbolTable, source: &const String, scope: ScopeId, start: usize, length: usize) -> SymbolId:
+        if scope.index < 0:
+            return missing_symbol()
+        index: usize = 0
+        while index < len(self.symbols):
+            symbol = self.symbols[index]
+            if symbol.scope.index == scope.index and range_equals(source, symbol.name_start, symbol.name_length, start, length):
+                return SymbolId(index=cast[i32](index))
+            index += 1
+        return missing_symbol()
+
+    def find_in_scope(self: &const SymbolTable, source: &const String, scope: ScopeId, start: usize, length: usize) -> SymbolId:
+        current_scope = scope
+        while current_scope.index >= 0:
+            found = self.find_in_current_scope(source, current_scope, start, length)
+            if found.index >= 0:
+                return found
+            current_scope = self.scopes[current_scope.index].parent
+        return missing_symbol()
+
+
+def missing_symbol() -> SymbolId:
+    return SymbolId(index=-1)
+
+
+def missing_scope() -> ScopeId:
+    return ScopeId(index=-1)
+
+
+def new_symbol_table() -> SymbolTable:
+    symbols: List[SymbolRecord] = []
+    scopes: List[ScopeRecord] = []
+    table = SymbolTable(symbols=symbols, scopes=scopes)
+    table.add_scope(missing_scope())
+    return table
+
+
+def root_scope() -> ScopeId:
+    return ScopeId(index=0)
+
+
+def range_equals(source: &const String, left_start: usize, left_length: usize, right_start: usize, right_length: usize) -> bool:
+    if left_length != right_length:
+        return false
+    offset: usize = 0
+    while offset < left_length:
+        if source.byte_at(left_start + offset) != source.byte_at(right_start + offset):
+            return false
+        offset += 1
+    return true

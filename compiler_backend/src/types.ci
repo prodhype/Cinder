@@ -1,0 +1,328 @@
+import syntax
+from syntax import NodeId
+
+
+enum TypeKind:
+    ERROR
+    VOID
+    BOOL
+    I32
+    I64
+    F64
+    CHAR
+    STRING
+    NAMED
+    POINTER
+    REFERENCE
+    SLICE
+    ARRAY
+    FUNCTION
+    CLOSURE
+    DYN
+    CONST
+    ENUM
+    UNION
+    VARIANT
+    CLASS
+    STRUCT
+    TUPLE
+    OPTION
+    RESULT
+    OWNED
+    LIST
+    MAP
+    SET
+    FILE
+
+
+struct TypeId:
+    index: i32
+
+
+struct TypeRecord:
+    kind: TypeKind
+    name_start: usize
+    name_length: usize
+    inner: TypeId
+    second: TypeId
+    extra: i32
+    flags: i32
+
+
+struct TypeTable:
+    types: List[TypeRecord]
+    type_args: List[TypeId]
+
+    def add(self: &TypeTable, kind: TypeKind, name_start: usize, name_length: usize, inner: TypeId, extra: i32, flags: i32) -> TypeId:
+        return self.add_full(kind, name_start, name_length, inner, missing_type(), extra, flags)
+
+    def add_full(self: &TypeTable, kind: TypeKind, name_start: usize, name_length: usize, inner: TypeId, second: TypeId, extra: i32, flags: i32) -> TypeId:
+        id = TypeId(index=cast[i32](len(self.types)))
+        self.types.append(
+            TypeRecord(
+                kind=kind,
+                name_start=name_start,
+                name_length=name_length,
+                inner=inner,
+                second=second,
+                extra=extra,
+                flags=flags,
+            )
+        )
+        return id
+
+    def primitive(self: &TypeTable, kind: TypeKind) -> TypeId:
+        return self.add(kind, 0, 0, missing_type(), 0, 0)
+
+    def pointer_to(self: &TypeTable, inner: TypeId) -> TypeId:
+        return self.add(TypeKind.POINTER, 0, 0, inner, 0, 0)
+
+    def reference_to(self: &TypeTable, inner: TypeId) -> TypeId:
+        return self.add(TypeKind.REFERENCE, 0, 0, inner, 0, 0)
+
+    def const_of(self: &TypeTable, inner: TypeId) -> TypeId:
+        return self.add(TypeKind.CONST, 0, 0, inner, 0, 0)
+
+    def slice_of(self: &TypeTable, inner: TypeId) -> TypeId:
+        return self.add(TypeKind.SLICE, 0, 0, inner, 0, 0)
+
+    def array_of(self: &TypeTable, inner: TypeId, length: i32) -> TypeId:
+        return self.add(TypeKind.ARRAY, 0, 0, inner, length, 0)
+
+    def dyn_of(self: &TypeTable, inner: TypeId) -> TypeId:
+        return self.add(TypeKind.DYN, 0, 0, inner, 0, 0)
+
+    def named(self: &TypeTable, start: usize, length: usize) -> TypeId:
+        return self.add(TypeKind.NAMED, start, length, missing_type(), 0, 0)
+
+    def nominal(self: &TypeTable, kind: TypeKind, start: usize, length: usize) -> TypeId:
+        return self.add(kind, start, length, missing_type(), 0, 0)
+
+    def generic1(self: &TypeTable, kind: TypeKind, start: usize, length: usize, inner: TypeId) -> TypeId:
+        return self.add(kind, start, length, inner, 0, 1)
+
+    def generic2(self: &TypeTable, kind: TypeKind, start: usize, length: usize, first: TypeId, second: TypeId) -> TypeId:
+        return self.add_full(kind, start, length, first, second, 0, 2)
+
+    def tuple_from_args(self: &TypeTable, args: &const List[TypeId]) -> TypeId:
+        first = cast[i32](len(self.type_args))
+        index: usize = 0
+        while index < len(args):
+            self.type_args.append(args[index])
+            index += 1
+        return self.add(TypeKind.TUPLE, 0, 0, missing_type(), first, cast[i32](len(args)))
+
+    def function_from_args(self: &TypeTable, args: &const List[TypeId], return_type: TypeId) -> TypeId:
+        first = cast[i32](len(self.type_args))
+        index: usize = 0
+        while index < len(args):
+            self.type_args.append(args[index])
+            index += 1
+        return self.add_full(TypeKind.FUNCTION, 0, 0, return_type, missing_type(), first, cast[i32](len(args)))
+
+    def closure_from_args(self: &TypeTable, environment: TypeId, args: &const List[TypeId], return_type: TypeId) -> TypeId:
+        first = cast[i32](len(self.type_args))
+        self.type_args.append(environment)
+        index: usize = 0
+        while index < len(args):
+            self.type_args.append(args[index])
+            index += 1
+        return self.add_full(TypeKind.CLOSURE, 0, 0, return_type, environment, first, cast[i32](len(args)))
+
+    def same(self: &const TypeTable, left: TypeId, right: TypeId) -> bool:
+        if left.index == right.index:
+            return true
+        if left.index < 0 or right.index < 0:
+            return false
+        left_type = self.types[left.index]
+        right_type = self.types[right.index]
+        if left_type.kind != right_type.kind:
+            return false
+        if left_type.kind == TypeKind.NAMED:
+            return left_type.name_start == right_type.name_start and left_type.name_length == right_type.name_length
+        if left_type.kind == TypeKind.POINTER or left_type.kind == TypeKind.REFERENCE or left_type.kind == TypeKind.SLICE or left_type.kind == TypeKind.CONST or left_type.kind == TypeKind.DYN or left_type.kind == TypeKind.ARRAY:
+            return self.same(left_type.inner, right_type.inner)
+        if left_type.kind == TypeKind.MAP or left_type.kind == TypeKind.RESULT:
+            return self.same(left_type.inner, right_type.inner) and self.same(left_type.second, right_type.second)
+        if left_type.kind == TypeKind.OPTION or left_type.kind == TypeKind.OWNED or left_type.kind == TypeKind.LIST or left_type.kind == TypeKind.SET:
+            return self.same(left_type.inner, right_type.inner)
+        if left_type.kind == TypeKind.TUPLE or left_type.kind == TypeKind.FUNCTION or left_type.kind == TypeKind.CLOSURE:
+            if left_type.flags != right_type.flags:
+                return false
+            if left_type.kind == TypeKind.FUNCTION or left_type.kind == TypeKind.CLOSURE:
+                if not self.same(left_type.inner, right_type.inner):
+                    return false
+            offset: i32 = 0
+            while offset < left_type.flags:
+                if not self.same(self.type_args[cast[usize](left_type.extra + offset)], self.type_args[cast[usize](right_type.extra + offset)]):
+                    return false
+                offset += 1
+            return true
+        return true
+
+    def resolve_type_node(self: &TypeTable, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> TypeId:
+        if id.index < 0:
+            return type_i32()
+        node = arena.nodes[id.index]
+        if node.kind == syntax.SyntaxKind.TYPE_NAME:
+            return self.resolve_type_name(source, node.value_start, node.value_length)
+        if node.kind == syntax.SyntaxKind.TYPE_POINTER:
+            return self.pointer_to(self.resolve_type_node(arena, first_child(arena, id), source))
+        if node.kind == syntax.SyntaxKind.TYPE_REFERENCE:
+            return self.reference_to(self.resolve_type_node(arena, first_child(arena, id), source))
+        if node.kind == syntax.SyntaxKind.TYPE_CONST:
+            return self.const_of(self.resolve_type_node(arena, first_child(arena, id), source))
+        if node.kind == syntax.SyntaxKind.TYPE_SLICE:
+            return self.slice_of(self.resolve_type_node(arena, first_child(arena, id), source))
+        if node.kind == syntax.SyntaxKind.TYPE_DYN:
+            return self.dyn_of(self.resolve_type_node(arena, first_child(arena, id), source))
+        if node.kind == syntax.SyntaxKind.TYPE_ARRAY:
+            return self.array_of(self.resolve_type_node(arena, first_child(arena, id), source), 0)
+        if node.kind == syntax.SyntaxKind.TYPE_GENERIC:
+            return self.resolve_generic_type_node(arena, id, source)
+        if node.kind == syntax.SyntaxKind.TYPE_FUNCTION:
+            return self.resolve_callable_type_node(arena, id, source, false)
+        if node.kind == syntax.SyntaxKind.TYPE_CLOSURE:
+            return self.resolve_callable_type_node(arena, id, source, true)
+        return type_error()
+
+    def resolve_type_name(self: &TypeTable, source: &const String, start: usize, length: usize) -> TypeId:
+        if range_text_equals(source, start, length, "void"):
+            return type_void()
+        if range_text_equals(source, start, length, "bool"):
+            return type_bool()
+        if range_text_equals(source, start, length, "i32"):
+            return type_i32()
+        if range_text_equals(source, start, length, "i64"):
+            return type_i64()
+        if range_text_equals(source, start, length, "f64"):
+            return type_f64()
+        if range_text_equals(source, start, length, "char"):
+            return type_char()
+        if range_text_equals(source, start, length, "String"):
+            return type_string()
+        if range_text_equals(source, start, length, "File"):
+            return self.nominal(TypeKind.FILE, start, length)
+        return self.named(start, length)
+
+    def resolve_generic_type_node(self: &TypeTable, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> TypeId:
+        node = arena.nodes[id.index]
+        if node.child_count <= 0:
+            return type_error()
+        base_id = arena.children[node.first_child]
+        base = arena.nodes[base_id.index]
+        first_arg = child_at(arena, id, 1)
+        second_arg = child_at(arena, id, 2)
+        if range_text_equals(source, base.value_start, base.value_length, "Option"):
+            return self.generic1(TypeKind.OPTION, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Owned"):
+            return self.generic1(TypeKind.OWNED, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "List"):
+            return self.generic1(TypeKind.LIST, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Set"):
+            return self.generic1(TypeKind.SET, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Map"):
+            return self.generic2(TypeKind.MAP, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source), self.resolve_type_node(arena, second_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Result"):
+            return self.generic2(TypeKind.RESULT, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source), self.resolve_type_node(arena, second_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Tuple"):
+            args: List[TypeId] = []
+            offset: i32 = 1
+            while offset < node.child_count:
+                args.append(self.resolve_type_node(arena, child_at(arena, id, offset), source))
+                offset += 1
+            return self.tuple_from_args(args)
+        return self.nominal(TypeKind.NAMED, base.value_start, base.value_length)
+
+    def resolve_callable_type_node(self: &TypeTable, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, is_closure: bool) -> TypeId:
+        node = arena.nodes[id.index]
+        args: List[TypeId] = []
+        offset: i32 = 0
+        while offset < node.child_count:
+            child_id = child_at(arena, id, offset)
+            if offset + 1 == node.child_count:
+                return_type = self.resolve_type_node(arena, child_id, source)
+                if is_closure:
+                    environment = type_error()
+                    if node.child_count > 0:
+                        environment = self.resolve_type_node(arena, child_at(arena, id, 0), source)
+                    return self.closure_from_args(environment, args, return_type)
+                return self.function_from_args(args, return_type)
+            args.append(self.resolve_type_node(arena, child_id, source))
+            offset += 1
+        return self.function_from_args(args, type_void())
+
+
+def missing_type() -> TypeId:
+    return TypeId(index=-1)
+
+
+def new_type_table() -> TypeTable:
+    records: List[TypeRecord] = []
+    args: List[TypeId] = []
+    table = TypeTable(types=records, type_args=args)
+    table.primitive(TypeKind.ERROR)
+    table.primitive(TypeKind.VOID)
+    table.primitive(TypeKind.BOOL)
+    table.primitive(TypeKind.I32)
+    table.primitive(TypeKind.I64)
+    table.primitive(TypeKind.F64)
+    table.primitive(TypeKind.CHAR)
+    table.primitive(TypeKind.STRING)
+    return table
+
+
+def type_error() -> TypeId:
+    return TypeId(index=0)
+
+
+def type_void() -> TypeId:
+    return TypeId(index=1)
+
+
+def type_bool() -> TypeId:
+    return TypeId(index=2)
+
+
+def type_i32() -> TypeId:
+    return TypeId(index=3)
+
+
+def type_i64() -> TypeId:
+    return TypeId(index=4)
+
+
+def type_f64() -> TypeId:
+    return TypeId(index=5)
+
+
+def type_char() -> TypeId:
+    return TypeId(index=6)
+
+
+def type_string() -> TypeId:
+    return TypeId(index=7)
+
+
+def first_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    return child_at(arena, id, 0)
+
+
+def child_at(arena: &const syntax.SyntaxArena, id: NodeId, offset: i32) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if offset < 0 or offset >= node.child_count:
+        return syntax.missing_node()
+    return arena.children[node.first_child + offset]
+
+
+def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:
+    if length != len(text):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != text.byte_at(offset):
+            return false
+        offset += 1
+    return true
