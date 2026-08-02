@@ -50,6 +50,21 @@ struct IRNode:
     flags: i32
 
 
+struct BackendSummary:
+    function_count: i32
+    struct_count: i32
+    class_count: i32
+    enum_count: i32
+    union_count: i32
+    variant_count: i32
+    extern_count: i32
+    global_count: i32
+    statement_count: i32
+    expression_count: i32
+    type_count: i32
+    node_count: i32
+
+
 struct IRModule:
     nodes: List[IRNode]
     children: List[IRNodeId]
@@ -77,21 +92,6 @@ struct IRModule:
             )
         )
         return id
-
-
-struct BackendSummary:
-    function_count: i32
-    struct_count: i32
-    class_count: i32
-    enum_count: i32
-    union_count: i32
-    variant_count: i32
-    extern_count: i32
-    global_count: i32
-    statement_count: i32
-    expression_count: i32
-    type_count: i32
-    node_count: i32
 
 
 def summarize(arena: &const SyntaxArena, root: NodeId) -> BackendSummary:
