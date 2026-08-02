@@ -25,6 +25,7 @@ struct ModuleCodegenContext:
     current_owner: String
     local_start: usize
     pointer_start: usize
+    deferred_expressions: List[NodeId]
 
 
 def emit_c(arena: &const SyntaxArena, root: NodeId, source: &const String) -> String:
@@ -770,6 +771,7 @@ def make_module_codegen_context(arena: &const SyntaxArena, root: NodeId, source:
     local_types: List[ModuleNameTypeBinding] = []
     pointer_names: List[String] = []
     field_types: List[ModuleFieldTypeBinding] = []
+    deferred_expressions: List[NodeId] = []
     context = ModuleCodegenContext(
         local_types=local_types,
         pointer_names=pointer_names,
@@ -777,6 +779,7 @@ def make_module_codegen_context(arena: &const SyntaxArena, root: NodeId, source:
         current_owner="",
         local_start=0,
         pointer_start=0,
+        deferred_expressions=deferred_expressions,
     )
     collect_module_field_types(arena, root, source, context)
     return context
@@ -1368,13 +1371,35 @@ def emit_module_block(
     node = arena.nodes[id.index]
     local_start = len(context.local_types)
     pointer_start = len(context.pointer_names)
+    defer_start = len(context.deferred_expressions)
     for offset in range(0, node.child_count):
         emit_module_statement(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
+    emit_module_defers(arena, source, builder, prefix, project_name, imports, context, defer_start)
     emit_context_drops(arena, context, source, builder, local_start)
     while len(context.local_types) > local_start:
         context.local_types.pop()
     while len(context.pointer_names) > pointer_start:
         context.pointer_names.pop()
+    while len(context.deferred_expressions) > defer_start:
+        context.deferred_expressions.pop()
+
+
+def emit_module_defers(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &ModuleCodegenContext,
+    defer_start: usize,
+) -> void:
+    index = len(context.deferred_expressions)
+    while index > defer_start:
+        index -= 1
+        builder.append("    ")
+        emit_module_expression(arena, context.deferred_expressions[index], source, builder, prefix, project_name, imports, context)
+        builder.append(";\n")
 
 
 def emit_module_statement(
@@ -1391,12 +1416,28 @@ def emit_module_statement(
         return
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
+        expr = first_child(arena, id)
+        if len(context.deferred_expressions) == 0:
+            builder.append("    return")
+            if expr.index >= 0:
+                builder.append(" ")
+                emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+            builder.append(";\n")
+            return
+        if expr.index >= 0:
+            builder.append("    __auto_type cinder_deferred_return_value = ")
+            emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+            builder.append(";\n")
+        emit_module_defers(arena, source, builder, prefix, project_name, imports, context, 0)
         builder.append("    return")
+        if expr.index >= 0:
+            builder.append(" cinder_deferred_return_value")
+        builder.append(";\n")
+        return
+    if node.kind == SyntaxKind.DEFER_STMT:
         expr = first_child(arena, id)
         if expr.index >= 0:
-            builder.append(" ")
-            emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
-        builder.append(";\n")
+            context.deferred_expressions.append(expr)
         return
     if node.kind == SyntaxKind.VAR_DECL_STMT:
         builder.append("    ")
