@@ -217,6 +217,33 @@ def test_gen1_check_rejects_cyclic_module_imports(
     assert "ok:" not in checked.stdout
 
 
+def test_gen1_check_rejects_ambiguous_module_layout(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    package_root = source_root / "maths"
+    package_root.mkdir(parents=True)
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text("import maths\n", encoding="utf-8")
+    file_candidate = source_root / "maths.ci"
+    package_candidate = package_root / "__init__.ci"
+    file_candidate.write_text("value: i32 = 1\n", encoding="utf-8")
+    package_candidate.write_text("value: i32 = 2\n", encoding="utf-8")
+
+    checked = run_gen1(gen1_compiler, "check", str(tmp_path))
+
+    assert checked.returncode == 1
+    assert checked.stderr.strip() == (
+        "project error: module 'maths' is ambiguous: "
+        f"both {file_candidate} and {package_candidate} exist"
+    )
+    assert "ok:" not in checked.stdout
+
+
 @pytest.mark.parametrize("source_kind", ["file", "project"])
 def test_gen1_check_rejects_missing_entry_file(
     gen1_compiler: Path,

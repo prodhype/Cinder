@@ -191,7 +191,10 @@ def visit_module(
         while index < len(dependencies):
             dependency = dependencies[index][0:len(dependencies[index])]
             if not is_builtin_module(&dependency):
-                resolved = resolve_module_path(config, &dependency)
+                resolved = resolve_module_path(config, &dependency, error_parts)
+                if len(error_parts) > 0:
+                    visiting.pop()
+                    return false
                 if len(resolved) > 0:
                     if not visit_module(config, modules, names, visiting, dependency[0:len(dependency)], resolved, error_parts):
                         visiting.pop()
@@ -212,15 +215,30 @@ def visit_module(
     return true
 
 
-def resolve_module_path(config: &const manifest.ProjectConfig, module_name: &const String) -> String:
+def resolve_module_path(
+    config: &const manifest.ProjectConfig,
+    module_name: &const String,
+    error_parts: &List[String],
+) -> String:
     module_path = fs.replace_char(module_name, 46, 47)
     base = fs.join_path(&config.source_root, &module_path)
     file_candidate = fs.with_suffix(&base, ".ci")
     init_name: String = "__init__.ci"
     package_candidate = fs.join_path(&base, &init_name)
-    if fs.file_exists(&file_candidate):
+    has_file = fs.file_exists(&file_candidate)
+    has_package = fs.file_exists(&package_candidate)
+    if has_file and has_package:
+        error_parts.append("module '")
+        error_parts.append(module_name[0:len(module_name)])
+        error_parts.append("' is ambiguous: both ")
+        error_parts.append(file_candidate[0:len(file_candidate)])
+        error_parts.append(" and ")
+        error_parts.append(package_candidate[0:len(package_candidate)])
+        error_parts.append(" exist")
+        return ""
+    if has_file:
         return file_candidate
-    if fs.file_exists(&package_candidate):
+    if has_package:
         return package_candidate
     return ""
 
