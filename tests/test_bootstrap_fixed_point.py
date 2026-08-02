@@ -196,6 +196,28 @@ def test_gen1_check_rejects_lexer_and_parser_diagnostics(
     assert "ok:" not in checked.stdout
 
 
+@pytest.mark.parametrize(
+    "source_text",
+    [
+        'def main() -> i32:\n    return "oops"\n',
+        'def main() -> i32:\n    value: i32 = "oops"\n    return value\n',
+    ],
+)
+def test_gen1_check_rejects_incompatible_types(
+    gen1_compiler: Path,
+    tmp_path: Path,
+    source_text: str,
+) -> None:
+    source = tmp_path / "incompatible.ci"
+    source.write_text(source_text, encoding="utf-8")
+
+    checked = run_gen1(gen1_compiler, "check", str(source))
+
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E 107 ")
+    assert "ok:" not in checked.stdout
+
+
 def test_gen1_check_rejects_cyclic_module_imports(
     gen1_compiler: Path,
     tmp_path: Path,

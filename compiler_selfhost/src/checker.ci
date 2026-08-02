@@ -816,13 +816,27 @@ def infer_map_literal_type(checker: &Checker, arena: &const syntax.SyntaxArena, 
 def types_compatible(checker: &Checker, expected: types.TypeId, actual: types.TypeId) -> bool:
     if checker.type_table.same(expected, actual):
         return true
-    ignored_expected = expected
-    ignored_actual = actual
+    if expected.index < 0 or actual.index < 0:
+        return true
+    expected_kind = checker.type_table.types[expected.index].kind
+    actual_kind = checker.type_table.types[actual.index].kind
+    if expected_kind == types.TypeKind.ERROR or actual_kind == types.TypeKind.ERROR:
+        return true
+    if is_numeric_kind(expected_kind) and is_numeric_kind(actual_kind):
+        return true
+    if expected_kind == types.TypeKind.BOOL and is_scalar_kind(actual_kind):
+        return true
+    if actual_kind == types.TypeKind.STRING:
+        return false
     return true
 
 
-def is_strict_scalar(kind: types.TypeKind) -> bool:
-    return kind == types.TypeKind.VOID or kind == types.TypeKind.BOOL or kind == types.TypeKind.I32 or kind == types.TypeKind.I64 or kind == types.TypeKind.F64 or kind == types.TypeKind.CHAR or kind == types.TypeKind.STRING
+def is_numeric_kind(kind: types.TypeKind) -> bool:
+    return kind == types.TypeKind.I32 or kind == types.TypeKind.I64 or kind == types.TypeKind.F64 or kind == types.TypeKind.CHAR
+
+
+def is_scalar_kind(kind: types.TypeKind) -> bool:
+    return kind == types.TypeKind.BOOL or is_numeric_kind(kind) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN
 
 
 def is_string_literal(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
