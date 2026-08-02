@@ -235,6 +235,32 @@ def test_gen1_check_rejects_unknown_imported_module_member(
     assert "ok:" not in checked.stdout
 
 
+@pytest.mark.parametrize(
+    "import_source, expression",
+    [
+        ("import maths as m", "m.answer()"),
+        ("from maths import answer as result", "result()"),
+    ],
+)
+def test_gen1_check_binds_explicit_import_aliases(
+    gen1_compiler: Path,
+    tmp_path: Path,
+    import_source: str,
+    expression: str,
+) -> None:
+    manifest = write_project(tmp_path)
+    main = tmp_path / "src" / "main.ci"
+    main.write_text(
+        f"{import_source}\n\ndef main() -> i32:\n    return {expression}\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(gen1_compiler, "check", str(manifest))
+
+    assert checked.returncode == 0, checked.stdout
+    assert checked.stdout.strip() == f"ok: {manifest}"
+
+
 def test_gen1_check_is_native_and_does_not_require_python_on_path(
     gen1_compiler: Path,
     tmp_path: Path,

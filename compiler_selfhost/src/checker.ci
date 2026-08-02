@@ -126,10 +126,16 @@ def collect_symbols_in_node(checker: &Checker, arena: &const syntax.SyntaxArena,
         imported = find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
         if imported.index >= 0:
             imported_node = arena.nodes[imported.index]
+            binding_node = imported_node
+            for offset in range(0, node.child_count):
+                child_id = arena.children[node.first_child + offset]
+                child = arena.nodes[child_id.index]
+                if child.kind == syntax.SyntaxKind.NAME and child.flags == 1:
+                    binding_node = child
             symbol = checker.symbols.add_symbol(
                 symbols.SymbolKind.GLOBAL,
-                imported_node.value_start,
-                imported_node.value_length,
+                binding_node.value_start,
+                binding_node.value_length,
                 types.missing_type(),
                 id,
                 symbols.root_scope(),
@@ -242,6 +248,11 @@ def collect_from_import_symbols(checker: &Checker, arena: &const syntax.SyntaxAr
         child = arena.nodes[child_id.index]
         if child.kind == syntax.SyntaxKind.IMPORT_NAME:
             name = first_child(arena, child_id)
+            for item_offset in range(0, child.child_count):
+                name_id = arena.children[child.first_child + item_offset]
+                name_node = arena.nodes[name_id.index]
+                if name_node.kind == syntax.SyntaxKind.NAME and name_node.flags == 1:
+                    name = name_id
             if name.index >= 0:
                 name_node = arena.nodes[name.index]
                 symbol = checker.symbols.add_symbol(
