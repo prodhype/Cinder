@@ -309,6 +309,33 @@ def test_gen1_check_rejects_unknown_imported_module_member(
 @pytest.mark.parametrize(
     "import_source, expression",
     [
+        ("from maths import absent", "absent()"),
+        ("from maths import absent as missing", "missing()"),
+    ],
+)
+def test_gen1_check_rejects_unknown_from_import_member(
+    gen1_compiler: Path,
+    tmp_path: Path,
+    import_source: str,
+    expression: str,
+) -> None:
+    manifest = write_project(tmp_path)
+    main = tmp_path / "src" / "main.ci"
+    main.write_text(
+        f"{import_source}\n\ndef main() -> i32:\n    return {expression}\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(gen1_compiler, "check", str(manifest))
+
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E 48 ")
+    assert "ok:" not in checked.stdout
+
+
+@pytest.mark.parametrize(
+    "import_source, expression",
+    [
         ("import maths as m", "m.answer()"),
         ("from maths import answer as result", "result()"),
     ],

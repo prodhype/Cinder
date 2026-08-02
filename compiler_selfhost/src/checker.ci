@@ -272,7 +272,51 @@ def validate_names(checker: &Checker, arena: &const syntax.SyntaxArena, root: No
 
 
 def validate_import_member_calls(checker: &Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:
+    validate_from_import_members_in_node(checker, arena, root, source, modules)
     validate_import_member_calls_in_node(checker, arena, root, source, imports, modules)
+
+
+def validate_from_import_members_in_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, modules: &const List[project.ParsedModule]) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.FROM_IMPORT_DECL:
+        validate_from_import_members(checker, arena, id, source, modules)
+    for offset in range(0, node.child_count):
+        validate_from_import_members_in_node(checker, arena, arena.children[node.first_child + offset], source, modules)
+
+
+def validate_from_import_members(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, modules: &const List[project.ParsedModule]) -> void:
+    dotted = find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
+    if dotted.index < 0:
+        return
+    dotted_node = arena.nodes[dotted.index]
+    module_name = source[dotted_node.start:dotted_node.start + dotted_node.length]
+    module_index: i32 = -1
+    index: i32 = 0
+    for module in modules:
+        if module.name == module_name:
+            module_index = index
+        index += 1
+    if module_index < 0:
+        return
+    module_source = modules[cast[usize](module_index)].source[0:len(modules[cast[usize](module_index)].source)]
+    scan = lexer.new_lexer(module_source[0:len(module_source)])
+    scan.tokenize()
+    parsed = parser.new_parser(scan)
+    module_root = parsed.parse_module()
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        import_id = arena.children[node.first_child + offset]
+        imported = arena.nodes[import_id.index]
+        if imported.kind == syntax.SyntaxKind.IMPORT_NAME:
+            for item_offset in range(0, imported.child_count):
+                name_id = arena.children[imported.first_child + item_offset]
+                name_node = arena.nodes[name_id.index]
+                if name_node.kind == syntax.SyntaxKind.NAME and name_node.flags != 1:
+                    member_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+                    if find_exported_declaration(parsed.arena, module_root, &module_source, &member_name).index < 0:
+                        checker.emit_error(48, name_node.start, name_node.length, name_node.line, name_node.column)
 
 
 def validate_import_member_calls_in_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:
