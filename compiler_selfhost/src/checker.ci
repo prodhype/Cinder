@@ -523,6 +523,14 @@ def validate_names_in_scope(checker: &Checker, arena: &const syntax.SyntaxArena,
         for offset in range(0, node.child_count):
             validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, function_scope, function_return)
         return
+    if node.kind == syntax.SyntaxKind.MATCH_CASE:
+        case_scope = checker.symbols.add_scope(current_scope)
+        checker.model.record_scope(id, case_scope)
+        if node.child_count > 0:
+            declare_pattern_bindings(checker, arena, arena.children[node.first_child], source, case_scope)
+        for offset in range(0, node.child_count):
+            validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, case_scope, expected_return)
+        return
     if node.kind == syntax.SyntaxKind.BLOCK:
         block_scope = checker.symbols.add_scope(current_scope)
         checker.model.record_scope(id, block_scope)
@@ -595,6 +603,45 @@ def validate_names_in_scope(checker: &Checker, arena: &const syntax.SyntaxArena,
                 return
     for offset in range(0, node.child_count):
         validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, current_scope, expected_return)
+
+
+def declare_pattern_bindings(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.PATTERN_PATH:
+        if node.flags == 0 and node.child_count == 1:
+            name_id = arena.children[node.first_child]
+            name = arena.nodes[name_id.index]
+            if name.kind == syntax.SyntaxKind.NAME and is_pattern_binding_name(source, name.value_start, name.value_length):
+                if checker.symbols.find_in_current_scope(source, current_scope, name.value_start, name.value_length).index < 0:
+                    symbol = checker.symbols.add_symbol(
+                        symbols.SymbolKind.LOCAL,
+                        name.value_start,
+                        name.value_length,
+                        types.type_i32(),
+                        name_id,
+                        current_scope,
+                        0,
+                    )
+                    checker.model.record_declaration_symbol(name_id, symbol)
+                return
+        for offset in range(0, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            child = arena.nodes[child_id.index]
+            if child.kind != syntax.SyntaxKind.NAME:
+                declare_pattern_bindings(checker, arena, child_id, source, current_scope)
+        return
+    if node.kind == syntax.SyntaxKind.PATTERN_CAPTURE or node.kind == syntax.SyntaxKind.PATTERN_OR:
+        for offset in range(0, node.child_count):
+            declare_pattern_bindings(checker, arena, arena.children[node.first_child + offset], source, current_scope)
+
+
+def is_pattern_binding_name(source: &const String, start: usize, length: usize) -> bool:
+    if length <= 0:
+        return false
+    first = source.byte_at(start)
+    return first >= 97 and first <= 122
 
 
 def declare_for_each_target_if_missing(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
@@ -675,6 +722,23 @@ def validate_call(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeI
     if is_nominal_constructor_symbol(symbol.kind) or symbol.kind == symbols.SymbolKind.GLOBAL:
         checker.model.record_name_symbol(callee, found)
         checker.model.record_expr_type(id, symbol.type_id)
+        return
+    if symbol.type_id.index >= 0:
+        callable_type = checker.type_table.types[symbol.type_id.index]
+        if callable_type.kind == types.TypeKind.FUNCTION or callable_type.kind == types.TypeKind.CLOSURE:
+            checker.model.record_name_symbol(callee, found)
+            checker.model.record_call(id, found, callable_type.inner, 0)
+            checker.model.record_expr_type(id, callable_type.inner)
+            actual = count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
+            expected = callable_type.flags
+            if actual < expected:
+                checker.emit_error(78, call.start, call.length, call.line, call.column)
+            elif actual > expected:
+                checker.emit_error(77, call.start, call.length, call.line, call.column)
+            return
+    if symbol.kind == symbols.SymbolKind.LOCAL or symbol.kind == symbols.SymbolKind.PARAMETER or symbol.kind == symbols.SymbolKind.CONSTANT:
+        checker.model.record_name_symbol(callee, found)
+        checker.model.record_expr_type(id, types.type_i32())
         return
     if symbol.kind != symbols.SymbolKind.FUNCTION and symbol.kind != symbols.SymbolKind.FUNCTION_TEMPLATE:
         checker.emit_error(48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
@@ -871,6 +935,8 @@ def types_compatible(checker: &Checker, expected: types.TypeId, actual: types.Ty
     if expected_kind == types.TypeKind.BOOL and is_scalar_kind(actual_kind):
         return true
     if actual_kind == types.TypeKind.STRING:
+        if expected_kind == types.TypeKind.CONST or expected_kind == types.TypeKind.POINTER:
+            return true
         return false
     return true
 
@@ -889,7 +955,15 @@ def is_string_literal(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
 
 
 def is_builtin_name(source: &const String, start: usize, length: usize) -> bool:
-    return range_text_equals(source, start, length, "print") or range_text_equals(source, start, length, "len") or range_text_equals(source, start, length, "open") or range_text_equals(source, start, length, "range") or range_text_equals(source, start, length, "String") or range_text_equals(source, start, length, "StringBuilder")
+    return range_text_equals(source, start, length, "print") or range_text_equals(source, start, length, "len") or range_text_equals(source, start, length, "open") or range_text_equals(source, start, length, "range") or range_text_equals(source, start, length, "sort") or range_text_equals(source, start, length, "input") or range_text_equals(source, start, length, "to_string") or range_text_equals(source, start, length, "set") or range_text_equals(source, start, length, "free") or range_text_equals(source, start, length, "panic") or range_text_equals(source, start, length, "String") or range_text_equals(source, start, length, "StringBuilder") or range_text_equals(source, start, length, "Some") or range_text_equals(source, start, length, "Owned") or range_text_equals(source, start, length, "Ok") or range_text_equals(source, start, length, "Err") or range_text_equals(source, start, length, "closure") or range_text_equals(source, start, length, "super") or is_parse_builtin_name(source, start, length) or is_reflection_builtin_name(source, start, length)
+
+
+def is_parse_builtin_name(source: &const String, start: usize, length: usize) -> bool:
+    return range_text_equals(source, start, length, "parse_i32") or range_text_equals(source, start, length, "parse_i64") or range_text_equals(source, start, length, "parse_u32") or range_text_equals(source, start, length, "parse_u64") or range_text_equals(source, start, length, "parse_isize") or range_text_equals(source, start, length, "parse_usize") or range_text_equals(source, start, length, "parse_f32") or range_text_equals(source, start, length, "parse_f64") or range_text_equals(source, start, length, "parse_bool")
+
+
+def is_reflection_builtin_name(source: &const String, start: usize, length: usize) -> bool:
+    return range_text_equals(source, start, length, "type_of") or range_text_equals(source, start, length, "type_name") or range_text_equals(source, start, length, "type_info") or range_text_equals(source, start, length, "size_of") or range_text_equals(source, start, length, "align_of") or range_text_equals(source, start, length, "field_count") or range_text_equals(source, start, length, "method_count") or range_text_equals(source, start, length, "fields") or range_text_equals(source, start, length, "methods") or range_text_equals(source, start, length, "fields_of") or range_text_equals(source, start, length, "methods_of") or range_text_equals(source, start, length, "has_field") or range_text_equals(source, start, length, "has_method") or range_text_equals(source, start, length, "implements")
 
 
 def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:

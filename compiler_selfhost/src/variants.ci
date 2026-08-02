@@ -82,23 +82,26 @@ def count_payload_fields(arena: &const syntax.SyntaxArena, case_id: NodeId) -> i
 
 def case_has_wildcard(arena: &const syntax.SyntaxArena, case_id: NodeId) -> bool:
     node = arena.nodes[case_id.index]
-    offset: i32 = 0
-    while offset < node.child_count:
-        if contains_wildcard(arena, arena.children[node.first_child + offset]):
-            return true
-        offset += 1
-    return false
+    if node.child_count <= 0:
+        return false
+    return pattern_is_catch_all(arena, arena.children[node.first_child])
 
 
-def contains_wildcard(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
+def pattern_is_catch_all(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
     if id.index < 0:
         return false
     node = arena.nodes[id.index]
     if node.kind == syntax.SyntaxKind.PATTERN_WILDCARD:
         return true
+    if node.kind == syntax.SyntaxKind.PATTERN_PATH:
+        if node.flags != 1 or node.child_count <= 0:
+            return false
+        return pattern_is_catch_all(arena, arena.children[node.first_child])
+    if node.kind != syntax.SyntaxKind.PATTERN_CAPTURE and node.kind != syntax.SyntaxKind.PATTERN_OR:
+        return false
     offset: i32 = 0
     while offset < node.child_count:
-        if contains_wildcard(arena, arena.children[node.first_child + offset]):
+        if pattern_is_catch_all(arena, arena.children[node.first_child + offset]):
             return true
         offset += 1
     return false

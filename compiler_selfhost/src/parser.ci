@@ -797,7 +797,8 @@ struct Parser:
             part = self.expect(TokenKind.NAME, 67)
             syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, part, 0))
         node = self.make_node(SyntaxKind.TYPE_NAME, start, self.previous(), name, children, 0)
-        if self.match_kind(TokenKind.LEFT_BRACKET):
+        if self.at(TokenKind.LEFT_BRACKET) and self.peek(1).kind != TokenKind.INTEGER and self.peek(1).kind != TokenKind.RIGHT_BRACKET:
+            self.advance()
             generic_children: List[NodeId] = []
             syntax.append_valid(generic_children, node)
             self.parse_type_list(generic_children, TokenKind.RIGHT_BRACKET)
