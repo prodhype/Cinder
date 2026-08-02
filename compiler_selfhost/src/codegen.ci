@@ -27,6 +27,7 @@ struct ModuleCodegenContext:
     pointer_start: usize
     deferred_expressions: List[NodeId]
     with_resources: List[String]
+    global_names: List[String]
 
 
 def emit_c(arena: &const SyntaxArena, root: NodeId, source: &const String) -> String:
@@ -774,6 +775,7 @@ def make_module_codegen_context(arena: &const SyntaxArena, root: NodeId, source:
     field_types: List[ModuleFieldTypeBinding] = []
     deferred_expressions: List[NodeId] = []
     with_resources: List[String] = []
+    global_names: List[String] = []
     context = ModuleCodegenContext(
         local_types=local_types,
         pointer_names=pointer_names,
@@ -783,9 +785,23 @@ def make_module_codegen_context(arena: &const SyntaxArena, root: NodeId, source:
         pointer_start=0,
         deferred_expressions=deferred_expressions,
         with_resources=with_resources,
+        global_names=global_names,
     )
     collect_module_field_types(arena, root, source, context)
+    collect_module_global_names(arena, root, source, context)
     return context
+
+
+def collect_module_global_names(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            collect_module_global_names(arena, arena.children[node.first_child + offset], source, context)
+        return
+    if node.kind == SyntaxKind.GLOBAL_DECL:
+        context.global_names.append(source[node.value_start:node.value_start + node.value_length])
 
 
 def collect_module_field_types(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
@@ -843,6 +859,18 @@ def context_name_type(context: &const ModuleCodegenContext, name: &const String)
         if context.local_types[index].name == name[0:len(name)]:
             return context.local_types[index].type_id
     return syntax.missing_node()
+
+
+def context_name_is_global(context: &const ModuleCodegenContext, name: &const String) -> bool:
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if context.local_types[index].name == name[0:len(name)]:
+            return false
+    for global_name in context.global_names:
+        if global_name == name[0:len(name)]:
+            return true
+    return false
 
 
 def context_type_needs_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
@@ -1218,6 +1246,19 @@ def emit_module_declarations(
         if not emitted_parameter:
             builder.append("void")
         builder.append(");\n")
+        return
+    if node.kind == SyntaxKind.GLOBAL_DECL:
+        builder.append("extern ")
+        if node.flags == 1:
+            builder.append("const ")
+        annotation = find_child_type(arena, id)
+        if annotation.index >= 0:
+            emit_module_c_type(arena, annotation, source, builder, prefix, project_name, imports)
+        else:
+            builder.append("int32_t")
+        builder.append(" ")
+        emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        builder.append(";\n")
 
 
 def emit_module_top_level(
@@ -1252,6 +1293,22 @@ def emit_module_top_level(
         return
     if node.kind == SyntaxKind.FUNCTION_DECL:
         emit_module_function(arena, id, source, builder, prefix, project_name, imports, is_entry, context)
+        return
+    if node.kind == SyntaxKind.GLOBAL_DECL:
+        if node.flags == 1:
+            builder.append("const ")
+        annotation = find_child_type(arena, id)
+        if annotation.index >= 0:
+            emit_module_c_type(arena, annotation, source, builder, prefix, project_name, imports)
+        else:
+            builder.append("int32_t")
+        builder.append(" ")
+        emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        initializer = last_child(arena, id)
+        if initializer.index >= 0 and not is_type_kind(arena.nodes[initializer.index].kind):
+            builder.append(" = ")
+            emit_module_expression(arena, initializer, source, builder, prefix, project_name, imports, context)
+        builder.append(";\n\n")
         return
 
 
@@ -1796,6 +1853,9 @@ def emit_module_expression(
         builder.append(" cinder_list; })")
         return
     if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        if context_name_is_global(context, &name):
+            builder.append(prefix[0:len(prefix)])
         append_source(builder, source, node.value_start, node.value_length)
         return
     if node.kind == SyntaxKind.EXPR_BINARY:

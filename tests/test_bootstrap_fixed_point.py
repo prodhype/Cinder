@@ -174,6 +174,27 @@ def test_gen1_check_and_emit_c(
     assert "return 42;" in emitted.stdout
 
 
+def test_gen1_build_emits_top_level_globals(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "global.ci"
+    source.write_text(
+        "value: i32 = 42\n\n"
+        "def main() -> i32:\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "global"
+
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+
+    assert built.returncode == 0, built.stderr
+    assert output.is_file()
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 42
+
+
 def test_gen1_emit_c_cleans_up_with_scope_before_return(
     gen1_compiler: Path,
     tmp_path: Path,
