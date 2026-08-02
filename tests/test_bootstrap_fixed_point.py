@@ -288,6 +288,20 @@ def test_gen1_check_rejects_missing_entry_file(
     assert "ok:" not in checked.stdout
 
 
+def test_gen1_check_rejects_missing_explicit_manifest(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "missing-project" / "cinder.toml"
+
+    checked = run_gen1(gen1_compiler, "check", str(manifest))
+
+    assert checked.returncode == 1
+    assert checked.stderr.strip() == f"project error: manifest file not found: {manifest}"
+    assert "panic:" not in checked.stderr
+    assert "ok:" not in checked.stdout
+
+
 def test_gen1_check_rejects_unknown_imported_module_member(
     gen1_compiler: Path,
     tmp_path: Path,
