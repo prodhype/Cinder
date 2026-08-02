@@ -196,6 +196,27 @@ def test_gen1_check_rejects_lexer_and_parser_diagnostics(
     assert "ok:" not in checked.stdout
 
 
+def test_gen1_check_rejects_cyclic_module_imports(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text("import a\n", encoding="utf-8")
+    (source_root / "a.ci").write_text("import b\n", encoding="utf-8")
+    (source_root / "b.ci").write_text("import a\n", encoding="utf-8")
+
+    checked = run_gen1(gen1_compiler, "check", str(tmp_path))
+
+    assert checked.returncode == 1
+    assert checked.stderr.strip() == "project error: cyclic module dependency: a -> b -> a"
+    assert "ok:" not in checked.stdout
+
+
 def test_gen1_check_is_native_and_does_not_require_python_on_path(
     gen1_compiler: Path,
     tmp_path: Path,

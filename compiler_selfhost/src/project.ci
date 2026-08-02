@@ -28,6 +28,7 @@ struct ProjectGraph:
     native: manifest.NativeConfig
     modules: List[ParsedModule]
     entry_module: String
+    error: String
 
 
 def load_project(path: String) -> ProjectGraph:
@@ -35,9 +36,10 @@ def load_project(path: String) -> ProjectGraph:
     modules: List[ParsedModule] = []
     names: List[String] = []
     visiting: List[String] = []
+    error_parts: List[String] = []
     entry_module = module_name_for_path(&config.entry, &config.source_root)
     entry_path = config.entry[0:len(config.entry)]
-    visit_module(&config, modules, names, visiting, entry_module[0:len(entry_module)], entry_path)
+    visit_module(&config, modules, names, visiting, entry_module[0:len(entry_module)], entry_path, error_parts)
     graph_name = config.name[0:len(config.name)]
     graph_root = config.root[0:len(config.root)]
     graph_source_root = config.source_root[0:len(config.source_root)]
@@ -50,6 +52,7 @@ def load_project(path: String) -> ProjectGraph:
         native=graph_native,
         modules=modules,
         entry_module=entry_module,
+        error=join_strings(&error_parts),
     )
 
 
@@ -152,9 +155,22 @@ def visit_module(
     visiting: &List[String],
     module_name: String,
     path: String,
-) -> void:
+    error_parts: &List[String],
+) -> bool:
     if contains_string(names, &module_name):
-        return
+        return true
+    if contains_string(visiting, &module_name):
+        error_parts.append("cyclic module dependency: ")
+        index = cast[usize](index_of_string(visiting, &module_name))
+        cycle_start = index
+        while index < len(visiting):
+            if index > cycle_start:
+                error_parts.append(" -> ")
+            error_parts.append(visiting[index][0:len(visiting[index])])
+            index += 1
+        error_parts.append(" -> ")
+        error_parts.append(module_name[0:len(module_name)])
+        return false
     visiting.append(module_name[0:len(module_name)])
 
     with open(path, "rb") as file:
@@ -173,7 +189,9 @@ def visit_module(
             if not is_builtin_module(&dependency):
                 resolved = resolve_module_path(config, &dependency)
                 if len(resolved) > 0:
-                    visit_module(config, modules, names, visiting, dependency[0:len(dependency)], resolved)
+                    if not visit_module(config, modules, names, visiting, dependency[0:len(dependency)], resolved, error_parts):
+                        visiting.pop()
+                        return false
             index += 1
 
         names.append(module_name[0:len(module_name)])
@@ -187,6 +205,7 @@ def visit_module(
             )
         )
         visiting.pop()
+    return true
 
 
 def resolve_module_path(config: &const manifest.ProjectConfig, module_name: &const String) -> String:
@@ -302,6 +321,22 @@ def contains_string(values: &const List[String], value: &const String) -> bool:
         if item == value:
             return true
     return false
+
+
+def index_of_string(values: &const List[String], value: &const String) -> i32:
+    index: usize = 0
+    while index < len(values):
+        if values[index] == value:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def join_strings(values: &const List[String]) -> String:
+    builder = StringBuilder()
+    for value in values:
+        builder.append(value)
+    return builder.finish()
 
 
 def is_builtin_module(module_name: &const String) -> bool:
