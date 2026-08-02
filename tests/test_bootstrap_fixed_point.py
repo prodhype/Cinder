@@ -217,6 +217,24 @@ def test_gen1_check_rejects_cyclic_module_imports(
     assert "ok:" not in checked.stdout
 
 
+def test_gen1_check_rejects_unknown_imported_module_member(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    manifest = write_project(tmp_path)
+    main = tmp_path / "src" / "main.ci"
+    main.write_text(
+        "import maths\n\ndef main() -> i32:\n    return maths.absent()\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(gen1_compiler, "check", str(manifest))
+
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E 48 ")
+    assert "ok:" not in checked.stdout
+
+
 def test_gen1_check_is_native_and_does_not_require_python_on_path(
     gen1_compiler: Path,
     tmp_path: Path,

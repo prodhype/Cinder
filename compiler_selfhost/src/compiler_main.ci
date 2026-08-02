@@ -162,6 +162,7 @@ def check_graph(graph: &const project.ProjectGraph) -> bool:
             return false
         check = checker.new_checker()
         checker.collect_symbols(check, parsed.arena, root, graph.modules[index].source)
+        checker.validate_import_member_calls(check, parsed.arena, root, graph.modules[index].source, &graph.modules[index].imports, &graph.modules)
         checker.validate_names(check, parsed.arena, root, graph.modules[index].source)
         if len(check.diagnostics) > 0:
             for diagnostic in check.diagnostics:
