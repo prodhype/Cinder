@@ -217,6 +217,28 @@ def test_gen1_check_rejects_cyclic_module_imports(
     assert "ok:" not in checked.stdout
 
 
+@pytest.mark.parametrize("source_kind", ["file", "project"])
+def test_gen1_check_rejects_missing_entry_file(
+    gen1_compiler: Path,
+    tmp_path: Path,
+    source_kind: str,
+) -> None:
+    if source_kind == "file":
+        source = tmp_path / "missing.ci"
+        expected_entry = source
+    else:
+        source = tmp_path / "missing-project"
+        source.mkdir()
+        expected_entry = source / "src" / "main.ci"
+
+    checked = run_gen1(gen1_compiler, "check", str(source))
+
+    assert checked.returncode == 1
+    assert checked.stderr.strip() == f"project error: entry file not found: {expected_entry}"
+    assert "panic:" not in checked.stderr
+    assert "ok:" not in checked.stdout
+
+
 def test_gen1_check_rejects_unknown_imported_module_member(
     gen1_compiler: Path,
     tmp_path: Path,

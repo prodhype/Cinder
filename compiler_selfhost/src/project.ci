@@ -39,7 +39,11 @@ def load_project(path: String) -> ProjectGraph:
     error_parts: List[String] = []
     entry_module = module_name_for_path(&config.entry, &config.source_root)
     entry_path = config.entry[0:len(config.entry)]
-    visit_module(&config, modules, names, visiting, entry_module[0:len(entry_module)], entry_path, error_parts)
+    if not fs.file_exists(&entry_path):
+        error_parts.append("entry file not found: ")
+        error_parts.append(entry_path[0:len(entry_path)])
+    else:
+        visit_module(&config, modules, names, visiting, entry_module[0:len(entry_module)], entry_path, error_parts)
     graph_name = config.name[0:len(config.name)]
     graph_root = config.root[0:len(config.root)]
     graph_source_root = config.source_root[0:len(config.source_root)]
