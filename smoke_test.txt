@@ -1,0 +1,1745 @@
+# Gen3 example smoke test
+# stage0: python -m cinder run
+# gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
+# date:   2026-08-02 17:24:48 UTC
+# cwd:    /Volumes/Shelfy/Code/Cinder
+# targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
+#
+# Interactive stdin: input.ci=World, fizzbuzz.ci=15, towers_of_hanoi.ci=3
+# Classification:
+#   OK   - both exit 0, identical stdout+stderr
+#   FAIL - gen3 (or stage0) non-zero exit / compile / checker / toolchain failure
+#   DIFF - both exit 0 but stdout/stderr differ
+# kind values: identical | gen3_checker_error | gen3_toolchain_error |
+#   gen3_project_error | gen3_runtime_nonzero | gen3_output_diff | timing_only_diff
+
+Summary: 1 ok, 35 fail, 0 diff
+
+## Status by example
+examples/aggregate_ownership.ci          FAIL   gen3_checker_error
+examples/algorithm_benchmarks.ci         FAIL   gen3_checker_error
+examples/anti_examples.ci                FAIL   gen3_checker_error
+examples/ast_arena.ci                    FAIL   gen3_checker_error
+examples/binary_sort.ci                  FAIL   gen3_toolchain_error
+examples/classes.ci                      FAIL   gen3_checker_error
+examples/closures.ci                     FAIL   gen3_checker_error
+examples/collections.ci                  FAIL   gen3_checker_error
+examples/control_flow.ci                 FAIL   gen3_runtime_nonzero
+examples/convert.ci                      FAIL   gen3_checker_error
+examples/defer.ci                        FAIL   gen3_checker_error
+examples/dijkstra_showcase.ci            FAIL   gen3_checker_error
+examples/expressive_match.ci             FAIL   gen3_checker_error
+examples/fizzbuzz.ci                     FAIL   gen3_checker_error
+examples/function_pointers.ci            FAIL   gen3_checker_error
+examples/generics.ci                     FAIL   gen3_checker_error
+examples/hello.ci                        OK     identical
+examples/input.ci                        FAIL   gen3_checker_error
+examples/interop.ci                      FAIL   gen3_toolchain_error
+examples/knapsack.ci                     FAIL   gen3_checker_error
+examples/leibniz_pi.ci                   FAIL   gen3_toolchain_error
+examples/long_string_sort.ci             FAIL   gen3_checker_error
+examples/owned.ci                        FAIL   gen3_checker_error
+examples/physics.ci                      FAIL   gen3_toolchain_error
+examples/pointers.ci                     FAIL   gen3_toolchain_error
+examples/print.ci                        FAIL   gen3_toolchain_error
+examples/read_file.ci                    FAIL   gen3_checker_error
+examples/reflection.ci                   FAIL   gen3_checker_error
+examples/slices.ci                       FAIL   gen3_checker_error
+examples/strings.ci                      FAIL   gen3_checker_error
+examples/towers_of_hanoi.ci              FAIL   gen3_checker_error
+examples/types_and_results.ci            FAIL   gen3_checker_error
+examples/vectors.ci                      FAIL   gen3_toolchain_error
+examples/write_jpg.ci                    FAIL   gen3_checker_error
+examples/class_project                   FAIL   gen3_toolchain_error
+examples/module_project                  FAIL   gen3_checker_error
+
+## OK
+- examples/hello.ci
+
+## Failures
+### examples/aggregate_ownership.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+bundle items=3 tags=2 scores=2
+score[1]=10
+take_bundle total=7
+nested lists=3
+popped inner=3 remaining=2
+take_list(inner)=3
+moved local len=2
+take_list(fresh)=4
+option list len=3
+result list len=2
+tuple tag=9
+array row0=1 row1=2
+drop Resource(9)
+take_resource=9
+group[1] len=2
+holdings=2 groups=2
+drop Resource(1)
+drop Resource(2)
+replaced holdings=1
+owned files=2
+option file opened
+drop Resource(3)
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 1789 6 70 34
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/aggregate_ownership.ci.s0.combined	2026-08-02 11:24:22
++++ /tmp/cinder-smoke.vf8Fmf/aggregate_ownership.ci.g3.combined	2026-08-02 11:24:22
+@@ -1,22 +1 @@
+-bundle items=3 tags=2 scores=2
+-score[1]=10
+-take_bundle total=7
+-nested lists=3
+-popped inner=3 remaining=2
+-take_list(inner)=3
+-moved local len=2
+-take_list(fresh)=4
+-option list len=3
+-result list len=2
+-tuple tag=9
+-array row0=1 row1=2
+-drop Resource(9)
+-take_resource=9
+-group[1] len=2
+-holdings=2 groups=2
+-drop Resource(1)
+-drop Resource(2)
+-replaced holdings=1
+-owned files=2
+-option file opened
+-drop Resource(3)
++E 48 1789 6 70 34
+
+### examples/algorithm_benchmarks.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+Algorithm benchmarks (lower elapsed times are better)
+CPU ticks are implementation-defined; wall time is elapsed fractional seconds.
+N-Queens n=15: 0.838066 seconds, 834186 CPU ticks, 2279184 solutions
+Exact TSP cities=20 runs=4: 0.951303 seconds, 936379 CPU ticks, minimum cost 275
+Edit distance length=30000: 0.908211 seconds, 907876 CPU ticks, distance 27921
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 1659 4 66 11
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/algorithm_benchmarks.ci.s0.combined	2026-08-02 11:24:26
++++ /tmp/cinder-smoke.vf8Fmf/algorithm_benchmarks.ci.g3.combined	2026-08-02 11:24:26
+@@ -1,5 +1 @@
+-Algorithm benchmarks (lower elapsed times are better)
+-CPU ticks are implementation-defined; wall time is elapsed fractional seconds.
+-N-Queens n=15: 0.838066 seconds, 834186 CPU ticks, 2279184 solutions
+-Exact TSP cities=20 runs=4: 0.951303 seconds, 936379 CPU ticks, minimum cost 275
+-Edit distance length=30000: 0.908211 seconds, 907876 CPU ticks, distance 27921
++E 48 1659 4 66 11
+
+### examples/anti_examples.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+compile-time field: value
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 66 1966 1 74 17
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/anti_examples.ci.s0.combined	2026-08-02 11:24:26
++++ /tmp/cinder-smoke.vf8Fmf/anti_examples.ci.g3.combined	2026-08-02 11:24:26
+@@ -1 +1 @@
+-compile-time field: value
++E 66 1966 1 74 17
+
+### examples/ast_arena.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+sum=42
+call=44 children=2
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 121 1838 116 64 13
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/ast_arena.ci.s0.combined	2026-08-02 11:24:27
++++ /tmp/cinder-smoke.vf8Fmf/ast_arena.ci.g3.combined	2026-08-02 11:24:27
+@@ -1,2 +1 @@
+-sum=42
+-call=44 children=2
++E 121 1838 116 64 13
+
+### examples/binary_sort.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+[3, 5, 10, 13, 14, 29, 37, 42]
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:6:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    6 |     __auto_type value = ((int32_t *)values.data)[index];
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:8:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    8 |     __auto_type high = index;
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:10:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   10 |     __auto_type middle = (low + ((high - low) / 2));
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   17 |     __auto_type current = index;
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:27: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
+      |                           ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:71: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
+      |                                                                       ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
+      |                                                             ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:126: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
+      |                                                                                                                              ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
+      |                                                             ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:181: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
+      |                                                                                                                                                                                     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
+      |                                                             ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:236: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
+      |                                                                                                                                                                                                                                            ^
+... [86 lines total; truncated after 40]
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/binary_sort.ci.s0.combined	2026-08-02 11:24:27
++++ /tmp/cinder-smoke.vf8Fmf/binary_sort.ci.g3.combined	2026-08-02 11:24:27
+@@ -1 +1,86 @@
+-[3, 5, 10, 13, 14, 29, 37, 42]
++toolchain error: C compiler failed
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:6:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    6 |     __auto_type value = ((int32_t *)values.data)[index];
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:8:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    8 |     __auto_type high = index;
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:10:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   10 |     __auto_type middle = (low + ((high - low) / 2));
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   17 |     __auto_type current = index;
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:27: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                           ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:71: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:126: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                                                                              ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:181: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                                                                                                                                     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:236: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                                                                                                                                                                                            ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:291: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                                                                                                                                                                                                                                                   ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:346: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                                                                                                                                                                                                                                                                                                          ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:400: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                                                                                                                                                                                                                                                                                                                                                                ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:28:455: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   28 |     __auto_type values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (29)); cinder_selfhost_list_append_value(&cinder_list, (10)); cinder_selfhost_list_append_value(&cinder_list, (14)); cinder_selfhost_list_append_value(&cinder_list, (37)); cinder_selfhost_list_append_value(&cinder_list, (13)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (42)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
++      |                                                                                                                                                                                                                                                                                                                                                                                                                                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.cinder.h:25:61: note: expanded from macro 'cinder_selfhost_list_append_value'
++   25 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
++      |                                                             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:30:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   30 |     ({ cinder_selfhost_print_integer_value((long long)(values), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:30:55: error: operand of type 'CinderList' (aka 'struct CinderList') where arithmetic or pointer type is required
++   30 |     ({ cinder_selfhost_print_integer_value((long long)(values), true); printf("\n"); 0; });
++      |                                                       ^~~~~~~~
++/tmp/cinder-smoke.vf8Fmf/g3-build/binary_sort.ci/cinder_gen/binary_sort.c:32:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   32 |     __auto_type cinder_return_value = 0;
++      |     ^
+... [diff truncated; 90 lines total]
+
+### examples/classes.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+runtime type: Circle
+circle: 50.27
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 362 5 23 9
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/classes.ci.s0.combined	2026-08-02 11:24:28
++++ /tmp/cinder-smoke.vf8Fmf/classes.ci.g3.combined	2026-08-02 11:24:28
+@@ -1,2 +1 @@
+-runtime type: Circle
+-circle: 50.27
++E 48 362 5 23 9
+
+### examples/closures.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+add: 42
+counter: 15
+counter: 22
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 345 8 19 12
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/closures.ci.s0.combined	2026-08-02 11:24:29
++++ /tmp/cinder-smoke.vf8Fmf/closures.ci.g3.combined	2026-08-02 11:24:29
+@@ -1,3 +1 @@
+-add: 42
+-counter: 15
+-counter: 22
++E 48 345 8 19 12
+
+### examples/collections.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+[1, 2, 3, 4, 5, 6]
+(21, 6)
+count=6 total=21
+last=6 remaining=5
+{'Ada': 7, 'Grace': 5}
+Ada=7
+Grace=5
+Ada score=7
+{5, 3, 2}
+{1, 5, 3, 7}
+{1, 5, 3, 2, 7}
+unique values=5
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 256 4 12 5
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/collections.ci.s0.combined	2026-08-02 11:24:29
++++ /tmp/cinder-smoke.vf8Fmf/collections.ci.g3.combined	2026-08-02 11:24:29
+@@ -1,12 +1 @@
+-[1, 2, 3, 4, 5, 6]
+-(21, 6)
+-count=6 total=21
+-last=6 remaining=5
+-{'Ada': 7, 'Grace': 5}
+-Ada=7
+-Grace=5
+-Ada score=7
+-{5, 3, 2}
+-{1, 5, 3, 7}
+-{1, 5, 3, 2, 7}
+-unique values=5
++E 48 256 4 12 5
+
+### examples/control_flow.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_runtime_nonzero
+
+--- stage0 stdout ---
+control flow works
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/control_flow.ci.s0.combined	2026-08-02 11:24:30
++++ /tmp/cinder-smoke.vf8Fmf/control_flow.ci.g3.combined	2026-08-02 11:24:30
+@@ -1 +0,0 @@
+-control flow works
+
+### examples/convert.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+doubled: 42
+bool: true
+float: 3.5
+char: Z
+empty input
+invalid input
+negative unsigned: 2
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 71 9 2 12
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/convert.ci.s0.combined	2026-08-02 11:24:31
++++ /tmp/cinder-smoke.vf8Fmf/convert.ci.g3.combined	2026-08-02 11:24:31
+@@ -1,7 +1 @@
+-doubled: 42
+-bool: true
+-float: 3.5
+-char: Z
+-empty input
+-invalid input
+-negative unsigned: 2
++E 48 71 9 2 12
+
+### examples/defer.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+result: 42
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 59 4 3 11
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/defer.ci.s0.combined	2026-08-02 11:24:31
++++ /tmp/cinder-smoke.vf8Fmf/defer.ci.g3.combined	2026-08-02 11:24:31
+@@ -1 +1 @@
+-result: 42
++E 48 59 4 3 11
+
+### examples/dijkstra_showcase.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+Graph has 1 reflected field
+Graph.weights: offset=0, size=144
+dijkstra: visit 0 at distance 0
+dijkstra: relax 0 -> 1 to 7
+dijkstra: relax 0 -> 2 to 9
+dijkstra: relax 0 -> 5 to 14
+dijkstra: visit 1 at distance 7
+dijkstra: relax 1 -> 3 to 22
+dijkstra: visit 2 at distance 9
+dijkstra: relax 2 -> 3 to 20
+dijkstra: relax 2 -> 5 to 11
+dijkstra: visit 5 at distance 11
+dijkstra: relax 5 -> 4 to 20
+dijkstra: visit 3 at distance 20
+dijkstra: visit 4 at distance 20
+path:
+0
+2
+5
+4
+dijkstra: shortest distance: 20
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 66 94 2 8 18
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/dijkstra_showcase.ci.s0.combined	2026-08-02 11:24:32
++++ /tmp/cinder-smoke.vf8Fmf/dijkstra_showcase.ci.g3.combined	2026-08-02 11:24:32
+@@ -1,21 +1 @@
+-Graph has 1 reflected field
+-Graph.weights: offset=0, size=144
+-dijkstra: visit 0 at distance 0
+-dijkstra: relax 0 -> 1 to 7
+-dijkstra: relax 0 -> 2 to 9
+-dijkstra: relax 0 -> 5 to 14
+-dijkstra: visit 1 at distance 7
+-dijkstra: relax 1 -> 3 to 22
+-dijkstra: visit 2 at distance 9
+-dijkstra: relax 2 -> 3 to 20
+-dijkstra: relax 2 -> 5 to 11
+-dijkstra: visit 5 at distance 11
+-dijkstra: relax 5 -> 4 to 20
+-dijkstra: visit 3 at distance 20
+-dijkstra: visit 4 at distance 20
+-path:
+-0
+-2
+-5
+-4
+-dijkstra: shortest distance: 20
++E 66 94 2 8 18
+
+### examples/expressive_match.ci
+stage0 exit=1  gen3 exit=1
+kind: gen3_checker_error
+NOTE: stage0 also exited non-zero
+
+--- stage0 stdout ---
+--- stage0 stderr ---
+/Volumes/Shelfy/Code/Cinder/examples/expressive_match.ci:45:20: error[C107]: expected Shape, got function Shape.Origin
+    |
+ 45 |     describe_shape(Shape.Origin)
+    |                    ^^^^^^^^^^^^
+--- gen3 stdout ---
+E 48 231 4 15 16
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/expressive_match.ci.s0.combined	2026-08-02 11:24:32
++++ /tmp/cinder-smoke.vf8Fmf/expressive_match.ci.g3.combined	2026-08-02 11:24:32
+@@ -1,4 +1 @@
+-/Volumes/Shelfy/Code/Cinder/examples/expressive_match.ci:45:20: error[C107]: expected Shape, got function Shape.Origin
+-    |
+- 45 |     describe_shape(Shape.Origin)
+-    |                    ^^^^^^^^^^^^
++E 48 231 4 15 16
+
+### examples/fizzbuzz.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+Up to: 1
+2
+Fizz
+4
+Buzz
+Fizz
+7
+8
+Fizz
+Buzz
+11
+Fizz
+13
+14
+FizzBuzz
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 30 5 2 12
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/fizzbuzz.ci.s0.combined	2026-08-02 11:24:33
++++ /tmp/cinder-smoke.vf8Fmf/fizzbuzz.ci.g3.combined	2026-08-02 11:24:33
+@@ -1,15 +1 @@
+-Up to: 1
+-2
+-Fizz
+-4
+-Buzz
+-Fizz
+-7
+-8
+-Fizz
+-Buzz
+-11
+-Fizz
+-13
+-14
+-FizzBuzz
++E 48 30 5 2 12
+
+### examples/function_pointers.ci
+stage0 exit=42  gen3 exit=1
+kind: gen3_checker_error
+NOTE: stage0 also exited non-zero
+
+--- stage0 stdout ---
+42
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 186 1 8 12
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/function_pointers.ci.s0.combined	2026-08-02 11:24:33
++++ /tmp/cinder-smoke.vf8Fmf/function_pointers.ci.g3.combined	2026-08-02 11:24:33
+@@ -1 +1 @@
+-42
++E 48 186 1 8 12
+
+### examples/generics.ci
+stage0 exit=42  gen3 exit=1
+kind: gen3_checker_error
+NOTE: stage0 also exited non-zero
+
+--- stage0 stdout ---
+40
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 746 5 38 26
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/generics.ci.s0.combined	2026-08-02 11:24:34
++++ /tmp/cinder-smoke.vf8Fmf/generics.ci.g3.combined	2026-08-02 11:24:34
+@@ -1 +1 @@
+-40
++E 48 746 5 38 26
+
+### examples/input.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+Name: Hello World
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 30 5 2 12
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/input.ci.s0.combined	2026-08-02 11:24:36
++++ /tmp/cinder-smoke.vf8Fmf/input.ci.g3.combined	2026-08-02 11:24:36
+@@ -1 +1 @@
+-Name: Hello World
++E 48 30 5 2 12
+
+### examples/interop.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+A
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    4 |     __auto_type result = cinder_interop_interop__toupper('a');
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:4:26: error: call to undeclared function 'cinder_interop_interop__toupper'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    4 |     __auto_type result = cinder_interop_interop__toupper('a');
+      |                          ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:5:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+    5 |     ({ cinder_selfhost_print_integer_value((long long)((char)(result)), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:5:94: warning: expression result unused [-Wunused-value]
+    5 |     ({ cinder_selfhost_print_integer_value((long long)((char)(result)), true); printf("\n"); 0; });
+      |                                                                                              ^
+3 warnings and 1 error generated.
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/interop.ci.s0.combined	2026-08-02 11:24:36
++++ /tmp/cinder-smoke.vf8Fmf/interop.ci.g3.combined	2026-08-02 11:24:36
+@@ -1 +1,14 @@
+-A
++toolchain error: C compiler failed
++/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    4 |     __auto_type result = cinder_interop_interop__toupper('a');
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:4:26: error: call to undeclared function 'cinder_interop_interop__toupper'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++    4 |     __auto_type result = cinder_interop_interop__toupper('a');
++      |                          ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:5:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++    5 |     ({ cinder_selfhost_print_integer_value((long long)((char)(result)), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/interop.ci/cinder_gen/interop.c:5:94: warning: expression result unused [-Wunused-value]
++    5 |     ({ cinder_selfhost_print_integer_value((long long)((char)(result)), true); printf("\n"); 0; });
++      |                                                                                              ^
++3 warnings and 1 error generated.
+
+### examples/knapsack.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+maximum value for capacity 10: 15
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 66 84 2 2 15
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/knapsack.ci.s0.combined	2026-08-02 11:24:37
++++ /tmp/cinder-smoke.vf8Fmf/knapsack.ci.g3.combined	2026-08-02 11:24:37
+@@ -1 +1 @@
+-maximum value for capacity 10: 15
++E 66 84 2 2 15
+
+### examples/leibniz_pi.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+Leibniz π with 1000000000 iterations
+π ≈ 3.141592654588
+elapsed: 576 ms
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:5:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    5 |     __auto_type rounds = (iterations + 2);
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:5:17: warning: unused variable 'rounds' [-Wunused-variable]
+    5 |     __auto_type rounds = (iterations + 2);
+      |                 ^~~~~~
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:10:28: error: invalid suffix '_000_000_000' on integer constant
+   10 |     uint32_t iterations = 1_000_000_000;
+      |                            ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:57: error: expected ')'
+   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
+      |                                                         ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:55: note: to match this '('
+   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
+      |                                                       ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:56: error: use of undeclared identifier 'f'
+   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
+      |                                                        ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:12:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   12 |     __auto_type started = cinder_leibniz_pi_leibniz_pi__cinder_wall_time();
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:12:27: error: call to undeclared function 'cinder_leibniz_pi_leibniz_pi__cinder_wall_time'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+   12 |     __auto_type started = cinder_leibniz_pi_leibniz_pi__cinder_wall_time();
+      |                           ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:12:27: note: did you mean 'cinder_leibniz_pi_leibniz_pi__leibniz_pi'?
+/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:3:8: note: 'cinder_leibniz_pi_leibniz_pi__leibniz_pi' declared here
+    3 | double cinder_leibniz_pi_leibniz_pi__leibniz_pi(uint32_t iterations) {
+      |        ^
+    4 |     double pi = 1.0;
+    5 |     __auto_type rounds = (iterations + 2);
+    6 |     return (pi * 4.0);
+    7 | }
+    8 | 
+    9 | int main(void) {
+   10 |     uint32_t iterations = 1_000_000_000;
+   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
+... [86 lines total; truncated after 40]
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/leibniz_pi.ci.s0.combined	2026-08-02 11:24:38
++++ /tmp/cinder-smoke.vf8Fmf/leibniz_pi.ci.g3.combined	2026-08-02 11:24:38
+@@ -1,3 +1,86 @@
+-Leibniz π with 1000000000 iterations
+-π ≈ 3.141592654588
+-elapsed: 576 ms
++toolchain error: C compiler failed
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:5:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    5 |     __auto_type rounds = (iterations + 2);
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:5:17: warning: unused variable 'rounds' [-Wunused-variable]
++    5 |     __auto_type rounds = (iterations + 2);
++      |                 ^~~~~~
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:10:28: error: invalid suffix '_000_000_000' on integer constant
++   10 |     uint32_t iterations = 1_000_000_000;
++      |                            ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:57: error: expected ')'
++   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:55: note: to match this '('
++   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:11:56: error: use of undeclared identifier 'f'
++   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:12:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   12 |     __auto_type started = cinder_leibniz_pi_leibniz_pi__cinder_wall_time();
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:12:27: error: call to undeclared function 'cinder_leibniz_pi_leibniz_pi__cinder_wall_time'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++   12 |     __auto_type started = cinder_leibniz_pi_leibniz_pi__cinder_wall_time();
++      |                           ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:12:27: note: did you mean 'cinder_leibniz_pi_leibniz_pi__leibniz_pi'?
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:3:8: note: 'cinder_leibniz_pi_leibniz_pi__leibniz_pi' declared here
++    3 | double cinder_leibniz_pi_leibniz_pi__leibniz_pi(uint32_t iterations) {
++      |        ^
++    4 |     double pi = 1.0;
++    5 |     __auto_type rounds = (iterations + 2);
++    6 |     return (pi * 4.0);
++    7 | }
++    8 | 
++    9 | int main(void) {
++   10 |     uint32_t iterations = 1_000_000_000;
++   11 |     ({ cinder_selfhost_print_integer_value((long long)(f"Leibniz π with {iterations} iterations"), true); printf("\n"); 0; });
++   12 |     __auto_type started = cinder_leibniz_pi_leibniz_pi__cinder_wall_time();
++      |                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++      |                           cinder_leibniz_pi_leibniz_pi__leibniz_pi
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:13:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   13 |     __auto_type estimate = cinder_leibniz_pi_leibniz_pi__leibniz_pi(iterations);
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:14:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   14 |     __auto_type end = cinder_leibniz_pi_leibniz_pi__cinder_wall_time();
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:15:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   15 |     __auto_type elapsed_ms = (int64_t)(((end - started) * 1000.0));
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:16:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"π ≈ {estimate:.12f}"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:16:57: error: expected ')'
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"π ≈ {estimate:.12f}"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:16:55: note: to match this '('
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"π ≈ {estimate:.12f}"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:16:56: error: use of undeclared identifier 'f'
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"π ≈ {estimate:.12f}"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:17:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   17 |     ({ cinder_selfhost_print_integer_value((long long)(f"elapsed: {elapsed_ms} ms"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:17:57: error: expected ')'
++   17 |     ({ cinder_selfhost_print_integer_value((long long)(f"elapsed: {elapsed_ms} ms"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:17:55: note: to match this '('
++   17 |     ({ cinder_selfhost_print_integer_value((long long)(f"elapsed: {elapsed_ms} ms"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/leibniz_pi.ci/cinder_gen/leibniz_pi.c:17:56: error: use of undeclared identifier 'f'
+... [diff truncated; 92 lines total]
+
+### examples/long_string_sort.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+['a lighthouse keeper recorded every passing storm in a weathered journal by the window', 'beneath the old railway bridge the river carried autumn leaves toward the distant harbor', 'careful preparation turns a complicated journey into a sequence of manageable small decisions', 'during the quiet afternoon the library filled with the soft rustle of pages being turned', 'every successful expedition depends on clear maps reliable tools and patient communication', 'scientists compared decades of field notes before announcing the unexpected migration pattern', 'the observatory remained open long after midnight while the final measurements were checked', 'when the workshop doors opened the newly restored clock began marking time across the square']
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 886 4 14 5
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/long_string_sort.ci.s0.combined	2026-08-02 11:24:39
++++ /tmp/cinder-smoke.vf8Fmf/long_string_sort.ci.g3.combined	2026-08-02 11:24:39
+@@ -1 +1 @@
+-['a lighthouse keeper recorded every passing storm in a weathered journal by the window', 'beneath the old railway bridge the river carried autumn leaves toward the distant harbor', 'careful preparation turns a complicated journey into a sequence of manageable small decisions', 'during the quiet afternoon the library filled with the soft rustle of pages being turned', 'every successful expedition depends on clear maps reliable tools and patient communication', 'scientists compared decades of field notes before announcing the unexpected migration pattern', 'the observatory remained open long after midnight while the final measurements were checked', 'when the workshop doors opened the newly restored clock began marking time across the square']
++E 48 886 4 14 5
+
+### examples/owned.ci
+stage0 exit=42  gen3 exit=1
+kind: gen3_checker_error
+NOTE: stage0 also exited non-zero
+
+--- stage0 stdout ---
+42
+1
+21
+21
+drop 1
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 377 5 23 26
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/owned.ci.s0.combined	2026-08-02 11:24:39
++++ /tmp/cinder-smoke.vf8Fmf/owned.ci.g3.combined	2026-08-02 11:24:39
+@@ -1,5 +1 @@
+-42
+-1
+-21
+-21
+-drop 1
++E 48 377 5 23 26
+
+### examples/physics.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+Common physics calculations
+kinetic energy (m=2.0 kg, v=12.0 m/s): 144.00 J
+potential energy (m=2.0 kg, h=5.0 m): 98.07 J
+momentum (m=2.0 kg, v=12.0 m/s): 24.00 kg·m/s
+force (m=2.0 kg, a=3.5 m/s^2): 7.00 N
+kinematic displacement (v0=4.0 m/s, t=3.0 s, a=3.5 m/s^2): 27.75 m
+final velocity (v0=4.0 m/s, a=3.5 m/s^2, t=3.0 s): 14.50 m/s
+projectile range (v=40.0 m/s, angle=35 deg): 153.32 m
+projectile max height (v=40.0 m/s, angle=35 deg): 26.84 m
+simple pendulum period (L=1.2 m): 2.198 s
+centripetal acceleration (v=8.0 m/s, r=2.5 m): 25.60 m/s^2
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:30:32: error: call to undeclared function 'cinder_physics_math__sin'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+   30 |     return (((speed * speed) * cinder_physics_math__sin((2.0 * angle_radians))) / cinder_physics_physics__G);
+      |                                ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:34:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   34 |     __auto_type vertical = (speed * cinder_physics_math__sin(angle_radians));
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:34:37: error: call to undeclared function 'cinder_physics_math__sin'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+   34 |     __auto_type vertical = (speed * cinder_physics_math__sin(angle_radians));
+      |                                     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:39:20: error: use of undeclared identifier 'cinder_physics_math__pi'
+   39 |     return ((2.0 * cinder_physics_math__pi) * cinder_physics_math__sqrt((length / cinder_physics_physics__G)));
+      |                    ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:39:47: error: call to undeclared function 'cinder_physics_math__sqrt'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+   39 |     return ((2.0 * cinder_physics_math__pi) * cinder_physics_math__sqrt((length / cinder_physics_physics__G)));
+      |                                               ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:47:24: error: use of undeclared identifier 'cinder_physics_math__pi'
+   47 |     return ((degrees * cinder_physics_math__pi) / 180.0);
+      |                        ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:51:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   51 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("Common physics calculations"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:57: error: expected ')'
+   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
+      |                                                         ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:55: note: to match this '('
+   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
+      |                                                       ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:56: error: use of undeclared identifier 'f'
+   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
+      |                                                        ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:56:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   56 |     ({ cinder_selfhost_print_integer_value((long long)(f"potential energy (m={mass:.1f} kg, h={height:.1f} m): {potential_energy(mass, height):.2f} J"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:56:57: error: expected ')'
+   56 |     ({ cinder_selfhost_print_integer_value((long long)(f"potential energy (m={mass:.1f} kg, h={height:.1f} m): {potential_energy(mass, height):.2f} J"), true); printf("\n"); 0; });
+      |                                                         ^
+... [126 lines total; truncated after 40]
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/physics.ci.s0.combined	2026-08-02 11:24:40
++++ /tmp/cinder-smoke.vf8Fmf/physics.ci.g3.combined	2026-08-02 11:24:40
+@@ -1,11 +1,126 @@
+-Common physics calculations
+-kinetic energy (m=2.0 kg, v=12.0 m/s): 144.00 J
+-potential energy (m=2.0 kg, h=5.0 m): 98.07 J
+-momentum (m=2.0 kg, v=12.0 m/s): 24.00 kg·m/s
+-force (m=2.0 kg, a=3.5 m/s^2): 7.00 N
+-kinematic displacement (v0=4.0 m/s, t=3.0 s, a=3.5 m/s^2): 27.75 m
+-final velocity (v0=4.0 m/s, a=3.5 m/s^2, t=3.0 s): 14.50 m/s
+-projectile range (v=40.0 m/s, angle=35 deg): 153.32 m
+-projectile max height (v=40.0 m/s, angle=35 deg): 26.84 m
+-simple pendulum period (L=1.2 m): 2.198 s
+-centripetal acceleration (v=8.0 m/s, r=2.5 m): 25.60 m/s^2
++toolchain error: C compiler failed
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:30:32: error: call to undeclared function 'cinder_physics_math__sin'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++   30 |     return (((speed * speed) * cinder_physics_math__sin((2.0 * angle_radians))) / cinder_physics_physics__G);
++      |                                ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:34:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   34 |     __auto_type vertical = (speed * cinder_physics_math__sin(angle_radians));
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:34:37: error: call to undeclared function 'cinder_physics_math__sin'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++   34 |     __auto_type vertical = (speed * cinder_physics_math__sin(angle_radians));
++      |                                     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:39:20: error: use of undeclared identifier 'cinder_physics_math__pi'
++   39 |     return ((2.0 * cinder_physics_math__pi) * cinder_physics_math__sqrt((length / cinder_physics_physics__G)));
++      |                    ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:39:47: error: call to undeclared function 'cinder_physics_math__sqrt'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++   39 |     return ((2.0 * cinder_physics_math__pi) * cinder_physics_math__sqrt((length / cinder_physics_physics__G)));
++      |                                               ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:47:24: error: use of undeclared identifier 'cinder_physics_math__pi'
++   47 |     return ((degrees * cinder_physics_math__pi) / 180.0);
++      |                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:51:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   51 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("Common physics calculations"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:57: error: expected ')'
++   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:55: note: to match this '('
++   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:55:56: error: use of undeclared identifier 'f'
++   55 |     ({ cinder_selfhost_print_integer_value((long long)(f"kinetic energy (m={mass:.1f} kg, v={speed:.1f} m/s): {kinetic_energy(mass, speed):.2f} J"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:56:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   56 |     ({ cinder_selfhost_print_integer_value((long long)(f"potential energy (m={mass:.1f} kg, h={height:.1f} m): {potential_energy(mass, height):.2f} J"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:56:57: error: expected ')'
++   56 |     ({ cinder_selfhost_print_integer_value((long long)(f"potential energy (m={mass:.1f} kg, h={height:.1f} m): {potential_energy(mass, height):.2f} J"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:56:55: note: to match this '('
++   56 |     ({ cinder_selfhost_print_integer_value((long long)(f"potential energy (m={mass:.1f} kg, h={height:.1f} m): {potential_energy(mass, height):.2f} J"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:56:56: error: use of undeclared identifier 'f'
++   56 |     ({ cinder_selfhost_print_integer_value((long long)(f"potential energy (m={mass:.1f} kg, h={height:.1f} m): {potential_energy(mass, height):.2f} J"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:57:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   57 |     ({ cinder_selfhost_print_integer_value((long long)(f"momentum (m={mass:.1f} kg, v={speed:.1f} m/s): {momentum(mass, speed):.2f} kg·m/s"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:57:57: error: expected ')'
++   57 |     ({ cinder_selfhost_print_integer_value((long long)(f"momentum (m={mass:.1f} kg, v={speed:.1f} m/s): {momentum(mass, speed):.2f} kg·m/s"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:57:55: note: to match this '('
++   57 |     ({ cinder_selfhost_print_integer_value((long long)(f"momentum (m={mass:.1f} kg, v={speed:.1f} m/s): {momentum(mass, speed):.2f} kg·m/s"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:57:56: error: use of undeclared identifier 'f'
++   57 |     ({ cinder_selfhost_print_integer_value((long long)(f"momentum (m={mass:.1f} kg, v={speed:.1f} m/s): {momentum(mass, speed):.2f} kg·m/s"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:59:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   59 |     ({ cinder_selfhost_print_integer_value((long long)(f"force (m={mass:.1f} kg, a={acceleration:.1f} m/s^2): {force(mass, acceleration):.2f} N"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:59:57: error: expected ')'
++   59 |     ({ cinder_selfhost_print_integer_value((long long)(f"force (m={mass:.1f} kg, a={acceleration:.1f} m/s^2): {force(mass, acceleration):.2f} N"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/physics.ci/cinder_gen/physics.c:59:55: note: to match this '('
++   59 |     ({ cinder_selfhost_print_integer_value((long long)(f"force (m={mass:.1f} kg, a={acceleration:.1f} m/s^2): {force(mass, acceleration):.2f} N"), true); printf("\n"); 0; });
+... [diff truncated; 140 lines total]
+
+### examples/pointers.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+value: 42
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:3:52: warning: parameter 'value' set but not used [-Wunused-but-set-parameter]
+    3 | void cinder_pointers_pointers__increment(int32_t * value) {
+      |                                                    ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:9:41: error: incompatible integer to pointer conversion passing 'int32_t' (aka 'int') to parameter of type 'int32_t *' (aka 'int *'); take the address with & [-Wint-conversion]
+    9 |     cinder_pointers_pointers__increment(value);
+      |                                         ^~~~~
+      |                                         &
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:3:52: note: passing argument to parameter 'value' here
+    3 | void cinder_pointers_pointers__increment(int32_t * value) {
+      |                                                    ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:57: error: expected ')'
+   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
+      |                                                         ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:55: note: to match this '('
+   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
+      |                                                       ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:56: error: use of undeclared identifier 'f'
+   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
+      |                                                        ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:97: warning: expression result unused [-Wunused-value]
+   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
+      |                                                                                                 ^
+3 warnings and 3 errors generated.
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/pointers.ci.s0.combined	2026-08-02 11:24:41
++++ /tmp/cinder-smoke.vf8Fmf/pointers.ci.g3.combined	2026-08-02 11:24:41
+@@ -1 +1,27 @@
+-value: 42
++toolchain error: C compiler failed
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:3:52: warning: parameter 'value' set but not used [-Wunused-but-set-parameter]
++    3 | void cinder_pointers_pointers__increment(int32_t * value) {
++      |                                                    ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:9:41: error: incompatible integer to pointer conversion passing 'int32_t' (aka 'int') to parameter of type 'int32_t *' (aka 'int *'); take the address with & [-Wint-conversion]
++    9 |     cinder_pointers_pointers__increment(value);
++      |                                         ^~~~~
++      |                                         &
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:3:52: note: passing argument to parameter 'value' here
++    3 | void cinder_pointers_pointers__increment(int32_t * value) {
++      |                                                    ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:57: error: expected ')'
++   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:55: note: to match this '('
++   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:56: error: use of undeclared identifier 'f'
++   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/pointers.ci/cinder_gen/pointers.c:12:97: warning: expression result unused [-Wunused-value]
++   12 |     ({ cinder_selfhost_print_integer_value((long long)(f"value: {value}"), true); printf("\n"); 0; });
++      |                                                                                                 ^
++3 warnings and 3 errors generated.
+
+### examples/print.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+print is available without importing stdio
+multiple values: Cinder 3 true
+default formats: string=Cinder bool=true char=C int=3 float=3.14159
+explicit scalar formats: string=Cinder bool=true char=C
+integer formats: d=3 i=3 u=3 o=3 x=3 X=3
+large integers: signed=-9223372036854775808 unsigned=18446744073709551615 hex=FFFFFFFFFFFFFFFF
+base values: hex=DEADBEEF octal=755 binary 0b1010110011110000=44272
+float formats: f=3.141590 F=3.141590 e=3.141590e+00 E=3.141590E+00 g=3.14159 G=3.14159
+float precision: f=3.14 F=3.14 e=3.142e+00 E=3.142E+00 g=3.142 G=3.142
+expressions: count + 1=4 nested=Cinder #3
+escaped braces {like this} and a literal percent 100%
+[1, 2, 3]
+{'Ada': 1, 'Grace': 2}
+{5, 3, 2}
+(1, 'ready')
+values=[1, 2, 3]
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    4 |     __auto_type name = cinder_string_from_cstr("Cinder");
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:5:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    5 |     __auto_type enabled = true;
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:7:31: error: invalid suffix '_223_372_036_854_775_807' on integer constant
+    7 |     int64_t large_signed = (-9_223_372_036_854_775_807 - 1);
+      |                               ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:8:33: error: invalid suffix '_446_744_073_709_551_615' on integer constant
+    8 |     uint64_t large_unsigned = 18_446_744_073_709_551_615;
+      |                                 ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:9:32: error: invalid suffix '_BEEF' on integer constant
+    9 |     uint32_t hex_value = 0xDEAD_BEEF;
+      |                                ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:11:31: error: invalid suffix '_272' on integer constant
+   11 |     uint16_t binary_value = 44_272;
+      |                               ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:13:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+   13 |     __auto_type initial = 'C';
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:14:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   14 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("print is available without importing stdio"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:15:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   15 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("multiple values:"), true); cinder_selfhost_print_integer_value((long long)(name), false); cinder_selfhost_print_integer_value((long long)(count), false); cinder_selfhost_print_integer_value((long long)(enabled), false); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:15:142: error: operand of type 'CinderString' (aka 'struct CinderString') where arithmetic or pointer type is required
+   15 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("multiple values:"), true); cinder_selfhost_print_integer_value((long long)(name), false); cinder_selfhost_print_integer_value((long long)(count), false); cinder_selfhost_print_integer_value((long long)(enabled), false); printf("\n"); 0; });
+      |                                                                                                                                              ^~~~~~
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:16:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:16:57: error: expected ')'
+   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}"), true); printf("\n"); 0; });
+      |                                                         ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:16:55: note: to match this '('
+   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}"), true); printf("\n"); 0; });
+      |                                                       ^
+... [120 lines total; truncated after 40]
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/print.ci.s0.combined	2026-08-02 11:24:41
++++ /tmp/cinder-smoke.vf8Fmf/print.ci.g3.combined	2026-08-02 11:24:41
+@@ -1,16 +1,120 @@
+-print is available without importing stdio
+-multiple values: Cinder 3 true
+-default formats: string=Cinder bool=true char=C int=3 float=3.14159
+-explicit scalar formats: string=Cinder bool=true char=C
+-integer formats: d=3 i=3 u=3 o=3 x=3 X=3
+-large integers: signed=-9223372036854775808 unsigned=18446744073709551615 hex=FFFFFFFFFFFFFFFF
+-base values: hex=DEADBEEF octal=755 binary 0b1010110011110000=44272
+-float formats: f=3.141590 F=3.141590 e=3.141590e+00 E=3.141590E+00 g=3.14159 G=3.14159
+-float precision: f=3.14 F=3.14 e=3.142e+00 E=3.142E+00 g=3.142 G=3.142
+-expressions: count + 1=4 nested=Cinder #3
+-escaped braces {like this} and a literal percent 100%
+-[1, 2, 3]
+-{'Ada': 1, 'Grace': 2}
+-{5, 3, 2}
+-(1, 'ready')
+-values=[1, 2, 3]
++toolchain error: C compiler failed
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    4 |     __auto_type name = cinder_string_from_cstr("Cinder");
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:5:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    5 |     __auto_type enabled = true;
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:7:31: error: invalid suffix '_223_372_036_854_775_807' on integer constant
++    7 |     int64_t large_signed = (-9_223_372_036_854_775_807 - 1);
++      |                               ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:8:33: error: invalid suffix '_446_744_073_709_551_615' on integer constant
++    8 |     uint64_t large_unsigned = 18_446_744_073_709_551_615;
++      |                                 ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:9:32: error: invalid suffix '_BEEF' on integer constant
++    9 |     uint32_t hex_value = 0xDEAD_BEEF;
++      |                                ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:11:31: error: invalid suffix '_272' on integer constant
++   11 |     uint16_t binary_value = 44_272;
++      |                               ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:13:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++   13 |     __auto_type initial = 'C';
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:14:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   14 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("print is available without importing stdio"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:15:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   15 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("multiple values:"), true); cinder_selfhost_print_integer_value((long long)(name), false); cinder_selfhost_print_integer_value((long long)(count), false); cinder_selfhost_print_integer_value((long long)(enabled), false); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:15:142: error: operand of type 'CinderString' (aka 'struct CinderString') where arithmetic or pointer type is required
++   15 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("multiple values:"), true); cinder_selfhost_print_integer_value((long long)(name), false); cinder_selfhost_print_integer_value((long long)(count), false); cinder_selfhost_print_integer_value((long long)(enabled), false); printf("\n"); 0; });
++      |                                                                                                                                              ^~~~~~
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:16:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:16:57: error: expected ')'
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:16:55: note: to match this '('
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:16:56: error: use of undeclared identifier 'f'
++   16 |     ({ cinder_selfhost_print_integer_value((long long)(f"default formats: string={name} bool={enabled} char={initial} int={count} float={pi}"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:17:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   17 |     ({ cinder_selfhost_print_integer_value((long long)(f"explicit scalar formats: string={name:s} bool={enabled:s} char={initial:c}"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:17:57: error: expected ')'
++   17 |     ({ cinder_selfhost_print_integer_value((long long)(f"explicit scalar formats: string={name:s} bool={enabled:s} char={initial:c}"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:17:55: note: to match this '('
++   17 |     ({ cinder_selfhost_print_integer_value((long long)(f"explicit scalar formats: string={name:s} bool={enabled:s} char={initial:c}"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:17:56: error: use of undeclared identifier 'f'
++   17 |     ({ cinder_selfhost_print_integer_value((long long)(f"explicit scalar formats: string={name:s} bool={enabled:s} char={initial:c}"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:18:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++   18 |     ({ cinder_selfhost_print_integer_value((long long)(f"integer formats: d={count:d} i={count:i} u={count:u} o={count:o} x={count:x} X={count:X}"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/print.ci/cinder_gen/print.c:18:57: error: expected ')'
++   18 |     ({ cinder_selfhost_print_integer_value((long long)(f"integer formats: d={count:d} i={count:i} u={count:u} o={count:o} x={count:x} X={count:X}"), true); printf("\n"); 0; });
++      |                                                         ^
+... [diff truncated; 139 lines total]
+
+### examples/read_file.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+read 5 bytes: 104 101 108 108 111
+read_line: hello
+read_line: world
+read_all length=12
+[104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100, 10]
+finished reading cinder_sample.txt
+def main() -> i32:
+    path: String = "cinder_sample.txt"
+
+    with open(path, "wb") as out:
+        # "hello\nworld\n"
+        payload: u8[12] = [
+            104, 101, 108, 108, 111, 10,
+            119, 111, 114, 108, 100, 10,
+        ]
+        if out.write(payload) != 12:
+            print(f"failed while writing {path}")
+            return 1
+
+    with open(path, "rb") as file:
+        chunk: u8[5]
+        counted = file.read(chunk)
+        print(f"read {counted} bytes:", chunk[0], chunk[1], chunk[2], chunk[3], chunk[4])
+
+    with open(path, "rb") as file:
+        first = file.read_line()
+        if first.is_none:
+            return 1
+        second = file.read_line()
+        if second.is_none:
+            return 1
+        print("read_line:", first.value)
+        print("read_line:", second.value)
+
+    with open(path, "rb") as file:
+        data = file.read_all()
+        print(f"read_all length={len(data)}")
+        print(data)
+
+    print(f"finished reading {path}")
+... [49 lines total; truncated after 40]
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 66 140 2 6 21
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/read_file.ci.s0.combined	2026-08-02 11:24:42
++++ /tmp/cinder-smoke.vf8Fmf/read_file.ci.g3.combined	2026-08-02 11:24:42
+@@ -1,49 +1 @@
+-read 5 bytes: 104 101 108 108 111
+-read_line: hello
+-read_line: world
+-read_all length=12
+-[104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100, 10]
+-finished reading cinder_sample.txt
+-def main() -> i32:
+-    path: String = "cinder_sample.txt"
+-
+-    with open(path, "wb") as out:
+-        # "hello\nworld\n"
+-        payload: u8[12] = [
+-            104, 101, 108, 108, 111, 10,
+-            119, 111, 114, 108, 100, 10,
+-        ]
+-        if out.write(payload) != 12:
+-            print(f"failed while writing {path}")
+-            return 1
+-
+-    with open(path, "rb") as file:
+-        chunk: u8[5]
+-        counted = file.read(chunk)
+-        print(f"read {counted} bytes:", chunk[0], chunk[1], chunk[2], chunk[3], chunk[4])
+-
+-    with open(path, "rb") as file:
+-        first = file.read_line()
+-        if first.is_none:
+-            return 1
+-        second = file.read_line()
+-        if second.is_none:
+-            return 1
+-        print("read_line:", first.value)
+-        print("read_line:", second.value)
+-
+-    with open(path, "rb") as file:
+-        data = file.read_all()
+-        print(f"read_all length={len(data)}")
+-        print(data)
+-
+-    print(f"finished reading {path}")
+-
+-    with open("examples/read_file.ci", "rb") as self_file:
+-        while true:
+-            line = self_file.read_line()
+-            if line.is_none:
+-                break
+-            print(line.value)
+-
+-    return 0
++E 66 140 2 6 21
+
+### examples/reflection.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+type: User, fields=3, methods=1
+runtime field: id (u64)
+runtime field: name (String)
+runtime field: active (bool)
+compile-time field: id, offset=0, size=8
+compile-time field: name, offset=8, size=24
+compile-time field: active, offset=32, size=1
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 156 11 11 15
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/reflection.ci.s0.combined	2026-08-02 11:24:43
++++ /tmp/cinder-smoke.vf8Fmf/reflection.ci.g3.combined	2026-08-02 11:24:43
+@@ -1,7 +1 @@
+-type: User, fields=3, methods=1
+-runtime field: id (u64)
+-runtime field: name (String)
+-runtime field: active (bool)
+-compile-time field: id, offset=0, size=8
+-compile-time field: name, offset=8, size=24
+-compile-time field: active, offset=32, size=1
++E 48 156 11 11 15
+
+### examples/slices.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+sum: 9, length: 3
+whole: 15
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 66 158 1 9 17
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/slices.ci.s0.combined	2026-08-02 11:24:43
++++ /tmp/cinder-smoke.vf8Fmf/slices.ci.g3.combined	2026-08-02 11:24:43
+@@ -1,2 +1 @@
+-sum: 9, length: 3
+-whole: 15
++E 66 158 1 9 17
+
+### examples/strings.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+greeting: héllo
+empty length: 0
+text: Aé中Z bytes: 7
+first byte: 65
+é lead byte: 195
+slice: é中 bytes: 5
+working: Aé中Z!?
+original unchanged: Aé中Z
+joined: alphabeta
+alpha < beta: true
+same content: true
+built: build-up
+parsed: 42
+bool: true char: Z
+map still has alpha: 7
+alpha in set: true
+mutated key: alpha changed
+sorted: ['alpha', 'zeta', 'éclair']
+moved length: 7
+label: field
+cleared length: 0
+strlen borrow: 5
+still owned after borrow: hello
+explicit const char*: c-string
+tuple: (7, 'ready')
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 2318 9 76 11
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/strings.ci.s0.combined	2026-08-02 11:24:44
++++ /tmp/cinder-smoke.vf8Fmf/strings.ci.g3.combined	2026-08-02 11:24:44
+@@ -1,25 +1 @@
+-greeting: héllo
+-empty length: 0
+-text: Aé中Z bytes: 7
+-first byte: 65
+-é lead byte: 195
+-slice: é中 bytes: 5
+-working: Aé中Z!?
+-original unchanged: Aé中Z
+-joined: alphabeta
+-alpha < beta: true
+-same content: true
+-built: build-up
+-parsed: 42
+-bool: true char: Z
+-map still has alpha: 7
+-alpha in set: true
+-mutated key: alpha changed
+-sorted: ['alpha', 'zeta', 'éclair']
+-moved length: 7
+-label: field
+-cleared length: 0
+-strlen borrow: 5
+-still owned after borrow: hello
+-explicit const char*: c-string
+-tuple: (7, 'ready')
++E 48 2318 9 76 11
+
+### examples/towers_of_hanoi.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+Disks: solving Towers of Hanoi with 3 disks
+move disk 1 from A to C
+move disk 2 from A to B
+move disk 1 from C to B
+move disk 3 from A to C
+move disk 1 from B to A
+move disk 2 from B to C
+move disk 1 from A to C
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 346 5 16 12
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/towers_of_hanoi.ci.s0.combined	2026-08-02 11:24:45
++++ /tmp/cinder-smoke.vf8Fmf/towers_of_hanoi.ci.g3.combined	2026-08-02 11:24:45
+@@ -1,8 +1 @@
+-Disks: solving Towers of Hanoi with 3 disks
+-move disk 1 from A to C
+-move disk 2 from A to B
+-move disk 1 from C to B
+-move disk 3 from A to C
+-move disk 1 from B to A
+-move disk 2 from B to C
+-move disk 1 from A to C
++E 48 346 5 16 12
+
+### examples/types_and_results.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+value=42
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 230 3 16 16
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/types_and_results.ci.s0.combined	2026-08-02 11:24:45
++++ /tmp/cinder-smoke.vf8Fmf/types_and_results.ci.g3.combined	2026-08-02 11:24:45
+@@ -1 +1 @@
+-value=42
++E 48 230 3 16 16
+
+### examples/vectors.ci
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+length: 5.0
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+In file included from /tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:1:
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:58:5: error: unknown type name 'cinder_vectors_vectors__f32'
+   58 |     cinder_vectors_vectors__f32 x;
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:59:5: error: unknown type name 'cinder_vectors_vectors__f32'
+   59 |     cinder_vectors_vectors__f32 y;
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:62:1: error: unknown type name 'cinder_vectors_vectors__f32'; did you mean 'cinder_vectors_vectors__Vec2'?
+   62 | cinder_vectors_vectors__f32 cinder_vectors_vectors__Vec2_length(const cinder_vectors_vectors__Vec2 * self);
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+      | cinder_vectors_vectors__Vec2
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:60:3: note: 'cinder_vectors_vectors__Vec2' declared here
+   60 | } cinder_vectors_vectors__Vec2;
+      |   ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:3:1: error: unknown type name 'cinder_vectors_vectors__f32'; did you mean 'cinder_vectors_vectors__Vec2'?
+    3 | cinder_vectors_vectors__f32 cinder_vectors_vectors__Vec2_length(const cinder_vectors_vectors__Vec2 * self) {
+      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+      | cinder_vectors_vectors__Vec2
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:60:3: note: 'cinder_vectors_vectors__Vec2' declared here
+   60 | } cinder_vectors_vectors__Vec2;
+      |   ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:4:12: error: call to undeclared function 'cinder_vectors_math__sqrtf'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    4 |     return cinder_vectors_math__sqrtf(((self->x * self->x) + (self->y * self->y)));
+      |            ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:8:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    8 |     __auto_type vector = (cinder_vectors_vectors__Vec2){.x = 3.0, .y = 4.0};
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
+      |      ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:57: error: expected ')'
+    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
+      |                                                         ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:55: note: to match this '('
+    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
+      |                                                       ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:56: error: use of undeclared identifier 'f'
+    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
+      |                                                        ^
+... [44 lines total; truncated after 40]
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/vectors.ci.s0.combined	2026-08-02 11:24:46
++++ /tmp/cinder-smoke.vf8Fmf/vectors.ci.g3.combined	2026-08-02 11:24:46
+@@ -1 +1,44 @@
+-length: 5.0
++toolchain error: C compiler failed
++In file included from /tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:1:
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:58:5: error: unknown type name 'cinder_vectors_vectors__f32'
++   58 |     cinder_vectors_vectors__f32 x;
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:59:5: error: unknown type name 'cinder_vectors_vectors__f32'
++   59 |     cinder_vectors_vectors__f32 y;
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:62:1: error: unknown type name 'cinder_vectors_vectors__f32'; did you mean 'cinder_vectors_vectors__Vec2'?
++   62 | cinder_vectors_vectors__f32 cinder_vectors_vectors__Vec2_length(const cinder_vectors_vectors__Vec2 * self);
++      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
++      | cinder_vectors_vectors__Vec2
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:60:3: note: 'cinder_vectors_vectors__Vec2' declared here
++   60 | } cinder_vectors_vectors__Vec2;
++      |   ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:3:1: error: unknown type name 'cinder_vectors_vectors__f32'; did you mean 'cinder_vectors_vectors__Vec2'?
++    3 | cinder_vectors_vectors__f32 cinder_vectors_vectors__Vec2_length(const cinder_vectors_vectors__Vec2 * self) {
++      | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
++      | cinder_vectors_vectors__Vec2
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.cinder.h:60:3: note: 'cinder_vectors_vectors__Vec2' declared here
++   60 | } cinder_vectors_vectors__Vec2;
++      |   ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:4:12: error: call to undeclared function 'cinder_vectors_math__sqrtf'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++    4 |     return cinder_vectors_math__sqrtf(((self->x * self->x) + (self->y * self->y)));
++      |            ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:8:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    8 |     __auto_type vector = (cinder_vectors_vectors__Vec2){.x = 3.0, .y = 4.0};
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:57: error: expected ')'
++    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:55: note: to match this '('
++    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:56: error: use of undeclared identifier 'f'
++    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/vectors.ci/cinder_gen/vectors.c:9:112: warning: expression result unused [-Wunused-value]
++    9 |     ({ cinder_selfhost_print_integer_value((long long)(f"length: {vector.length():.1f}"), true); printf("\n"); 0; });
++      |                                                                                                                ^
++3 warnings and 7 errors generated.
+
+### examples/write_jpg.ci
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+wrote JPEG image to cinder_sample.jpg
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 66 120 1 3 13
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/write_jpg.ci.s0.combined	2026-08-02 11:24:46
++++ /tmp/cinder-smoke.vf8Fmf/write_jpg.ci.g3.combined	2026-08-02 11:24:46
+@@ -1 +1 @@
+-wrote JPEG image to cinder_sample.jpg
++E 66 120 1 3 13
+
+### examples/class_project
+stage0 exit=0  gen3 exit=2
+kind: gen3_toolchain_error
+
+--- stage0 stdout ---
+Circle: 25.13
+--- stage0 stderr ---
+--- gen3 stdout ---
+--- gen3 stderr ---
+toolchain error: C compiler failed
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:3:56: warning: unused parameter 'self' [-Wunused-parameter]
+    3 | double cinder_class_project_shapes__Shape_area(int32_t self) {
+      |                                                        ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:5:1: warning: non-void function does not return a value [-Wreturn-type]
+    5 | }
+      | ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:8:13: error: call to undeclared function 'area'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+    8 |     return (area(self) * factor);
+      |             ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:12:12: error: call to undeclared function 'scaled'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+   12 |     return scaled(&shape, 2.0);
+      |            ^
+2 warnings and 2 errors generated.
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:4:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
+    4 |     self->radius = radius;
+      |     ~~~~  ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:8:52: error: member reference type 'int32_t' (aka 'int') is not a pointer
+    8 |     return ((cinder_class_project_math__pi * self->radius) * self->radius);
+      |                                              ~~~~  ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:8:14: error: use of undeclared identifier 'cinder_class_project_math__pi'
+    8 |     return ((cinder_class_project_math__pi * self->radius) * self->radius);
+      |              ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:8:68: error: member reference type 'int32_t' (aka 'int') is not a pointer
+    8 |     return ((cinder_class_project_math__pi * self->radius) * self->radius);
+      |                                                              ~~~~  ^
+4 errors generated.
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+    4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
+      |     ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:4:27: error: use of undeclared identifier 'cinder_class_project_models__Circle'; did you mean 'cinder_class_project_shapes__measure'?
+    4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                           cinder_class_project_shapes__measure
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.cinder.h:57:8: note: 'cinder_class_project_shapes__measure' declared here
+   57 | double cinder_class_project_shapes__measure(void * shape);
+      |        ^
+/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:4:63: error: expected ';' at end of declaration
+    4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
+      |                                                               ^
+... [57 lines total; truncated after 40]
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/class_project.s0.combined	2026-08-02 11:24:47
++++ /tmp/cinder-smoke.vf8Fmf/class_project.g3.combined	2026-08-02 11:24:47
+@@ -1 +1,57 @@
+-Circle: 25.13
++toolchain error: C compiler failed
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:3:56: warning: unused parameter 'self' [-Wunused-parameter]
++    3 | double cinder_class_project_shapes__Shape_area(int32_t self) {
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:5:1: warning: non-void function does not return a value [-Wreturn-type]
++    5 | }
++      | ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:8:13: error: call to undeclared function 'area'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++    8 |     return (area(self) * factor);
++      |             ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.c:12:12: error: call to undeclared function 'scaled'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
++   12 |     return scaled(&shape, 2.0);
++      |            ^
++2 warnings and 2 errors generated.
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:4:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
++    4 |     self->radius = radius;
++      |     ~~~~  ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:8:52: error: member reference type 'int32_t' (aka 'int') is not a pointer
++    8 |     return ((cinder_class_project_math__pi * self->radius) * self->radius);
++      |                                              ~~~~  ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:8:14: error: use of undeclared identifier 'cinder_class_project_math__pi'
++    8 |     return ((cinder_class_project_math__pi * self->radius) * self->radius);
++      |              ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/models.c:8:68: error: member reference type 'int32_t' (aka 'int') is not a pointer
++    8 |     return ((cinder_class_project_math__pi * self->radius) * self->radius);
++      |                                                              ~~~~  ^
++4 errors generated.
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
++    4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
++      |     ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:4:27: error: use of undeclared identifier 'cinder_class_project_models__Circle'; did you mean 'cinder_class_project_shapes__measure'?
++    4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
++      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++      |                           cinder_class_project_shapes__measure
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/shapes.cinder.h:57:8: note: 'cinder_class_project_shapes__measure' declared here
++   57 | double cinder_class_project_shapes__measure(void * shape);
++      |        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:4:63: error: expected ';' at end of declaration
++    4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
++      |                                                               ^
++      |                                                               ;
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:5:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
++    5 |     ({ cinder_selfhost_print_integer_value((long long)(f"{type_name(circle)}: {shapes.measure(circle):.2f}"), true); printf("\n"); 0; });
++      |      ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:5:57: error: expected ')'
++    5 |     ({ cinder_selfhost_print_integer_value((long long)(f"{type_name(circle)}: {shapes.measure(circle):.2f}"), true); printf("\n"); 0; });
++      |                                                         ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:5:55: note: to match this '('
++    5 |     ({ cinder_selfhost_print_integer_value((long long)(f"{type_name(circle)}: {shapes.measure(circle):.2f}"), true); printf("\n"); 0; });
++      |                                                       ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:5:56: error: use of undeclared identifier 'f'
++    5 |     ({ cinder_selfhost_print_integer_value((long long)(f"{type_name(circle)}: {shapes.measure(circle):.2f}"), true); printf("\n"); 0; });
++      |                                                        ^
++/tmp/cinder-smoke.vf8Fmf/g3-build/class_project/cinder_gen/main.c:5:132: warning: expression result unused [-Wunused-value]
++    5 |     ({ cinder_selfhost_print_integer_value((long long)(f"{type_name(circle)}: {shapes.measure(circle):.2f}"), true); printf("\n"); 0; });
++      |                                                                                                                                    ^
++3 warnings and 4 errors generated.
+
+### examples/module_project
+stage0 exit=0  gen3 exit=1
+kind: gen3_checker_error
+
+--- stage0 stdout ---
+value=42
+--- stage0 stderr ---
+--- gen3 stdout ---
+E 48 112 3 6 16
+--- gen3 stderr ---
+--- unified diff (stdout+stderr, truncated) ---
+--- /tmp/cinder-smoke.vf8Fmf/module_project.s0.combined	2026-08-02 11:24:48
++++ /tmp/cinder-smoke.vf8Fmf/module_project.g3.combined	2026-08-02 11:24:48
+@@ -1 +1 @@
+-value=42
++E 48 112 3 6 16
+
+## Output differences
+(none)
+
