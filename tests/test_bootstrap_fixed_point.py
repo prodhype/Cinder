@@ -174,6 +174,26 @@ def test_gen1_check_and_emit_c(
     assert "return 42;" in emitted.stdout
 
 
+def test_gen1_emit_c_cleans_up_with_scope_before_return(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "with_return.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        "    with open(\"input.txt\", \"rb\") as file:\n"
+        "        return 42\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    materialized_return = emitted.stdout.index("__auto_type cinder_return_value = 42;")
+    cleanup = emitted.stdout.index("fclose(file);", materialized_return)
+    returned = emitted.stdout.index("return cinder_return_value;", cleanup)
+    assert materialized_return < cleanup < returned
+
+
 @pytest.mark.parametrize(
     "source_text",
     [

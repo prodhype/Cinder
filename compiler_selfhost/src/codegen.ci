@@ -26,6 +26,7 @@ struct ModuleCodegenContext:
     local_start: usize
     pointer_start: usize
     deferred_expressions: List[NodeId]
+    with_resources: List[String]
 
 
 def emit_c(arena: &const SyntaxArena, root: NodeId, source: &const String) -> String:
@@ -772,6 +773,7 @@ def make_module_codegen_context(arena: &const SyntaxArena, root: NodeId, source:
     pointer_names: List[String] = []
     field_types: List[ModuleFieldTypeBinding] = []
     deferred_expressions: List[NodeId] = []
+    with_resources: List[String] = []
     context = ModuleCodegenContext(
         local_types=local_types,
         pointer_names=pointer_names,
@@ -780,6 +782,7 @@ def make_module_codegen_context(arena: &const SyntaxArena, root: NodeId, source:
         local_start=0,
         pointer_start=0,
         deferred_expressions=deferred_expressions,
+        with_resources=with_resources,
     )
     collect_module_field_types(arena, root, source, context)
     return context
@@ -1402,6 +1405,24 @@ def emit_module_defers(
         builder.append(";\n")
 
 
+def emit_module_return_cleanups(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &ModuleCodegenContext,
+) -> void:
+    emit_module_defers(arena, source, builder, prefix, project_name, imports, context, 0)
+    index = len(context.with_resources)
+    while index > 0:
+        index -= 1
+        builder.append("    fclose(")
+        builder.append(context.with_resources[index])
+        builder.append(");\n")
+
+
 def emit_module_statement(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -1417,22 +1438,26 @@ def emit_module_statement(
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
         expr = first_child(arena, id)
-        if len(context.deferred_expressions) == 0:
+        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0
+        if not has_cleanups:
             builder.append("    return")
             if expr.index >= 0:
                 builder.append(" ")
                 emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
             builder.append(";\n")
             return
+        builder.append("    {\n")
         if expr.index >= 0:
-            builder.append("    __auto_type cinder_deferred_return_value = ")
+            builder.append("    __auto_type cinder_return_value = ")
             emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
             builder.append(";\n")
-        emit_module_defers(arena, source, builder, prefix, project_name, imports, context, 0)
+            mark_context_expression_moved(arena, context, expr, source)
+        emit_module_return_cleanups(arena, source, builder, prefix, project_name, imports, context)
         builder.append("    return")
         if expr.index >= 0:
-            builder.append(" cinder_deferred_return_value")
+            builder.append(" cinder_return_value")
         builder.append(";\n")
+        builder.append("    }\n")
         return
     if node.kind == SyntaxKind.DEFER_STMT:
         expr = first_child(arena, id)
@@ -1576,11 +1601,14 @@ def emit_module_with(
     emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
     builder.append(";\n")
     register_context_pointer_name(context, source, name_node.value_start, name_node.value_length)
+    resource_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    context.with_resources.append(resource_name[0:len(resource_name)])
     builder.append("    if (")
     append_source(builder, source, name_node.value_start, name_node.value_length)
     builder.append(" == NULL) cinder_panic(\"failed to open file\");\n")
     builder.append("    {\n")
     emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+    context.with_resources.pop()
     builder.append("    }\n")
     builder.append("    fclose(")
     append_source(builder, source, name_node.value_start, name_node.value_length)
