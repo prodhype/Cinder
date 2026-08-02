@@ -206,7 +206,10 @@ def build_command(graph: &const project.ProjectGraph, options: &const DriverOpti
     if not run_after:
         print(output[0:len(output)])
         return 0
-    command: List[String] = [output[0:len(output)]]
+    executable = output[0:len(output)]
+    if fs.last_slash(&executable) < 0:
+        executable = "./" + executable
+    command: List[String] = [executable[0:len(executable)]]
     index = 0
     while index < len(options.program_args):
         command.append(options.program_args[index][0:len(options.program_args[index])])

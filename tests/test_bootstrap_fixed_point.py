@@ -335,6 +335,26 @@ def test_gen1_emit_project_build_and_run(
     assert ran.returncode == 42
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX execvp pathname regression")
+def test_gen1_run_executes_default_artifact_from_current_directory(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    write_project(tmp_path)
+    (tmp_path / "cinder").symlink_to(ROOT / "cinder", target_is_directory=True)
+
+    ran = subprocess.run(
+        [str(gen1_compiler), "run", "."],
+        cwd=tmp_path,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+    assert ran.returncode == 42, ran.stderr
+    assert (tmp_path / "selfhost_cli_demo").is_file()
+
+
 def test_gen1_builds_compiler_sources_into_gen2(
     gen2_compiler: tuple[Path, Path],
     tmp_path: Path,
