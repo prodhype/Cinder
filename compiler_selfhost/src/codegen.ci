@@ -1125,7 +1125,7 @@ def emit_map_set_specialization(
     builder.append(name[0:len(name)])
     builder.append("_entry *old = self->entries; size_t old_capacity = self->capacity; self->entries = (")
     builder.append(name[0:len(name)])
-    builder.append("_entry *)cinder_alloc(capacity, sizeof(*self->entries)); self->capacity = capacity; for (size_t i = 0; i < old_capacity; ++i) if (old[i].occupied) { size_t slot = old[i].hash & (capacity - 1); while (self->entries[slot].occupied) slot = (slot + 1) & (capacity - 1); self->entries[slot] = old[i]; } free(old); }\n")
+    builder.append("_entry *)cinder_alloc(capacity, sizeof(*self->entries)); memset(self->entries, 0, capacity * sizeof(*self->entries)); self->capacity = capacity; for (size_t i = 0; i < old_capacity; ++i) if (old[i].occupied) { size_t slot = old[i].hash & (capacity - 1); while (self->entries[slot].occupied) slot = (slot + 1) & (capacity - 1); self->entries[slot] = old[i]; } free(old); }\n")
     if is_map:
         builder.append("static inline ")
         builder.append(name[0:len(name)])

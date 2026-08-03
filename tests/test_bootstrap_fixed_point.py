@@ -557,7 +557,9 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         str(tmp_path / "build"),
     )
     assert built.returncode == 0, built.stderr
-    assert subprocess.run([str(executable)], check=False).returncode == 14
+    run_env = os.environ.copy()
+    run_env["MALLOC_PERTURB_"] = "165"
+    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 14
 
     header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):
