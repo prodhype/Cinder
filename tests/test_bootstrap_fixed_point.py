@@ -544,13 +544,15 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "    key.clear()\n"
         "    groups: Map[i32, List[i32]] = {1: [10]}\n"
         "    groups[2] = [20]\n"
+        "    indexed: List[i32] = groups[1]\n"
+        "    indexed.append(40)\n"
         "    found = groups.get(1)\n"
         "    missing = groups.get(3)\n"
         "    if not found.is_some or missing.is_some:\n"
         "        return 1\n"
         "    found.value.append(30)\n"
         "    bundle: Bundle = Bundle(scores=scores)\n"
-        "    return len(unique) + len(bundle.scores) + bundle.scores[1] + len(found.value) + string_scores[\"alpha\"]\n",
+        "    return len(unique) + len(bundle.scores) + bundle.scores[1] + len(indexed) + len(found.value) + string_scores[\"alpha\"]\n",
         encoding="utf-8",
     )
     executable = tmp_path / "collections"
@@ -566,7 +568,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert built.returncode == 0, built.stderr
     run_env = os.environ.copy()
     run_env["MALLOC_PERTURB_"] = "165"
-    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 23
+    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 25
 
     header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):
