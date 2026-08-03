@@ -583,6 +583,12 @@ def test_gen1_distinguishes_structural_specialization_arguments(
         encoding="utf-8",
     )
     (source_root / "main.ci").write_text(
+        "struct A_argument_cinder_structural_main__B:\n"
+        "    value: i32\n\n"
+        "struct A:\n"
+        "    value: i32\n\n"
+        "struct B:\n"
+        "    value: i32\n\n"
         "def preserve(\n"
         "    integers: List[i32[2]],\n"
         "    strings: List[String[4]],\n"
@@ -593,6 +599,8 @@ def test_gen1_distinguishes_structural_specialization_arguments(
         "    callback_return: List[def() -> def(i32) -> i32],\n"
         "    commented_arrow_argument: List[def # -> not a return\n"
         "        (i32)],\n"
+        "    delimited_nominal: List[def(A_argument_cinder_structural_main__B)],\n"
+        "    separate_nominals: List[def(A, B)],\n"
         ") -> i32:\n"
         "    return 0\n\n"
         "def main() -> i32:\n"
@@ -615,11 +623,13 @@ def test_gen1_distinguishes_structural_specialization_arguments(
         "CinderList_argument_18_array_i32_length_2",
         "CinderList_argument_21_array_String_length_4",
         "CinderList_argument_9_slice_i32",
-        "CinderList_argument_37_function_argument_i32_returns_i64_end",
-        "CinderList_argument_37_function_argument_i64_returns_i32_end",
-        "CinderList_argument_59_function_argument_function_argument_i32_returns_i32_end_end",
-        "CinderList_argument_58_function_returns_function_argument_i32_returns_i32_end_end",
-        "CinderList_argument_25_function_argument_i32_end",
+        "CinderList_argument_41_function_argument_3_i32_returns_3_i64_end",
+        "CinderList_argument_41_function_argument_3_i64_returns_3_i32_end",
+        "CinderList_argument_66_function_argument_41_function_argument_3_i32_returns_3_i32_end_end",
+        "CinderList_argument_65_function_returns_41_function_argument_3_i32_returns_3_i32_end_end",
+        "CinderList_argument_27_function_argument_3_i32_end",
+        "CinderList_argument_85_function_argument_60_cinder_structural_main__A_argument_cinder_structural_main__B_end",
+        "CinderList_argument_88_function_argument_25_cinder_structural_main__A_argument_25_cinder_structural_main__B_end",
     ):
         assert specialized_name in header
     assert "CinderList_value" not in header

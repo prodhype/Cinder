@@ -784,11 +784,16 @@ def emit_specialized_type_name(
         has_return = callable_type_has_return(source, &node)
         offset: i32 = 0
         while offset < node.child_count:
+            child_builder = StringBuilder()
+            emit_specialized_type_name(arena, arena.children[node.first_child + offset], source, child_builder, prefix, project_name, imports)
+            child_name = child_builder.finish()
             if has_return and offset == node.child_count - 1:
                 builder.append("_returns_")
             else:
                 builder.append("_argument_")
-            emit_specialized_type_name(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports)
+            append_specialization_decimal(builder, len(child_name))
+            builder.append("_")
+            builder.append(child_name[0:len(child_name)])
             offset += 1
         builder.append("_end")
         return
