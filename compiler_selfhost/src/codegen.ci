@@ -94,7 +94,7 @@ def emit_module_header(
     builder.append("\n")
     prefix = c_prefix(project_name, module_name)
     emitted_specializations: List[String] = []
-    emit_module_type_specializations(arena, root, source, builder, emitted_specializations)
+    emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports)
     emit_module_declarations(arena, root, source, builder, &prefix, project_name, imports, true)
     builder.append("\n#endif\n")
     return builder.finish()
@@ -715,7 +715,7 @@ def emit_module_c_type(
         if base.index >= 0:
             base_node = arena.nodes[base.index]
             if is_runtime_generic_name(source, base_node, "List") or is_runtime_generic_name(source, base_node, "Set") or is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "Option") or is_runtime_generic_name(source, base_node, "Result") or is_runtime_generic_name(source, base_node, "Owned") or is_runtime_generic_name(source, base_node, "Tuple"):
-                emit_specialized_type_name(arena, id, source, builder)
+                emit_specialized_type_name(arena, id, source, builder, prefix, project_name, imports)
                 return
         emit_module_nominal_type(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
@@ -739,14 +739,22 @@ def is_runtime_generic_name(source: &const String, node: &const syntax.SyntaxNod
     return range_text_equals(source, node.value_start, node.value_length, expected)
 
 
-def emit_specialized_type_name(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+def emit_specialized_type_name(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_REFERENCE:
-        emit_specialized_type_name(arena, first_child(arena, id), source, builder)
+        emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         builder.append("_ptr")
         return
     if node.kind == SyntaxKind.TYPE_CONST:
-        emit_specialized_type_name(arena, first_child(arena, id), source, builder)
+        emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.TYPE_GENERIC:
         base = first_child(arena, id)
@@ -756,16 +764,63 @@ def emit_specialized_type_name(arena: &const SyntaxArena, id: NodeId, source: &c
         offset: i32 = 1
         while offset < node.child_count:
             builder.append("_")
-            emit_specialized_type_name(arena, arena.children[node.first_child + offset], source, builder)
+            emit_specialized_type_name(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports)
             offset += 1
         return
     if node.kind == SyntaxKind.TYPE_NAME:
         if range_text_equals(source, node.value_start, node.value_length, "File"):
             builder.append("FILE")
-        else:
+        elif is_specialization_builtin_name(source, node):
             append_source(builder, source, node.value_start, node.value_length)
+        else:
+            emit_specialized_nominal_identity(arena, id, source, builder, prefix, project_name, imports)
         return
     builder.append("value")
+
+
+def emit_specialized_nominal_identity(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    node = arena.nodes[id.index]
+    if node.child_count > 1:
+        first = arena.children[node.first_child]
+        first_node = arena.nodes[first.index]
+        alias = source[first_node.value_start:first_node.value_start + first_node.value_length]
+        imported_alias = find_import_alias(imports, &alias)
+        if len(imported_alias.module_name) > 0:
+            builder.append(c_prefix(project_name, &imported_alias.module_name))
+            offset: i32 = 1
+            while offset < node.child_count:
+                if offset > 1:
+                    builder.append("_")
+                part = arena.nodes[arena.children[node.first_child + offset].index]
+                append_source(builder, source, part.value_start, part.value_length)
+                offset += 1
+            return
+    name = source[node.value_start:node.value_start + node.value_length]
+    imported = find_import_member(imports, &name)
+    if len(imported.module_name) > 0 and len(imported.member) > 0:
+        builder.append(c_prefix(project_name, &imported.module_name))
+        builder.append(imported.member)
+        return
+    builder.append(prefix[0:len(prefix)])
+    offset: i32 = 0
+    while offset < node.child_count:
+        if offset > 0:
+            builder.append("_")
+        part = arena.nodes[arena.children[node.first_child + offset].index]
+        append_source(builder, source, part.value_start, part.value_length)
+        offset += 1
+
+
+def is_specialization_builtin_name(source: &const String, node: &const syntax.SyntaxNode) -> bool:
+    return range_text_equals(source, node.value_start, node.value_length, "void") or range_text_equals(source, node.value_start, node.value_length, "bool") or range_text_equals(source, node.value_start, node.value_length, "i8") or range_text_equals(source, node.value_start, node.value_length, "i16") or range_text_equals(source, node.value_start, node.value_length, "i32") or range_text_equals(source, node.value_start, node.value_length, "i64") or range_text_equals(source, node.value_start, node.value_length, "u8") or range_text_equals(source, node.value_start, node.value_length, "u16") or range_text_equals(source, node.value_start, node.value_length, "u32") or range_text_equals(source, node.value_start, node.value_length, "u64") or range_text_equals(source, node.value_start, node.value_length, "f32") or range_text_equals(source, node.value_start, node.value_length, "f64") or range_text_equals(source, node.value_start, node.value_length, "char") or range_text_equals(source, node.value_start, node.value_length, "usize") or range_text_equals(source, node.value_start, node.value_length, "isize") or range_text_equals(source, node.value_start, node.value_length, "c_int") or range_text_equals(source, node.value_start, node.value_length, "c_long") or range_text_equals(source, node.value_start, node.value_length, "c_size_t") or range_text_equals(source, node.value_start, node.value_length, "String") or range_text_equals(source, node.value_start, node.value_length, "StringBuilder") or range_text_equals(source, node.value_start, node.value_length, "clock_t")
 
 
 def string_list_contains(values: &const List[String], expected: &const String) -> bool:
@@ -781,12 +836,15 @@ def emit_module_type_specializations(
     source: &const String,
     builder: &StringBuilder,
     emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
-        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted)
+        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports)
     if node.kind != SyntaxKind.TYPE_GENERIC:
         return
     base = first_child(arena, id)
@@ -798,7 +856,7 @@ def emit_module_type_specializations(
     if not is_collection and not is_scalar_wrapper:
         return
     name_builder = StringBuilder()
-    emit_specialized_type_name(arena, id, source, name_builder)
+    emit_specialized_type_name(arena, id, source, name_builder, prefix, project_name, imports)
     name = name_builder.finish()
     if string_list_contains(emitted, &name):
         return

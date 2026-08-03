@@ -508,7 +508,7 @@ def test_gen1_preserves_runtime_generic_specializations(
     for specialized_name in (
         "CinderList_i32",
         "CinderList_CinderList_i32",
-        "CinderSet_Resource",
+        "CinderSet_cinder_specialized_main__Resource",
         "CinderMap_i32_CinderList_i32",
         "CinderOption_CinderList_i32",
         "CinderOption_FILE_ptr",
@@ -516,6 +516,56 @@ def test_gen1_preserves_runtime_generic_specializations(
         "CinderTuple_CinderList_i32_i32",
     ):
         assert specialized_name in header
+
+
+def test_gen1_canonicalizes_qualified_specialization_names(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    (source_root / "support").mkdir(parents=True)
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"specialized\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "support" / "errors.ci").write_text(
+        "struct MathError:\n"
+        "    code: i32\n\n"
+        "struct OtherError:\n"
+        "    code: i64\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import support.errors as calculations\n"
+        "import support.errors as failures\n\n"
+        "def preserve(\n"
+        "    first: Result[i32, calculations.MathError],\n"
+        "    same: Result[i32, failures.MathError],\n"
+        "    other: Result[i32, calculations.OtherError],\n"
+        ") -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    math_error = "CinderResult_i32_cinder_specialized_support_errors__MathError"
+    other_error = "CinderResult_i32_cinder_specialized_support_errors__OtherError"
+    assert math_error in header
+    assert other_error in header
+    assert "CinderResult_i32_calculations" not in header
+    assert "CinderResult_i32_failures" not in header
 
 
 def test_gen1_build_accepts_equals_form_ldflag(
