@@ -408,7 +408,7 @@ def emit_module_methods(
             builder.append("_")
             append_source(builder, source, child.value_start, child.value_length)
             builder.append("(")
-            emit_module_parameters(arena, child_id, source, builder, prefix, project_name, imports)
+            emit_module_method_parameters(arena, child_id, source, builder, prefix, project_name, imports, owner_start, owner_length)
             if declarations_only:
                 builder.append(");\n")
                 builder.append("#define ")
@@ -428,6 +428,36 @@ def emit_module_methods(
                     register_module_parameters(arena, child_id, source, context)
                     emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
                 builder.append("}\n\n")
+
+
+def emit_module_method_parameters(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    owner_start: usize,
+    owner_length: usize,
+) -> void:
+    node = arena.nodes[id.index]
+    emitted_parameter = false
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.PARAMETER:
+            if emitted_parameter:
+                builder.append(", ")
+            parameter_type = find_child_type(arena, child_id)
+            if parameter_type.index < 0 and range_text_equals(source, child.value_start, child.value_length, "self"):
+                emit_prefixed_name(builder, prefix, source, owner_start, owner_length)
+                builder.append(" * self")
+            else:
+                emit_module_parameter(arena, child_id, source, builder, prefix, project_name, imports)
+            emitted_parameter = true
+    if not emitted_parameter:
+        builder.append("void")
 
 
 def emit_function(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
@@ -1579,6 +1609,9 @@ def emit_module_declarations(
             emit_module_declarations(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, is_entry)
         return
     if node.kind == SyntaxKind.STRUCT_DECL:
+        emit_module_struct(arena, id, source, builder, prefix, project_name, imports)
+        return
+    if node.kind == SyntaxKind.CLASS_DECL:
         emit_module_struct(arena, id, source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.ENUM_DECL:

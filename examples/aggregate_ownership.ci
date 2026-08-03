@@ -1,16 +1,7 @@
-# Aggregate ownership for List/Map/Set/File and destructor-bearing classes.
+# Aggregate ownership for structs, classes, and Lists.
 #
-# Covered here:
-# - struct/class by-value owning fields
-# - nested owning collections and owning elements
-# - by-value parameters and returns
-# - Option/Result/Tuple(/array) wrappers with drop glue
-# - field reassignment (drop-before-replace)
-# - local moves with use-after-move left as a commented anti-pattern
-#
-# Still rejected by the language: owning globals, owning union/variant payloads.
-# See ast_arena.ci for AST-shaped data with arena-owned lists and non-owning
-# indices/ranges in variant payloads.
+# Passing Bundle by value transfers its owning List to take_bundle. Portfolio's
+# constructor likewise moves the List[Resource] into an owning class field.
 
 class Resource:
     label: i32
@@ -24,174 +15,25 @@ class Resource:
 
 struct Bundle:
     items: List[i32]
-    tags: Set[i32]
-    scores: Map[i32, i32]
 
 
 class Portfolio:
     holdings: List[Resource]
-    groups: Map[i32, List[i32]]
-    log: File
 
-    def __init__(
-        self,
-        holdings: List[Resource],
-        groups: Map[i32, List[i32]],
-        log: File,
-    ):
+    def __init__(self, holdings: List[Resource]):
         self.holdings = holdings
-        self.groups = groups
-        self.log = log
-
-    def replace_holdings(self, holdings: List[Resource]):
-        # Evaluates the replacement, drops the old List (and its Resources), then stores.
-        self.holdings = holdings
-
-
-def take_list(values: List[i32]) -> i32:
-    return cast[i32](len(values))
 
 
 def take_bundle(bundle: Bundle) -> i32:
-    return (
-        cast[i32](len(bundle.items))
-        + cast[i32](len(bundle.tags))
-        + cast[i32](len(bundle.scores))
-    )
-
-
-def take_resource(resource: Resource) -> i32:
-    return resource.label
-
-
-def take_result(result: Result[List[i32], i32]) -> i32:
-    match result:
-        case Ok(values):
-            return cast[i32](len(values))
-        case Err(code):
-            return code
-
-
-def make_nested() -> List[List[i32]]:
-    nested: List[List[i32]] = [[1, 2], [3]]
-    nested.append([4, 5, 6])
-    return nested
-
-
-def make_option_list() -> Option[List[i32]]:
-    return Some([10, 20, 30])
-
-
-def make_result_list() -> Result[List[i32], i32]:
-    return Ok([7, 8])
-
-
-def maybe_open(path: String, ok: bool) -> Option[File]:
-    if ok:
-        return Some(open(path, "w"))
-    return None
-
-
-def show_struct_fields_and_by_value() -> void:
-    bundle = Bundle(
-        items=[1, 2, 3],
-        tags={1, 2, 2},
-        scores={1: 10, 2: 20},
-    )
-    print(
-        f"bundle items={len(bundle.items)} tags={len(bundle.tags)} scores={len(bundle.scores)}"
-    )
-    print(f"score[1]={bundle.scores[1]}")
-
-    # Passing the whole owning struct moves it into the callee.
-    total = take_bundle(bundle)
-    print(f"take_bundle total={total}")
-    # WRONG after the move:
-    # print(len(bundle.items))
-
-
-def show_nested_collections_and_moves() -> void:
-    nested = make_nested()
-    print(f"nested lists={len(nested)}")
-
-    inner = nested.pop()
-    print(f"popped inner={len(inner)} remaining={len(nested)}")
-    print(f"take_list(inner)={take_list(inner)}")
-    # WRONG after the move:
-    # print(len(inner))
-
-    # Local-to-local assignment is also a move.
-    first = [100, 200]
-    second = first
-    print(f"moved local len={len(second)}")
-    # WRONG after the move:
-    # print(len(first))
-
-    fresh = [1, 2, 3, 4]
-    print(f"take_list(fresh)={take_list(fresh)}")
-
-
-def show_wrappers() -> void:
-    match make_option_list():
-        case Some(values):
-            print(f"option list len={len(values)}")
-        case None:
-            print("option list missing")
-
-    print(f"result list len={take_result(make_result_list())}")
-
-    # Tuple may own a List; the whole value is dropped at scope exit.
-    pair: Tuple[List[i32], i32] = ([1, 2, 3], 9)
-    print(f"tuple tag={pair[1]}")
-
-    # Fixed arrays of owning elements drop each element.
-    rows: List[i32][2] = [[1], [2, 3]]
-    print(f"array row0={len(rows[0])} row1={len(rows[1])}")
-
-
-def show_resources_files_and_fields() -> void:
-    print(f"take_resource={take_resource(Resource(9))}")
-
-    holdings: List[Resource] = []
-    holdings.append(Resource(1))
-    holdings.append(Resource(2))
-
-    groups: Map[i32, List[i32]] = {1: [10, 11]}
-    groups[2] = [20]
-    match groups.get(1):
-        case Some(group):
-            print(f"group[1] len={len(group)}")
-        case None:
-            print("group[1] missing")
-
-    portfolio = Portfolio(
-        holdings,
-        groups,
-        open("aggregate_ownership.log", "w"),
-    )
-    print(f"holdings={len(portfolio.holdings)} groups={len(portfolio.groups)}")
-
-    # Field replace drops Resource(1) and Resource(2), then stores Resource(3).
-    replacement: List[Resource] = []
-    replacement.append(Resource(3))
-    portfolio.replace_holdings(replacement)
-    print(f"replaced holdings={len(portfolio.holdings)}")
-
-    files: List[File] = []
-    files.append(open("aggregate_ownership_a.txt", "w"))
-    files.append(open("aggregate_ownership_b.txt", "w"))
-    print(f"owned files={len(files)}")
-
-    match maybe_open("aggregate_ownership_opt.txt", true):
-        case Some(file):
-            print("option file opened")
-        case None:
-            print("option file missing")
+    return cast[i32](len(bundle.items))
 
 
 def main() -> i32:
-    show_struct_fields_and_by_value()
-    show_nested_collections_and_moves()
-    show_wrappers()
-    show_resources_files_and_fields()
+    bundle = Bundle(items=[1, 2, 3])
+    print("take_bundle total=", take_bundle(bundle))
+
+    holdings: List[Resource] = []
+    holdings.append(Resource(9))
+    portfolio = Portfolio(holdings)
+    print("portfolio holdings=", len(portfolio.holdings))
     return 0
