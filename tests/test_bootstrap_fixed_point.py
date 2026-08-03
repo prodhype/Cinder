@@ -511,7 +511,7 @@ def test_gen1_preserves_runtime_generic_specializations(
         "CinderSet_cinder_specialized_main__Resource",
         "CinderMap_i32_CinderList_i32",
         "CinderOption_CinderList_i32",
-        "CinderOption_FILE_ptr",
+        "CinderOption_pointer_4_FILE",
         "CinderResult_CinderList_i32_i32",
         "CinderTuple_CinderList_i32_i32",
     ):
@@ -629,7 +629,16 @@ def test_gen1_distinguishes_pointer_and_reference_specialization_arguments(
         encoding="utf-8",
     )
     (source_root / "main.ci").write_text(
-        "def preserve(pointer: List[i32*], reference: List[&i32]) -> i32:\n"
+        "struct Thing:\n"
+        "    value: i32\n\n"
+        "struct Thing_ptr:\n"
+        "    value: i32\n\n"
+        "def preserve(\n"
+        "    pointer: List[i32*],\n"
+        "    reference: List[&i32],\n"
+        "    nominal_pointer: List[Thing*],\n"
+        "    structural_suffix: List[Thing_ptr],\n"
+        ") -> i32:\n"
         "    return 0\n\n"
         "def main() -> i32:\n"
         "    return 0\n",
@@ -647,8 +656,10 @@ def test_gen1_distinguishes_pointer_and_reference_specialization_arguments(
 
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
-    assert "CinderList_i32_ptr" in header
-    assert "CinderList_i32_ref" in header
+    assert "CinderList_pointer_3_i32" in header
+    assert "CinderList_reference_3_i32" in header
+    assert "CinderList_pointer_30_cinder_indirection_main__Thing" in header
+    assert "CinderList_cinder_indirection_main__Thing_ptr" in header
 
 
 def test_gen1_build_accepts_equals_form_ldflag(

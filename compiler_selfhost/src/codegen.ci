@@ -750,12 +750,10 @@ def emit_specialized_type_name(
 ) -> void:
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.TYPE_POINTER:
-        emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
-        builder.append("_ptr")
+        emit_specialized_indirection_name("pointer", arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.TYPE_REFERENCE:
-        emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
-        builder.append("_ref")
+        emit_specialized_indirection_name("reference", arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.TYPE_CONST:
         emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
@@ -814,6 +812,52 @@ def emit_specialized_type_name(
             emit_specialized_nominal_identity(arena, id, source, builder, prefix, project_name, imports)
         return
     builder.append("value")
+
+
+def emit_specialized_indirection_name(
+    tag: String,
+    arena: &const SyntaxArena,
+    child: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    child_builder = StringBuilder()
+    emit_specialized_type_name(arena, child, source, child_builder, prefix, project_name, imports)
+    child_name = child_builder.finish()
+    builder.append(tag[0:len(tag)])
+    builder.append("_")
+    append_specialization_decimal(builder, len(child_name))
+    builder.append("_")
+    builder.append(child_name[0:len(child_name)])
+
+
+def append_specialization_decimal(builder: &StringBuilder, value: usize) -> void:
+    if value >= 10:
+        append_specialization_decimal(builder, value / 10)
+    digit = value % 10
+    if digit == 0:
+        builder.append("0")
+    elif digit == 1:
+        builder.append("1")
+    elif digit == 2:
+        builder.append("2")
+    elif digit == 3:
+        builder.append("3")
+    elif digit == 4:
+        builder.append("4")
+    elif digit == 5:
+        builder.append("5")
+    elif digit == 6:
+        builder.append("6")
+    elif digit == 7:
+        builder.append("7")
+    elif digit == 8:
+        builder.append("8")
+    else:
+        builder.append("9")
 
 
 def callable_type_has_return(source: &const String, node: &const syntax.SyntaxNode) -> bool:
