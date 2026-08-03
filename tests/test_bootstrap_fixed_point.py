@@ -487,6 +487,8 @@ def test_gen1_preserves_runtime_generic_specializations(
         "    file: Option[File*],\n"
         "    result: Result[List[i32], i32],\n"
         "    pair: Tuple[List[i32], i32],\n"
+        "    nested_pair: Tuple[Tuple[i32], i64],\n"
+        "    nested_single: Tuple[Tuple[i32, i64]],\n"
         ") -> i32:\n"
         "    return 0\n\n"
         "def main() -> i32:\n"
@@ -506,14 +508,16 @@ def test_gen1_preserves_runtime_generic_specializations(
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for specialized_name in (
-        "CinderList_i32",
-        "CinderList_CinderList_i32",
-        "CinderSet_cinder_specialized_main__Resource",
-        "CinderMap_i32_CinderList_i32",
-        "CinderOption_CinderList_i32",
-        "CinderOption_pointer_4_FILE",
-        "CinderResult_CinderList_i32_i32",
-        "CinderTuple_CinderList_i32_i32",
+        "CinderList_argument_3_i32",
+        "CinderList_argument_25_CinderList_argument_3_i32",
+        "CinderSet_argument_33_cinder_specialized_main__Resource",
+        "CinderMap_argument_3_i32_argument_25_CinderList_argument_3_i32",
+        "CinderOption_argument_25_CinderList_argument_3_i32",
+        "CinderOption_argument_14_pointer_4_FILE",
+        "CinderResult_argument_25_CinderList_argument_3_i32_argument_3_i32",
+        "CinderTuple_argument_25_CinderList_argument_3_i32_argument_3_i32",
+        "CinderTuple_argument_26_CinderTuple_argument_3_i32_argument_3_i64",
+        "CinderTuple_argument_41_CinderTuple_argument_3_i32_argument_3_i64",
     ):
         assert specialized_name in header
 
@@ -560,8 +564,8 @@ def test_gen1_canonicalizes_qualified_specialization_names(
 
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
-    math_error = "CinderResult_i32_cinder_specialized_support_errors__MathError"
-    other_error = "CinderResult_i32_cinder_specialized_support_errors__OtherError"
+    math_error = "CinderResult_argument_3_i32_argument_44_cinder_specialized_support_errors__MathError"
+    other_error = "CinderResult_argument_3_i32_argument_45_cinder_specialized_support_errors__OtherError"
     assert math_error in header
     assert other_error in header
     assert "CinderResult_i32_calculations" not in header
@@ -606,13 +610,13 @@ def test_gen1_distinguishes_structural_specialization_arguments(
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for specialized_name in (
-        "CinderList_array_i32_length_2",
-        "CinderList_array_String_length_4",
-        "CinderList_slice_i32",
-        "CinderList_function_argument_i32_returns_i64_end",
-        "CinderList_function_argument_i64_returns_i32_end",
-        "CinderList_function_argument_function_argument_i32_returns_i32_end_end",
-        "CinderList_function_returns_function_argument_i32_returns_i32_end_end",
+        "CinderList_argument_18_array_i32_length_2",
+        "CinderList_argument_21_array_String_length_4",
+        "CinderList_argument_9_slice_i32",
+        "CinderList_argument_37_function_argument_i32_returns_i64_end",
+        "CinderList_argument_37_function_argument_i64_returns_i32_end",
+        "CinderList_argument_59_function_argument_function_argument_i32_returns_i32_end_end",
+        "CinderList_argument_58_function_returns_function_argument_i32_returns_i32_end_end",
     ):
         assert specialized_name in header
     assert "CinderList_value" not in header
@@ -656,10 +660,10 @@ def test_gen1_distinguishes_pointer_and_reference_specialization_arguments(
 
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
-    assert "CinderList_pointer_3_i32" in header
-    assert "CinderList_reference_3_i32" in header
-    assert "CinderList_pointer_30_cinder_indirection_main__Thing" in header
-    assert "CinderList_cinder_indirection_main__Thing_ptr" in header
+    assert "CinderList_argument_13_pointer_3_i32" in header
+    assert "CinderList_argument_15_reference_3_i32" in header
+    assert "CinderList_argument_41_pointer_30_cinder_indirection_main__Thing" in header
+    assert "CinderList_argument_34_cinder_indirection_main__Thing_ptr" in header
 
 
 def test_gen1_build_accepts_equals_form_ldflag(

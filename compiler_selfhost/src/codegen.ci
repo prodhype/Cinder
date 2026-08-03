@@ -799,8 +799,13 @@ def emit_specialized_type_name(
         append_source(builder, source, base_node.value_start, base_node.value_length)
         offset: i32 = 1
         while offset < node.child_count:
+            argument_builder = StringBuilder()
+            emit_specialized_type_name(arena, arena.children[node.first_child + offset], source, argument_builder, prefix, project_name, imports)
+            argument_name = argument_builder.finish()
+            builder.append("_argument_")
+            append_specialization_decimal(builder, len(argument_name))
             builder.append("_")
-            emit_specialized_type_name(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports)
+            builder.append(argument_name[0:len(argument_name)])
             offset += 1
         return
     if node.kind == SyntaxKind.TYPE_NAME:
