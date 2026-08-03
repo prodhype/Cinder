@@ -1540,7 +1540,13 @@ def emit_typed_collection_literal(
         return false
     node = arena.nodes[id.index]
     is_map = node.kind == SyntaxKind.EXPR_MAP and context_type_is_runtime_generic(arena, type_id, source, "Map")
-    is_set = node.kind == SyntaxKind.EXPR_SET and context_type_is_runtime_generic(arena, type_id, source, "Set")
+    is_empty_set = false
+    if node.kind == SyntaxKind.EXPR_CALL and node.child_count == 1:
+        callee = first_child(arena, id)
+        if callee.index >= 0:
+            callee_node = arena.nodes[callee.index]
+            is_empty_set = callee_node.kind == SyntaxKind.EXPR_NAME and range_text_equals(source, callee_node.value_start, callee_node.value_length, "set")
+    is_set = (node.kind == SyntaxKind.EXPR_SET or is_empty_set) and context_type_is_runtime_generic(arena, type_id, source, "Set")
     if not is_map and not is_set:
         return false
     name_builder = StringBuilder()
@@ -1566,7 +1572,7 @@ def emit_typed_collection_literal(
                 emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
             mark_context_expression_moved(arena, context, value, source)
             builder.append("));")
-        elif is_set and not is_type_kind(child.kind):
+        elif node.kind == SyntaxKind.EXPR_SET and is_set and not is_type_kind(child.kind):
             builder.append(" ")
             builder.append(name[0:len(name)])
             builder.append("_add(&cinder_collection, (")

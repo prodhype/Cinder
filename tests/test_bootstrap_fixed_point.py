@@ -538,6 +538,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "    scores: Map[i32, i32]\n\n"
         "def main() -> i32:\n"
         "    unique: Set[i32] = {1, 2, 2}\n"
+        "    empty: Set[i32] = set()\n"
         '    text = "alpha"\n'
         "    names: Set[String] = {text}\n"
         "    text.clear()\n"
@@ -560,7 +561,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "        return 1\n"
         "    found.value.append(30)\n"
         "    bundle: Bundle = Bundle(scores=scores)\n"
-        "    return len(unique) + len(names) + len(bundle.scores) + bundle.scores[1] + len(indexed) + len(found.value) + string_scores[\"alpha\"] + nested[1][2]\n",
+        "    return len(unique) + len(empty) + len(names) + len(bundle.scores) + bundle.scores[1] + len(indexed) + len(found.value) + string_scores[\"alpha\"] + nested[1][2]\n",
         encoding="utf-8",
     )
     executable = tmp_path / "collections"
@@ -584,6 +585,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert "CinderOption_argument_25_CinderList_argument_3_i32_Tag_Some" in header
     assert ".is_some = true" in header
     generated_source = (tmp_path / "build" / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    assert "cinder_collections_main__set()" not in generated_source
     assert "_lookup_mut(&scores, 1)" in generated_source
     assert 'if (!cinder_map_assignment_value) cinder_panic("Map key not found")' in generated_source
     assert "_at(&nested, 1)})[0], 2)" in generated_source
