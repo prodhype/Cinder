@@ -783,7 +783,7 @@ def emit_specialized_type_name(
             builder.append("function")
         else:
             builder.append("closure")
-        has_return = type_syntax_contains_arrow(source, &node)
+        has_return = callable_type_has_return(source, &node)
         offset: i32 = 0
         while offset < node.child_count:
             if has_return and offset == node.child_count - 1:
@@ -816,12 +816,22 @@ def emit_specialized_type_name(
     builder.append("value")
 
 
-def type_syntax_contains_arrow(source: &const String, node: &const syntax.SyntaxNode) -> bool:
+def callable_type_has_return(source: &const String, node: &const syntax.SyntaxNode) -> bool:
     offset = node.start
     end = node.start + node.length
+    paren_depth: i32 = 0
+    bracket_depth: i32 = 0
     while offset + 1 < end:
-        if source[offset:offset + 2] == "->":
+        if paren_depth == 0 and bracket_depth == 0 and source[offset:offset + 2] == "->":
             return true
+        if source[offset:offset + 1] == "(":
+            paren_depth += 1
+        if source[offset:offset + 1] == ")":
+            paren_depth -= 1
+        if source[offset:offset + 1] == "[":
+            bracket_depth += 1
+        if source[offset:offset + 1] == "]":
+            bracket_depth -= 1
         offset += 1
     return false
 
