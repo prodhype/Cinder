@@ -989,6 +989,11 @@ def emit_module_type_specializations(
         builder.append("#endif\n")
         emitted.append(name[0:len(name)])
         return
+    elif is_runtime_generic_name(source, base_node, "Option"):
+        emit_option_specialization(arena, second_child(arena, id), source, builder, &name, prefix, project_name, imports, false)
+        builder.append("#endif\n")
+        emitted.append(name[0:len(name)])
+        return
     else:
         builder.append("typedef int32_t ")
     builder.append(name[0:len(name)])
@@ -1074,6 +1079,95 @@ def emit_equal_expression(arena: &const SyntaxArena, type_id: NodeId, source: &c
         builder.append(")")
 
 
+def emit_option_specialization(
+    arena: &const SyntaxArena,
+    value_type: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    include_guard: bool,
+) -> void:
+    value_c = StringBuilder()
+    emit_module_c_type(arena, value_type, source, value_c, prefix, project_name, imports)
+    value_name = value_c.finish()
+    if include_guard:
+        builder.append("#ifndef CINDER_SPECIALIZED_")
+        builder.append(name[0:len(name)])
+        builder.append("\n#define CINDER_SPECIALIZED_")
+        builder.append(name[0:len(name)])
+        builder.append("\n")
+    builder.append("typedef enum ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag { ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_None = 0, ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Some = 1 } ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag;\ntypedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" { ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag tag; bool is_some; bool is_none; ")
+    builder.append(value_name[0:len(value_name)])
+    builder.append(" value; } ")
+    builder.append(name[0:len(name)])
+    builder.append(";\n")
+    if include_guard:
+        builder.append("#endif\n")
+
+
+def emit_type_clone_expression(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    value: String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    if context_type_name_equals(arena, type_id, source, "String"):
+        builder.append("cinder_string_clone(&")
+        builder.append(value[0:len(value)])
+        builder.append(")")
+        return
+    if type_id.index >= 0 and arena.nodes[type_id.index].kind == SyntaxKind.TYPE_GENERIC:
+        base = first_child(arena, type_id)
+        if base.index >= 0:
+            base_node = arena.nodes[base.index]
+            if is_runtime_generic_name(source, base_node, "List"):
+                element_type = second_child(arena, type_id)
+                element_c_builder = StringBuilder()
+                emit_module_c_type(arena, element_type, source, element_c_builder, prefix, project_name, imports)
+                element_c = element_c_builder.finish()
+                builder.append("({ CinderList cinder_copy = (CinderList){0}; ")
+                builder.append(element_c[0:len(element_c)])
+                builder.append(" *cinder_items = (")
+                builder.append(element_c[0:len(element_c)])
+                builder.append(" *)")
+                builder.append(value[0:len(value)])
+                builder.append(".data; for (size_t cinder_i = 0; cinder_i < ")
+                builder.append(value[0:len(value)])
+                builder.append(".length; ++cinder_i) cinder_selfhost_list_append_value(&cinder_copy, (")
+                emit_type_clone_expression(arena, element_type, source, builder, "cinder_items[cinder_i]", prefix, project_name, imports)
+                builder.append(")); cinder_copy; })")
+                return
+            if is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "Set"):
+                type_name = StringBuilder()
+                emit_specialized_type_name(arena, type_id, source, type_name, prefix, project_name, imports)
+                rendered = type_name.finish()
+                builder.append(rendered[0:len(rendered)])
+                builder.append("_clone(&")
+                builder.append(value[0:len(value)])
+                builder.append(")")
+                return
+    builder.append(value[0:len(value)])
+
+
 def emit_map_set_specialization(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -1097,6 +1191,16 @@ def emit_map_set_specialization(
     value_c = StringBuilder()
     emit_module_c_type(arena, value_type, source, value_c, prefix, project_name, imports)
     value_name = value_c.finish()
+    option_name = ""
+    if is_map:
+        option_name_builder = StringBuilder()
+        builder_name = "CinderOption_argument_"
+        option_name_builder.append(builder_name)
+        append_specialization_decimal(option_name_builder, len(value_name))
+        option_name_builder.append("_")
+        option_name_builder.append(value_name[0:len(value_name)])
+        option_name = option_name_builder.finish()
+        emit_option_specialization(arena, value_type, source, builder, &option_name, prefix, project_name, imports, true)
     builder.append("typedef struct ")
     builder.append(name[0:len(name)])
     builder.append("_entry { bool occupied; size_t hash; ")
@@ -1214,17 +1318,29 @@ def emit_map_set_specialization(
         builder.append(" *value = ")
         builder.append(name[0:len(name)])
         builder.append("_lookup(self, key); if (!value) cinder_panic(\"Map key not found\"); return *value; }\n")
-        builder.append("static inline const ")
-        builder.append(value_name[0:len(value_name)])
-        builder.append(" *")
+        builder.append("static inline ")
+        builder.append(option_name[0:len(option_name)])
+        builder.append(" ")
         builder.append(name[0:len(name)])
         builder.append("_get(const ")
         builder.append(name[0:len(name)])
         builder.append(" *self, ")
         builder.append(key_name[0:len(key_name)])
-        builder.append(" key) { return ")
+        builder.append(" key) { const ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" *value = ")
         builder.append(name[0:len(name)])
-        builder.append("_lookup(self, key); }\n")
+        builder.append("_lookup(self, key); if (!value) return (")
+        builder.append(option_name[0:len(option_name)])
+        builder.append("){ .tag = ")
+        builder.append(option_name[0:len(option_name)])
+        builder.append("_Tag_None, .is_some = false, .is_none = true }; return (")
+        builder.append(option_name[0:len(option_name)])
+        builder.append("){ .tag = ")
+        builder.append(option_name[0:len(option_name)])
+        builder.append("_Tag_Some, .is_some = true, .is_none = false, .value = ")
+        emit_type_clone_expression(arena, value_type, source, builder, "(*value)", prefix, project_name, imports)
+        builder.append(" }; }\n")
     else:
         builder.append("static inline bool ")
         builder.append(name[0:len(name)])
@@ -1243,6 +1359,28 @@ def emit_map_set_specialization(
         builder.append(" return false; } slot = (slot + 1) & (self->capacity - 1); } self->entries[slot] = (")
         builder.append(name[0:len(name)])
         builder.append("_entry){ .occupied = true, .hash = hash, .value = value }; self->length++; return true; }\n")
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_clone(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { ")
+    builder.append(name[0:len(name)])
+    builder.append(" copy = (")
+    builder.append(name[0:len(name)])
+    builder.append("){0}; if (!self) return copy; for (size_t i = 0; i < self->capacity; ++i) if (self->entries[i].occupied) ")
+    builder.append(name[0:len(name)])
+    if is_map:
+        builder.append("_set(&copy, ")
+        emit_type_clone_expression(arena, key_type, source, builder, "self->entries[i].key", prefix, project_name, imports)
+        builder.append(", ")
+        emit_type_clone_expression(arena, value_type, source, builder, "self->entries[i].value", prefix, project_name, imports)
+        builder.append("); return copy; }\n")
+    else:
+        builder.append("_add(&copy, ")
+        emit_type_clone_expression(arena, key_type, source, builder, "self->entries[i].value", prefix, project_name, imports)
+        builder.append("); return copy; }\n")
     builder.append("static inline size_t ")
     builder.append(name[0:len(name)])
     builder.append("_len(const ")
@@ -4436,6 +4574,28 @@ def emit_module_attribute(
     if receiver.index >= 0 and member.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         member_node = arena.nodes[member.index]
+        receiver_type = context_expression_type(arena, context, receiver, source)
+        if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Option"):
+            member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            option_name_builder = StringBuilder()
+            emit_specialized_type_name(context.type_arena, receiver_type, context.type_source, option_name_builder, prefix, project_name, imports)
+            option_name = option_name_builder.finish()
+            builder.append("(")
+            emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+            if context_expression_is_pointer_like(arena, context, receiver, source):
+                builder.append("->")
+            else:
+                builder.append(".")
+            if member_name == "is_some" or member_name == "is_none":
+                builder.append("tag == ")
+                builder.append(option_name[0:len(option_name)])
+                if member_name == "is_some":
+                    builder.append("_Tag_Some)")
+                else:
+                    builder.append("_Tag_None)")
+            else:
+                builder.append("value)")
+            return
         if receiver_node.kind == SyntaxKind.EXPR_ATTRIBUTE and is_uppercase_start(source, member_node.value_start):
             emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
             builder.append("_")

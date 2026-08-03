@@ -542,8 +542,12 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "    groups: Map[i32, List[i32]] = {1: [10]}\n"
         "    groups[2] = [20]\n"
         "    found = groups.get(1)\n"
+        "    missing = groups.get(3)\n"
+        "    if not found.is_some or missing.is_some:\n"
+        "        return 1\n"
+        "    found.value.append(30)\n"
         "    bundle: Bundle = Bundle(scores=scores)\n"
-        "    return len(unique) + len(bundle.scores) + bundle.scores[1]\n",
+        "    return len(unique) + len(bundle.scores) + bundle.scores[1] + len(found.value)\n",
         encoding="utf-8",
     )
     executable = tmp_path / "collections"
@@ -559,11 +563,13 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert built.returncode == 0, built.stderr
     run_env = os.environ.copy()
     run_env["MALLOC_PERTURB_"] = "165"
-    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 14
+    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 16
 
     header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):
         assert helper in header
+    assert "CinderOption_argument_25_CinderList_argument_3_i32_Tag_Some" in header
+    assert ".is_some = true" in header
 
 
 def test_gen1_canonicalizes_qualified_specialization_names(
