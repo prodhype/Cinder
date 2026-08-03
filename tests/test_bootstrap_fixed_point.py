@@ -551,6 +551,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "    key.clear()\n"
         "    groups: Map[i32, List[i32]] = {1: [10]}\n"
         "    groups[2] = [20]\n"
+        "    nested: Map[i32, Map[i32, i32]] = {1: {2: 7}}\n"
         "    indexed: List[i32] = groups[1]\n"
         "    indexed.append(40)\n"
         "    found = groups.get(1)\n"
@@ -559,7 +560,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "        return 1\n"
         "    found.value.append(30)\n"
         "    bundle: Bundle = Bundle(scores=scores)\n"
-        "    return len(unique) + len(names) + len(bundle.scores) + bundle.scores[1] + len(indexed) + len(found.value) + string_scores[\"alpha\"]\n",
+        "    return len(unique) + len(names) + len(bundle.scores) + bundle.scores[1] + len(indexed) + len(found.value) + string_scores[\"alpha\"] + nested[1][2]\n",
         encoding="utf-8",
     )
     executable = tmp_path / "collections"
@@ -575,7 +576,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert built.returncode == 0, built.stderr
     run_env = os.environ.copy()
     run_env["MALLOC_PERTURB_"] = "165"
-    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 29
+    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 36
 
     header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):
@@ -585,6 +586,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     generated_source = (tmp_path / "build" / "cinder_gen" / "main.c").read_text(encoding="utf-8")
     assert "_lookup_mut(&scores, 1)" in generated_source
     assert 'if (!cinder_map_assignment_value) cinder_panic("Map key not found")' in generated_source
+    assert "_at(&nested, 1)})[0], 2)" in generated_source
 
 
 def test_gen1_canonicalizes_qualified_specialization_names(
