@@ -522,6 +522,48 @@ def test_gen1_preserves_runtime_generic_specializations(
         assert specialized_name in header
 
 
+def test_gen1_emits_specialized_map_and_set_helpers(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    manifest = tmp_path / "cinder.toml"
+    manifest.write_text(
+        "[project]\nname = \"collections\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "struct Bundle:\n"
+        "    scores: Map[i32, i32]\n\n"
+        "def main() -> i32:\n"
+        "    unique: Set[i32] = {1, 2, 2}\n"
+        "    scores: Map[i32, i32] = {1: 10, 2: 20}\n"
+        "    groups: Map[i32, List[i32]] = {1: [10]}\n"
+        "    groups[2] = [20]\n"
+        "    found = groups.get(1)\n"
+        "    bundle: Bundle = Bundle(scores=scores)\n"
+        "    return len(unique) + len(bundle.scores) + bundle.scores[1]\n",
+        encoding="utf-8",
+    )
+    executable = tmp_path / "collections"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(manifest),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 14
+
+    header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):
+        assert helper in header
+
+
 def test_gen1_canonicalizes_qualified_specialization_names(
     gen1_compiler: Path,
     tmp_path: Path,

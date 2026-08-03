@@ -103,6 +103,7 @@ def emit_module_header(
 def emit_common_support(builder: &StringBuilder) -> void:
     builder.append("\n#ifndef CINDER_SELFHOST_COMMON_SUPPORT\n")
     builder.append("#define CINDER_SELFHOST_COMMON_SUPPORT\n")
+    builder.append("static inline size_t cinder_selfhost_hash_bytes(const void *data, size_t length) { const unsigned char *bytes = (const unsigned char *)data; size_t hash = (size_t)1469598103934665603ULL; for (size_t i = 0; i < length; ++i) { hash ^= bytes[i]; hash *= (size_t)1099511628211ULL; } return hash; }\n")
     builder.append("typedef struct CinderList { void *data; size_t length; size_t capacity; } CinderList;\n")
     builder.append("static inline void cinder_selfhost_list_reserve(CinderList *list, size_t minimum, size_t element_size) {\n")
     builder.append("    if (list->capacity >= minimum) return;\n")
@@ -981,13 +982,284 @@ def emit_module_type_specializations(
     builder.append("\n#define CINDER_SPECIALIZED_")
     builder.append(name[0:len(name)])
     builder.append("\n")
-    if is_collection:
+    if is_collection and is_runtime_generic_name(source, base_node, "List"):
         builder.append("typedef CinderList ")
+    elif is_collection:
+        emit_map_set_specialization(arena, id, source, builder, &name, prefix, project_name, imports)
+        builder.append("#endif\n")
+        emitted.append(name[0:len(name)])
+        return
     else:
         builder.append("typedef int32_t ")
     builder.append(name[0:len(name)])
     builder.append(";\n#endif\n")
     emitted.append(name)
+
+
+def emit_type_drop_statement(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    value: String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    if context_type_name_equals(arena, type_id, source, "String"):
+        builder.append("cinder_string_drop(&")
+        builder.append(value[0:len(value)])
+        builder.append(");")
+        return
+    if type_id.index >= 0 and arena.nodes[type_id.index].kind == SyntaxKind.TYPE_GENERIC:
+        base = first_child(arena, type_id)
+        if base.index >= 0:
+            base_node = arena.nodes[base.index]
+            if is_runtime_generic_name(source, base_node, "List"):
+                element_type = second_child(arena, type_id)
+                element_c_builder = StringBuilder()
+                emit_module_c_type(arena, element_type, source, element_c_builder, prefix, project_name, imports)
+                element_c = element_c_builder.finish()
+                builder.append("{ ")
+                builder.append(element_c[0:len(element_c)])
+                builder.append(" *cinder_items = (")
+                builder.append(element_c[0:len(element_c)])
+                builder.append(" *)")
+                builder.append(value[0:len(value)])
+                builder.append(".data; for (size_t cinder_i = 0; cinder_i < ")
+                builder.append(value[0:len(value)])
+                builder.append(".length; ++cinder_i) { ")
+                emit_type_drop_statement(arena, element_type, source, builder, "cinder_items[cinder_i]", prefix, project_name, imports)
+                builder.append(" } free(")
+                builder.append(value[0:len(value)])
+                builder.append(".data); }")
+                return
+            if is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "Set"):
+                type_name = StringBuilder()
+                emit_specialized_type_name(arena, type_id, source, type_name, prefix, project_name, imports)
+                rendered = type_name.finish()
+                builder.append(rendered[0:len(rendered)])
+                builder.append("_drop(&")
+                builder.append(value[0:len(value)])
+                builder.append(");")
+
+
+def emit_hash_expression(arena: &const SyntaxArena, type_id: NodeId, source: &const String, builder: &StringBuilder, value: String) -> void:
+    if context_type_name_equals(arena, type_id, source, "String"):
+        builder.append("cinder_selfhost_hash_bytes(cinder_string_cstr(&")
+        builder.append(value[0:len(value)])
+        builder.append("), ")
+        builder.append(value[0:len(value)])
+        builder.append(".length)")
+    else:
+        builder.append("cinder_selfhost_hash_bytes(&")
+        builder.append(value[0:len(value)])
+        builder.append(", sizeof(")
+        builder.append(value[0:len(value)])
+        builder.append("))")
+
+
+def emit_equal_expression(arena: &const SyntaxArena, type_id: NodeId, source: &const String, builder: &StringBuilder, left: String, right: String) -> void:
+    if context_type_name_equals(arena, type_id, source, "String"):
+        builder.append("cinder_string_equal_value(&")
+        builder.append(left[0:len(left)])
+        builder.append(", &")
+        builder.append(right[0:len(right)])
+        builder.append(")")
+    else:
+        builder.append("(")
+        builder.append(left[0:len(left)])
+        builder.append(" == ")
+        builder.append(right[0:len(right)])
+        builder.append(")")
+
+
+def emit_map_set_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    node = arena.nodes[id.index]
+    base_node = arena.nodes[first_child(arena, id).index]
+    key_type = arena.children[node.first_child + 1]
+    value_type = key_type
+    is_map = is_runtime_generic_name(source, base_node, "Map")
+    if is_map and node.child_count > 2:
+        value_type = arena.children[node.first_child + 2]
+    key_c = StringBuilder()
+    emit_module_c_type(arena, key_type, source, key_c, prefix, project_name, imports)
+    key_name = key_c.finish()
+    value_c = StringBuilder()
+    emit_module_c_type(arena, value_type, source, value_c, prefix, project_name, imports)
+    value_name = value_c.finish()
+    builder.append("typedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append("_entry { bool occupied; size_t hash; ")
+    builder.append(key_name[0:len(key_name)])
+    if is_map:
+        builder.append(" key; ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" value; }")
+    else:
+        builder.append(" value; }")
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_entry;\n")
+    builder.append("typedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" { ")
+    builder.append(name[0:len(name)])
+    builder.append("_entry *entries; size_t length; size_t capacity; } ")
+    builder.append(name[0:len(name)])
+    builder.append(";\n")
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, size_t minimum) { if (self->capacity >= minimum) return; size_t capacity = self->capacity ? self->capacity : 8; while (capacity < minimum) { if (capacity > SIZE_MAX / 2) cinder_panic(\"collection capacity overflow\"); capacity *= 2; } ")
+    builder.append(name[0:len(name)])
+    builder.append("_entry *old = self->entries; size_t old_capacity = self->capacity; self->entries = (")
+    builder.append(name[0:len(name)])
+    builder.append("_entry *)cinder_alloc(capacity, sizeof(*self->entries)); self->capacity = capacity; for (size_t i = 0; i < old_capacity; ++i) if (old[i].occupied) { size_t slot = old[i].hash & (capacity - 1); while (self->entries[slot].occupied) slot = (slot + 1) & (capacity - 1); self->entries[slot] = old[i]; } free(old); }\n")
+    if is_map:
+        builder.append("static inline ")
+        builder.append(name[0:len(name)])
+        builder.append("_entry *")
+        builder.append(name[0:len(name)])
+        builder.append("_find_mut(")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" key) { if (!self || !self->capacity) return NULL; size_t hash = ")
+        emit_hash_expression(arena, key_type, source, builder, "key")
+        builder.append("; size_t slot = hash & (self->capacity - 1); while (self->entries[slot].occupied) { if (self->entries[slot].hash == hash && ")
+        emit_equal_expression(arena, key_type, source, builder, "self->entries[slot].key", "key")
+        builder.append(") return &self->entries[slot]; slot = (slot + 1) & (self->capacity - 1); } return NULL; }\n")
+        builder.append("static inline const ")
+        builder.append(name[0:len(name)])
+        builder.append("_entry *")
+        builder.append(name[0:len(name)])
+        builder.append("_find(const ")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" key) { return ")
+        builder.append(name[0:len(name)])
+        builder.append("_find_mut((")
+        builder.append(name[0:len(name)])
+        builder.append(" *)self, key); }\n")
+        builder.append("static inline void ")
+        builder.append(name[0:len(name)])
+        builder.append("_set(")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" key, ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" value) { ")
+        builder.append(name[0:len(name)])
+        builder.append("_entry *found = ")
+        builder.append(name[0:len(name)])
+        builder.append("_find_mut(self, key); if (found) { ")
+        emit_type_drop_statement(arena, key_type, source, builder, "key", prefix, project_name, imports)
+        emit_type_drop_statement(arena, value_type, source, builder, "found->value", prefix, project_name, imports)
+        builder.append(" found->value = value; return; } if ((self->length + 1) * 4 >= self->capacity * 3) ")
+        builder.append(name[0:len(name)])
+        builder.append("_reserve(self, self->capacity ? self->capacity * 2 : 8); size_t hash = ")
+        emit_hash_expression(arena, key_type, source, builder, "key")
+        builder.append("; size_t slot = hash & (self->capacity - 1); while (self->entries[slot].occupied) slot = (slot + 1) & (self->capacity - 1); self->entries[slot] = (")
+        builder.append(name[0:len(name)])
+        builder.append("_entry){ .occupied = true, .hash = hash, .key = key, .value = value }; self->length++; }\n")
+        builder.append("static inline const ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" *")
+        builder.append(name[0:len(name)])
+        builder.append("_lookup(const ")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" key) { const ")
+        builder.append(name[0:len(name)])
+        builder.append("_entry *entry = ")
+        builder.append(name[0:len(name)])
+        builder.append("_find(self, key); return entry ? &entry->value : NULL; }\n")
+        builder.append("static inline ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" *")
+        builder.append(name[0:len(name)])
+        builder.append("_lookup_mut(")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" key) { ")
+        builder.append(name[0:len(name)])
+        builder.append("_entry *entry = ")
+        builder.append(name[0:len(name)])
+        builder.append("_find_mut(self, key); return entry ? &entry->value : NULL; }\n")
+        builder.append("static inline ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" ")
+        builder.append(name[0:len(name)])
+        builder.append("_at(const ")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" key) { const ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" *value = ")
+        builder.append(name[0:len(name)])
+        builder.append("_lookup(self, key); if (!value) cinder_panic(\"Map key not found\"); return *value; }\n")
+        builder.append("static inline const ")
+        builder.append(value_name[0:len(value_name)])
+        builder.append(" *")
+        builder.append(name[0:len(name)])
+        builder.append("_get(const ")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" key) { return ")
+        builder.append(name[0:len(name)])
+        builder.append("_lookup(self, key); }\n")
+    else:
+        builder.append("static inline bool ")
+        builder.append(name[0:len(name)])
+        builder.append("_add(")
+        builder.append(name[0:len(name)])
+        builder.append(" *self, ")
+        builder.append(key_name[0:len(key_name)])
+        builder.append(" value) { if ((self->length + 1) * 4 >= self->capacity * 3) ")
+        builder.append(name[0:len(name)])
+        builder.append("_reserve(self, self->capacity ? self->capacity * 2 : 8); size_t hash = ")
+        emit_hash_expression(arena, key_type, source, builder, "value")
+        builder.append("; size_t slot = hash & (self->capacity - 1); while (self->entries[slot].occupied) { if (self->entries[slot].hash == hash && ")
+        emit_equal_expression(arena, key_type, source, builder, "self->entries[slot].value", "value")
+        builder.append(") { ")
+        emit_type_drop_statement(arena, key_type, source, builder, "value", prefix, project_name, imports)
+        builder.append(" return false; } slot = (slot + 1) & (self->capacity - 1); } self->entries[slot] = (")
+        builder.append(name[0:len(name)])
+        builder.append("_entry){ .occupied = true, .hash = hash, .value = value }; self->length++; return true; }\n")
+    builder.append("static inline size_t ")
+    builder.append(name[0:len(name)])
+    builder.append("_len(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { return self ? self->length : 0; }\nstatic inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { if (!self) return; for (size_t i = 0; i < self->capacity; ++i) if (self->entries[i].occupied) { ")
+    if is_map:
+        emit_type_drop_statement(arena, key_type, source, builder, "self->entries[i].key", prefix, project_name, imports)
+        emit_type_drop_statement(arena, value_type, source, builder, "self->entries[i].value", prefix, project_name, imports)
+    else:
+        emit_type_drop_statement(arena, key_type, source, builder, "self->entries[i].value", prefix, project_name, imports)
+    builder.append(" } free(self->entries); *self = (")
+    builder.append(name[0:len(name)])
+    builder.append("){0}; }\n")
 
 
 def context_type_is_array(arena: &const SyntaxArena, type_id: NodeId) -> bool:
@@ -1109,6 +1381,55 @@ def emit_array_as_list(
     length = array_length_node(context.type_arena, type_id)
     append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
     builder.append(", .capacity = 0 }")
+
+
+def emit_typed_collection_literal(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &ModuleCodegenContext,
+) -> bool:
+    if id.index < 0 or type_id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    is_map = node.kind == SyntaxKind.EXPR_MAP and context_type_is_runtime_generic(arena, type_id, source, "Map")
+    is_set = node.kind == SyntaxKind.EXPR_SET and context_type_is_runtime_generic(arena, type_id, source, "Set")
+    if not is_map and not is_set:
+        return false
+    name_builder = StringBuilder()
+    emit_specialized_type_name(arena, type_id, source, name_builder, prefix, project_name, imports)
+    name = name_builder.finish()
+    builder.append("({ ")
+    builder.append(name[0:len(name)])
+    builder.append(" cinder_collection = (")
+    builder.append(name[0:len(name)])
+    builder.append("){0};")
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if is_map and child.kind == SyntaxKind.EXPR_MAP_ENTRY:
+            builder.append(" ")
+            builder.append(name[0:len(name)])
+            builder.append("_set(&cinder_collection, (")
+            emit_module_expression(arena, first_child(arena, child_id), source, builder, prefix, project_name, imports, context)
+            builder.append("), (")
+            value = second_child(arena, child_id)
+            emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+            mark_context_expression_moved(arena, context, value, source)
+            builder.append("));")
+        elif is_set and not is_type_kind(child.kind):
+            builder.append(" ")
+            builder.append(name[0:len(name)])
+            builder.append("_add(&cinder_collection, (")
+            emit_module_expression(arena, child_id, source, builder, prefix, project_name, imports, context)
+            builder.append("));")
+    builder.append(" cinder_collection; })")
+    return true
 
 
 def emit_module_nominal_type(
@@ -1388,7 +1709,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, type_id: NodeId, source: 
         if base.index < 0:
             return false
         base_node = arena.nodes[base.index]
-        return range_text_equals(source, base_node.value_start, base_node.value_length, "List")
+        return range_text_equals(source, base_node.value_start, base_node.value_length, "List") or range_text_equals(source, base_node.value_start, base_node.value_length, "Map") or range_text_equals(source, base_node.value_start, base_node.value_length, "Set")
     return false
 
 
@@ -1476,6 +1797,18 @@ def context_type_is_list(arena: &const SyntaxArena, type_id: NodeId, source: &co
         return false
     base_node = arena.nodes[base.index]
     return range_text_equals(source, base_node.value_start, base_node.value_length, "List") or range_text_equals(source, base_node.value_start, base_node.value_length, "Slice")
+
+
+def context_type_is_runtime_generic(arena: &const SyntaxArena, type_id: NodeId, source: &const String, expected: String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_type_is_runtime_generic(arena, first_child(arena, type_id), source, expected[0:len(expected)])
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return false
+    base = first_child(arena, type_id)
+    return base.index >= 0 and range_text_equals(source, arena.nodes[base.index].value_start, arena.nodes[base.index].value_length, expected[0:len(expected)])
 
 
 def context_list_element_type(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> NodeId:
@@ -1645,15 +1978,15 @@ def context_expression_is_pointer_initializer(arena: &const SyntaxArena, context
     return context_expression_is_pointer_like(arena, context, id, source)
 
 
-def emit_context_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, builder: &StringBuilder, local_start: usize) -> void:
+def emit_context_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, builder: &StringBuilder, local_start: usize, prefix: &const String, project_name: &const String, imports: &const List[project.ImportBinding]) -> void:
     index = len(context.local_types)
     while index > local_start:
         index -= 1
         if not context.local_types[index].moved:
-            emit_context_drop(arena, context.local_types[index].type_id, source, builder, &context.local_types[index].name)
+            emit_context_drop(arena, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
 
 
-def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String, builder: &StringBuilder, name: &const String) -> void:
+def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String, builder: &StringBuilder, name: &const String, prefix: &const String, project_name: &const String, imports: &const List[project.ImportBinding]) -> void:
     if type_id.index < 0 or len(name) == 0:
         return
     node = arena.nodes[type_id.index]
@@ -1694,6 +2027,16 @@ def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const
                 builder.append("    free(")
                 builder.append(name[0:len(name)])
                 builder.append(".data);\n")
+                return
+            if range_text_equals(source, base_node.value_start, base_node.value_length, "Map") or range_text_equals(source, base_node.value_start, base_node.value_length, "Set"):
+                type_name_builder = StringBuilder()
+                emit_specialized_type_name(arena, type_id, source, type_name_builder, prefix, project_name, imports)
+                type_name = type_name_builder.finish()
+                builder.append("    ")
+                builder.append(type_name[0:len(type_name)])
+                builder.append("_drop(&")
+                builder.append(name[0:len(name)])
+                builder.append(");\n")
                 return
 
 
@@ -2100,7 +2443,7 @@ def emit_module_block(
     for offset in range(0, node.child_count):
         emit_module_statement(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
     emit_module_defers(arena, source, builder, prefix, project_name, imports, context, defer_start)
-    emit_context_drops(arena, context, source, builder, local_start)
+    emit_context_drops(arena, context, source, builder, local_start, prefix, project_name, imports)
     while len(context.local_types) > local_start:
         context.local_types.pop()
     while len(context.pointer_names) > pointer_start:
@@ -2209,6 +2552,8 @@ def emit_module_statement(
             builder.append(" = ")
             if annotation.index >= 0 and context_type_is_array(arena, annotation):
                 emit_module_array_initializer(arena, expr, source, builder, prefix, project_name, imports, context)
+            elif annotation.index >= 0 and emit_typed_collection_literal(arena, expr, annotation, source, builder, prefix, project_name, imports, context):
+                pass
             else:
                 emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
             mark_context_expression_moved(arena, context, expr, source)
@@ -2224,6 +2569,26 @@ def emit_module_statement(
     if node.kind == SyntaxKind.ASSIGN_STMT:
         builder.append("    ")
         target = first_child(arena, id)
+        if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_INDEX:
+            receiver = first_child(arena, target)
+            receiver_type = context_expression_type(arena, context, receiver, source)
+            if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Map"):
+                map_name_builder = StringBuilder()
+                emit_specialized_type_name(context.type_arena, receiver_type, context.type_source, map_name_builder, prefix, project_name, imports)
+                map_name = map_name_builder.finish()
+                builder.append(map_name[0:len(map_name)])
+                builder.append("_set(")
+                if not context_expression_is_pointer_like(arena, context, receiver, source):
+                    builder.append("&")
+                emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+                builder.append(", ")
+                emit_module_expression(arena, second_child(arena, target), source, builder, prefix, project_name, imports, context)
+                builder.append(", ")
+                value = second_child(arena, id)
+                emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+                mark_context_expression_moved(arena, context, value, source)
+                builder.append(");\n")
+                return
         if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
             target_node = arena.nodes[target.index]
             if not context_has_name(context, source, target_node.value_start, target_node.value_length):
@@ -2657,6 +3022,9 @@ def emit_module_expression(
                 builder.append("));")
         builder.append(" cinder_list; })")
         return
+    if node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+        builder.append("0 /* collection literal requires a Map/Set context */")
+        return
     if node.kind == SyntaxKind.EXPR_NAME:
         name = source[node.value_start:node.value_start + node.value_length]
         if context_name_is_global(context, &name) or (not context_has_name(context, source, node.value_start, node.value_length) and not context_name_is_extern(context, &name) and context_has_function_name(context.type_arena, context.root, context.type_source, &name)):
@@ -2984,6 +3352,17 @@ def emit_len_call(
     if context_type_is_array(context.type_arena, arg_type):
         length = array_length_node(context.type_arena, arg_type)
         append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+        return
+    if context_type_is_runtime_generic(context.type_arena, arg_type, context.type_source, "Map") or context_type_is_runtime_generic(context.type_arena, arg_type, context.type_source, "Set"):
+        collection_name_builder = StringBuilder()
+        emit_specialized_type_name(context.type_arena, arg_type, context.type_source, collection_name_builder, prefix, project_name, imports)
+        collection_name = collection_name_builder.finish()
+        builder.append(collection_name[0:len(collection_name)])
+        builder.append("_len(")
+        if not context_expression_is_pointer_like(arena, context, arg, source):
+            builder.append("&")
+        emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
+        builder.append(")")
         return
     emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
     if context_expression_is_pointer_like(arena, context, arg, source):
@@ -3569,8 +3948,36 @@ def emit_attribute_call(
             emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context)
             builder.append(")")
             return
+    receiver_type = context_expression_type(arena, context, receiver, source)
+    if member_name == "get" and context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Map"):
+        map_name_builder = StringBuilder()
+        emit_specialized_type_name(context.type_arena, receiver_type, context.type_source, map_name_builder, prefix, project_name, imports)
+        map_name = map_name_builder.finish()
+        builder.append(map_name[0:len(map_name)])
+        builder.append("_get(")
+        if not context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+        builder.append(", ")
+        emit_module_expression(arena, first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context)
+        builder.append(")")
+        return
+    if member_name == "add" and context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Set"):
+        set_name_builder = StringBuilder()
+        emit_specialized_type_name(context.type_arena, receiver_type, context.type_source, set_name_builder, prefix, project_name, imports)
+        set_name = set_name_builder.finish()
+        builder.append(set_name[0:len(set_name)])
+        builder.append("_add(")
+        if not context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+        builder.append(", ")
+        arg = first_call_argument(arena, call_id)
+        emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
+        mark_context_expression_moved(arena, context, arg, source)
+        builder.append(")")
+        return
     if member_name == "clear":
-        receiver_type = context_expression_type(arena, context, receiver, source)
         if context_type_is_string(context.type_arena, receiver_type, context.type_source):
             builder.append("cinder_string_clear(")
         else:
@@ -3734,6 +4141,19 @@ def emit_module_index(
     receiver = first_child(arena, id)
     index = second_child(arena, id)
     receiver_type = context_expression_type(arena, context, receiver, source)
+    if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Map"):
+        map_name_builder = StringBuilder()
+        emit_specialized_type_name(context.type_arena, receiver_type, context.type_source, map_name_builder, prefix, project_name, imports)
+        map_name = map_name_builder.finish()
+        builder.append(map_name[0:len(map_name)])
+        builder.append("_at(")
+        if not context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+        builder.append(", ")
+        emit_module_expression(arena, index, source, builder, prefix, project_name, imports, context)
+        builder.append(")")
+        return
     if context_type_is_array(context.type_arena, receiver_type):
         emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
         builder.append("[")
