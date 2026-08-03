@@ -871,6 +871,10 @@ def callable_type_has_return(source: &const String, node: &const syntax.SyntaxNo
     paren_depth: i32 = 0
     bracket_depth: i32 = 0
     while offset + 1 < end:
+        if source[offset:offset + 1] == "#":
+            while offset < end and source[offset:offset + 1] != "\n":
+                offset += 1
+            continue
         if paren_depth == 0 and bracket_depth == 0 and source[offset:offset + 2] == "->":
             return true
         if source[offset:offset + 1] == "(":

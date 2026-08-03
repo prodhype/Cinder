@@ -591,6 +591,8 @@ def test_gen1_distinguishes_structural_specialization_arguments(
         "    predicate: List[def(i64) -> i32],\n"
         "    callback_argument: List[def(def(i32) -> i32)],\n"
         "    callback_return: List[def() -> def(i32) -> i32],\n"
+        "    commented_arrow_argument: List[def # -> not a return\n"
+        "        (i32)],\n"
         ") -> i32:\n"
         "    return 0\n\n"
         "def main() -> i32:\n"
@@ -617,6 +619,7 @@ def test_gen1_distinguishes_structural_specialization_arguments(
         "CinderList_argument_37_function_argument_i64_returns_i32_end",
         "CinderList_argument_59_function_argument_function_argument_i32_returns_i32_end_end",
         "CinderList_argument_58_function_returns_function_argument_i32_returns_i32_end_end",
+        "CinderList_argument_25_function_argument_i32_end",
     ):
         assert specialized_name in header
     assert "CinderList_value" not in header
