@@ -756,7 +756,7 @@ def emit_specialized_type_name(
         emit_specialized_indirection_name("reference", arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.TYPE_CONST:
-        emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
+        emit_specialized_indirection_name("const", arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.TYPE_ARRAY:
         builder.append("array_")
