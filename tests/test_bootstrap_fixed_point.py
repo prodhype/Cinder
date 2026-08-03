@@ -466,6 +466,266 @@ def test_gen1_emit_project_build_and_run(
     assert ran.returncode == 42
 
 
+def test_gen1_preserves_runtime_generic_specializations(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"specialized\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "struct Resource:\n"
+        "    value: i32\n\n"
+        "def preserve(\n"
+        "    lists: List[List[i32]],\n"
+        "    resources: Set[Resource],\n"
+        "    mapping: Map[i32, List[i32]],\n"
+        "    option: Option[List[i32]],\n"
+        "    file: Option[File*],\n"
+        "    result: Result[List[i32], i32],\n"
+        "    pair: Tuple[List[i32], i32],\n"
+        "    nested_pair: Tuple[Tuple[i32], i64],\n"
+        "    nested_single: Tuple[Tuple[i32, i64]],\n"
+        ") -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    for specialized_name in (
+        "CinderList_argument_3_i32",
+        "CinderList_argument_25_CinderList_argument_3_i32",
+        "CinderSet_argument_33_cinder_specialized_main__Resource",
+        "CinderMap_argument_3_i32_argument_25_CinderList_argument_3_i32",
+        "CinderOption_argument_25_CinderList_argument_3_i32",
+        "CinderOption_argument_14_pointer_4_FILE",
+        "CinderResult_argument_25_CinderList_argument_3_i32_argument_3_i32",
+        "CinderTuple_argument_25_CinderList_argument_3_i32_argument_3_i32",
+        "CinderTuple_argument_26_CinderTuple_argument_3_i32_argument_3_i64",
+        "CinderTuple_argument_41_CinderTuple_argument_3_i32_argument_3_i64",
+    ):
+        assert specialized_name in header
+
+
+def test_gen1_canonicalizes_qualified_specialization_names(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    (source_root / "support").mkdir(parents=True)
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"specialized\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "support" / "errors.ci").write_text(
+        "struct MathError:\n"
+        "    code: i32\n\n"
+        "struct OtherError:\n"
+        "    code: i64\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import support.errors as calculations\n"
+        "import support.errors as failures\n\n"
+        "def preserve(\n"
+        "    first: Result[i32, calculations.MathError],\n"
+        "    same: Result[i32, failures.MathError],\n"
+        "    other: Result[i32, calculations.OtherError],\n"
+        ") -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    math_error = "CinderResult_argument_3_i32_argument_44_cinder_specialized_support_errors__MathError"
+    other_error = "CinderResult_argument_3_i32_argument_45_cinder_specialized_support_errors__OtherError"
+    assert math_error in header
+    assert other_error in header
+    assert "CinderResult_i32_calculations" not in header
+    assert "CinderResult_i32_failures" not in header
+
+
+def test_gen1_distinguishes_structural_specialization_arguments(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"structural\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "struct A_argument_cinder_structural_main__B:\n"
+        "    value: i32\n\n"
+        "struct A:\n"
+        "    value: i32\n\n"
+        "struct B:\n"
+        "    value: i32\n\n"
+        "def preserve(\n"
+        "    integers: List[i32[2]],\n"
+        "    strings: List[String[4]],\n"
+        "    slice: List[[]i32],\n"
+        "    callback: List[def(i32) -> i64],\n"
+        "    predicate: List[def(i64) -> i32],\n"
+        "    callback_argument: List[def(def(i32) -> i32)],\n"
+        "    callback_return: List[def() -> def(i32) -> i32],\n"
+        "    commented_arrow_argument: List[def # -> not a return\n"
+        "        (i32)],\n"
+        "    delimited_nominal: List[def(A_argument_cinder_structural_main__B)],\n"
+        "    separate_nominals: List[def(A, B)],\n"
+        ") -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    for specialized_name in (
+        "CinderList_argument_18_array_i32_length_2",
+        "CinderList_argument_21_array_String_length_4",
+        "CinderList_argument_9_slice_i32",
+        "CinderList_argument_41_function_argument_3_i32_returns_3_i64_end",
+        "CinderList_argument_41_function_argument_3_i64_returns_3_i32_end",
+        "CinderList_argument_66_function_argument_41_function_argument_3_i32_returns_3_i32_end_end",
+        "CinderList_argument_65_function_returns_41_function_argument_3_i32_returns_3_i32_end_end",
+        "CinderList_argument_27_function_argument_3_i32_end",
+        "CinderList_argument_85_function_argument_60_cinder_structural_main__A_argument_cinder_structural_main__B_end",
+        "CinderList_argument_88_function_argument_25_cinder_structural_main__A_argument_25_cinder_structural_main__B_end",
+    ):
+        assert specialized_name in header
+    assert "CinderList_value" not in header
+
+
+def test_gen1_distinguishes_pointer_and_reference_specialization_arguments(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"indirection\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "struct Thing:\n"
+        "    value: i32\n\n"
+        "struct Thing_ptr:\n"
+        "    value: i32\n\n"
+        "def preserve(\n"
+        "    pointer: List[i32*],\n"
+        "    reference: List[&i32],\n"
+        "    nominal_pointer: List[Thing*],\n"
+        "    structural_suffix: List[Thing_ptr],\n"
+        ") -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    assert "CinderList_argument_13_pointer_3_i32" in header
+    assert "CinderList_argument_15_reference_3_i32" in header
+    assert "CinderList_argument_41_pointer_30_cinder_indirection_main__Thing" in header
+    assert "CinderList_argument_34_cinder_indirection_main__Thing_ptr" in header
+
+
+def test_gen1_preserves_const_specialization_arguments(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"const_specialization\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "def preserve(\n"
+        "    const_result: Result[const i32, i32],\n"
+        "    mutable_result: Result[i32, i32],\n"
+        "    const_owned: Owned[const i32],\n"
+        "    mutable_owned: Owned[i32],\n"
+        "    const_pointer: List[*const i32],\n"
+        "    mutable_pointer: List[*i32],\n"
+        ") -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    for specialized_name in (
+        "CinderResult_argument_11_const_3_i32_argument_3_i32",
+        "CinderResult_argument_3_i32_argument_3_i32",
+        "CinderOwned_argument_11_const_3_i32",
+        "CinderOwned_argument_3_i32",
+        "CinderList_argument_22_pointer_11_const_3_i32",
+        "CinderList_argument_13_pointer_3_i32",
+    ):
+        assert specialized_name in header
+
+
 def test_gen1_build_accepts_equals_form_ldflag(
     gen1_compiler: Path,
     tmp_path: Path,
