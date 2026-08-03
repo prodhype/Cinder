@@ -1357,11 +1357,11 @@ def emit_map_set_specialization(
         emit_hash_expression(arena, key_type, source, builder, "value")
         builder.append("; size_t slot = hash & (self->capacity - 1); while (self->entries[slot].occupied) { if (self->entries[slot].hash == hash && ")
         emit_equal_expression(arena, key_type, source, builder, "self->entries[slot].value", "value")
-        builder.append(") { ")
-        emit_type_drop_statement(arena, key_type, source, builder, "value", prefix, project_name, imports)
-        builder.append(" return false; } slot = (slot + 1) & (self->capacity - 1); } self->entries[slot] = (")
+        builder.append(") return false; slot = (slot + 1) & (self->capacity - 1); } self->entries[slot] = (")
         builder.append(name[0:len(name)])
-        builder.append("_entry){ .occupied = true, .hash = hash, .value = value }; self->length++; return true; }\n")
+        builder.append("_entry){ .occupied = true, .hash = hash, .value = ")
+        emit_type_clone_expression(arena, key_type, source, builder, "value", prefix, project_name, imports)
+        builder.append(" }; self->length++; return true; }\n")
     builder.append("static inline ")
     builder.append(name[0:len(name)])
     builder.append(" ")
@@ -1382,7 +1382,7 @@ def emit_map_set_specialization(
         builder.append("); return copy; }\n")
     else:
         builder.append("_add(&copy, ")
-        emit_type_clone_expression(arena, key_type, source, builder, "self->entries[i].value", prefix, project_name, imports)
+        builder.append("self->entries[i].value")
         builder.append("); return copy; }\n")
     builder.append("static inline size_t ")
     builder.append(name[0:len(name)])
@@ -4115,7 +4115,6 @@ def emit_attribute_call(
         builder.append(", ")
         arg = first_call_argument(arena, call_id)
         emit_module_expression(arena, arg, source, builder, prefix, project_name, imports, context)
-        mark_context_expression_moved(arena, context, arg, source)
         builder.append(")")
         return
     if member_name == "clear":
