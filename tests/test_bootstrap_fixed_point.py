@@ -539,6 +539,9 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "def main() -> i32:\n"
         "    unique: Set[i32] = {1, 2, 2}\n"
         "    scores: Map[i32, i32] = {1: 10, 2: 20}\n"
+        "    key = \"alpha\"\n"
+        "    string_scores: Map[String, i32] = {key: 7}\n"
+        "    key.clear()\n"
         "    groups: Map[i32, List[i32]] = {1: [10]}\n"
         "    groups[2] = [20]\n"
         "    found = groups.get(1)\n"
@@ -547,7 +550,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "        return 1\n"
         "    found.value.append(30)\n"
         "    bundle: Bundle = Bundle(scores=scores)\n"
-        "    return len(unique) + len(bundle.scores) + bundle.scores[1] + len(found.value)\n",
+        "    return len(unique) + len(bundle.scores) + bundle.scores[1] + len(found.value) + string_scores[\"alpha\"]\n",
         encoding="utf-8",
     )
     executable = tmp_path / "collections"
@@ -563,7 +566,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert built.returncode == 0, built.stderr
     run_env = os.environ.copy()
     run_env["MALLOC_PERTURB_"] = "165"
-    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 16
+    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 23
 
     header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):
