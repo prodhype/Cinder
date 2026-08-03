@@ -93,6 +93,7 @@ def emit_module_header(
             builder.append("\"\n")
     builder.append("\n")
     prefix = c_prefix(project_name, module_name)
+    emit_module_nominal_declarations(arena, root, source, builder, &prefix, project_name, imports)
     emitted_specializations: List[String] = []
     emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports)
     emit_module_declarations(arena, root, source, builder, &prefix, project_name, imports, true)
@@ -1560,7 +1561,9 @@ def emit_typed_collection_literal(
             emit_module_expression(arena, first_child(arena, child_id), source, builder, prefix, project_name, imports, context)
             builder.append("), (")
             value = second_child(arena, child_id)
-            emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+            value_type = context_map_value_type(arena, type_id, source)
+            if not emit_typed_collection_literal(arena, value, value_type, source, builder, prefix, project_name, imports, context):
+                emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
             mark_context_expression_moved(arena, context, value, source)
             builder.append("));")
         elif is_set and not is_type_kind(child.kind):
@@ -1976,6 +1979,22 @@ def context_list_element_type(arena: &const SyntaxArena, type_id: NodeId, source
     return syntax.missing_node()
 
 
+def context_map_value_type(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> NodeId:
+    if type_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_map_value_type(arena, first_child(arena, type_id), source)
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = first_child(arena, type_id)
+        if base.index >= 0:
+            base_node = arena.nodes[base.index]
+            if range_text_equals(source, base_node.value_start, base_node.value_length, "Map"):
+                if node.child_count > 2:
+                    return arena.children[node.first_child + 2]
+    return syntax.missing_node()
+
+
 def context_type_owner_name(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> String:
     if type_id.index < 0:
         return ""
@@ -2081,6 +2100,8 @@ def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenCo
         return context_field_type_for_receiver(arena, context, first_child(arena, id), second_child(arena, id), source)
     if node.kind == SyntaxKind.EXPR_INDEX:
         receiver_type = context_expression_type(arena, context, first_child(arena, id), source)
+        if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Map"):
+            return context_map_value_type(context.type_arena, receiver_type, context.type_source)
         return context_list_element_type(context.type_arena, receiver_type, context.type_source)
     return syntax.missing_node()
 
@@ -2288,6 +2309,37 @@ def range_text_equals(source: &const String, start: usize, length: usize, text: 
             return false
         offset += 1
     return true
+
+
+def emit_module_nominal_declarations(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            emit_module_nominal_declarations(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports)
+        return
+    if node.kind == SyntaxKind.EXTERN_BLOCK:
+        for offset in range(0, node.child_count):
+            emit_module_nominal_declarations(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports)
+        return
+    if node.kind == SyntaxKind.STRUCT_DECL:
+        emit_module_struct(arena, id, source, builder, prefix, project_name, imports)
+        return
+    if node.kind == SyntaxKind.ENUM_DECL:
+        emit_module_enum(arena, id, source, builder, prefix)
+        return
+    if node.kind == SyntaxKind.UNION_DECL:
+        emit_module_union(arena, id, source, builder, prefix, project_name, imports)
+        return
 
 
 def emit_module_declarations(
