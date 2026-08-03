@@ -568,6 +568,52 @@ def test_gen1_canonicalizes_qualified_specialization_names(
     assert "CinderResult_i32_failures" not in header
 
 
+def test_gen1_distinguishes_structural_specialization_arguments(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"structural\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "def preserve(\n"
+        "    integers: List[i32[2]],\n"
+        "    strings: List[String[4]],\n"
+        "    slice: List[[]i32],\n"
+        "    callback: List[def(i32) -> i64],\n"
+        "    predicate: List[def(i64) -> i32],\n"
+        ") -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    for specialized_name in (
+        "CinderList_array_i32_length_2",
+        "CinderList_array_String_length_4",
+        "CinderList_slice_i32",
+        "CinderList_function_argument_i32_returns_i64_end",
+        "CinderList_function_argument_i64_returns_i32_end",
+    ):
+        assert specialized_name in header
+    assert "CinderList_value" not in header
+
+
 def test_gen1_build_accepts_equals_form_ldflag(
     gen1_compiler: Path,
     tmp_path: Path,
