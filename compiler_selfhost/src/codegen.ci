@@ -2730,6 +2730,30 @@ def emit_module_statement(
                 mark_context_expression_moved(arena, context, value, source)
                 builder.append(");\n")
                 return
+        if node.flags != cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_INDEX:
+            receiver = first_child(arena, target)
+            receiver_type = context_expression_type(arena, context, receiver, source)
+            if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Map"):
+                map_name_builder = StringBuilder()
+                emit_specialized_type_name(context.type_arena, receiver_type, context.type_source, map_name_builder, prefix, project_name, imports)
+                map_name = map_name_builder.finish()
+                builder.append("{ __auto_type cinder_map_assignment_value = ")
+                builder.append(map_name[0:len(map_name)])
+                builder.append("_lookup_mut(")
+                if not context_expression_is_pointer_like(arena, context, receiver, source):
+                    builder.append("&")
+                emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+                builder.append(", ")
+                emit_module_expression(arena, second_child(arena, target), source, builder, prefix, project_name, imports, context)
+                builder.append("); if (!cinder_map_assignment_value) cinder_panic(\"Map key not found\"); *cinder_map_assignment_value ")
+                append_assignment_operator(builder, node.flags)
+                builder.append(" ")
+                value = second_child(arena, id)
+                emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+                mark_context_expression_moved(arena, context, value, source)
+                mark_context_expression_live(context, target, arena, source)
+                builder.append("; }\n")
+                return
         if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
             target_node = arena.nodes[target.index]
             if not context_has_name(context, source, target_node.value_start, target_node.value_length):
@@ -3123,6 +3147,21 @@ def append_assignment_operator(builder: &StringBuilder, flag: i32) -> void:
         return
     if flag == cast[i32](token.TokenKind.PERCENT_ASSIGN):
         builder.append("%=")
+        return
+    if flag == cast[i32](token.TokenKind.AMPERSAND_ASSIGN):
+        builder.append("&=")
+        return
+    if flag == cast[i32](token.TokenKind.PIPE_ASSIGN):
+        builder.append("|=")
+        return
+    if flag == cast[i32](token.TokenKind.CARET_ASSIGN):
+        builder.append("^=")
+        return
+    if flag == cast[i32](token.TokenKind.SHIFT_LEFT_ASSIGN):
+        builder.append("<<=")
+        return
+    if flag == cast[i32](token.TokenKind.SHIFT_RIGHT_ASSIGN):
+        builder.append(">>=")
         return
     builder.append("=")
 

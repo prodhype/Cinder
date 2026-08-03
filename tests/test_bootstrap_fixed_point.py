@@ -545,6 +545,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "    names.add(duplicate)\n"
         "    duplicate.clear()\n"
         "    scores: Map[i32, i32] = {1: 10, 2: 20}\n"
+        "    scores[1] += 3\n"
         "    key = \"alpha\"\n"
         "    string_scores: Map[String, i32] = {key: 7}\n"
         "    key.clear()\n"
@@ -574,13 +575,16 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert built.returncode == 0, built.stderr
     run_env = os.environ.copy()
     run_env["MALLOC_PERTURB_"] = "165"
-    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 26
+    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 29
 
     header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):
         assert helper in header
     assert "CinderOption_argument_25_CinderList_argument_3_i32_Tag_Some" in header
     assert ".is_some = true" in header
+    generated_source = (tmp_path / "build" / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    assert "_lookup_mut(&scores, 1)" in generated_source
+    assert 'if (!cinder_map_assignment_value) cinder_panic("Map key not found")' in generated_source
 
 
 def test_gen1_canonicalizes_qualified_specialization_names(
