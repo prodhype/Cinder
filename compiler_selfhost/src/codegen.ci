@@ -93,6 +93,8 @@ def emit_module_header(
             builder.append("\"\n")
     builder.append("\n")
     prefix = c_prefix(project_name, module_name)
+    emitted_specializations: List[String] = []
+    emit_module_type_specializations(arena, root, source, builder, emitted_specializations)
     emit_module_declarations(arena, root, source, builder, &prefix, project_name, imports, true)
     builder.append("\n#endif\n")
     return builder.finish()
@@ -712,11 +714,8 @@ def emit_module_c_type(
         base = first_child(arena, id)
         if base.index >= 0:
             base_node = arena.nodes[base.index]
-            if range_text_equals(source, base_node.value_start, base_node.value_length, "List") or range_text_equals(source, base_node.value_start, base_node.value_length, "Set") or range_text_equals(source, base_node.value_start, base_node.value_length, "Map"):
-                builder.append("CinderList")
-                return
-            if range_text_equals(source, base_node.value_start, base_node.value_length, "Option") or range_text_equals(source, base_node.value_start, base_node.value_length, "Result") or range_text_equals(source, base_node.value_start, base_node.value_length, "Owned"):
-                builder.append("int32_t")
+            if is_runtime_generic_name(source, base_node, "List") or is_runtime_generic_name(source, base_node, "Set") or is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "Option") or is_runtime_generic_name(source, base_node, "Result") or is_runtime_generic_name(source, base_node, "Owned") or is_runtime_generic_name(source, base_node, "Tuple"):
+                emit_specialized_type_name(arena, id, source, builder)
                 return
         emit_module_nominal_type(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
@@ -734,6 +733,87 @@ def emit_module_c_type(
         emit_module_nominal_type(arena, id, source, builder, prefix, project_name, imports)
         return
     builder.append("int32_t")
+
+
+def is_runtime_generic_name(source: &const String, node: &const syntax.SyntaxNode, expected: String) -> bool:
+    return range_text_equals(source, node.value_start, node.value_length, expected)
+
+
+def emit_specialized_type_name(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_REFERENCE:
+        emit_specialized_type_name(arena, first_child(arena, id), source, builder)
+        builder.append("_ptr")
+        return
+    if node.kind == SyntaxKind.TYPE_CONST:
+        emit_specialized_type_name(arena, first_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = first_child(arena, id)
+        base_node = arena.nodes[base.index]
+        builder.append("Cinder")
+        append_source(builder, source, base_node.value_start, base_node.value_length)
+        offset: i32 = 1
+        while offset < node.child_count:
+            builder.append("_")
+            emit_specialized_type_name(arena, arena.children[node.first_child + offset], source, builder)
+            offset += 1
+        return
+    if node.kind == SyntaxKind.TYPE_NAME:
+        if range_text_equals(source, node.value_start, node.value_length, "File"):
+            builder.append("FILE")
+        else:
+            append_source(builder, source, node.value_start, node.value_length)
+        return
+    builder.append("value")
+
+
+def string_list_contains(values: &const List[String], expected: &const String) -> bool:
+    for value in values:
+        if value == expected:
+            return true
+    return false
+
+
+def emit_module_type_specializations(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return
+    base = first_child(arena, id)
+    if base.index < 0:
+        return
+    base_node = arena.nodes[base.index]
+    is_collection = is_runtime_generic_name(source, base_node, "List") or is_runtime_generic_name(source, base_node, "Set") or is_runtime_generic_name(source, base_node, "Map")
+    is_scalar_wrapper = is_runtime_generic_name(source, base_node, "Option") or is_runtime_generic_name(source, base_node, "Result") or is_runtime_generic_name(source, base_node, "Owned") or is_runtime_generic_name(source, base_node, "Tuple")
+    if not is_collection and not is_scalar_wrapper:
+        return
+    name_builder = StringBuilder()
+    emit_specialized_type_name(arena, id, source, name_builder)
+    name = name_builder.finish()
+    if string_list_contains(emitted, &name):
+        return
+    builder.append("#ifndef CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n")
+    if is_collection:
+        builder.append("typedef CinderList ")
+    else:
+        builder.append("typedef int32_t ")
+    builder.append(name[0:len(name)])
+    builder.append(";\n#endif\n")
+    emitted.append(name)
 
 
 def context_type_is_array(arena: &const SyntaxArena, type_id: NodeId) -> bool:
