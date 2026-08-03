@@ -749,9 +749,13 @@ def emit_specialized_type_name(
     imports: &const List[project.ImportBinding],
 ) -> void:
     node = arena.nodes[id.index]
-    if node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_REFERENCE:
+    if node.kind == SyntaxKind.TYPE_POINTER:
         emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         builder.append("_ptr")
+        return
+    if node.kind == SyntaxKind.TYPE_REFERENCE:
+        emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)
+        builder.append("_ref")
         return
     if node.kind == SyntaxKind.TYPE_CONST:
         emit_specialized_type_name(arena, first_child(arena, id), source, builder, prefix, project_name, imports)

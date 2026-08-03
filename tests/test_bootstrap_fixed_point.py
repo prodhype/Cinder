@@ -614,6 +614,39 @@ def test_gen1_distinguishes_structural_specialization_arguments(
     assert "CinderList_value" not in header
 
 
+def test_gen1_distinguishes_pointer_and_reference_specialization_arguments(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"indirection\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "def preserve(pointer: List[i32*], reference: List[&i32]) -> i32:\n"
+        "    return 0\n\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    assert "CinderList_i32_ptr" in header
+    assert "CinderList_i32_ref" in header
+
+
 def test_gen1_build_accepts_equals_form_ldflag(
     gen1_compiler: Path,
     tmp_path: Path,
