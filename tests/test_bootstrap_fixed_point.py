@@ -520,6 +520,45 @@ def test_gen1_preserves_runtime_generic_specializations(
         "CinderTuple_argument_41_CinderTuple_argument_3_i32_argument_3_i64",
     ):
         assert specialized_name in header
+    result_name = "CinderResult_argument_25_CinderList_argument_3_i32_argument_3_i32"
+    assert f"typedef enum {result_name}_Tag" in header
+    assert f"{result_name}_Tag_Ok = 0" in header
+    assert f"{result_name}_Tag_Err = 1" in header
+    assert "CinderList_argument_3_i32 ok;" in header
+    assert "int32_t err;" in header
+
+
+def test_gen1_builds_and_runs_result_specialization_example(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / (
+        "types_and_results.exe" if shutil.which("cl") and not shutil.which("cc") else "types_and_results"
+    )
+    build_dir = tmp_path / "build"
+
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(ROOT / "examples" / "types_and_results.ci"),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(build_dir),
+    )
+
+    assert built.returncode == 0, built.stderr
+    generated = (build_dir / "cinder_gen" / "types_and_results.c").read_text(
+        encoding="utf-8"
+    )
+    assert ".data.ok =" in generated
+    assert ".data.err =" in generated
+    assert "cinder_result.tag ==" in generated
+    assert "cinder_match_value.data.Integer.value" in generated
+
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "value=42\n"
 
 
 def test_gen1_canonicalizes_qualified_specialization_names(
