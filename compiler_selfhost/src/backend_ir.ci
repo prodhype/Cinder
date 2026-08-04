@@ -68,6 +68,7 @@ struct BackendSummary:
 struct IRModule:
     nodes: List[IRNode]
     children: List[IRNodeId]
+    specialization_types: List[TypeId]
     root: IRNodeId
     summary: BackendSummary
 
@@ -113,13 +114,58 @@ def summarize(arena: &const SyntaxArena, root: NodeId) -> BackendSummary:
     return summary
 
 
-def lower(arena: &const SyntaxArena, root: NodeId, model: &const semantic.SemanticModel) -> IRModule:
+def lower(arena: &const SyntaxArena, root: NodeId, model: &const semantic.SemanticModel, table: &const types.TypeTable) -> IRModule:
     nodes: List[IRNode] = []
     children: List[IRNodeId] = []
+    specialization_types: List[TypeId] = []
     summary = summarize(arena, root)
-    module = IRModule(nodes=nodes, children=children, root=missing_ir_node(), summary=summary)
+    module = IRModule(nodes=nodes, children=children, specialization_types=specialization_types, root=missing_ir_node(), summary=summary)
     module.root = lower_node(module, arena, root, model)
+    collect_module_specializations(module, table)
     return module
+
+
+def collect_module_specializations(module: &IRModule, table: &const types.TypeTable) -> void:
+    for node in module.nodes:
+        collect_specialization_type(module.specialization_types, table, node.type_id)
+
+
+def collect_specialization_type(result: &List[TypeId], table: &const types.TypeTable, type_id: TypeId) -> void:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        append_specialization_once(result, type_id)
+        collect_specialization_type(result, table, record.inner)
+        return
+    if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
+        append_specialization_once(result, type_id)
+        collect_specialization_type(result, table, record.inner)
+        collect_specialization_type(result, table, record.second)
+        return
+    if record.kind == types.TypeKind.TUPLE:
+        append_specialization_once(result, type_id)
+        offset: i32 = 0
+        while offset < record.flags:
+            collect_specialization_type(result, table, table.type_args[cast[usize](record.extra + offset)])
+            offset += 1
+        return
+    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.DYN:
+        collect_specialization_type(result, table, record.inner)
+        return
+    if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+        collect_specialization_type(result, table, record.inner)
+        offset: i32 = 0
+        while offset < record.flags:
+            collect_specialization_type(result, table, table.type_args[cast[usize](record.extra + offset)])
+            offset += 1
+
+
+def append_specialization_once(result: &List[TypeId], type_id: TypeId) -> void:
+    for existing in result:
+        if existing.index == type_id.index:
+            return
+    result.append(type_id)
 
 
 def summarize_ir(module: &const IRModule) -> BackendSummary:

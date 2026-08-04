@@ -140,7 +140,9 @@ struct TypeTable:
             return false
         if left_type.kind == TypeKind.NAMED:
             return left_type.name_start == right_type.name_start and left_type.name_length == right_type.name_length
-        if left_type.kind == TypeKind.POINTER or left_type.kind == TypeKind.REFERENCE or left_type.kind == TypeKind.SLICE or left_type.kind == TypeKind.CONST or left_type.kind == TypeKind.DYN or left_type.kind == TypeKind.ARRAY:
+        if left_type.kind == TypeKind.ARRAY:
+            return left_type.extra == right_type.extra and self.same(left_type.inner, right_type.inner)
+        if left_type.kind == TypeKind.POINTER or left_type.kind == TypeKind.REFERENCE or left_type.kind == TypeKind.SLICE or left_type.kind == TypeKind.CONST or left_type.kind == TypeKind.DYN:
             return self.same(left_type.inner, right_type.inner)
         if left_type.kind == TypeKind.MAP or left_type.kind == TypeKind.RESULT:
             return self.same(left_type.inner, right_type.inner) and self.same(left_type.second, right_type.second)
@@ -177,7 +179,7 @@ struct TypeTable:
         if node.kind == syntax.SyntaxKind.TYPE_DYN:
             return self.dyn_of(self.resolve_type_node(arena, first_child(arena, id), source))
         if node.kind == syntax.SyntaxKind.TYPE_ARRAY:
-            return self.array_of(self.resolve_type_node(arena, first_child(arena, id), source), 0)
+            return self.array_of(self.resolve_type_node(arena, first_child(arena, id), source), array_length_from_node(arena, id, source))
         if node.kind == syntax.SyntaxKind.TYPE_GENERIC:
             return self.resolve_generic_type_node(arena, id, source)
         if node.kind == syntax.SyntaxKind.TYPE_FUNCTION:
@@ -316,6 +318,21 @@ def child_at(arena: &const syntax.SyntaxArena, id: NodeId, offset: i32) -> NodeI
     if offset < 0 or offset >= node.child_count:
         return syntax.missing_node()
     return arena.children[node.first_child + offset]
+
+
+def array_length_from_node(arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> i32:
+    length_id = child_at(arena, id, 1)
+    if length_id.index < 0:
+        return 0
+    node = arena.nodes[length_id.index]
+    value: i32 = 0
+    offset: usize = 0
+    while offset < node.value_length:
+        byte = source.byte_at(node.value_start + offset)
+        if byte >= 48 and byte <= 57:
+            value = value * 10 + cast[i32](byte - 48)
+        offset += 1
+    return value
 
 
 def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:
