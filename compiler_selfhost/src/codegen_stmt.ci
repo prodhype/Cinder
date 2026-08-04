@@ -1,0 +1,774 @@
+import codegen_access
+import codegen_context
+import codegen_expr
+import codegen_context as codegen_model
+import codegen_names
+import codegen_specializations
+import codegen_type_names
+import project
+import syntax
+import token
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+def emit_module_block(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    node = arena.nodes[id.index]
+    local_start = len(context.local_types)
+    pointer_start = len(context.pointer_names)
+    defer_start = len(context.deferred_expressions)
+    for offset in range(0, node.child_count):
+        emit_module_statement(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
+    emit_module_defers(arena, source, builder, prefix, project_name, imports, context, defer_start)
+    codegen_context.emit_context_drops(arena, context, source, builder, local_start)
+    while len(context.local_types) > local_start:
+        context.local_types.pop()
+    while len(context.pointer_names) > pointer_start:
+        context.pointer_names.pop()
+    while len(context.deferred_expressions) > defer_start:
+        context.deferred_expressions.pop()
+
+def emit_module_defers(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    defer_start: usize,
+) -> void:
+    index = len(context.deferred_expressions)
+    while index > defer_start:
+        index -= 1
+        builder.append("    ")
+        codegen_expr.emit_module_expression(arena, context.deferred_expressions[index], source, builder, prefix, project_name, imports, context)
+        builder.append(";\n")
+
+def emit_module_return_cleanups(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    emit_module_defers(arena, source, builder, prefix, project_name, imports, context, 0)
+    index = len(context.with_resources)
+    while index > 0:
+        index -= 1
+        builder.append("    fclose(")
+        builder.append(context.with_resources[index])
+        builder.append(");\n")
+
+def emit_module_statement(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.RETURN_STMT:
+        expr = codegen_names.first_child(arena, id)
+        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0
+        if not has_cleanups:
+            builder.append("    return")
+            if expr.index >= 0:
+                builder.append(" ")
+                previous_expected = context.expected_type
+                context.expected_type = context.current_return_type
+                codegen_expr.emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+                context.expected_type = previous_expected
+            builder.append(";\n")
+            return
+        builder.append("    {\n")
+        if expr.index >= 0:
+            builder.append("    __auto_type cinder_return_value = ")
+            previous_expected = context.expected_type
+            context.expected_type = context.current_return_type
+            codegen_expr.emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+            context.expected_type = previous_expected
+            builder.append(";\n")
+            codegen_context.mark_context_expression_moved(arena, context, expr, source)
+        emit_module_return_cleanups(arena, source, builder, prefix, project_name, imports, context)
+        builder.append("    return")
+        if expr.index >= 0:
+            builder.append(" cinder_return_value")
+        builder.append(";\n")
+        builder.append("    }\n")
+        return
+    if node.kind == SyntaxKind.DEFER_STMT:
+        expr = codegen_names.first_child(arena, id)
+        if expr.index >= 0:
+            context.deferred_expressions.append(expr)
+        return
+    if node.kind == SyntaxKind.VAR_DECL_STMT:
+        builder.append("    ")
+        annotation = codegen_type_names.find_child_type(arena, id)
+        expr = codegen_names.last_child(arena, id)
+        if annotation.index >= 0:
+            if codegen_specializations.context_type_is_array(arena, annotation):
+                codegen_specializations.emit_module_typed_declarator(arena, annotation, source, builder, prefix, project_name, imports, node.value_start, node.value_length, context.specialization_names)
+            else:
+                codegen_type_names.emit_module_c_type(arena, annotation, source, builder, prefix, project_name, imports, context.specialization_names)
+                builder.append(" ")
+                codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        elif expr.index >= 0:
+            builder.append("__auto_type")
+            builder.append(" ")
+            codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        else:
+            builder.append("int32_t")
+            builder.append(" ")
+            codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        if expr.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[expr.index].kind):
+            builder.append(" = ")
+            if annotation.index >= 0 and codegen_specializations.context_type_is_array(arena, annotation):
+                codegen_expr.emit_module_array_initializer(arena, expr, source, builder, prefix, project_name, imports, context)
+            else:
+                previous_expected = context.expected_type
+                if annotation.index >= 0:
+                    context.expected_type = annotation
+                codegen_expr.emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+                context.expected_type = previous_expected
+            codegen_context.mark_context_expression_moved(arena, context, expr, source)
+        builder.append(";\n")
+        if annotation.index >= 0:
+            codegen_context.register_context_name_type(arena, context, source, node.value_start, node.value_length, annotation)
+        elif codegen_context.context_expression_is_pointer_initializer(arena, context, expr, source):
+            codegen_context.register_context_pointer_name(context, source, node.value_start, node.value_length)
+        else:
+            inferred_type = codegen_context.context_expression_type(arena, context, expr, source)
+            codegen_context.register_context_name_type(arena, context, source, node.value_start, node.value_length, inferred_type)
+        return
+    if node.kind == SyntaxKind.ASSIGN_STMT:
+        builder.append("    ")
+        target = codegen_names.first_child(arena, id)
+        if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
+            target_node = arena.nodes[target.index]
+            if not codegen_context.context_has_name(context, source, target_node.value_start, target_node.value_length):
+                builder.append("__auto_type ")
+                codegen_expr.emit_module_expression(arena, target, source, builder, prefix, project_name, imports, context)
+                builder.append(" = ")
+                value = codegen_names.second_child(arena, id)
+                codegen_expr.emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+                codegen_context.mark_context_expression_moved(arena, context, value, source)
+                builder.append(";\n")
+                if codegen_context.context_expression_is_pointer_initializer(arena, context, value, source):
+                    codegen_context.register_context_pointer_name(context, source, target_node.value_start, target_node.value_length)
+                else:
+                    inferred_type = codegen_context.context_expression_type(arena, context, value, source)
+                    codegen_context.register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, inferred_type)
+                return
+        emit_module_assignment_target(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+        builder.append(" ")
+        codegen_names.append_assignment_operator(builder, node.flags)
+        builder.append(" ")
+        value = codegen_names.second_child(arena, id)
+        previous_expected = context.expected_type
+        target_type = codegen_context.context_expression_type(arena, context, target, source)
+        if target_type.index >= 0:
+            context.expected_type = target_type
+        codegen_expr.emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+        context.expected_type = previous_expected
+        codegen_context.mark_context_expression_moved(arena, context, value, source)
+        codegen_context.mark_context_expression_live(context, codegen_names.first_child(arena, id), arena, source)
+        builder.append(";\n")
+        return
+    if node.kind == SyntaxKind.IF_STMT:
+        emit_module_if(arena, id, source, builder, prefix, project_name, imports, context)
+        return
+    if node.kind == SyntaxKind.MATCH_STMT:
+        emit_module_match(arena, id, source, builder, prefix, project_name, imports, context)
+        return
+    if node.kind == SyntaxKind.WHILE_STMT:
+        builder.append("    while (")
+        codegen_expr.emit_module_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+        builder.append(") {\n")
+        emit_module_block(arena, codegen_names.second_child(arena, id), source, builder, prefix, project_name, imports, context)
+        builder.append("    }\n")
+        return
+    if node.kind == SyntaxKind.WITH_STMT:
+        emit_module_with(arena, id, source, builder, prefix, project_name, imports, context)
+        return
+    if node.kind == SyntaxKind.FOR_EACH_STMT:
+        emit_module_for_each(arena, id, source, builder, prefix, project_name, imports, context)
+        return
+    if node.kind == SyntaxKind.FOR_C_STMT:
+        emit_module_for_c(arena, id, source, builder, prefix, project_name, imports, context)
+        return
+    if node.kind == SyntaxKind.BREAK_STMT:
+        builder.append("    break;\n")
+        return
+    if node.kind == SyntaxKind.CONTINUE_STMT:
+        builder.append("    continue;\n")
+        return
+    if node.kind == SyntaxKind.EXPR_STMT:
+        builder.append("    ")
+        codegen_expr.emit_module_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+        builder.append(";\n")
+        return
+    if node.kind == SyntaxKind.PASS_STMT:
+        builder.append("    ;\n")
+
+def emit_module_assignment_target(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    if id.index >= 0:
+        node = arena.nodes[id.index]
+        if node.kind == SyntaxKind.EXPR_NAME:
+            name = source[node.value_start:node.value_start + node.value_length]
+            type_id = codegen_context.context_name_type(context, &name)
+            if type_id.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, type_id) == SyntaxKind.TYPE_REFERENCE:
+                builder.append("(*")
+                codegen_names.append_source(builder, source, node.value_start, node.value_length)
+                builder.append(")")
+                return
+    codegen_expr.emit_module_expression(arena, id, source, builder, prefix, project_name, imports, context)
+
+def emit_module_for_c(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    node = arena.nodes[id.index]
+    if node.child_count < 4:
+        return
+    local_start = len(context.local_types)
+    pointer_start = len(context.pointer_names)
+    builder.append("    for (")
+    emit_module_for_clause(arena, arena.children[node.first_child], source, builder, prefix, project_name, imports, context)
+    builder.append("; ")
+    codegen_expr.emit_module_expression(arena, arena.children[node.first_child + 1], source, builder, prefix, project_name, imports, context)
+    builder.append("; ")
+    emit_module_for_clause(arena, arena.children[node.first_child + 2], source, builder, prefix, project_name, imports, context)
+    builder.append(") {\n")
+    emit_module_block(arena, arena.children[node.first_child + 3], source, builder, prefix, project_name, imports, context)
+    builder.append("    }\n")
+    while len(context.local_types) > local_start:
+        context.local_types.pop()
+    while len(context.pointer_names) > pointer_start:
+        context.pointer_names.pop()
+
+def emit_module_for_clause(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.VAR_DECL_STMT:
+        annotation = codegen_type_names.find_child_type(arena, id)
+        expr = codegen_names.last_child(arena, id)
+        if annotation.index >= 0:
+            if codegen_specializations.context_type_is_array(arena, annotation):
+                codegen_specializations.emit_module_typed_declarator(arena, annotation, source, builder, prefix, project_name, imports, node.value_start, node.value_length, context.specialization_names)
+            else:
+                codegen_type_names.emit_module_c_type(arena, annotation, source, builder, prefix, project_name, imports, context.specialization_names)
+                builder.append(" ")
+                codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        else:
+            builder.append("__auto_type")
+            builder.append(" ")
+            codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        if expr.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[expr.index].kind):
+            builder.append(" = ")
+            if annotation.index >= 0 and codegen_specializations.context_type_is_array(arena, annotation):
+                codegen_expr.emit_module_array_initializer(arena, expr, source, builder, prefix, project_name, imports, context)
+            else:
+                codegen_expr.emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+        if annotation.index >= 0:
+            codegen_context.register_context_name_type(arena, context, source, node.value_start, node.value_length, annotation)
+        return
+    if node.kind == SyntaxKind.ASSIGN_STMT:
+        emit_module_assignment_target(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+        builder.append(" ")
+        codegen_names.append_assignment_operator(builder, node.flags)
+        builder.append(" ")
+        codegen_expr.emit_module_expression(arena, codegen_names.second_child(arena, id), source, builder, prefix, project_name, imports, context)
+        return
+    if node.kind == SyntaxKind.EXPR_STMT:
+        codegen_expr.emit_module_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+
+def emit_module_if(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    builder.append("    if (")
+    codegen_expr.emit_module_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+    builder.append(") {\n")
+    emit_module_block(arena, codegen_names.second_child(arena, id), source, builder, prefix, project_name, imports, context)
+    builder.append("    }")
+    node = arena.nodes[id.index]
+    for offset in range(2, node.child_count):
+        branch_id = arena.children[node.first_child + offset]
+        branch = arena.nodes[branch_id.index]
+        if branch.kind == SyntaxKind.IF_BRANCH and branch.flags == 1:
+            builder.append(" else if (")
+            codegen_expr.emit_module_expression(arena, codegen_names.first_child(arena, branch_id), source, builder, prefix, project_name, imports, context)
+            builder.append(") {\n")
+            emit_module_block(arena, codegen_names.second_child(arena, branch_id), source, builder, prefix, project_name, imports, context)
+            builder.append("    }")
+        elif branch.kind == SyntaxKind.IF_BRANCH and branch.flags == 2:
+            builder.append(" else {\n")
+            emit_module_block(arena, codegen_names.first_child(arena, branch_id), source, builder, prefix, project_name, imports, context)
+            builder.append("    }")
+    builder.append("\n")
+
+def emit_module_match(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    subject = codegen_names.first_child(arena, id)
+    subject_type = codegen_context.context_expression_type(arena, context, subject, source)
+    builder.append("    {\n    __auto_type cinder_match_value = ")
+    previous_expected = context.expected_type
+    context.expected_type = subject_type
+    codegen_expr.emit_module_expression(arena, subject, source, builder, prefix, project_name, imports, context)
+    context.expected_type = previous_expected
+    builder.append(";\n")
+    node = arena.nodes[id.index]
+    emitted_case = false
+    for offset in range(1, node.child_count):
+        case_id = arena.children[node.first_child + offset]
+        case_node = arena.nodes[case_id.index]
+        if case_node.kind != SyntaxKind.MATCH_CASE:
+            continue
+        pattern = codegen_names.first_child(arena, case_id)
+        if emitted_case:
+            builder.append("    else if (")
+        else:
+            builder.append("    if (")
+        emit_match_pattern_condition(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type)
+        builder.append(") {\n")
+        local_start = len(context.local_types)
+        pointer_start = len(context.pointer_names)
+        emit_match_pattern_captures(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type)
+        body = codegen_names.find_child_kind(arena, case_id, SyntaxKind.BLOCK)
+        if body.index >= 0:
+            emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+        while len(context.local_types) > local_start:
+            context.local_types.pop()
+        while len(context.pointer_names) > pointer_start:
+            context.pointer_names.pop()
+        builder.append("    }\n")
+        emitted_case = true
+    builder.append("    }\n")
+
+def emit_match_pattern_condition(
+    arena: &const SyntaxArena,
+    pattern: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    subject_type: NodeId,
+) -> void:
+    if pattern.index < 0:
+        builder.append("false")
+        return
+    node = arena.nodes[pattern.index]
+    if node.kind == SyntaxKind.PATTERN_WILDCARD:
+        builder.append("true")
+        return
+    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
+        emit_match_pattern_condition(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type)
+        return
+    if node.kind == SyntaxKind.PATTERN_OR:
+        builder.append("(")
+        for offset in range(0, node.child_count):
+            if offset > 0:
+                builder.append(" || ")
+            emit_match_pattern_condition(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, subject_type)
+        builder.append(")")
+        return
+    if node.kind != SyntaxKind.PATTERN_PATH or node.child_count <= 0:
+        builder.append("false")
+        return
+    first = arena.children[node.first_child]
+    first_node = arena.nodes[first.index]
+    if node.child_count == 1 and first_node.kind == SyntaxKind.NAME and codegen_names.is_lowercase_start(source, first_node.value_start):
+        builder.append("true")
+        return
+    if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
+        if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok") or codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Err"):
+            name_builder = StringBuilder()
+            codegen_type_names.emit_specialized_type_name(context.type_arena, subject_type, context.type_source, &name_builder, prefix, project_name, imports, context.specialization_names)
+            name = name_builder.finish()
+            builder.append("cinder_match_value.tag == ")
+            builder.append(name[0:len(name)])
+            if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok"):
+                builder.append("_Tag_Ok")
+            else:
+                builder.append("_Tag_Err")
+            return
+    if node.child_count >= 2 and first_node.kind == SyntaxKind.NAME:
+        second = arena.children[node.first_child + 1]
+        second_node = arena.nodes[second.index]
+        owner_name = source[first_node.value_start:first_node.value_start + first_node.value_length]
+        case_name = source[second_node.value_start:second_node.value_start + second_node.value_length]
+        variant_id = codegen_names.find_module_variant_declaration(context.type_arena, context.root, context.type_source, &owner_name)
+        if codegen_names.find_variant_case_declaration(context.type_arena, variant_id, context.type_source, &case_name).index >= 0:
+            builder.append("cinder_match_value.tag == ")
+            builder.append(prefix[0:len(prefix)])
+            builder.append(owner_name[0:len(owner_name)])
+            builder.append("_")
+            builder.append(case_name[0:len(case_name)])
+            return
+    builder.append("false")
+
+def emit_match_pattern_captures(
+    arena: &const SyntaxArena,
+    pattern: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    subject_type: NodeId,
+) -> void:
+    if pattern.index < 0:
+        return
+    node = arena.nodes[pattern.index]
+    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
+        emit_match_pattern_captures(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type)
+        return
+    if node.kind != SyntaxKind.PATTERN_PATH or node.child_count <= 1:
+        return
+    first = arena.children[node.first_child]
+    first_node = arena.nodes[first.index]
+    if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
+        is_ok = codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok")
+        is_err = codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Err")
+        if (is_ok or is_err) and node.child_count > 1:
+            nested = arena.children[node.first_child + 1]
+            payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 0)
+            access = ".data.ok"
+            if is_err:
+                payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 1)
+                access = ".data.err"
+            emit_match_capture_binding(arena, nested, source, builder, context, payload_type, &access)
+            return
+    if node.child_count < 2:
+        return
+    second = arena.children[node.first_child + 1]
+    second_node = arena.nodes[second.index]
+    owner_name = source[first_node.value_start:first_node.value_start + first_node.value_length]
+    case_name = source[second_node.value_start:second_node.value_start + second_node.value_length]
+    variant_id = codegen_names.find_module_variant_declaration(context.type_arena, context.root, context.type_source, &owner_name)
+    case_id = codegen_names.find_variant_case_declaration(context.type_arena, variant_id, context.type_source, &case_name)
+    if case_id.index < 0:
+        return
+    case_node = codegen_names.arena_node_at(context.type_arena, case_id)
+    pattern_offset: i32 = 2
+    for field_offset in range(0, case_node.child_count):
+        field_id = codegen_names.arena_child_at(context.type_arena, case_node.first_child + field_offset)
+        field = codegen_names.arena_node_at(context.type_arena, field_id)
+        if field.kind != SyntaxKind.FIELD_DECL:
+            continue
+        if pattern_offset < node.child_count:
+            nested = arena.children[node.first_child + pattern_offset]
+            emit_match_variant_capture_binding(
+                arena,
+                nested,
+                source,
+                builder,
+                context,
+                codegen_type_names.find_child_type(context.type_arena, field_id),
+                &case_name,
+                field.value_start,
+                field.value_length,
+            )
+        pattern_offset += 1
+
+def emit_match_variant_capture_binding(
+    arena: &const SyntaxArena,
+    pattern: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    type_id: NodeId,
+    case_name: &const String,
+    field_start: usize,
+    field_length: usize,
+) -> void:
+    if pattern.index < 0:
+        return
+    node = arena.nodes[pattern.index]
+    if node.kind == SyntaxKind.PATTERN_WILDCARD:
+        return
+    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
+        emit_match_variant_capture_binding(arena, codegen_names.first_child(arena, pattern), source, builder, context, type_id, case_name, field_start, field_length)
+        return
+    if node.kind != SyntaxKind.PATTERN_PATH or node.child_count != 1:
+        return
+    name_id = arena.children[node.first_child]
+    name = arena.nodes[name_id.index]
+    if name.kind != SyntaxKind.NAME or not codegen_names.is_lowercase_start(source, name.value_start):
+        return
+    builder.append("    __auto_type ")
+    codegen_names.append_source(builder, source, name.value_start, name.value_length)
+    builder.append(" = cinder_match_value.data.")
+    builder.append(case_name[0:len(case_name)])
+    builder.append(".")
+    codegen_names.append_source(builder, context.type_source, field_start, field_length)
+    builder.append(";\n")
+    codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, type_id)
+
+def emit_match_capture_binding(
+    arena: &const SyntaxArena,
+    pattern: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    type_id: NodeId,
+    access: &const String,
+) -> void:
+    if pattern.index < 0:
+        return
+    node = arena.nodes[pattern.index]
+    if node.kind == SyntaxKind.PATTERN_WILDCARD:
+        return
+    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
+        emit_match_capture_binding(arena, codegen_names.first_child(arena, pattern), source, builder, context, type_id, access)
+        return
+    if node.kind != SyntaxKind.PATTERN_PATH or node.child_count != 1:
+        return
+    name_id = arena.children[node.first_child]
+    name = arena.nodes[name_id.index]
+    if name.kind != SyntaxKind.NAME or not codegen_names.is_lowercase_start(source, name.value_start):
+        return
+    builder.append("    __auto_type ")
+    codegen_names.append_source(builder, source, name.value_start, name.value_length)
+    builder.append(" = cinder_match_value")
+    builder.append(access[0:len(access)])
+    builder.append(";\n")
+    codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, type_id)
+
+def emit_module_with(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    expr = codegen_names.first_child(arena, id)
+    name = codegen_names.second_child(arena, id)
+    body = codegen_names.last_child(arena, id)
+    name_node = arena.nodes[name.index]
+    builder.append("    FILE *")
+    codegen_names.append_source(builder, source, name_node.value_start, name_node.value_length)
+    builder.append(" = ")
+    codegen_expr.emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
+    builder.append(";\n")
+    codegen_context.register_context_pointer_name(context, source, name_node.value_start, name_node.value_length)
+    resource_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    context.with_resources.append(resource_name[0:len(resource_name)])
+    builder.append("    if (")
+    codegen_names.append_source(builder, source, name_node.value_start, name_node.value_length)
+    builder.append(" == NULL) cinder_panic(\"failed to open file\");\n")
+    builder.append("    {\n")
+    emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+    context.with_resources.pop()
+    builder.append("    }\n")
+    builder.append("    fclose(")
+    codegen_names.append_source(builder, source, name_node.value_start, name_node.value_length)
+    builder.append(");\n")
+
+def emit_module_for_each(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    target = codegen_names.first_child(arena, id)
+    iterable = for_each_iterable(arena, id)
+    body = codegen_names.last_child(arena, id)
+    target_node = arena.nodes[target.index]
+    if is_range_call(arena, iterable, source):
+        range_type = codegen_context.context_expression_type(arena, context, range_argument_expression(arena, iterable, 1), source)
+        if range_type.index < 0:
+            range_type = codegen_context.context_expression_type(arena, context, range_argument_expression(arena, iterable, 0), source)
+        builder.append("    for (")
+        if range_type.index >= 0 and codegen_type_names.is_type_kind(codegen_type_names.type_node_kind(context.type_arena, range_type)):
+            codegen_type_names.emit_module_c_type(context.type_arena, range_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        else:
+            builder.append("int32_t")
+        builder.append(" ")
+        codegen_names.append_source(builder, source, target_node.value_start, target_node.value_length)
+        builder.append(" = ")
+        emit_range_argument(arena, iterable, 0, source, builder, prefix, project_name, imports, context)
+        builder.append("; ")
+        codegen_names.append_source(builder, source, target_node.value_start, target_node.value_length)
+        builder.append(" < ")
+        emit_range_argument(arena, iterable, 1, source, builder, prefix, project_name, imports, context)
+        builder.append("; ")
+        codegen_names.append_source(builder, source, target_node.value_start, target_node.value_length)
+        builder.append(" += ")
+        emit_range_argument(arena, iterable, 2, source, builder, prefix, project_name, imports, context)
+        builder.append(") {\n")
+        if range_type.index >= 0:
+            codegen_context.register_context_name_type(context.type_arena, context, source, target_node.value_start, target_node.value_length, range_type)
+        emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+        if range_type.index >= 0 and len(context.local_types) > 0:
+            context.local_types.pop()
+        builder.append("    }\n")
+        return
+    element_type = codegen_context.context_expression_list_element_type(arena, context, iterable, source)
+    if element_type.index < 0:
+        element_type = codegen_type_names.find_child_type(arena, id)
+    element_name = ""
+    if element_type.index < 0:
+        element_name = codegen_access.known_list_element_name(arena, iterable, source, context)
+    builder.append("    for (size_t cinder_index = 0; cinder_index < ")
+    codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+    if codegen_context.context_expression_is_pointer_like(arena, context, iterable, source):
+        builder.append("->length")
+    else:
+        builder.append(".length")
+    builder.append("; ++cinder_index) {\n")
+    builder.append("    ")
+    if element_type.index >= 0:
+        codegen_type_names.emit_module_c_type(arena, element_type, source, builder, prefix, project_name, imports, context.specialization_names)
+    elif len(element_name) > 0:
+        builder.append(element_name)
+    else:
+        builder.append("__auto_type")
+    builder.append(" ")
+    codegen_names.append_source(builder, source, target_node.value_start, target_node.value_length)
+    builder.append(" = ((")
+    if element_type.index >= 0:
+        codegen_type_names.emit_module_c_type(arena, element_type, source, builder, prefix, project_name, imports, context.specialization_names)
+    elif len(element_name) > 0:
+        builder.append(element_name)
+    else:
+        builder.append("char")
+    builder.append(" *)")
+    codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+    if codegen_context.context_expression_is_pointer_like(arena, context, iterable, source):
+        builder.append("->data)[cinder_index];\n")
+    else:
+        builder.append(".data)[cinder_index];\n")
+    if element_type.index >= 0:
+        codegen_context.register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, element_type)
+    emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+    if element_type.index >= 0:
+        if len(context.local_types) > 0:
+            context.local_types.pop()
+    builder.append("    }\n")
+
+def for_each_iterable(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind != SyntaxKind.NAME and not codegen_type_names.is_type_kind(child.kind) and child.kind != SyntaxKind.BLOCK:
+            return child_id
+    return syntax.missing_node()
+
+def is_range_call(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0:
+        return false
+    callee_node = arena.nodes[callee.index]
+    return callee_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "range")
+
+def range_argument_expression(arena: &const SyntaxArena, id: NodeId, argument_index: i32) -> NodeId:
+    actual_index: i32 = 0
+    node = arena.nodes[id.index]
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            if actual_index == argument_index:
+                return codegen_names.last_child(arena, child_id)
+            actual_index += 1
+    return syntax.missing_node()
+
+def emit_range_argument(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    argument_index: i32,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    actual_index: i32 = 0
+    node = arena.nodes[id.index]
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            if actual_index == argument_index:
+                codegen_expr.emit_module_expression(arena, codegen_names.last_child(arena, child_id), source, builder, prefix, project_name, imports, context)
+                return
+            actual_index += 1
+    if argument_index == 0:
+        builder.append("0")
+    elif argument_index == 2:
+        builder.append("1")
+    else:
+        builder.append("0")

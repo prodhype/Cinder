@@ -1,0 +1,294 @@
+import fs
+import project
+import syntax
+import token
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+struct SpecializationNameRegistry:
+    canonical_bytes: List[char]
+    canonical_starts: List[usize]
+    readable_bytes: List[char]
+    readable_starts: List[usize]
+
+
+def new_specialization_name_registry() -> SpecializationNameRegistry:
+    canonical_bytes: List[char] = []
+    canonical_starts: List[usize] = []
+    readable_bytes: List[char] = []
+    readable_starts: List[usize] = []
+    return SpecializationNameRegistry(
+        canonical_bytes=canonical_bytes,
+        canonical_starts=canonical_starts,
+        readable_bytes=readable_bytes,
+        readable_starts=readable_starts,
+    )
+
+def store_specialization_name(stored: &List[char], value: &const String) -> usize:
+    start = len(stored)
+    index: usize = 0
+    while index < len(value):
+        stored.append(cast[char](value.byte_at(index)))
+        index += 1
+    stored.append(cast[char](0))
+    return start
+
+def stored_specialization_name_equals_string(stored: &const List[char], start: usize, value: &const String) -> bool:
+    if start + len(value) >= len(stored):
+        return false
+    index: usize = 0
+    while index < len(value):
+        if stored[start + index] != cast[char](value.byte_at(index)):
+            return false
+        index += 1
+    return stored[start + len(value)] == cast[char](0)
+
+def stored_specialization_names_equal(stored: &const List[char], left_start: usize, right_start: usize) -> bool:
+    offset: usize = 0
+    while left_start + offset < len(stored) and right_start + offset < len(stored):
+        left = stored[left_start + offset]
+        right = stored[right_start + offset]
+        if left != right:
+            return false
+        if left == cast[char](0):
+            return true
+        offset += 1
+    return false
+
+def append_stored_specialization_name(stored: &const List[char], start: usize, builder: &StringBuilder) -> void:
+    if start >= len(stored):
+        return
+    value = String(&stored[start])
+    builder.append(value)
+
+def record_specialization_name(registry: &SpecializationNameRegistry, canonical: String, readable: String) -> void:
+    index: usize = 0
+    while index < len(registry.canonical_starts):
+        if stored_specialization_name_equals_string(&registry.canonical_bytes, registry.canonical_starts[index], &canonical):
+            return
+        index += 1
+    canonical_start = store_specialization_name(&registry.canonical_bytes, &canonical)
+    readable_start = store_specialization_name(&registry.readable_bytes, &readable)
+    registry.canonical_starts.append(canonical_start)
+    registry.readable_starts.append(readable_start)
+
+def append_registered_specialization_name(registry: &const SpecializationNameRegistry, canonical: &const String, readable: &const String, builder: &StringBuilder) -> void:
+    index: usize = 0
+    while index < len(registry.canonical_starts):
+        if stored_specialization_name_equals_string(&registry.canonical_bytes, registry.canonical_starts[index], canonical):
+            collided = false
+            other: usize = 0
+            while other < len(registry.readable_starts):
+                if other != index and stored_specialization_names_equal(&registry.readable_bytes, registry.readable_starts[other], registry.readable_starts[index]):
+                    collided = true
+                other += 1
+            append_stored_specialization_name(&registry.readable_bytes, registry.readable_starts[index], builder)
+            if collided:
+                builder.append("__")
+                append_stored_specialization_name(&registry.canonical_bytes, registry.canonical_starts[index], builder)
+            return
+        index += 1
+    builder.append(readable[0:len(readable)])
+
+def first_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        return syntax.missing_node()
+    return arena.children[node.first_child]
+
+def second_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 1:
+        return syntax.missing_node()
+    return arena.children[node.first_child + 1]
+
+def last_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        return syntax.missing_node()
+    return arena.children[node.first_child + node.child_count - 1]
+
+def arena_node_at(arena: &const SyntaxArena, id: NodeId) -> syntax.SyntaxNode:
+    return arena.nodes[id.index]
+
+def arena_child_at(arena: &const SyntaxArena, index: i32) -> NodeId:
+    return arena.children[index]
+
+def find_child_kind(arena: &const SyntaxArena, id: NodeId, kind: SyntaxKind) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == kind:
+            return child_id
+    return syntax.missing_node()
+
+def find_direct_child_kind(arena: &const SyntaxArena, id: NodeId, kind: SyntaxKind) -> NodeId:
+    return find_child_kind(arena, id, kind)
+
+def emit_prefixed_name(builder: &StringBuilder, prefix: &const String, source: &const String, start: usize, length: usize) -> void:
+    builder.append(prefix[0:len(prefix)])
+    append_source(builder, source, start, length)
+
+def append_source(builder: &StringBuilder, source: &const String, start: usize, length: usize) -> void:
+    if length == 0:
+        return
+    builder.append(source[start:start + length])
+
+def append_unquoted_string(builder: &StringBuilder, source: &const String, start: usize, length: usize) -> void:
+    if length <= 2:
+        return
+    builder.append(source[start + 1:start + length - 1])
+
+def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:
+    if length != len(text):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != text.byte_at(offset):
+            return false
+        offset += 1
+    return true
+
+def append_assignment_operator(builder: &StringBuilder, flag: i32) -> void:
+    if flag == cast[i32](token.TokenKind.PLUS_ASSIGN):
+        builder.append("+=")
+        return
+    if flag == cast[i32](token.TokenKind.MINUS_ASSIGN):
+        builder.append("-=")
+        return
+    if flag == cast[i32](token.TokenKind.STAR_ASSIGN):
+        builder.append("*=")
+        return
+    if flag == cast[i32](token.TokenKind.SLASH_ASSIGN):
+        builder.append("/=")
+        return
+    if flag == cast[i32](token.TokenKind.PERCENT_ASSIGN):
+        builder.append("%=")
+        return
+    builder.append("=")
+
+def find_module_variant_declaration(arena: &const SyntaxArena, id: NodeId, source: &const String, name: &const String) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.VARIANT_DECL and range_text_equals(source, node.value_start, node.value_length, name[0:len(name)]):
+        return id
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            found = find_module_variant_declaration(arena, arena.children[node.first_child + offset], source, name)
+            if found.index >= 0:
+                return found
+    return syntax.missing_node()
+
+def find_variant_case_declaration(arena: &const SyntaxArena, variant_id: NodeId, source: &const String, name: &const String) -> NodeId:
+    if variant_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[variant_id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.VARIANT_CASE_DECL and range_text_equals(source, child.value_start, child.value_length, name[0:len(name)]):
+            return child_id
+    return syntax.missing_node()
+
+def call_argument_at(arena: &const SyntaxArena, id: NodeId, expected_index: i32) -> NodeId:
+    node = arena.nodes[id.index]
+    argument_index: i32 = 0
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            if argument_index == expected_index:
+                return last_child(arena, child_id)
+            argument_index += 1
+    return syntax.missing_node()
+
+def emit_builtin_function_name(builder: &StringBuilder, module_name: &const String, member: &const String) -> void:
+    if module_name == "cinder" and member == "panic":
+        builder.append("cinder_panic")
+        return
+    builder.append(member[0:len(member)])
+
+def is_uppercase_start(source: &const String, start: usize) -> bool:
+    if start >= len(source):
+        return false
+    byte = source.byte_at(start)
+    return byte >= 65 and byte <= 90
+
+def is_lowercase_start(source: &const String, start: usize) -> bool:
+    if start >= len(source):
+        return false
+    byte = source.byte_at(start)
+    return byte >= 97 and byte <= 122
+
+def first_call_argument(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            return last_child(arena, child_id)
+    return syntax.missing_node()
+
+def second_call_argument(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    seen: i32 = 0
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            if seen == 1:
+                return last_child(arena, child_id)
+            seen += 1
+    return syntax.missing_node()
+
+def find_import_alias(imports: &const List[project.ImportBinding], alias: &const String) -> project.ImportBinding:
+    for item in imports:
+        if item.alias == alias and len(item.member) == 0:
+            return project.ImportBinding(
+                alias=item.alias[0:len(item.alias)],
+                module_name=item.module_name[0:len(item.module_name)],
+                member=item.member[0:len(item.member)],
+            )
+    return project.ImportBinding(alias="", module_name="", member="")
+
+def find_import_member(imports: &const List[project.ImportBinding], alias: &const String) -> project.ImportBinding:
+    for item in imports:
+        if item.alias == alias and len(item.member) > 0:
+            return project.ImportBinding(
+                alias=item.alias[0:len(item.alias)],
+                module_name=item.module_name[0:len(item.module_name)],
+                member=item.member[0:len(item.member)],
+            )
+    return project.ImportBinding(alias="", module_name="", member="")
+
+def generated_header_name(module_name: &const String) -> String:
+    return "cinder_gen/" + fs.replace_char(module_name, 46, 47) + ".cinder.h"
+
+def generated_source_name(module_name: &const String) -> String:
+    return "cinder_gen/" + fs.replace_char(module_name, 46, 47) + ".c"
+
+def c_prefix(project_name: &const String, module_name: &const String) -> String:
+    qualified = project_name + "_" + fs.replace_char(module_name, 46, 95)
+    cleaned = fs.sanitize_identifier(&qualified)
+    return "cinder_" + cleaned + "__"
+
+def header_guard(header_name: &const String) -> String:
+    cleaned = fs.sanitize_identifier(header_name)
+    return "CINDER_GEN_" + cleaned + "_"
+
+def node_start(arena: &const SyntaxArena, id: NodeId) -> usize:
+    return arena.nodes[id.index].start
+
+def node_length(arena: &const SyntaxArena, id: NodeId) -> usize:
+    return arena.nodes[id.index].length
+
+
+def append_numeric_literal(builder: &StringBuilder, source: &const String, start: usize, length: usize) -> void:
+    offset: usize = 0
+    while offset < length:
+        byte = source.byte_at(start + offset)
+        if byte != 95:
+            builder.append(source[start + offset:start + offset + 1])
+        offset += 1

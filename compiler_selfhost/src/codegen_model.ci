@@ -1,0 +1,5 @@
+struct FStringField:
+    expression_end: usize
+    format_start: usize
+    close: usize
+    valid: bool

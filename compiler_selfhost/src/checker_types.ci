@@ -1,0 +1,208 @@
+import checker_core
+import collections
+import generics
+import semantic
+import symbols
+import syntax
+import token
+import types
+from syntax import NodeId
+
+
+def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    call = arena.nodes[id.index]
+    callee = checker_core.first_child(arena, id)
+    if callee.index < 0:
+        return
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return
+    if is_builtin_name(source, callee_node.value_start, callee_node.value_length):
+        checker.model.record_expr_type(id, types.type_i32())
+        return
+    found = checker.symbols.find_in_scope(source, current_scope, callee_node.value_start, callee_node.value_length)
+    if found.index < 0:
+        checker_core.emit_error(checker, 48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
+        return
+    symbol = checker.symbols.symbols[found.index]
+    if is_nominal_constructor_symbol(symbol.kind) or symbol.kind == symbols.SymbolKind.GLOBAL:
+        checker.model.record_name_symbol(callee, found)
+        checker.model.record_expr_type(id, symbol.type_id)
+        return
+    if symbol.type_id.index >= 0:
+        callable_type = checker.type_table.types[symbol.type_id.index]
+        if callable_type.kind == types.TypeKind.FUNCTION or callable_type.kind == types.TypeKind.CLOSURE:
+            checker.model.record_name_symbol(callee, found)
+            checker.model.record_call(id, found, callable_type.inner, 0)
+            checker.model.record_expr_type(id, callable_type.inner)
+            actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
+            expected = callable_type.flags
+            if actual < expected:
+                checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+            elif actual > expected:
+                checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+            return
+    if symbol.kind == symbols.SymbolKind.LOCAL or symbol.kind == symbols.SymbolKind.PARAMETER or symbol.kind == symbols.SymbolKind.CONSTANT:
+        checker.model.record_name_symbol(callee, found)
+        checker.model.record_expr_type(id, types.type_i32())
+        return
+    if symbol.kind != symbols.SymbolKind.FUNCTION and symbol.kind != symbols.SymbolKind.FUNCTION_TEMPLATE:
+        checker_core.emit_error(checker, 48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
+        return
+    checker.model.record_name_symbol(callee, found)
+    checker.model.record_call(id, found, symbol.type_id, 0)
+    checker.model.record_expr_type(id, symbol.type_id)
+    if call.flags == 1:
+        record_generic_call_specialization(checker, arena, id, source, found)
+    actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    expected = symbol.flags
+    if actual < expected:
+        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+    elif actual > expected:
+        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+
+
+def is_nominal_constructor_symbol(kind: symbols.SymbolKind) -> bool:
+    return kind == symbols.SymbolKind.STRUCT or kind == symbols.SymbolKind.CLASS or kind == symbols.SymbolKind.ENUM or kind == symbols.SymbolKind.UNION or kind == symbols.SymbolKind.VARIANT or kind == symbols.SymbolKind.EXTERN_TYPE
+
+
+def record_generic_call_specialization(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, callee: symbols.SymbolId) -> void:
+    call = arena.nodes[id.index]
+    args: List[types.TypeId] = []
+    offset: i32 = 1
+    while offset < call.child_count:
+        child_id = arena.children[call.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if checker_core.is_type_kind(child.kind):
+            type_id = checker.type_table.resolve_type_node(arena, child_id, source)
+            checker.model.record_type_node(child_id, type_id)
+            args.append(type_id)
+        offset += 1
+    suffix = generics.specialization_suffix(checker.type_table, args, source)
+    checker.model.record_specialization(id, callee, args, suffix)
+
+
+def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
+    if id.index < 0:
+        return types.type_error()
+    existing = checker.model.expr_type(id)
+    if existing.index != types.type_error().index:
+        return existing
+    node = arena.nodes[id.index]
+    result = types.type_error()
+    if node.kind == syntax.SyntaxKind.EXPR_LITERAL:
+        if node.flags == cast[i32](token.TokenKind.TRUE) or node.flags == cast[i32](token.TokenKind.FALSE):
+            result = types.type_bool()
+        elif node.flags == cast[i32](token.TokenKind.STRING):
+            result = types.type_string()
+        elif node.flags == cast[i32](token.TokenKind.CHAR):
+            result = types.type_char()
+        elif node.flags == cast[i32](token.TokenKind.FLOAT):
+            result = types.type_f64()
+        elif node.flags == cast[i32](token.TokenKind.NULL) or node.flags == cast[i32](token.TokenKind.NONE):
+            result = types.type_error()
+        else:
+            result = types.type_i32()
+    elif node.kind == syntax.SyntaxKind.EXPR_NAME:
+        found = checker.symbols.find_in_scope(source, current_scope, node.value_start, node.value_length)
+        if found.index >= 0:
+            checker.model.record_name_symbol(id, found)
+            result = checker.symbols.symbols[found.index].type_id
+    elif node.kind == syntax.SyntaxKind.EXPR_CALL:
+        validate_call(checker, arena, id, source, current_scope)
+        result = checker.model.expr_type(id)
+    elif node.kind == syntax.SyntaxKind.EXPR_CAST:
+        type_node = checker_core.find_child_type(arena, id)
+        result = checker.type_table.resolve_type_node(arena, type_node, source)
+        checker.model.record_type_node(type_node, result)
+    elif node.kind == syntax.SyntaxKind.EXPR_LIST:
+        result = infer_list_literal_type(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_MAP:
+        result = infer_map_literal_type(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_SET:
+        result = infer_set_literal_type(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_UNARY:
+        result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_BINARY:
+        operator = node.flags
+        if operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN):
+            result = types.type_bool()
+        else:
+            result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+    checker.model.record_expr_type(id, result)
+    return result
+
+
+def infer_list_literal_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
+    node = arena.nodes[id.index]
+    element = types.type_error()
+    if node.child_count > 0:
+        element = infer_expression_type(checker, arena, arena.children[node.first_child], source, current_scope)
+    return collections.list_type(checker.type_table, element)
+
+
+def infer_set_literal_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
+    node = arena.nodes[id.index]
+    element = types.type_error()
+    if node.child_count > 0:
+        element = infer_expression_type(checker, arena, arena.children[node.first_child], source, current_scope)
+    return collections.set_type(checker.type_table, element)
+
+
+def infer_map_literal_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
+    node = arena.nodes[id.index]
+    key_type = types.type_error()
+    value_type = types.type_error()
+    if node.child_count > 0:
+        entry_id = arena.children[node.first_child]
+        entry = arena.nodes[entry_id.index]
+        if entry.child_count > 0:
+            key_type = infer_expression_type(checker, arena, arena.children[entry.first_child], source, current_scope)
+        if entry.child_count > 1:
+            value_type = infer_expression_type(checker, arena, arena.children[entry.first_child + 1], source, current_scope)
+    return collections.map_type(checker.type_table, key_type, value_type)
+
+
+def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId) -> bool:
+    if checker.type_table.same(expected, actual):
+        return true
+    if expected.index < 0 or actual.index < 0:
+        return true
+    expected_kind = checker.type_table.types[expected.index].kind
+    actual_kind = checker.type_table.types[actual.index].kind
+    if expected_kind == types.TypeKind.ERROR or actual_kind == types.TypeKind.ERROR:
+        return true
+    if is_numeric_kind(expected_kind) and is_numeric_kind(actual_kind):
+        return true
+    if expected_kind == types.TypeKind.BOOL and is_scalar_kind(actual_kind):
+        return true
+    if actual_kind == types.TypeKind.STRING:
+        if expected_kind == types.TypeKind.CONST or expected_kind == types.TypeKind.POINTER:
+            return true
+        return false
+    return true
+
+
+def is_numeric_kind(kind: types.TypeKind) -> bool:
+    return kind == types.TypeKind.I32 or kind == types.TypeKind.I64 or kind == types.TypeKind.F64 or kind == types.TypeKind.CHAR
+
+
+def is_scalar_kind(kind: types.TypeKind) -> bool:
+    return kind == types.TypeKind.BOOL or is_numeric_kind(kind) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN
+
+
+def is_string_literal(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
+    node = arena.nodes[id.index]
+    return node.kind == syntax.SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING)
+
+
+def is_builtin_name(source: &const String, start: usize, length: usize) -> bool:
+    return checker_core.range_text_equals(source, start, length, "print") or checker_core.range_text_equals(source, start, length, "len") or checker_core.range_text_equals(source, start, length, "open") or checker_core.range_text_equals(source, start, length, "range") or checker_core.range_text_equals(source, start, length, "sort") or checker_core.range_text_equals(source, start, length, "input") or checker_core.range_text_equals(source, start, length, "to_string") or checker_core.range_text_equals(source, start, length, "set") or checker_core.range_text_equals(source, start, length, "free") or checker_core.range_text_equals(source, start, length, "panic") or checker_core.range_text_equals(source, start, length, "String") or checker_core.range_text_equals(source, start, length, "StringBuilder") or checker_core.range_text_equals(source, start, length, "Some") or checker_core.range_text_equals(source, start, length, "Owned") or checker_core.range_text_equals(source, start, length, "Ok") or checker_core.range_text_equals(source, start, length, "Err") or checker_core.range_text_equals(source, start, length, "closure") or checker_core.range_text_equals(source, start, length, "super") or is_parse_builtin_name(source, start, length) or is_reflection_builtin_name(source, start, length)
+
+
+def is_parse_builtin_name(source: &const String, start: usize, length: usize) -> bool:
+    return checker_core.range_text_equals(source, start, length, "parse_i32") or checker_core.range_text_equals(source, start, length, "parse_i64") or checker_core.range_text_equals(source, start, length, "parse_u32") or checker_core.range_text_equals(source, start, length, "parse_u64") or checker_core.range_text_equals(source, start, length, "parse_isize") or checker_core.range_text_equals(source, start, length, "parse_usize") or checker_core.range_text_equals(source, start, length, "parse_f32") or checker_core.range_text_equals(source, start, length, "parse_f64") or checker_core.range_text_equals(source, start, length, "parse_bool")
+
+
+def is_reflection_builtin_name(source: &const String, start: usize, length: usize) -> bool:
+    return checker_core.range_text_equals(source, start, length, "type_of") or checker_core.range_text_equals(source, start, length, "type_name") or checker_core.range_text_equals(source, start, length, "type_info") or checker_core.range_text_equals(source, start, length, "size_of") or checker_core.range_text_equals(source, start, length, "align_of") or checker_core.range_text_equals(source, start, length, "field_count") or checker_core.range_text_equals(source, start, length, "method_count") or checker_core.range_text_equals(source, start, length, "fields") or checker_core.range_text_equals(source, start, length, "methods") or checker_core.range_text_equals(source, start, length, "fields_of") or checker_core.range_text_equals(source, start, length, "methods_of") or checker_core.range_text_equals(source, start, length, "has_field") or checker_core.range_text_equals(source, start, length, "has_method") or checker_core.range_text_equals(source, start, length, "implements")

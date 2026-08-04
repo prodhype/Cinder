@@ -1,0 +1,453 @@
+import codegen_context
+import codegen_model
+import codegen_names
+import codegen_type_names
+import lexer
+import parser
+import project
+import syntax
+import token
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+def emit_string_value_expression(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+    state: &codegen_context.ModuleExpressionState,
+    emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    if codegen_context.context_expression_is_pointer_like(arena, context, id, source):
+        builder.append("*(")
+        emit_nested(state, id)
+        builder.append(")")
+        return
+    emit_nested(state, id)
+
+def emit_print_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+    state: &codegen_context.ModuleExpressionState,
+    emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("({ ")
+    first = true
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            arg = codegen_names.last_child(arena, child_id)
+            if arg.index >= 0 and arena.nodes[arg.index].kind == SyntaxKind.EXPR_FSTRING:
+                if not first:
+                    builder.append("printf(\" \"); ")
+                emit_print_fstring_segments(arena, arg, source, builder, prefix, project_name, imports, context, state, emit_nested)
+            else:
+                emit_print_argument(arena, arg, source, builder, prefix, project_name, imports, context, first, state, emit_nested)
+            first = false
+    builder.append("printf(\"\\n\"); 0; })")
+
+def emit_print_argument(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+    first: bool,
+    state: &codegen_context.ModuleExpressionState,
+    emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    type_id = codegen_context.context_expression_type(arena, context, id, source)
+    if codegen_context.context_type_is_list(context.type_arena, type_id, context.type_source):
+        emit_print_list_value(arena, id, source, builder, prefix, project_name, imports, context, type_id, first, state, emit_nested)
+        return
+    if codegen_context.expression_may_be_string(arena, context, id, source):
+        builder.append("cinder_selfhost_print_string_value(")
+        emit_string_value_expression(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    elif codegen_type_names.context_type_name_equals(context.type_arena, type_id, context.type_source, "bool"):
+        builder.append("cinder_selfhost_print_bool_value(")
+        emit_nested(state, id)
+    elif codegen_type_names.context_type_name_equals(context.type_arena, type_id, context.type_source, "char"):
+        builder.append("cinder_selfhost_print_char_value(")
+        emit_nested(state, id)
+    elif codegen_type_names.context_type_name_equals(context.type_arena, type_id, context.type_source, "f32") or codegen_type_names.context_type_name_equals(context.type_arena, type_id, context.type_source, "f64"):
+        builder.append("cinder_selfhost_print_float_value((double)(")
+        emit_nested(state, id)
+        builder.append("), ")
+        if first:
+            builder.append("true); ")
+        else:
+            builder.append("false); ")
+        return
+    elif context_type_is_unsigned_integer(arena, type_id, source):
+        builder.append("cinder_selfhost_print_unsigned_value((unsigned long long)(")
+        emit_nested(state, id)
+        builder.append("), ")
+        if first:
+            builder.append("true); ")
+        else:
+            builder.append("false); ")
+        return
+    else:
+        builder.append("cinder_selfhost_print_integer_value((long long)(")
+        emit_nested(state, id)
+        builder.append(")")
+    if first:
+        builder.append(", true); ")
+    else:
+        builder.append(", false); ")
+
+def context_type_is_unsigned_integer(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    return codegen_type_names.context_type_name_equals(arena, type_id, source, "u8") or codegen_type_names.context_type_name_equals(arena, type_id, source, "u16") or codegen_type_names.context_type_name_equals(arena, type_id, source, "u32") or codegen_type_names.context_type_name_equals(arena, type_id, source, "u64") or codegen_type_names.context_type_name_equals(arena, type_id, source, "usize") or codegen_type_names.context_type_name_equals(arena, type_id, source, "c_size_t")
+
+def emit_print_list_value(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+    type_id: NodeId,
+    first: bool,
+    state: &codegen_context.ModuleExpressionState,
+    emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    element_type = codegen_context.context_list_element_type(context.type_arena, type_id, context.type_source)
+    builder.append("({ __auto_type cinder_print_list = ")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, id, source):
+        builder.append("&")
+    emit_nested(state, id)
+    builder.append("; ")
+    if codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "String"):
+        builder.append("cinder_selfhost_print_string_list(")
+    elif codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "i64") or codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "isize") or codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "c_long"):
+        builder.append("cinder_selfhost_print_i64_list(")
+    elif context_type_is_unsigned_integer(arena, element_type, source):
+        builder.append("cinder_selfhost_print_u64_list(")
+    elif codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "f32") or codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "f64"):
+        builder.append("cinder_selfhost_print_f64_list(")
+    else:
+        builder.append("cinder_selfhost_print_i32_list(")
+    builder.append("cinder_print_list->data, cinder_print_list->length")
+    if first:
+        builder.append(", true); }); ")
+    else:
+        builder.append(", false); }); ")
+
+def emit_print_fstring_segments(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+    state: &codegen_context.ModuleExpressionState,
+    emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.value_length < 3:
+        return
+    content_start = node.value_start + 2
+    content_end = node.value_start + node.value_length - 1
+    segment_start = content_start
+    index = content_start
+    while index < content_end:
+        byte = source.byte_at(index)
+        if byte == 92:
+            if index + 1 < content_end:
+                index += 2
+            else:
+                index += 1
+            continue
+        if byte == 123:
+            if index + 1 < content_end and source.byte_at(index + 1) == 123:
+                emit_fstring_literal(source, segment_start, index, builder)
+                builder.append("printf(\"{\"); ")
+                index += 2
+                segment_start = index
+                continue
+            emit_fstring_literal(source, segment_start, index, builder)
+            field = scan_fstring_field(source, index + 1, content_end)
+            if not field.valid:
+                emit_fstring_literal(source, index, content_end, builder)
+                return
+            expression_start = trim_left(source, index + 1, field.expression_end)
+            expression_end = trim_right(source, expression_start, field.expression_end)
+            if expression_end > expression_start:
+                expression_source = source[expression_start:expression_end]
+                scan = lexer.new_lexer(expression_source)
+                scan.tokenize()
+                parsed = parser.new_parser(&scan)
+                expression = parsed.parse_expression(0)
+                if len(scan.diagnostics) == 0 and len(parsed.diagnostics) == 0 and expression.index >= 0:
+                    format_start = field.format_start
+                    format_length: usize = 0
+                    if format_start < field.close:
+                        format_start = trim_left(source, format_start + 1, field.close)
+                        format_end = trim_right(source, format_start, field.close)
+                        format_length = format_end - format_start
+                    nested_state = codegen_context.ModuleExpressionState(
+                        arena=&parsed.arena,
+                        source=&scan.source,
+                        builder=state.builder,
+                        prefix=state.prefix,
+                        project_name=state.project_name,
+                        imports=state.imports,
+                        context=state.context,
+                    )
+                    emit_fstring_replacement(
+                        &parsed.arena,
+                        expression,
+                        &scan.source,
+                        source,
+                        format_start,
+                        format_length,
+                        builder,
+                        prefix,
+                        project_name,
+                        imports,
+                        context,
+                        &nested_state,
+                        emit_nested,
+                    )
+            index = field.close + 1
+            segment_start = index
+            continue
+        if byte == 125 and index + 1 < content_end and source.byte_at(index + 1) == 125:
+            emit_fstring_literal(source, segment_start, index, builder)
+            builder.append("printf(\"}\"); ")
+            index += 2
+            segment_start = index
+            continue
+        index += 1
+    emit_fstring_literal(source, segment_start, content_end, builder)
+
+def scan_fstring_field(source: &const String, start: usize, end: usize) -> codegen_model.FStringField:
+    brackets: List[u8] = []
+    index = start
+    format_start = end
+    while index < end:
+        byte = source.byte_at(index)
+        if byte == 34 or byte == 39:
+            index = skip_fstring_quoted(source, index, end)
+            continue
+        if byte == 40:
+            brackets.append(41)
+            index += 1
+            continue
+        if byte == 91:
+            brackets.append(93)
+            index += 1
+            continue
+        if byte == 123:
+            brackets.append(125)
+            index += 1
+            continue
+        if byte == 41 or byte == 93 or byte == 125:
+            if len(brackets) > 0:
+                if brackets[len(brackets) - 1] == byte:
+                    brackets.pop()
+                index += 1
+                continue
+            if byte == 125:
+                expression_end = index
+                if format_start < end:
+                    expression_end = format_start
+                return codegen_model.FStringField(
+                    expression_end=expression_end,
+                    format_start=format_start,
+                    close=index,
+                    valid=true,
+                )
+            index += 1
+            continue
+        if byte == 58 and len(brackets) == 0 and format_start == end:
+            format_start = index
+        index += 1
+    return codegen_model.FStringField(expression_end=end, format_start=end, close=end, valid=false)
+
+def skip_fstring_quoted(source: &const String, start: usize, end: usize) -> usize:
+    quote = source.byte_at(start)
+    index = start + 1
+    escaped = false
+    while index < end:
+        byte = source.byte_at(index)
+        if escaped:
+            escaped = false
+        elif byte == 92:
+            escaped = true
+        elif byte == quote:
+            return index + 1
+        index += 1
+    return index
+
+def trim_left(source: &const String, start: usize, end: usize) -> usize:
+    index = start
+    while index < end:
+        byte = source.byte_at(index)
+        if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+            break
+        index += 1
+    return index
+
+def trim_right(source: &const String, start: usize, end: usize) -> usize:
+    index = end
+    while index > start:
+        byte = source.byte_at(index - 1)
+        if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+            break
+        index -= 1
+    return index
+
+def emit_fstring_literal(source: &const String, start: usize, end: usize, builder: &StringBuilder) -> void:
+    if start >= end:
+        return
+    builder.append("printf(\"")
+    index = start
+    chunk_start = start
+    while index < end:
+        byte = source.byte_at(index)
+        if byte == 92 and index + 1 < end:
+            if index > chunk_start:
+                builder.append(source[chunk_start:index])
+            builder.append(source[index:index + 2])
+            index += 2
+            chunk_start = index
+            continue
+        if byte == 34:
+            if index > chunk_start:
+                builder.append(source[chunk_start:index])
+            builder.append("\\\"")
+            chunk_start = index + 1
+        elif byte == 37:
+            if index > chunk_start:
+                builder.append(source[chunk_start:index])
+            builder.append("%%")
+            chunk_start = index + 1
+        elif byte == 10:
+            if index > chunk_start:
+                builder.append(source[chunk_start:index])
+            builder.append("\\n")
+            chunk_start = index + 1
+        elif byte == 13:
+            if index > chunk_start:
+                builder.append(source[chunk_start:index])
+            builder.append("\\r")
+            chunk_start = index + 1
+        index += 1
+    if end > chunk_start:
+        builder.append(source[chunk_start:end])
+    builder.append("\"); ")
+
+def emit_fstring_replacement(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    format_source: &const String,
+    format_start: usize,
+    format_length: usize,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+    state: &codegen_context.ModuleExpressionState,
+    emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    if id.index >= 0 and arena.nodes[id.index].kind == SyntaxKind.EXPR_FSTRING:
+        emit_print_fstring_segments(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+    type_id = codegen_context.context_expression_type(arena, context, id, source)
+    if codegen_context.context_type_is_list(context.type_arena, type_id, context.type_source):
+        emit_print_list_value(arena, id, source, builder, prefix, project_name, imports, context, type_id, true, state, emit_nested)
+        return
+    conversion: u8 = 0
+    if format_length > 0:
+        conversion = format_source.byte_at(format_start + format_length - 1)
+    string_value = codegen_context.expression_may_be_string(arena, context, id, source)
+    if conversion == 115 and fstring_expression_is_type(arena, context, id, source, "bool"):
+        builder.append("printf(\"%s\", (")
+        emit_nested(state, id)
+        builder.append(") ? \"true\" : \"false\"); ")
+        return
+    if conversion == 115 or (conversion == 0 and string_value):
+        if string_value:
+            builder.append("cinder_selfhost_print_string_fragment(")
+            emit_string_value_expression(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+            builder.append("); ")
+        else:
+            builder.append("printf(\"%s\", ")
+            emit_nested(state, id)
+            builder.append("); ")
+        return
+    if conversion == 99 or (conversion == 0 and fstring_expression_is_type(arena, context, id, source, "char")):
+        builder.append("printf(\"%c\", (int)(")
+        emit_nested(state, id)
+        builder.append(")); ")
+        return
+    if conversion == 0 and fstring_expression_is_type(arena, context, id, source, "bool"):
+        builder.append("printf(\"%s\", (")
+        emit_nested(state, id)
+        builder.append(") ? \"true\" : \"false\"); ")
+        return
+    if is_float_conversion(conversion) or (conversion == 0 and fstring_expression_is_float(arena, context, id, source)):
+        builder.append("printf(\"")
+        if format_length == 0:
+            builder.append("%g")
+        else:
+            builder.append("%")
+            builder.append(format_source[format_start:format_start + format_length])
+        builder.append("\", (double)(")
+        emit_nested(state, id)
+        builder.append(")); ")
+        return
+    if conversion == 117 or conversion == 111 or conversion == 120 or conversion == 88:
+        builder.append("printf(\"%ll")
+        builder.append(format_source[format_start + format_length - 1:format_start + format_length])
+        builder.append("\", (unsigned long long)(")
+        emit_nested(state, id)
+        builder.append(")); ")
+        return
+    builder.append("printf(\"%lld\", (long long)(")
+    emit_nested(state, id)
+    builder.append(")); ")
+
+def is_float_conversion(conversion: u8) -> bool:
+    return conversion == 102 or conversion == 70 or conversion == 101 or conversion == 69 or conversion == 103 or conversion == 71
+
+def fstring_expression_is_float(arena: &const SyntaxArena, context: &codegen_context.ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
+    return fstring_expression_is_type(arena, context, id, source, "f32") or fstring_expression_is_type(arena, context, id, source, "f64")
+
+def fstring_expression_is_type(arena: &const SyntaxArena, context: &codegen_context.ModuleCodegenContext, id: NodeId, source: &const String, expected: String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL:
+        if expected == "bool":
+            return node.flags == cast[i32](token.TokenKind.TRUE) or node.flags == cast[i32](token.TokenKind.FALSE)
+        if expected == "char":
+            return node.flags == cast[i32](token.TokenKind.CHAR)
+        if expected == "f64":
+            return node.flags == cast[i32](token.TokenKind.FLOAT)
+    type_id = codegen_context.context_expression_type(arena, context, id, source)
+    return codegen_type_names.context_type_name_equals(context.type_arena, type_id, context.type_source, expected)

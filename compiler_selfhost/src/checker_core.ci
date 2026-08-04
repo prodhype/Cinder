@@ -1,0 +1,116 @@
+import semantic
+import symbols
+import syntax
+import types
+from syntax import NodeId
+
+
+struct CheckerDiagnostic:
+    code: i32
+    start: usize
+    length: usize
+    line: i32
+    column: i32
+
+
+struct Checker:
+    type_table: types.TypeTable
+    symbols: symbols.SymbolTable
+    model: semantic.SemanticModel
+    diagnostics: List[CheckerDiagnostic]
+
+    def emit_error(self: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
+        if len(self.diagnostics) > 0:
+            return
+        self.diagnostics.append(
+            CheckerDiagnostic(code=code, start=start, length=length, line=line, column=column)
+        )
+
+
+def new_checker() -> Checker:
+    diagnostics: List[CheckerDiagnostic] = []
+    return Checker(type_table=types.new_type_table(), symbols=symbols.new_symbol_table(), model=semantic.new_semantic_model(), diagnostics=diagnostics)
+
+
+def emit_error(checker: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
+    checker.emit_error(code, start, length, line, column)
+
+
+def dump_diagnostics(checker: &const Checker) -> void:
+    for diagnostic in checker.diagnostics:
+        print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+
+
+def count_direct_children(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> i32:
+    node = arena.nodes[id.index]
+    count: i32 = 0
+    for offset in range(0, node.child_count):
+        child = arena.nodes[arena.children[node.first_child + offset].index]
+        if child.kind == kind:
+            count += 1
+    return count
+
+
+def first_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        return syntax.missing_node()
+    return arena.children[node.first_child]
+
+
+def second_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 1:
+        return syntax.missing_node()
+    return arena.children[node.first_child + 1]
+
+
+def last_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        return syntax.missing_node()
+    return arena.children[node.first_child + node.child_count - 1]
+
+
+def find_child_kind(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == kind:
+            return child_id
+    return syntax.missing_node()
+
+
+def resolve_declared_type_or_default(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, fallback: types.TypeId) -> types.TypeId:
+    type_node = find_child_type(arena, id)
+    if type_node.index < 0:
+        return fallback
+    type_id = checker.type_table.resolve_type_node(arena, type_node, source)
+    checker.model.record_type_node(type_node, type_id)
+    return type_id
+
+
+def find_child_type(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if is_type_kind(child.kind):
+            return child_id
+    return syntax.missing_node()
+
+
+def is_type_kind(kind: syntax.SyntaxKind) -> bool:
+    return kind == syntax.SyntaxKind.TYPE_NAME or kind == syntax.SyntaxKind.TYPE_GENERIC or kind == syntax.SyntaxKind.TYPE_CONST or kind == syntax.SyntaxKind.TYPE_POINTER or kind == syntax.SyntaxKind.TYPE_REFERENCE or kind == syntax.SyntaxKind.TYPE_ARRAY or kind == syntax.SyntaxKind.TYPE_SLICE or kind == syntax.SyntaxKind.TYPE_DYN or kind == syntax.SyntaxKind.TYPE_FUNCTION or kind == syntax.SyntaxKind.TYPE_CLOSURE
+
+
+def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:
+    if length != len(text):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != text.byte_at(offset):
+            return false
+        offset += 1
+    return true

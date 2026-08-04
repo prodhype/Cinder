@@ -1,0 +1,712 @@
+import backend_ir
+import codegen_names
+import codegen_type_names
+import project
+import syntax
+import token
+import types
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+struct ModuleNameTypeBinding:
+    name: String
+    type_id: NodeId
+    moved: bool
+
+struct ModuleFieldTypeBinding:
+    owner: String
+    field: String
+    type_id: NodeId
+
+struct ModuleCodegenContext:
+    root: NodeId
+    type_arena: &const SyntaxArena
+    type_source: &const String
+    specialization_names: &const codegen_names.SpecializationNameRegistry
+    semantic_nodes: &const List[backend_ir.IRNode]
+    type_table: &const types.TypeTable
+    local_types: List[ModuleNameTypeBinding]
+    pointer_names: List[String]
+    field_types: List[ModuleFieldTypeBinding]
+    current_owner: String
+    local_start: usize
+    pointer_start: usize
+    deferred_expressions: List[NodeId]
+    with_resources: List[String]
+    global_names: List[String]
+    extern_names: List[String]
+    current_return_type: NodeId
+    expected_type: NodeId
+    temporary_index: i32
+
+struct ModuleExpressionState:
+    arena: &const SyntaxArena
+    source: &const String
+    builder: &StringBuilder
+    prefix: &const String
+    project_name: &const String
+    imports: &const List[project.ImportBinding]
+    context: &ModuleCodegenContext
+
+
+def make_module_codegen_context(
+    arena: &const SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    registry: &const codegen_names.SpecializationNameRegistry,
+    semantic_nodes: &const List[backend_ir.IRNode],
+    type_table: &const types.TypeTable,
+) -> ModuleCodegenContext:
+    local_types: List[ModuleNameTypeBinding] = []
+    pointer_names: List[String] = []
+    field_types: List[ModuleFieldTypeBinding] = []
+    deferred_expressions: List[NodeId] = []
+    with_resources: List[String] = []
+    global_names: List[String] = []
+    extern_names: List[String] = []
+    context = ModuleCodegenContext(
+        root=root,
+        type_arena=arena,
+        type_source=source,
+        specialization_names=registry,
+        semantic_nodes=semantic_nodes,
+        type_table=type_table,
+        local_types=local_types,
+        pointer_names=pointer_names,
+        field_types=field_types,
+        current_owner="",
+        local_start=0,
+        pointer_start=0,
+        deferred_expressions=deferred_expressions,
+        with_resources=with_resources,
+        global_names=global_names,
+        extern_names=extern_names,
+        current_return_type=syntax.missing_node(),
+        expected_type=syntax.missing_node(),
+        temporary_index=0,
+    )
+    collect_module_field_types(arena, root, source, context)
+    collect_module_global_names(arena, root, source, context)
+    collect_module_extern_names(arena, root, source, context)
+    return context
+
+def collect_module_extern_names(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.FUNCTION_DECL and node.flags == 1:
+        context.extern_names.append(source[node.value_start:node.value_start + node.value_length])
+        return
+    if node.kind == SyntaxKind.MODULE or node.kind == SyntaxKind.EXTERN_BLOCK:
+        for offset in range(0, node.child_count):
+            collect_module_extern_names(arena, arena.children[node.first_child + offset], source, context)
+
+def context_name_is_extern(context: &ModuleCodegenContext, name: &const String) -> bool:
+    for extern_name in context.extern_names:
+        if extern_name == name[0:len(name)]:
+            return true
+    return false
+
+def context_has_function_name(arena: &const SyntaxArena, id: NodeId, source: &const String, name: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.FUNCTION_DECL:
+        return codegen_names.range_text_equals(source, node.value_start, node.value_length, name[0:len(name)])
+    if node.kind == SyntaxKind.MODULE or node.kind == SyntaxKind.EXTERN_BLOCK:
+        for offset in range(0, node.child_count):
+            if context_has_function_name(arena, arena.children[node.first_child + offset], source, name):
+                return true
+    return false
+
+def find_function_return_type(arena: &const SyntaxArena, id: NodeId, source: &const String, name: &const String) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.FUNCTION_DECL and codegen_names.range_text_equals(source, node.value_start, node.value_length, name[0:len(name)]):
+        return codegen_type_names.find_child_type(arena, id)
+    if node.kind == SyntaxKind.MODULE or node.kind == SyntaxKind.EXTERN_BLOCK:
+        for offset in range(0, node.child_count):
+            found = find_function_return_type(arena, arena.children[node.first_child + offset], source, name)
+            if found.index >= 0:
+                return found
+    return syntax.missing_node()
+
+def collect_module_global_names(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            collect_module_global_names(arena, arena.children[node.first_child + offset], source, context)
+        return
+    if node.kind == SyntaxKind.GLOBAL_DECL:
+        context.global_names.append(source[node.value_start:node.value_start + node.value_length])
+
+def collect_module_field_types(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            collect_module_field_types(arena, arena.children[node.first_child + offset], source, context)
+        return
+    if node.kind == SyntaxKind.STRUCT_DECL or node.kind == SyntaxKind.CLASS_DECL or node.kind == SyntaxKind.UNION_DECL:
+        owner = source[node.value_start:node.value_start + node.value_length]
+        for offset in range(0, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            child = arena.nodes[child_id.index]
+            if child.kind == SyntaxKind.FIELD_DECL:
+                field_type = codegen_type_names.find_child_type(arena, child_id)
+                context.field_types.append(
+                    ModuleFieldTypeBinding(
+                        owner=owner[0:len(owner)],
+                        field=source[child.value_start:child.value_start + child.value_length],
+                        type_id=field_type,
+                    )
+                )
+
+def register_context_name_type(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, start: usize, length: usize, type_id: NodeId) -> void:
+    if length == 0:
+        return
+    name = source[start:start + length]
+    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false))
+    if type_id.index >= 0 and context_type_is_pointer_like(arena, type_id):
+        context.pointer_names.append(name[0:len(name)])
+
+def register_context_pointer_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
+    if length == 0:
+        return
+    context.pointer_names.append(source[start:start + length])
+
+def register_module_parameters(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.PARAMETER:
+            register_context_name_type(arena, context, source, child.value_start, child.value_length, codegen_type_names.find_child_type(arena, child_id))
+
+def context_name_type(context: &ModuleCodegenContext, name: &const String) -> NodeId:
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if context.local_types[index].name == name[0:len(name)]:
+            return context.local_types[index].type_id
+    return syntax.missing_node()
+
+def context_name_is_global(context: &ModuleCodegenContext, name: &const String) -> bool:
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if context.local_types[index].name == name[0:len(name)]:
+            return false
+    for global_name in context.global_names:
+        if global_name == name[0:len(name)]:
+            return true
+    return false
+
+def context_type_needs_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL:
+        return node.flags == cast[i32](token.TokenKind.STRING)
+    if node.kind == SyntaxKind.EXPR_CALL:
+        return context_type_is_string(arena, type_id, source)
+    if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+        return true
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return false
+    if node.kind == SyntaxKind.TYPE_NAME:
+        return codegen_names.range_text_equals(source, node.value_start, node.value_length, "String") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder")
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = codegen_names.first_child(arena, type_id)
+        if base.index < 0:
+            return false
+        base_node = arena.nodes[base.index]
+        return codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List")
+    return false
+
+def mark_context_expression_moved(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_NAME:
+        return
+    name = source[node.value_start:node.value_start + node.value_length]
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if context.local_types[index].name == name[0:len(name)]:
+            if context_type_needs_drop(arena, context.local_types[index].type_id, source):
+                context.local_types[index].moved = true
+            return
+
+def mark_context_expression_live(context: &ModuleCodegenContext, id: NodeId, arena: &const SyntaxArena, source: &const String) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_NAME:
+        return
+    name = source[node.value_start:node.value_start + node.value_length]
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if context.local_types[index].name == name[0:len(name)]:
+            context.local_types[index].moved = false
+            return
+
+def context_has_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> bool:
+    if length == 0:
+        return false
+    name = source[start:start + length]
+    local_index = len(context.local_types)
+    while local_index > context.local_start:
+        local_index -= 1
+        if context.local_types[local_index].name == name[0:len(name)]:
+            return true
+    pointer_index = len(context.pointer_names)
+    while pointer_index > context.pointer_start:
+        pointer_index -= 1
+        if context.pointer_names[pointer_index] == name[0:len(name)]:
+            return true
+    return false
+
+def context_name_is_pointer(arena: &const SyntaxArena, context: &ModuleCodegenContext, name: &const String) -> bool:
+    pointer_index = len(context.pointer_names)
+    while pointer_index > context.pointer_start:
+        pointer_index -= 1
+        if context.pointer_names[pointer_index] == name[0:len(name)]:
+            return true
+    binding_type = context_name_type(context, name)
+    return context_type_is_pointer_like(context.type_arena, binding_type)
+
+def context_type_is_pointer_like(arena: &const SyntaxArena, type_id: NodeId) -> bool:
+    if type_id.index < 0:
+        return false
+    kind = arena.nodes[type_id.index].kind
+    if kind == SyntaxKind.EXPR_UNARY:
+        return arena.nodes[type_id.index].flags == cast[i32](token.TokenKind.AMPERSAND)
+    return kind == SyntaxKind.TYPE_POINTER or kind == SyntaxKind.TYPE_REFERENCE
+
+def context_type_is_runtime_generic(arena: &const SyntaxArena, type_id: NodeId, source: &const String, expected: String) -> bool:
+    current = type_id
+    while current.index >= 0:
+        current_node = arena.nodes[current.index]
+        if current_node.kind != SyntaxKind.TYPE_REFERENCE and current_node.kind != SyntaxKind.TYPE_POINTER and current_node.kind != SyntaxKind.TYPE_CONST:
+            break
+        current = codegen_names.first_child(arena, current)
+    if current.index < 0:
+        return false
+    node = arena.nodes[current.index]
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return false
+    base = codegen_names.first_child(arena, current)
+    if base.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
+    return codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, expected)
+
+def context_generic_argument(arena: &const SyntaxArena, type_id: NodeId, index: i32) -> NodeId:
+    if type_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_generic_argument(arena, codegen_names.first_child(arena, type_id), index)
+    if node.kind != SyntaxKind.TYPE_GENERIC or index < 0 or index + 1 >= node.child_count:
+        return syntax.missing_node()
+    return arena.children[node.first_child + index + 1]
+
+def context_type_is_list(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_LIST:
+        return true
+    if node.kind == SyntaxKind.TYPE_ARRAY or node.kind == SyntaxKind.TYPE_SLICE:
+        return true
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_type_is_list(arena, codegen_names.first_child(arena, type_id), source)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return false
+    base = codegen_names.first_child(arena, type_id)
+    if base.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
+    return codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List") or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Slice")
+
+def context_list_element_type(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> NodeId:
+    if type_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_LIST:
+        if node.child_count > 0:
+            return arena.children[node.first_child]
+        return syntax.missing_node()
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_list_element_type(arena, codegen_names.first_child(arena, type_id), source)
+    if node.kind == SyntaxKind.TYPE_ARRAY:
+        return codegen_names.first_child(arena, type_id)
+    if node.kind == SyntaxKind.TYPE_SLICE:
+        return codegen_names.first_child(arena, type_id)
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = codegen_names.first_child(arena, type_id)
+        if base.index >= 0:
+            base_node = arena.nodes[base.index]
+            if codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List") or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Slice"):
+                if node.child_count > 1:
+                    return arena.children[node.first_child + 1]
+    return syntax.missing_node()
+
+def context_field_type(context: &ModuleCodegenContext, owner: &const String, field: &const String) -> NodeId:
+    index = len(context.field_types)
+    while index > 0:
+        index -= 1
+        if context.field_types[index].owner == owner[0:len(owner)] and context.field_types[index].field == field[0:len(field)]:
+            return context.field_types[index].type_id
+    return syntax.missing_node()
+
+def context_field_type_for_receiver(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    receiver: NodeId,
+    member: NodeId,
+    source: &const String,
+) -> NodeId:
+    if receiver.index < 0 or member.index < 0:
+        return syntax.missing_node()
+    member_node = arena.nodes[member.index]
+    field_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind == SyntaxKind.EXPR_NAME:
+        receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+        if receiver_name == "self" and len(context.current_owner) > 0:
+            return context_field_type(context, &context.current_owner, &field_name)
+    receiver_type = context_expression_type(arena, context, receiver, source)
+    owner = codegen_type_names.context_type_owner_name(context.type_arena, receiver_type, context.type_source)
+    if len(owner) > 0:
+        return context_field_type(context, &owner, &field_name)
+    return syntax.missing_node()
+
+def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.TypeId:
+    semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
+    for node in semantic_nodes:
+        if node.syntax.index == id.index:
+            return node.type_id
+    return types.missing_type()
+
+def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL or node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET or node.kind == SyntaxKind.EXPR_TUPLE or node.kind == SyntaxKind.EXPR_ALLOC:
+        return id
+    if node.kind == SyntaxKind.EXPR_SLICE:
+        receiver_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
+        if context_type_is_string(context.type_arena, receiver_type, context.type_source):
+            value_type = receiver_type
+            while value_type.index >= 0:
+                value_kind = codegen_type_names.type_node_kind(context.type_arena, value_type)
+                if value_kind != SyntaxKind.TYPE_REFERENCE and value_kind != SyntaxKind.TYPE_POINTER and value_kind != SyntaxKind.TYPE_CONST:
+                    break
+                value_type = codegen_names.first_child(context.type_arena, value_type)
+            return value_type
+        return id
+    if node.kind == SyntaxKind.EXPR_CAST:
+        return codegen_type_names.find_child_type(arena, id)
+    if node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, id)
+        if callee.index >= 0:
+            callee_node = arena.nodes[callee.index]
+            if callee_node.kind == SyntaxKind.EXPR_NAME:
+                if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "Ok") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "Err"):
+                    if context_type_is_runtime_generic(context.type_arena, context.expected_type, context.type_source, "Result"):
+                        return context.expected_type
+                if codegen_names.is_uppercase_start(source, callee_node.value_start) or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "String") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "input") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "to_string"):
+                    return id
+                name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+                return_type = find_function_return_type(context.type_arena, context.root, context.type_source, &name)
+                if return_type.index >= 0:
+                    return return_type
+            if context_type_is_string(arena, id, source):
+                return id
+    if node.kind == SyntaxKind.EXPR_UNARY:
+        if node.flags == cast[i32](token.TokenKind.AMPERSAND):
+            return id
+        return context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
+    if node.kind == SyntaxKind.EXPR_BINARY:
+        left_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
+        if left_type.index >= 0:
+            return left_type
+        return context_expression_type(arena, context, codegen_names.second_child(arena, id), source)
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        return context_name_type(context, &name)
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        return context_field_type_for_receiver(arena, context, codegen_names.first_child(arena, id), codegen_names.second_child(arena, id), source)
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
+        return context_list_element_type(context.type_arena, receiver_type, context.type_source)
+    if node.kind == SyntaxKind.EXPR_PROPAGATE:
+        source_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
+        return context_generic_argument(context.type_arena, source_type, 0)
+    return syntax.missing_node()
+
+def context_expression_is_pointer_like(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        return context_name_is_pointer(arena, context, &name)
+    if node.kind == SyntaxKind.EXPR_UNARY:
+        return node.flags == cast[i32](token.TokenKind.AMPERSAND)
+    if node.kind == SyntaxKind.EXPR_ALLOC:
+        return true
+    if node.kind != SyntaxKind.EXPR_ATTRIBUTE and node.kind != SyntaxKind.EXPR_INDEX:
+        return false
+    expr_type = context_expression_type(arena, context, id, source)
+    return context_type_is_pointer_like(context.type_arena, expr_type)
+
+def context_expression_list_element_type(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> NodeId:
+    if id.index >= 0 and arena.nodes[id.index].kind == SyntaxKind.EXPR_SLICE:
+        receiver = codegen_names.first_child(arena, id)
+        return context_expression_list_element_type(arena, context, receiver, source)
+    expr_type = context_expression_type(arena, context, id, source)
+    return context_list_element_type(context.type_arena, expr_type, context.type_source)
+
+def context_expression_is_pointer_initializer(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_UNARY and node.flags == cast[i32](token.TokenKind.AMPERSAND):
+        return true
+    return context_expression_is_pointer_like(arena, context, id, source)
+
+def emit_context_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, builder: &StringBuilder, local_start: usize) -> void:
+    index = len(context.local_types)
+    while index > local_start:
+        index -= 1
+        if not context.local_types[index].moved:
+            emit_context_drop(arena, context.local_types[index].type_id, source, builder, &context.local_types[index].name)
+
+def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String, builder: &StringBuilder, name: &const String) -> void:
+    if type_id.index < 0 or len(name) == 0:
+        return
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
+        builder.append("    cinder_string_drop(&")
+        builder.append(name[0:len(name)])
+        builder.append(");\n")
+        return
+    if node.kind == SyntaxKind.EXPR_CALL and context_type_is_string(arena, type_id, source):
+        builder.append("    cinder_string_drop(&")
+        builder.append(name[0:len(name)])
+        builder.append(");\n")
+        return
+    if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+        builder.append("    free(")
+        builder.append(name[0:len(name)])
+        builder.append(".data);\n")
+        return
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return
+    if node.kind == SyntaxKind.TYPE_NAME:
+        if codegen_names.range_text_equals(source, node.value_start, node.value_length, "String"):
+            builder.append("    cinder_string_drop(&")
+            builder.append(name[0:len(name)])
+            builder.append(");\n")
+            return
+        if codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder"):
+            builder.append("    cinder_string_builder_drop(&")
+            builder.append(name[0:len(name)])
+            builder.append(");\n")
+            return
+        return
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = codegen_names.first_child(arena, type_id)
+        if base.index >= 0:
+            base_node = arena.nodes[base.index]
+            if codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List"):
+                builder.append("    free(")
+                builder.append(name[0:len(name)])
+                builder.append(".data);\n")
+                return
+
+def context_type_is_string(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL:
+        return node.flags == cast[i32](token.TokenKind.STRING)
+    if node.kind == SyntaxKind.EXPR_SLICE:
+        return false
+    if node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, type_id)
+        if callee.index >= 0:
+            callee_node = arena.nodes[callee.index]
+            if callee_node.kind == SyntaxKind.EXPR_NAME:
+                return codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "String") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "input") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "to_string")
+            if callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+                member = codegen_names.second_child(arena, callee)
+                if member.index >= 0:
+                    member_node = arena.nodes[member.index]
+                    return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "read_text") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "finish") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "trim") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "strip_quotes") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "basename") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "parent_dir") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "join_path") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "stem") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "replace_char") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "with_suffix")
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_type_is_string(arena, codegen_names.first_child(arena, type_id), source)
+    return node.kind == SyntaxKind.TYPE_NAME and codegen_names.range_text_equals(source, node.value_start, node.value_length, "String")
+
+def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
+        return true
+    if node.kind == SyntaxKind.EXPR_SLICE:
+        receiver = codegen_names.first_child(arena, id)
+        receiver_type = context_expression_type(arena, context, receiver, source)
+        if context_type_is_string(context.type_arena, receiver_type, context.type_source):
+            return true
+        return expression_may_be_string(arena, context, receiver, source)
+    if node.kind == SyntaxKind.EXPR_BINARY and node.flags == cast[i32](token.TokenKind.PLUS):
+        return expression_may_be_string(arena, context, codegen_names.first_child(arena, id), source) or expression_may_be_string(arena, context, codegen_names.second_child(arena, id), source)
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver = codegen_names.first_child(arena, id)
+        if receiver.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_ATTRIBUTE:
+            member = codegen_names.second_child(arena, receiver)
+            if member.index >= 0:
+                member_node = arena.nodes[member.index]
+                if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "include_dirs") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "library_dirs") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "libraries") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "link_files") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "cflags") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "ldflags") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "dependencies"):
+                    return true
+    expr_type = context_expression_type(arena, context, id, source)
+    if context_type_is_string(context.type_arena, expr_type, context.type_source):
+        return true
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        member = codegen_names.second_child(arena, id)
+        if member.index < 0:
+            return false
+        member_node = arena.nodes[member.index]
+        if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "alias") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "module_name") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "member") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "name") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "source") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "output") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "stdout") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "stderr") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "path") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "root") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "entry") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "manifest") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "project_name") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "error") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "source_root"):
+            return true
+    if node.kind == SyntaxKind.EXPR_NAME and expr_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expr_type) == SyntaxKind.EXPR_SLICE:
+        return expression_may_be_string(context.type_arena, context, expr_type, context.type_source)
+    if expr_type.index >= 0:
+        return false
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return codegen_names.range_text_equals(source, node.value_start, node.value_length, "command") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "output") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "c_source") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "path") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "source") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "message") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "text") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "alias") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "module_name") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "member")
+    return false
+
+def should_borrow_named_argument(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if context_expression_is_pointer_like(arena, context, id, source):
+        return false
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return codegen_names.range_text_equals(source, node.value_start, node.value_length, "summary") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "module") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "child_nodes") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "builder") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "context") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "check") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "checker") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "checked") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "ir") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "scan") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "parsed")
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        member = codegen_names.second_child(arena, id)
+        if member.index < 0:
+            return false
+        member_node = arena.nodes[member.index]
+        return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "type_table") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "symbols") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "model") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "arena") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "native") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "source")
+    return false
+
+def call_is_name(arena: &const SyntaxArena, callee: NodeId, source: &const String, name: String) -> bool:
+    if callee.index < 0:
+        return false
+    node = arena.nodes[callee.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return codegen_names.range_text_equals(source, node.value_start, node.value_length, name[0:len(name)])
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        member = codegen_names.second_child(arena, callee)
+        if member.index >= 0:
+            member_node = arena.nodes[member.index]
+            return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, name[0:len(name)])
+    return false
+
+def should_borrow_for_callee(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    callee: NodeId,
+    arg: NodeId,
+    source: &const String,
+    argument_index: usize,
+) -> bool:
+    if arg.index < 0 or context_expression_is_pointer_like(arena, context, arg, source):
+        return false
+    arg_node = arena.nodes[arg.index]
+    if arg_node.kind == SyntaxKind.EXPR_UNARY and arg_node.flags == cast[i32](token.TokenKind.AMPERSAND):
+        return false
+    expected_type = context_callee_parameter_type(arena, context, callee, source, argument_index)
+    if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE:
+        return true
+    if expected_type.index >= 0:
+        return false
+    if arg_node.kind == SyntaxKind.EXPR_NAME and (codegen_names.range_text_equals(source, arg_node.value_start, arg_node.value_length, "decorators") or codegen_names.range_text_equals(source, arg_node.value_start, arg_node.value_length, "member_decorators")):
+        return true
+    arg_type = context_expression_type(arena, context, arg, source)
+    if context_type_is_list(context.type_arena, arg_type, context.type_source):
+        if call_is_name(arena, callee, source, "parse_options") or call_is_name(arena, callee, source, "emit_ok") or call_is_name(arena, callee, source, "resolve_paths"):
+            return false
+        return true
+    if arg_node.kind != SyntaxKind.EXPR_NAME:
+        return false
+    if not codegen_names.range_text_equals(source, arg_node.value_start, arg_node.value_length, "args"):
+        return false
+    return call_is_name(arena, callee, source, "tuple_from_args") or call_is_name(arena, callee, source, "function_from_args") or call_is_name(arena, callee, source, "closure_from_args") or call_is_name(arena, callee, source, "specialization_suffix") or call_is_name(arena, callee, source, "record_specialization")
+
+def context_callee_parameter_type(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    callee: NodeId,
+    source: &const String,
+    argument_index: usize,
+) -> NodeId:
+    if callee.index < 0:
+        return syntax.missing_node()
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind != SyntaxKind.EXPR_NAME:
+        return syntax.missing_node()
+    name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+    return find_function_parameter_type(
+        context.type_arena,
+        context.root,
+        context.type_source,
+        &name,
+        argument_index,
+    )
+
+def find_function_parameter_type(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    name: &const String,
+    parameter_index: usize,
+) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.FUNCTION_DECL and codegen_names.range_text_equals(source, node.value_start, node.value_length, name[0:len(name)]):
+        seen: usize = 0
+        for offset in range(0, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            child = arena.nodes[child_id.index]
+            if child.kind == SyntaxKind.PARAMETER:
+                if seen == parameter_index:
+                    return codegen_type_names.find_child_type(arena, child_id)
+                seen += 1
+        return syntax.missing_node()
+    if node.kind == SyntaxKind.MODULE or node.kind == SyntaxKind.EXTERN_BLOCK:
+        for offset in range(0, node.child_count):
+            found = find_function_parameter_type(
+                arena,
+                arena.children[node.first_child + offset],
+                source,
+                name,
+                parameter_index,
+            )
+            if found.index >= 0:
+                return found
+    return syntax.missing_node()

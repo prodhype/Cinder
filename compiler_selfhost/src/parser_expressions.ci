@@ -1,0 +1,221 @@
+import lexer
+import parser_core
+import parser_types
+import syntax
+from syntax import NodeId, SyntaxKind
+from token import Token, TokenKind
+
+def parse_expression(context: &parser_core.ParserContext, minimum_precedence: i32) -> NodeId:
+    left = parse_unary(context)
+    while not *context.failed:
+        precedence = parser_core.binary_precedence(parser_core.current(context).kind)
+        is_not_in = false
+        if parser_core.at(context, TokenKind.NOT) and parser_core.peek(context, 1).kind == TokenKind.IN:
+            precedence = parser_core.binary_precedence(TokenKind.IN)
+            is_not_in = true
+        if precedence == 0 or precedence < minimum_precedence:
+            break
+        operator = parser_core.advance(context)
+        if is_not_in:
+            parser_core.advance(context)
+        right = parse_expression(context, precedence + 1)
+        children: List[NodeId] = []
+        syntax.append_valid(children, left)
+        syntax.append_valid(children, right)
+        left = parser_core.make_node(context, SyntaxKind.EXPR_BINARY, operator, parser_core.previous(context), operator, children, cast[i32](operator.kind))
+    return left
+
+def parse_unary(context: &parser_core.ParserContext) -> NodeId:
+    if parser_core.at(context, TokenKind.NOT) or parser_core.at(context, TokenKind.MINUS) or parser_core.at(context, TokenKind.PLUS) or parser_core.at(context, TokenKind.TILDE) or parser_core.at(context, TokenKind.STAR) or parser_core.at(context, TokenKind.AMPERSAND):
+        operator = parser_core.advance(context)
+        children: List[NodeId] = []
+        syntax.append_valid(children, parse_unary(context))
+        return parser_core.make_node(context, SyntaxKind.EXPR_UNARY, operator, parser_core.previous(context), operator, children, cast[i32](operator.kind))
+    return parse_postfix(context)
+
+def parse_postfix(context: &parser_core.ParserContext) -> NodeId:
+    expression = parse_primary(context)
+    while not *context.failed:
+        if looks_like_generic_call(context):
+            type_children: List[NodeId] = []
+            parser_core.expect(context, TokenKind.LEFT_BRACKET, 68)
+            parser_types.parse_type_list(context, type_children, TokenKind.RIGHT_BRACKET)
+            parser_core.expect(context, TokenKind.RIGHT_BRACKET, 68)
+            call_children: List[NodeId] = []
+            syntax.append_valid(call_children, expression)
+            for child in type_children:
+                syntax.append_valid(call_children, child)
+            parse_call_arguments(context, call_children)
+            expression = parser_core.make_node(context, SyntaxKind.EXPR_CALL, parser_core.previous(context), parser_core.previous(context), parser_core.previous(context), call_children, 1)
+            continue
+        if parser_core.at(context, TokenKind.LEFT_PAREN):
+            call_children: List[NodeId] = []
+            syntax.append_valid(call_children, expression)
+            parse_call_arguments(context, call_children)
+            expression = parser_core.make_node(context, SyntaxKind.EXPR_CALL, parser_core.previous(context), parser_core.previous(context), parser_core.previous(context), call_children, 0)
+            continue
+        if parser_core.match_kind(context, TokenKind.DOT):
+            dot = parser_core.previous(context)
+            name = parser_core.expect(context, TokenKind.NAME, 71)
+            children: List[NodeId] = []
+            syntax.append_valid(children, expression)
+            syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
+            expression = parser_core.make_node(context, SyntaxKind.EXPR_ATTRIBUTE, dot, name, name, children, 0)
+            continue
+        if parser_core.match_kind(context, TokenKind.LEFT_BRACKET):
+            bracket = parser_core.previous(context)
+            children: List[NodeId] = []
+            syntax.append_valid(children, expression)
+            if parser_core.match_kind(context, TokenKind.COLON):
+                if not parser_core.at(context, TokenKind.RIGHT_BRACKET):
+                    syntax.append_valid(children, parse_expression(context, 0))
+                close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 73)
+                expression = parser_core.make_node(context, SyntaxKind.EXPR_SLICE, bracket, close, bracket, children, 1)
+                continue
+            syntax.append_valid(children, parse_expression(context, 0))
+            if parser_core.match_kind(context, TokenKind.COLON):
+                if not parser_core.at(context, TokenKind.RIGHT_BRACKET):
+                    syntax.append_valid(children, parse_expression(context, 0))
+                close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 74)
+                expression = parser_core.make_node(context, SyntaxKind.EXPR_SLICE, bracket, close, bracket, children, 0)
+                continue
+            close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 75)
+            expression = parser_core.make_node(context, SyntaxKind.EXPR_INDEX, bracket, close, bracket, children, 0)
+            continue
+        if parser_core.match_kind(context, TokenKind.QUESTION):
+            question = parser_core.previous(context)
+            children: List[NodeId] = []
+            syntax.append_valid(children, expression)
+            expression = parser_core.make_node(context, SyntaxKind.EXPR_PROPAGATE, question, question, question, children, 0)
+            continue
+        break
+    return expression
+
+def parse_call_arguments(context: &parser_core.ParserContext, children: &List[NodeId]) -> void:
+    start = parser_core.expect(context, TokenKind.LEFT_PAREN, 72)
+    if not parser_core.at(context, TokenKind.RIGHT_PAREN):
+        while not *context.failed:
+            arg_start = parser_core.current(context)
+            arg_children: List[NodeId] = []
+            flags: i32 = 0
+            if parser_core.at(context, TokenKind.NAME) and parser_core.peek(context, 1).kind == TokenKind.ASSIGN:
+                name = parser_core.advance(context)
+                parser_core.advance(context)
+                syntax.append_valid(arg_children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
+                flags = 1
+            syntax.append_valid(arg_children, parse_expression(context, 0))
+            syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.EXPR_ARGUMENT, arg_start, parser_core.previous(context), arg_start, arg_children, flags))
+            if not parser_core.match_kind(context, TokenKind.COMMA):
+                break
+            if parser_core.at(context, TokenKind.RIGHT_PAREN):
+                break
+    close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 76)
+    ignored_start = start
+    ignored_close = close
+
+def parse_primary(context: &parser_core.ParserContext) -> NodeId:
+    token = parser_core.current(context)
+    if parser_core.match_kind(context, TokenKind.INTEGER) or parser_core.match_kind(context, TokenKind.FLOAT) or parser_core.match_kind(context, TokenKind.STRING) or parser_core.match_kind(context, TokenKind.CHAR) or parser_core.match_kind(context, TokenKind.FSTRING) or parser_core.match_kind(context, TokenKind.TRUE) or parser_core.match_kind(context, TokenKind.FALSE) or parser_core.match_kind(context, TokenKind.NULL) or parser_core.match_kind(context, TokenKind.NONE):
+        literal = parser_core.previous(context)
+        kind = SyntaxKind.EXPR_LITERAL
+        if literal.kind == TokenKind.FSTRING:
+            kind = SyntaxKind.EXPR_FSTRING
+        return parser_core.make_token_node(context, kind, literal, cast[i32](literal.kind))
+    if parser_core.at(context, TokenKind.NAME) and (parser_core.token_text_equals(context, parser_core.current(context), "cast") or parser_core.token_text_equals(context, parser_core.current(context), "alloc")) and parser_core.peek(context, 1).kind == TokenKind.LEFT_BRACKET:
+        builtin = parser_core.advance(context)
+        children: List[NodeId] = []
+        parser_core.expect(context, TokenKind.LEFT_BRACKET, 77)
+        syntax.append_valid(children, parser_types.parse_type(context))
+        parser_core.expect(context, TokenKind.RIGHT_BRACKET, 77)
+        parser_core.expect(context, TokenKind.LEFT_PAREN, 77)
+        if not parser_core.at(context, TokenKind.RIGHT_PAREN):
+            syntax.append_valid(children, parse_expression(context, 0))
+        close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 78)
+        if parser_core.token_text_equals(context, builtin, "cast"):
+            return parser_core.make_node(context, SyntaxKind.EXPR_CAST, builtin, close, builtin, children, 0)
+        return parser_core.make_node(context, SyntaxKind.EXPR_ALLOC, builtin, close, builtin, children, 0)
+    if parser_core.match_kind(context, TokenKind.NAME):
+        name = parser_core.previous(context)
+        return parser_core.make_token_node(context, SyntaxKind.EXPR_NAME, name, 0)
+    if parser_core.match_kind(context, TokenKind.LEFT_PAREN):
+        start = parser_core.previous(context)
+        children: List[NodeId] = []
+        if parser_core.match_kind(context, TokenKind.RIGHT_PAREN):
+            return parser_core.make_node(context, SyntaxKind.EXPR_TUPLE, start, parser_core.previous(context), start, children, 0)
+        first = parse_expression(context, 0)
+        if parser_core.match_kind(context, TokenKind.COMMA):
+            syntax.append_valid(children, first)
+            while not parser_core.at(context, TokenKind.RIGHT_PAREN) and not *context.failed:
+                syntax.append_valid(children, parse_expression(context, 0))
+                if not parser_core.match_kind(context, TokenKind.COMMA):
+                    break
+                if parser_core.at(context, TokenKind.RIGHT_PAREN):
+                    break
+            close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 80)
+            return parser_core.make_node(context, SyntaxKind.EXPR_TUPLE, start, close, start, children, 0)
+        close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 81)
+        ignored_close = close
+        return first
+    if parser_core.match_kind(context, TokenKind.LEFT_BRACKET):
+        start = parser_core.previous(context)
+        children: List[NodeId] = []
+        if not parser_core.at(context, TokenKind.RIGHT_BRACKET):
+            while not *context.failed:
+                syntax.append_valid(children, parse_expression(context, 0))
+                if not parser_core.match_kind(context, TokenKind.COMMA):
+                    break
+                if parser_core.at(context, TokenKind.RIGHT_BRACKET):
+                    break
+        close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 80)
+        return parser_core.make_node(context, SyntaxKind.EXPR_LIST, start, close, start, children, 0)
+    if parser_core.match_kind(context, TokenKind.LEFT_BRACE):
+        start = parser_core.previous(context)
+        children: List[NodeId] = []
+        if parser_core.match_kind(context, TokenKind.RIGHT_BRACE):
+            return parser_core.make_node(context, SyntaxKind.EXPR_MAP, start, parser_core.previous(context), start, children, 0)
+        first = parse_expression(context, 0)
+        if parser_core.match_kind(context, TokenKind.COLON):
+            entry_children: List[NodeId] = []
+            syntax.append_valid(entry_children, first)
+            syntax.append_valid(entry_children, parse_expression(context, 0))
+            syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.EXPR_MAP_ENTRY, start, parser_core.previous(context), start, entry_children, 0))
+            while parser_core.match_kind(context, TokenKind.COMMA):
+                if parser_core.at(context, TokenKind.RIGHT_BRACE):
+                    break
+                entry_start = parser_core.current(context)
+                key = parse_expression(context, 0)
+                parser_core.expect(context, TokenKind.COLON, 144)
+                value = parse_expression(context, 0)
+                more_children: List[NodeId] = []
+                syntax.append_valid(more_children, key)
+                syntax.append_valid(more_children, value)
+                syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.EXPR_MAP_ENTRY, entry_start, parser_core.previous(context), entry_start, more_children, 0))
+            close = parser_core.expect(context, TokenKind.RIGHT_BRACE, 80)
+            return parser_core.make_node(context, SyntaxKind.EXPR_MAP, start, close, start, children, 0)
+        syntax.append_valid(children, first)
+        while parser_core.match_kind(context, TokenKind.COMMA):
+            if parser_core.at(context, TokenKind.RIGHT_BRACE):
+                break
+            syntax.append_valid(children, parse_expression(context, 0))
+        close = parser_core.expect(context, TokenKind.RIGHT_BRACE, 80)
+        return parser_core.make_node(context, SyntaxKind.EXPR_SET, start, close, start, children, 0)
+    parser_core.emit_error(context, 82, token)
+    return syntax.missing_node()
+
+def looks_like_generic_call(context: &parser_core.ParserContext) -> bool:
+    if not parser_core.at(context, TokenKind.LEFT_BRACKET):
+        return false
+    depth: i32 = 0
+    index: usize = *context.index
+    while index < parser_core.token_count(context):
+        kind = parser_core.token_at(context, index).kind
+        if kind == TokenKind.LEFT_BRACKET:
+            depth += 1
+        elif kind == TokenKind.RIGHT_BRACKET:
+            depth -= 1
+            if depth == 0:
+                return index + 1 < parser_core.token_count(context) and parser_core.token_at(context, index + 1).kind == TokenKind.LEFT_PAREN
+        elif kind == TokenKind.NEWLINE or kind == TokenKind.EOF or kind == TokenKind.INDENT or kind == TokenKind.DEDENT:
+            return false
+        index += 1
+    return false

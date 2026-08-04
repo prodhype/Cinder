@@ -1,0 +1,40 @@
+import parser_core
+import parser_declarations
+import syntax
+from syntax import NodeId, SyntaxKind
+from token import Token, TokenKind
+
+def parse_module(context: &parser_core.ParserContext) -> NodeId:
+    start = parser_core.current(context)
+    children: List[NodeId] = []
+    while not parser_core.at(context, TokenKind.EOF) and not *context.failed:
+        if parser_core.match_kind(context, TokenKind.NEWLINE):
+            continue
+        decorators = parser_declarations.parse_decorators(context)
+        if parser_core.at(context, TokenKind.IMPORT):
+            syntax.append_valid(children, parser_declarations.parse_import(context, decorators))
+        elif parser_core.at(context, TokenKind.FROM):
+            syntax.append_valid(children, parser_declarations.parse_from_import(context, decorators))
+        elif parser_core.at(context, TokenKind.EXTERN):
+            parser_declarations.parse_extern(context, children, decorators)
+        elif parser_core.at(context, TokenKind.STRUCT):
+            syntax.append_valid(children, parser_declarations.parse_struct(context, decorators))
+        elif parser_core.at(context, TokenKind.CLASS) or parser_core.at(context, TokenKind.ABSTRACT):
+            syntax.append_valid(children, parser_declarations.parse_class(context, decorators))
+        elif parser_core.at(context, TokenKind.ENUM):
+            syntax.append_valid(children, parser_declarations.parse_enum(context, decorators))
+        elif parser_core.at(context, TokenKind.UNION):
+            syntax.append_valid(children, parser_declarations.parse_union(context, decorators))
+        elif parser_core.at(context, TokenKind.VARIANT):
+            syntax.append_valid(children, parser_declarations.parse_variant(context, decorators))
+        elif parser_core.at(context, TokenKind.DEF):
+            syntax.append_valid(children, parser_declarations.parse_function(context, decorators, false))
+        elif parser_core.at(context, TokenKind.NAME) and parser_core.token_text_equals(context, parser_core.current(context), "static_assert"):
+            syntax.append_valid(children, parser_declarations.parse_static_assert(context))
+        elif parser_core.at(context, TokenKind.CONST) or (parser_core.at(context, TokenKind.NAME) and (parser_core.peek(context, 1).kind == TokenKind.COLON or parser_core.peek(context, 1).kind == TokenKind.ASSIGN)):
+            syntax.append_valid(children, parser_declarations.parse_global(context))
+        else:
+            parser_core.emit_error(context, 2, parser_core.current(context))
+            break
+    end = parser_core.expect(context, TokenKind.EOF, 3)
+    return parser_core.make_node_from_range(context, SyntaxKind.MODULE, start, end, children, 0)

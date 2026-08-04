@@ -1,6 +1,8 @@
 import backend_ir
 import checker
+import checker_core
 import codegen
+import codegen_names
 import fs
 import lexer
 import parser
@@ -44,7 +46,7 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
         scan.tokenize()
         parsed = parser.new_parser(scan)
         root = parsed.parse_module()
-        checked = checker.new_checker()
+        checked: checker_core.Checker = checker.new_checker()
         checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
         checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
         ir = backend_ir.lower(parsed.arena, root, checked.model, checked.type_table)
@@ -90,7 +92,7 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
         scan.tokenize()
         parsed = parser.new_parser(scan)
         root = parsed.parse_module()
-        checked = checker.new_checker()
+        checked: checker_core.Checker = checker.new_checker()
         checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
         checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
         ir = backend_ir.lower(parsed.arena, root, checked.model, checked.type_table)
@@ -113,7 +115,7 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
         scan.tokenize()
         parsed = parser.new_parser(scan)
         root = parsed.parse_module()
-        checked = checker.new_checker()
+        checked: checker_core.Checker = checker.new_checker()
         checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
         checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
         ir = backend_ir.lower(parsed.arena, root, checked.model, checked.type_table)
@@ -134,7 +136,7 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
     return builder.finish()
 
 
-def collect_project_specialization_names(graph: &const project.ProjectGraph) -> codegen.SpecializationNameRegistry:
+def collect_project_specialization_names(graph: &const project.ProjectGraph) -> codegen_names.SpecializationNameRegistry:
     registry = codegen.new_specialization_name_registry()
     index: usize = 0
     while index < len(graph.modules):
