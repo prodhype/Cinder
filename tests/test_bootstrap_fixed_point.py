@@ -491,8 +491,11 @@ def test_gen1_preserves_runtime_generic_specializations(
         "    nested_single: Tuple[Tuple[i32, i64]],\n"
         ") -> i32:\n"
         "    return 0\n\n"
+            "def inferred_total() -> i32:\n"
+            "    values = [1, 2, 3]\n"
+            "    return len(values)\n\n"
         "def main() -> i32:\n"
-        "    return 0\n",
+            "    return inferred_total() - 3\n",
         encoding="utf-8",
     )
     generated = tmp_path / "generated"
@@ -508,24 +511,87 @@ def test_gen1_preserves_runtime_generic_specializations(
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for specialized_name in (
-        "CinderList_argument_3_i32",
-        "CinderList_argument_25_CinderList_argument_3_i32",
-        "CinderSet_argument_33_cinder_specialized_main__Resource",
-        "CinderMap_argument_3_i32_argument_25_CinderList_argument_3_i32",
-        "CinderOption_argument_25_CinderList_argument_3_i32",
-        "CinderOption_argument_14_pointer_4_FILE",
-        "CinderResult_argument_25_CinderList_argument_3_i32_argument_3_i32",
-        "CinderTuple_argument_25_CinderList_argument_3_i32_argument_3_i32",
-        "CinderTuple_argument_26_CinderTuple_argument_3_i32_argument_3_i64",
-        "CinderTuple_argument_41_CinderTuple_argument_3_i32_argument_3_i64",
+        "CinderList_i32",
+        "CinderList_CinderList_i32",
+        "CinderSet_Resource",
+        "CinderMap_i32_CinderList_i32",
+        "CinderOption_CinderList_i32",
+        "CinderOption_FILE_ptr",
+        "CinderResult_CinderList_i32_i32",
+        "CinderTuple_CinderList_i32_i32",
+        "CinderTuple_CinderTuple_i32_i64__CinderTuple_argument_26_CinderTuple_argument_3_i32_argument_3_i64",
+        "CinderTuple_CinderTuple_i32_i64__CinderTuple_argument_41_CinderTuple_argument_3_i32_argument_3_i64",
     ):
         assert specialized_name in header
-    result_name = "CinderResult_argument_25_CinderList_argument_3_i32_argument_3_i32"
+    assert "struct CinderList_i32 {" in header
+    assert "int32_t *data;" in header
+    assert "struct CinderList_CinderList_i32 {" in header
+    assert "CinderList_i32 *data;" in header
+    assert "typedef CinderList CinderList_i32;" not in header
+    assert "typedef int32_t CinderOption_CinderList_i32;" not in header
+    assert "struct CinderOption_CinderList_i32 {" in header
+    assert "CinderOption_CinderList_i32_Tag_Some = 1" in header
+    assert "CinderList_i32 value;" in header
+    assert "FILE * value;" in header
+    assert "struct CinderTuple_CinderList_i32_i32 {" in header
+    assert "CinderList_i32 item_0;" in header
+    assert "int32_t item_1;" in header
+    assert "CinderMap_i32_CinderList_i32_Entry *entries;" in header
+    assert "CinderSet_Resource_Entry *entries;" in header
+    result_name = "CinderResult_CinderList_i32_i32"
     assert f"typedef enum {result_name}_Tag" in header
     assert f"{result_name}_Tag_Ok = 0" in header
     assert f"{result_name}_Tag_Err = 1" in header
-    assert "CinderList_argument_3_i32 ok;" in header
+    assert "CinderList_i32 ok;" in header
     assert "int32_t err;" in header
+    generated_source = (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    assert "CinderList_i32 cinder_list = (CinderList_i32){0};" in generated_source
+
+    executable = tmp_path / "specialized"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+def test_gen1_emits_inferred_list_specialization(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "inferred.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        "    values = [1, 2, 3]\n"
+        "    return len(values) - 3\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(source),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    generated_source = next((generated / "cinder_gen").glob("*.c"))
+    source_text = generated_source.read_text(encoding="utf-8")
+    assert "struct CinderList_i32 {" in source_text
+    assert "int32_t *data;" in source_text
+    assert "CinderList_i32 cinder_list = (CinderList_i32){0};" in source_text
+    executable = tmp_path / "inferred"
+    compiled = compile_generated_project(generated, executable)
+    assert compiled.returncode == 0, compiled.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
 
 
 def test_gen1_builds_and_runs_result_specialization_example(
@@ -578,13 +644,20 @@ def test_gen1_canonicalizes_qualified_specialization_names(
         "    code: i64\n",
         encoding="utf-8",
     )
+    (source_root / "support" / "other_errors.ci").write_text(
+        "struct MathError:\n"
+        "    code: i64\n",
+        encoding="utf-8",
+    )
     (source_root / "main.ci").write_text(
         "import support.errors as calculations\n"
-        "import support.errors as failures\n\n"
+        "import support.errors as failures\n"
+        "import support.other_errors as alternatives\n\n"
         "def preserve(\n"
         "    first: Result[i32, calculations.MathError],\n"
         "    same: Result[i32, failures.MathError],\n"
         "    other: Result[i32, calculations.OtherError],\n"
+        "    colliding: Result[i32, alternatives.MathError],\n"
         ") -> i32:\n"
         "    return 0\n\n"
         "def main() -> i32:\n"
@@ -603,9 +676,11 @@ def test_gen1_canonicalizes_qualified_specialization_names(
 
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
-    math_error = "CinderResult_argument_3_i32_argument_44_cinder_specialized_support_errors__MathError"
-    other_error = "CinderResult_argument_3_i32_argument_45_cinder_specialized_support_errors__OtherError"
-    assert math_error in header
+    math_error = "CinderResult_i32_MathError__CinderResult_argument_3_i32_argument_"
+    other_error = "CinderResult_i32_OtherError"
+    assert header.count(f"#ifndef CINDER_SPECIALIZED_{math_error}") == 2
+    assert "cinder_specialized_support_errors__MathError" in header
+    assert "cinder_specialized_support_other_errors__MathError" in header
     assert other_error in header
     assert "CinderResult_i32_calculations" not in header
     assert "CinderResult_i32_failures" not in header
@@ -659,18 +734,22 @@ def test_gen1_distinguishes_structural_specialization_arguments(
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for specialized_name in (
-        "CinderList_argument_18_array_i32_length_2",
-        "CinderList_argument_21_array_String_length_4",
-        "CinderList_argument_9_slice_i32",
-        "CinderList_argument_41_function_argument_3_i32_returns_3_i64_end",
-        "CinderList_argument_41_function_argument_3_i64_returns_3_i32_end",
-        "CinderList_argument_66_function_argument_41_function_argument_3_i32_returns_3_i32_end_end",
-        "CinderList_argument_65_function_returns_41_function_argument_3_i32_returns_3_i32_end_end",
-        "CinderList_argument_27_function_argument_3_i32_end",
-        "CinderList_argument_85_function_argument_60_cinder_structural_main__A_argument_cinder_structural_main__B_end",
-        "CinderList_argument_88_function_argument_25_cinder_structural_main__A_argument_25_cinder_structural_main__B_end",
+        "CinderList_i32_array_2",
+        "CinderList_String_array_4",
+        "CinderList_i32_slice",
+        "CinderList_function_argument_i32_returns_i64_end",
+        "CinderList_function_argument_i64_returns_i32_end",
+        "CinderList_function_argument_function_argument_i32_returns_i32_end_end",
+        "CinderList_function_returns_function_argument_i32_returns_i32_end_end",
+        "CinderList_function_argument_i32_end",
+        "CinderList_function_argument_A_argument_cinder_structural_main__B_end",
+        "CinderList_function_argument_A_argument_B_end",
     ):
         assert specialized_name in header
+    assert "int32_t (*data)[2];" in header
+    assert "CinderString (*data)[4];" in header
+    compiled = compile_generated_project(generated, tmp_path / "structural")
+    assert compiled.returncode == 0, compiled.stderr
     assert "CinderList_value" not in header
 
 
@@ -712,10 +791,16 @@ def test_gen1_distinguishes_pointer_and_reference_specialization_arguments(
 
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
-    assert "CinderList_argument_13_pointer_3_i32" in header
-    assert "CinderList_argument_15_reference_3_i32" in header
-    assert "CinderList_argument_41_pointer_30_cinder_indirection_main__Thing" in header
-    assert "CinderList_argument_34_cinder_indirection_main__Thing_ptr" in header
+    assert "CinderList_i32_ptr" in header
+    assert "CinderList_i32_ref" in header
+    assert (
+        "CinderList_Thing_ptr__"
+        "CinderList_argument_41_pointer_30_cinder_indirection_main__Thing"
+    ) in header
+    assert (
+        "CinderList_Thing_ptr__"
+        "CinderList_argument_34_cinder_indirection_main__Thing_ptr"
+    ) in header
 
 
 def test_gen1_preserves_const_specialization_arguments(
@@ -755,12 +840,12 @@ def test_gen1_preserves_const_specialization_arguments(
     assert emitted.returncode == 0, emitted.stderr
     header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for specialized_name in (
-        "CinderResult_argument_11_const_3_i32_argument_3_i32",
-        "CinderResult_argument_3_i32_argument_3_i32",
-        "CinderOwned_argument_11_const_3_i32",
-        "CinderOwned_argument_3_i32",
-        "CinderList_argument_22_pointer_11_const_3_i32",
-        "CinderList_argument_13_pointer_3_i32",
+        "CinderResult_i32_const_i32",
+        "CinderResult_i32_i32",
+        "CinderOwned_i32_const",
+        "CinderOwned_i32",
+        "CinderList_i32_const_ptr",
+        "CinderList_i32_ptr",
     ):
         assert specialized_name in header
 
