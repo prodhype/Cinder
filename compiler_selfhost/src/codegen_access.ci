@@ -1,0 +1,774 @@
+import codegen_context
+import codegen_context as codegen_model
+import codegen_names
+import codegen_specializations
+import codegen_type_names
+import project
+import syntax
+import token
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+def emit_array_as_list(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    builder.append("(CinderList){ .data = (void *)")
+    emit_nested(state, id)
+    builder.append(", .length = ")
+    length = codegen_specializations.array_length_node(context.type_arena, type_id)
+    codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+    builder.append(", .capacity = 0 }")
+
+def emit_imported_nominal_constructor(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    module_name: &const String,
+    name: &const String,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    builder.append("(")
+    builder.append(codegen_names.c_prefix(project_name, module_name))
+    builder.append(name[0:len(name)])
+    builder.append("){")
+    node = arena.nodes[id.index]
+    emitted = false
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            if emitted:
+                builder.append(", ")
+            named = codegen_names.first_child(arena, child_id)
+            if child.flags == 1 and named.index >= 0:
+                named_node = arena.nodes[named.index]
+                builder.append(".")
+                codegen_names.append_source(builder, source, named_node.value_start, named_node.value_length)
+                builder.append(" = ")
+            value = codegen_names.last_child(arena, child_id)
+            emit_nested(state, value)
+            codegen_context.mark_context_expression_moved(arena, context, value, source)
+            emitted = true
+    builder.append("}")
+
+def emit_access_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    path = codegen_names.first_call_argument(arena, id)
+    mode = codegen_names.second_call_argument(arena, id)
+    builder.append("access(cinder_string_cstr(")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, path, source):
+        builder.append("&")
+    emit_nested(state, path)
+    builder.append("), ")
+    emit_nested(state, mode)
+    builder.append(")")
+
+def emit_open_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    path = codegen_names.first_call_argument(arena, id)
+    mode = codegen_names.second_call_argument(arena, id)
+    if path.index >= 0:
+        path_node = arena.nodes[path.index]
+        if path_node.kind == SyntaxKind.EXPR_LITERAL and path_node.flags == cast[i32](token.TokenKind.STRING):
+            builder.append("fopen(")
+            codegen_names.append_source(builder, source, path_node.value_start, path_node.value_length)
+            builder.append(", ")
+            emit_c_string_argument(arena, mode, source, builder, prefix, project_name, imports, context, state, emit_nested)
+            builder.append(")")
+            return
+    builder.append("fopen(cinder_string_cstr(")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, path, source):
+        builder.append("&")
+    emit_nested(state, path)
+    builder.append("), ")
+    emit_c_string_argument(arena, mode, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(")")
+
+def emit_attribute_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    callee_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    receiver = codegen_names.first_child(arena, callee_id)
+    member = codegen_names.second_child(arena, callee_id)
+    if member.index < 0:
+        emit_nested(state, callee_id)
+        return
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    if receiver.index >= 0:
+        receiver_node = arena.nodes[receiver.index]
+        if receiver_node.kind == SyntaxKind.EXPR_NAME:
+            receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            imported = codegen_names.find_import_alias(imports, &receiver_name)
+            if len(imported.module_name) > 0:
+                if codegen_names.is_uppercase_start(source, member_node.value_start):
+                    emit_imported_nominal_constructor(arena, call_id, source, builder, prefix, project_name, imports, &imported.module_name, &member_name, context, state, emit_nested)
+                    return
+                if imported.module_name == "process" and member_name == "run":
+                    builder.append("({ __auto_type cinder_process_args = &(")
+                    emit_nested(state, codegen_names.first_call_argument(arena, call_id))
+                    builder.append("); cinder_selfhost_process_run_list(cinder_process_args->data, cinder_process_args->length); })")
+                    return
+                if imported.module_name == "cinder" and (member_name == "write_stdout" or member_name == "write_stderr"):
+                    if member_name == "write_stdout":
+                        builder.append("cinder_write_stdout")
+                    else:
+                        builder.append("cinder_write_stderr")
+                    builder.append("(&")
+                    emit_nested(state, codegen_names.first_call_argument(arena, call_id))
+                    builder.append(")")
+                    return
+                if project.is_builtin_module(&imported.module_name):
+                    codegen_names.emit_builtin_function_name(builder, &imported.module_name, &member_name)
+                    builder.append("(")
+                    emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
+                    builder.append(")")
+                    return
+                builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
+                codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+                builder.append("(")
+                if member_name == "dump_summary":
+                    emit_nested(state, codegen_names.first_call_argument(arena, call_id))
+                else:
+                    emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
+                builder.append(")")
+                return
+    if member_name == "dump" and receiver.index >= 0:
+        receiver_node = arena.nodes[receiver.index]
+        if receiver_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, receiver_node.value_start, receiver_node.value_length, "scan"):
+            lexer_module = "lexer"
+            builder.append(codegen_names.c_prefix(project_name, &lexer_module))
+            builder.append("Lexer_dump(")
+            emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
+            emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
+            builder.append(")")
+            return
+    if member_name == "clear":
+        receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+        if codegen_context.context_type_is_string(context.type_arena, receiver_type, context.type_source):
+            builder.append("cinder_string_clear(")
+        else:
+            builder.append("cinder_selfhost_list_clear(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
+    if member_name == "append":
+        arg = codegen_names.first_call_argument(arena, call_id)
+        if receiver_is_builder(arena, receiver, source):
+            emit_builder_append_call(arena, receiver, arg, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        else:
+            builder.append("cinder_selfhost_list_append_value(")
+            if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+                builder.append("&")
+            emit_nested(state, receiver)
+            builder.append(", (")
+            previous_expected = context.expected_type
+            receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+            element_type = codegen_context.context_list_element_type(context.type_arena, receiver_type, context.type_source)
+            if element_type.index >= 0:
+                context.expected_type = element_type
+            emit_nested(state, arg)
+            context.expected_type = previous_expected
+            codegen_context.mark_context_expression_moved(arena, context, arg, source)
+            builder.append("))")
+        return
+    if member_name == "append_char":
+        builder.append("cinder_string_builder_append_char(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_nested(state, receiver)
+        builder.append(", ")
+        emit_nested(state, codegen_names.first_call_argument(arena, call_id))
+        builder.append(")")
+        return
+    if member_name == "pop":
+        builder.append("cinder_selfhost_list_pop(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
+    if member_name == "finish":
+        builder.append("cinder_string_builder_finish(&")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
+    if member_name == "byte_at":
+        if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("cinder_string_byte_at(")
+        else:
+            builder.append("cinder_selfhost_string_byte_at_value(")
+        emit_nested(state, receiver)
+        builder.append(", ")
+        emit_nested(state, codegen_names.first_call_argument(arena, call_id))
+        builder.append(")")
+        return
+    if member_name == "read_text":
+        builder.append("cinder_read_all_text(")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
+    if member_name == "write":
+        emit_file_write_call(arena, receiver, codegen_names.first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+    codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+    builder.append("(")
+    emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
+    builder.append(")")
+
+def emit_builder_append_call(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    arg: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    arg_node = arena.nodes[arg.index]
+    if arg_node.kind == SyntaxKind.EXPR_LITERAL and arg_node.flags == cast[i32](token.TokenKind.STRING):
+        builder.append("cinder_selfhost_string_builder_append_cstr(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_nested(state, receiver)
+        builder.append(", ")
+        codegen_names.append_source(builder, source, arg_node.value_start, arg_node.value_length)
+        builder.append(")")
+    else:
+        builder.append("cinder_selfhost_string_builder_append_value(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_nested(state, receiver)
+        builder.append(", ")
+        emit_nested(state, arg)
+        builder.append(")")
+
+def emit_file_write_call(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    arg: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    arg_type = codegen_context.context_expression_type(arena, context, arg, source)
+    if codegen_specializations.context_type_is_array(context.type_arena, arg_type):
+        builder.append("fwrite((const void *)")
+        emit_nested(state, arg)
+        builder.append(", 1, ")
+        length = codegen_specializations.array_length_node(context.type_arena, arg_type)
+        codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+        builder.append(", ")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
+    if codegen_context.context_type_is_list(context.type_arena, arg_type, context.type_source):
+        builder.append("fwrite(")
+        emit_nested(state, arg)
+        if codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+            builder.append("->data, 1, ")
+        else:
+            builder.append(".data, 1, ")
+        emit_nested(state, arg)
+        if codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+            builder.append("->length, ")
+        else:
+            builder.append(".length, ")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
+    builder.append("fwrite(cinder_string_cstr(")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+        builder.append("&")
+    emit_nested(state, arg)
+    builder.append("), 1, ")
+    emit_nested(state, arg)
+    if codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+        builder.append("->length, ")
+    else:
+        builder.append(".length, ")
+    emit_nested(state, receiver)
+    builder.append(")")
+
+def emit_module_index(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    receiver = codegen_names.first_child(arena, id)
+    index = codegen_names.second_child(arena, id)
+    receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+    if codegen_specializations.context_type_is_array(context.type_arena, receiver_type):
+        emit_nested(state, receiver)
+        builder.append("[")
+        emit_nested(state, index)
+        builder.append("]")
+        return
+    if emit_known_list_index(arena, receiver, index, source, builder, prefix, project_name, imports, context, state, emit_nested):
+        return
+    element_type = codegen_context.context_expression_list_element_type(arena, context, receiver, source)
+    if element_type.index >= 0:
+        receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+        builder.append("((")
+        codegen_type_names.emit_module_c_type(arena, element_type, source, builder, prefix, project_name, imports, context.specialization_names)
+        builder.append(" *)")
+        emit_nested(state, receiver)
+        if codegen_context.context_type_is_pointer_like(arena, receiver_type):
+            builder.append("->data")
+        else:
+            builder.append(".data")
+        builder.append(")")
+    else:
+        emit_nested(state, receiver)
+    builder.append("[")
+    emit_nested(state, index)
+    builder.append("]")
+
+def emit_known_list_index(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    index: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> bool:
+    element = known_list_element_name(arena, receiver, source, context)
+    if len(element) == 0:
+        return false
+    builder.append("(((")
+    builder.append(element)
+    builder.append(" *)")
+    emit_nested(state, receiver)
+    if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+        builder.append("->data)[")
+    else:
+        builder.append(".data)[")
+    emit_nested(state, index)
+    builder.append("])")
+    return true
+
+def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source: &const String, context: &codegen_model.ModuleCodegenContext) -> String:
+    if receiver.index < 0:
+        return ""
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return ""
+    object = codegen_names.first_child(arena, receiver)
+    member = codegen_names.second_child(arena, receiver)
+    if object.index < 0 or member.index < 0:
+        return ""
+    object_node = arena.nodes[object.index]
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    owner = ""
+    if object_node.kind == SyntaxKind.EXPR_NAME:
+        object_name = source[object_node.value_start:object_node.value_start + object_node.value_length]
+        if object_name == "self":
+            owner = context.current_owner[0:len(context.current_owner)]
+        if object_name == "arena":
+            owner = "SyntaxArena"
+        if object_name == "scan":
+            owner = "Lexer"
+        if object_name == "parser" or object_name == "parsed":
+            owner = "Parser"
+        if object_name == "checker" or object_name == "check":
+            owner = "Checker"
+        if len(owner) == 0:
+            owner = codegen_type_names.context_type_owner_name(arena, codegen_context.context_name_type(context, &object_name), source)
+    if owner == "SyntaxArena" and member_name == "nodes":
+        return "cinder_cinder_selfhost_syntax__SyntaxNode"
+    if owner == "SyntaxArena" and member_name == "children":
+        return "cinder_cinder_selfhost_syntax__NodeId"
+    if owner == "IRModule" and member_name == "nodes":
+        return "cinder_cinder_selfhost_backend_ir__IRNode"
+    if owner == "IRModule" and member_name == "children":
+        return "cinder_cinder_selfhost_backend_ir__IRNodeId"
+    if owner == "TypeTable" and member_name == "types":
+        return "cinder_cinder_selfhost_types__TypeRecord"
+    if owner == "TypeTable" and member_name == "type_args":
+        return "cinder_cinder_selfhost_types__TypeId"
+    if member_name == "types":
+        return "cinder_cinder_selfhost_types__TypeRecord"
+    if member_name == "type_args":
+        return "cinder_cinder_selfhost_types__TypeId"
+    if member_name == "canonical_bytes" or member_name == "readable_bytes":
+        return "char"
+    if member_name == "canonical_starts" or member_name == "readable_starts":
+        return "size_t"
+    if member_name == "local_types":
+        return "cinder_cinder_selfhost_codegen_context__ModuleNameTypeBinding"
+    if member_name == "field_types":
+        return "cinder_cinder_selfhost_codegen_context__ModuleFieldTypeBinding"
+    if member_name == "semantic_nodes":
+        return "cinder_cinder_selfhost_backend_ir__IRNode"
+    if member_name == "deferred_expressions":
+        return "cinder_cinder_selfhost_syntax__NodeId"
+    if member_name == "pointer_names" or member_name == "with_resources" or member_name == "global_names" or member_name == "extern_names":
+        return "CinderString"
+    if owner == "SymbolTable" and member_name == "symbols":
+        return "cinder_cinder_selfhost_symbols__SymbolRecord"
+    if owner == "SymbolTable" and member_name == "scopes":
+        return "cinder_cinder_selfhost_symbols__ScopeRecord"
+    if member_name == "symbols":
+        return "cinder_cinder_selfhost_symbols__SymbolRecord"
+    if member_name == "scopes":
+        return "cinder_cinder_selfhost_symbols__ScopeRecord"
+    if owner == "Lexer" and member_name == "tokens":
+        return "cinder_cinder_selfhost_token__Token"
+    if member_name == "tokens":
+        return "cinder_cinder_selfhost_token__Token"
+    if owner == "Lexer" and member_name == "diagnostics":
+        return "cinder_cinder_selfhost_token__LexerDiagnostic"
+    if owner == "Parser" and member_name == "diagnostics":
+        return "cinder_cinder_selfhost_syntax__ParseDiagnostic"
+    if owner == "Checker" and member_name == "diagnostics":
+        return "cinder_cinder_selfhost_checker__CheckerDiagnostic"
+    if owner == "ProjectGraph" and member_name == "modules":
+        return "cinder_cinder_selfhost_project__ParsedModule"
+    if owner == "DriverOptions" and member_name == "program_args":
+        return "CinderString"
+    if owner == "DriverOptions" and member_name == "cflags":
+        return "CinderString"
+    if owner == "DriverOptions" and member_name == "ldflags":
+        return "CinderString"
+    if owner == "EmitResult" and member_name == "sources":
+        return "CinderString"
+    if owner == "EmitResult" and member_name == "headers":
+        return "CinderString"
+    if owner == "NativeConfig" and member_name == "include_dirs":
+        return "CinderString"
+    if owner == "NativeConfig" and member_name == "library_dirs":
+        return "CinderString"
+    if owner == "NativeConfig" and member_name == "libraries":
+        return "CinderString"
+    if owner == "NativeConfig" and member_name == "link_files":
+        return "CinderString"
+    if owner == "NativeConfig" and member_name == "cflags":
+        return "CinderString"
+    if owner == "NativeConfig" and member_name == "ldflags":
+        return "CinderString"
+    return ""
+
+def emit_module_slice(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    receiver = codegen_names.first_child(arena, id)
+    start = codegen_names.second_child(arena, id)
+    stop = codegen_names.last_child(arena, id)
+    receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+    if not codegen_context.expression_may_be_string(arena, context, receiver, source):
+        element_type = codegen_context.context_expression_list_element_type(arena, context, receiver, source)
+        if codegen_specializations.context_type_is_array(context.type_arena, receiver_type):
+            builder.append("(CinderList){ .data = (void *)(&")
+            emit_nested(state, receiver)
+            builder.append("[")
+            if start.index >= 0 and start.index != stop.index:
+                emit_nested(state, start)
+            else:
+                builder.append("0")
+            builder.append("]), .length = (")
+            if stop.index >= 0 and stop.index != receiver.index:
+                emit_nested(state, stop)
+            else:
+                length = codegen_specializations.array_length_node(context.type_arena, receiver_type)
+                codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+            builder.append(" - ")
+            if start.index >= 0 and start.index != stop.index:
+                emit_nested(state, start)
+            else:
+                builder.append("0")
+            builder.append("), .capacity = 0 }")
+            return
+        builder.append("cinder_selfhost_list_slice(")
+        if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("*")
+        emit_nested(state, receiver)
+        builder.append(", ")
+        if start.index >= 0 and start.index != stop.index:
+            emit_nested(state, start)
+        else:
+            builder.append("0")
+        builder.append(", ")
+        if stop.index >= 0 and stop.index != receiver.index:
+            emit_nested(state, stop)
+        else:
+            emit_nested(state, receiver)
+            if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+                builder.append("->length")
+            else:
+                builder.append(".length")
+        builder.append(", sizeof(")
+        if element_type.index >= 0:
+            codegen_type_names.emit_module_c_type(context.type_arena, element_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        else:
+            builder.append("char")
+        builder.append("))")
+        return
+    builder.append("cinder_string_slice(")
+    receiver_is_pointer = codegen_context.context_expression_is_pointer_like(arena, context, receiver, source)
+    if not receiver_is_pointer:
+        builder.append("&")
+    emit_nested(state, receiver)
+    builder.append(", ")
+    if start.index >= 0 and start.index != stop.index:
+        emit_nested(state, start)
+    else:
+        builder.append("0")
+    builder.append(", ")
+    if stop.index >= 0 and stop.index != receiver.index:
+        emit_nested(state, stop)
+    else:
+        emit_nested(state, receiver)
+        if receiver_is_pointer:
+            builder.append("->length")
+        else:
+            builder.append(".length")
+    builder.append(")")
+
+def emit_module_attribute(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    receiver = codegen_names.first_child(arena, id)
+    member = codegen_names.second_child(arena, id)
+    if receiver.index >= 0 and member.index >= 0:
+        receiver_node = arena.nodes[receiver.index]
+        member_node = arena.nodes[member.index]
+        if receiver_node.kind == SyntaxKind.EXPR_NAME and member_node.kind == SyntaxKind.NAME:
+            receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            imported = codegen_names.find_import_alias(imports, &receiver_name)
+            if len(imported.module_name) > 0:
+                if imported.module_name == "math" and codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "pi"):
+                    builder.append("CINDER_PI")
+                    return
+                builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
+                codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+                return
+            imported_member = codegen_names.find_import_member(imports, &receiver_name)
+            if len(imported_member.module_name) > 0 and len(imported_member.member) > 0:
+                builder.append(codegen_names.c_prefix(project_name, &imported_member.module_name))
+                builder.append(imported_member.member)
+                builder.append("_")
+                codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+                return
+            if codegen_names.is_uppercase_start(source, receiver_node.value_start):
+                builder.append(prefix[0:len(prefix)])
+                codegen_names.append_source(builder, source, receiver_node.value_start, receiver_node.value_length)
+                builder.append("_")
+                codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+                return
+            if codegen_names.range_text_equals(source, receiver_node.value_start, receiver_node.value_length, "self"):
+                builder.append("self->")
+                codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+                return
+            receiver_type = codegen_context.context_name_type(context, &receiver_name)
+            if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "length") and codegen_specializations.context_type_is_array(context.type_arena, receiver_type):
+                length = codegen_specializations.array_length_node(context.type_arena, receiver_type)
+                codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+                return
+            if codegen_context.context_name_is_pointer(arena, context, &receiver_name):
+                codegen_names.append_source(builder, source, receiver_node.value_start, receiver_node.value_length)
+                builder.append("->")
+                codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+                return
+    if receiver.index >= 0 and member.index >= 0:
+        receiver_node = arena.nodes[receiver.index]
+        member_node = arena.nodes[member.index]
+        if receiver_node.kind == SyntaxKind.EXPR_ATTRIBUTE and codegen_names.is_uppercase_start(source, member_node.value_start):
+            emit_nested(state, receiver)
+            builder.append("_")
+            codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+            return
+        emit_nested(state, receiver)
+        if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("->")
+        else:
+            builder.append(".")
+        codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+        return
+    codegen_names.append_source(builder, source, codegen_names.node_start(arena, id), codegen_names.node_length(arena, id))
+
+def emit_remaining_call_arguments(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    already_emitted: bool,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    node = arena.nodes[id.index]
+    emitted_argument = already_emitted
+    argument_index: usize = 0
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.EXPR_ARGUMENT:
+            if emitted_argument:
+                builder.append(", ")
+            arg = codegen_names.last_child(arena, child_id)
+            callee = codegen_names.first_child(arena, id)
+            expected_type = codegen_context.context_callee_parameter_type(arena, context, callee, source, argument_index)
+            arg_type = codegen_context.context_expression_type(arena, context, arg, source)
+            if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_SLICE and codegen_specializations.context_type_is_array(context.type_arena, arg_type):
+                emit_array_as_list(arena, arg, arg_type, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                emitted_argument = true
+                argument_index += 1
+                continue
+            borrow_argument = codegen_context.should_borrow_named_argument(arena, context, arg, source)
+            if not borrow_argument:
+                borrow_argument = codegen_context.should_borrow_for_callee(arena, context, callee, arg, source, argument_index)
+            if borrow_argument and not codegen_context.call_is_name(arena, callee, source, "dump_summary"):
+                builder.append("&")
+            emit_nested(state, arg)
+            if not borrow_argument:
+                codegen_context.mark_context_expression_moved(arena, context, arg, source)
+            emitted_argument = true
+            argument_index += 1
+
+def receiver_is_builder(arena: &const SyntaxArena, receiver: NodeId, source: &const String) -> bool:
+    if receiver.index < 0:
+        return false
+    node = arena.nodes[receiver.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return codegen_names.range_text_equals(source, node.value_start, node.value_length, "builder")
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        member = codegen_names.second_child(arena, receiver)
+        if member.index >= 0:
+            member_node = arena.nodes[member.index]
+            return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "builder")
+    return false
+
+def emit_c_string_argument(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    if id.index < 0:
+        builder.append("\"\"")
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
+        codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        return
+    emit_nested(state, id)
+
+def emit_receiver_argument(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    if receiver.index >= 0:
+        node = arena.nodes[receiver.index]
+        if node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, node.value_start, node.value_length, "self"):
+            builder.append("self")
+            return
+    if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+        emit_nested(state, receiver)
+        return
+    builder.append("&")
+    emit_nested(state, receiver)

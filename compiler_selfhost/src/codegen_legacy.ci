@@ -1,0 +1,294 @@
+import backend_ir
+import codegen_names
+import syntax
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+def emit_c(arena: &const SyntaxArena, root: NodeId, source: &const String) -> String:
+    builder = StringBuilder()
+    builder.append("#include <stdint.h>\n")
+    builder.append("#include <stddef.h>\n")
+    builder.append("#include <stdbool.h>\n\n")
+    emit_top_level(arena, root, source, builder)
+    return builder.finish()
+
+def emit_c_from_ir(module: &const backend_ir.IRModule, arena: &const SyntaxArena, source: &const String) -> String:
+    if module.root.index < 0:
+        return emit_c(arena, syntax.missing_node(), source)
+    root = module.nodes[module.root.index].syntax
+    return emit_c(arena, root, source)
+
+def emit_top_level(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            emit_top_level(arena, arena.children[node.first_child + offset], source, builder)
+        return
+    if node.kind == SyntaxKind.STRUCT_DECL:
+        emit_struct(arena, id, source, builder)
+        return
+    if node.kind == SyntaxKind.ENUM_DECL:
+        emit_enum(arena, id, source, builder)
+        return
+    if node.kind == SyntaxKind.UNION_DECL:
+        emit_union(arena, id, source, builder)
+        return
+    if node.kind == SyntaxKind.FUNCTION_DECL:
+        emit_function(arena, id, source, builder)
+        return
+
+def emit_struct(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    node = arena.nodes[id.index]
+    builder.append("typedef struct ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(" {\n")
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.FIELD_DECL:
+            builder.append("    int32_t ")
+            codegen_names.append_source(builder, source, child.value_start, child.value_length)
+            builder.append(";\n")
+    builder.append("} ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(";\n\n")
+
+def emit_enum(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    node = arena.nodes[id.index]
+    builder.append("typedef enum ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(" {\n")
+    emitted = false
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.ENUM_MEMBER_DECL:
+            if emitted:
+                builder.append(",\n")
+            builder.append("    ")
+            codegen_names.append_source(builder, source, node.value_start, node.value_length)
+            builder.append("_")
+            codegen_names.append_source(builder, source, child.value_start, child.value_length)
+            emitted = true
+    if emitted:
+        builder.append("\n")
+    builder.append("} ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(";\n\n")
+
+def emit_union(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    node = arena.nodes[id.index]
+    builder.append("typedef union ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(" {\n")
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.FIELD_DECL:
+            builder.append("    int32_t ")
+            codegen_names.append_source(builder, source, child.value_start, child.value_length)
+            builder.append(";\n")
+    builder.append("} ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(";\n\n")
+
+def emit_function(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    node = arena.nodes[id.index]
+    return_type = codegen_names.find_direct_child_kind(arena, id, SyntaxKind.TYPE_NAME)
+    emit_c_type(arena, return_type, source, builder)
+    builder.append(" ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append("(")
+    emitted_parameter = false
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.PARAMETER:
+            if emitted_parameter:
+                builder.append(", ")
+            emit_parameter(arena, child_id, source, builder)
+            emitted_parameter = true
+    if not emitted_parameter:
+        builder.append("void")
+    builder.append(") {\n")
+    body = codegen_names.find_child_kind(arena, id, SyntaxKind.BLOCK)
+    if body.index >= 0:
+        emit_block(arena, body, source, builder)
+    builder.append("}\n\n")
+
+def emit_parameter(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    node = arena.nodes[id.index]
+    parameter_type = codegen_names.find_child_kind(arena, id, SyntaxKind.TYPE_NAME)
+    emit_c_type(arena, parameter_type, source, builder)
+    builder.append(" ")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+
+def emit_block(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_statement(arena, arena.children[node.first_child + offset], source, builder)
+
+def emit_statement(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.RETURN_STMT:
+        builder.append("    return")
+        expr = codegen_names.first_child(arena, id)
+        if expr.index >= 0:
+            builder.append(" ")
+            emit_expression(arena, expr, source, builder)
+        builder.append(";\n")
+        return
+    if node.kind == SyntaxKind.VAR_DECL_STMT:
+        builder.append("    int32_t ")
+        codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        expr = codegen_names.last_child(arena, id)
+        if expr.index >= 0 and arena.nodes[expr.index].kind != SyntaxKind.TYPE_NAME:
+            builder.append(" = ")
+            emit_expression(arena, expr, source, builder)
+        builder.append(";\n")
+        return
+    if node.kind == SyntaxKind.ASSIGN_STMT:
+        builder.append("    ")
+        emit_expression(arena, codegen_names.first_child(arena, id), source, builder)
+        builder.append(" = ")
+        emit_expression(arena, codegen_names.second_child(arena, id), source, builder)
+        builder.append(";\n")
+        return
+    if node.kind == SyntaxKind.IF_STMT:
+        emit_if(arena, id, source, builder)
+        return
+    if node.kind == SyntaxKind.WHILE_STMT:
+        builder.append("    while (")
+        emit_expression(arena, codegen_names.first_child(arena, id), source, builder)
+        builder.append(") {\n")
+        emit_block(arena, codegen_names.second_child(arena, id), source, builder)
+        builder.append("    }\n")
+        return
+    if node.kind == SyntaxKind.BREAK_STMT:
+        builder.append("    break;\n")
+        return
+    if node.kind == SyntaxKind.CONTINUE_STMT:
+        builder.append("    continue;\n")
+        return
+    if node.kind == SyntaxKind.EXPR_STMT:
+        builder.append("    ")
+        emit_expression(arena, codegen_names.first_child(arena, id), source, builder)
+        builder.append(";\n")
+        return
+    if node.kind == SyntaxKind.PASS_STMT:
+        builder.append("    ;\n")
+
+def emit_if(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    builder.append("    if (")
+    emit_expression(arena, codegen_names.first_child(arena, id), source, builder)
+    builder.append(") {\n")
+    emit_block(arena, codegen_names.second_child(arena, id), source, builder)
+    builder.append("    }")
+    node = arena.nodes[id.index]
+    for offset in range(2, node.child_count):
+        branch_id = arena.children[node.first_child + offset]
+        branch = arena.nodes[branch_id.index]
+        if branch.kind == SyntaxKind.IF_BRANCH and branch.flags == 1:
+            builder.append(" else if (")
+            emit_expression(arena, codegen_names.first_child(arena, branch_id), source, builder)
+            builder.append(") {\n")
+            emit_block(arena, codegen_names.second_child(arena, branch_id), source, builder)
+            builder.append("    }")
+        elif branch.kind == SyntaxKind.IF_BRANCH and branch.flags == 2:
+            builder.append(" else {\n")
+            emit_block(arena, codegen_names.first_child(arena, branch_id), source, builder)
+            builder.append("    }")
+    builder.append("\n")
+
+def emit_expression(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    if id.index < 0:
+        builder.append("0")
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL or node.kind == SyntaxKind.EXPR_NAME:
+        codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        return
+    if node.kind == SyntaxKind.EXPR_BINARY:
+        emit_expression(arena, codegen_names.first_child(arena, id), source, builder)
+        builder.append(" ")
+        codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        builder.append(" ")
+        emit_expression(arena, codegen_names.second_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.EXPR_UNARY:
+        codegen_names.append_source(builder, source, node.value_start, node.value_length)
+        emit_expression(arena, codegen_names.first_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, id)
+        emit_expression(arena, callee, source, builder)
+        builder.append("(")
+        emitted_argument = false
+        for offset in range(1, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            child = arena.nodes[child_id.index]
+            if child.kind == SyntaxKind.EXPR_ARGUMENT:
+                if emitted_argument:
+                    builder.append(", ")
+                emit_expression(arena, codegen_names.last_child(arena, child_id), source, builder)
+                emitted_argument = true
+        builder.append(")")
+        return
+    if node.kind == SyntaxKind.EXPR_CAST:
+        builder.append("(int32_t)(")
+        emit_expression(arena, codegen_names.last_child(arena, id), source, builder)
+        builder.append(")")
+        return
+    codegen_names.append_source(builder, source, node.start, node.length)
+
+def emit_c_type(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder) -> void:
+    if id.index < 0:
+        builder.append("int32_t")
+        return
+    node = arena.nodes[id.index]
+    if codegen_names.range_text_equals(source, node.value_start, node.value_length, "void"):
+        builder.append("void")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "bool"):
+        builder.append("bool")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "i8"):
+        builder.append("int8_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "i16"):
+        builder.append("int16_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "i32"):
+        builder.append("int32_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "i64"):
+        builder.append("int64_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "u8"):
+        builder.append("uint8_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "u16"):
+        builder.append("uint16_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "u32"):
+        builder.append("uint32_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "u64"):
+        builder.append("uint64_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "usize"):
+        builder.append("size_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "isize"):
+        builder.append("ptrdiff_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "f64"):
+        builder.append("double")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "f32"):
+        builder.append("float")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "char"):
+        builder.append("char")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "c_int"):
+        builder.append("int")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "c_long"):
+        builder.append("long")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "c_size_t"):
+        builder.append("size_t")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "String"):
+        builder.append("CinderString")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder"):
+        builder.append("CinderStringBuilder")
+    else:
+        builder.append("int32_t")

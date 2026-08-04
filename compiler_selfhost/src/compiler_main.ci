@@ -1,5 +1,6 @@
 import cinder
 import checker
+import checker_core
 import emit_project
 import fs
 import lexer
@@ -164,13 +165,12 @@ def check_graph(graph: &const project.ProjectGraph) -> bool:
         if len(parsed.diagnostics) > 0:
             parsed.dump_diagnostics()
             return false
-        check = checker.new_checker()
+        check: checker_core.Checker = checker.new_checker()
         checker.collect_symbols(check, parsed.arena, root, graph.modules[index].source)
         checker.validate_import_member_calls(check, parsed.arena, root, graph.modules[index].source, &graph.modules[index].imports, &graph.modules)
         checker.validate_names(check, parsed.arena, root, graph.modules[index].source)
         if len(check.diagnostics) > 0:
-            for diagnostic in check.diagnostics:
-                print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+            checker_core.dump_diagnostics(check)
             return false
         index += 1
     return true

@@ -1,4 +1,10 @@
 import lexer
+import parser_core
+import parser_declarations
+import parser_expressions
+import parser_module
+import parser_statements
+import parser_types
 import syntax
 from syntax import NodeId, ParseDiagnostic, SyntaxArena, SyntaxKind
 from token import Token, TokenKind
@@ -29,43 +35,28 @@ struct Parser:
         return self.current().kind == kind
 
     def advance(self: &Parser) -> Token:
-        token = self.current()
-        if token.kind != TokenKind.EOF:
-            self.index += 1
-        return token
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_core.advance(context)
 
     def match_kind(self: &Parser, kind: TokenKind) -> bool:
-        if self.at(kind):
-            self.advance()
-            return true
-        return false
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_core.match_kind(context, kind)
 
     def emit_error(self: &Parser, code: i32, token: Token) -> void:
-        if not self.failed:
-            self.diagnostics.append(
-                ParseDiagnostic(
-                    code=code,
-                    start=token.start,
-                    length=token.length,
-                    line=token.line,
-                    column=token.column,
-                )
-            )
-        self.failed = true
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        parser_core.emit_error(context, code, token)
 
     def expect(self: &Parser, kind: TokenKind, code: i32) -> Token:
-        if self.at(kind):
-            return self.advance()
-        token = self.current()
-        self.emit_error(code, token)
-        return token
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_core.expect(context, kind, code)
 
     def make_token_node(self: &Parser, kind: SyntaxKind, token: Token, flags: i32) -> NodeId:
-        return self.arena.add_token_node(kind, token.start, token.length, token.line, token.column, flags)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_core.make_token_node(context, kind, token, flags)
 
     def make_leaf(self: &Parser, kind: SyntaxKind, start: Token, end: Token, value: Token, flags: i32) -> NodeId:
-        children: List[NodeId] = []
-        return self.make_node(kind, start, end, value, children, flags)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_core.make_leaf(context, kind, start, end, value, flags)
 
     def make_node(
         self: &Parser,
@@ -76,27 +67,8 @@ struct Parser:
         children: &const List[NodeId],
         flags: i32,
     ) -> NodeId:
-        node_end = end.start + end.length
-        first_child = cast[i32](len(self.arena.children))
-        index: usize = 0
-        while index < len(children):
-            child = children[index]
-            if child.index >= 0:
-                self.arena.children.append(child)
-            index += 1
-        child_count = cast[i32](len(self.arena.children)) - first_child
-        return self.arena.add_node_raw(
-            kind,
-            start.start,
-            node_end,
-            start.line,
-            start.column,
-            value.start,
-            value.length,
-            first_child,
-            child_count,
-            flags,
-        )
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_core.make_node(context, kind, start, end, value, children, flags)
 
     def make_node_from_range(
         self: &Parser,
@@ -106,7 +78,8 @@ struct Parser:
         children: &const List[NodeId],
         flags: i32,
     ) -> NodeId:
-        return self.make_node(kind, start, end, start, children, flags)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_core.make_node_from_range(context, kind, start, end, children, flags)
 
     def token_text_equals(self: &const Parser, token: Token, text: String) -> bool:
         if token.length != len(text):
@@ -119,194 +92,52 @@ struct Parser:
         return true
 
     def parse_module(self: &Parser) -> NodeId:
-        start = self.current()
-        children: List[NodeId] = []
-        while not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            decorators = self.parse_decorators()
-            if self.at(TokenKind.IMPORT):
-                syntax.append_valid(children, self.parse_import(decorators))
-            elif self.at(TokenKind.FROM):
-                syntax.append_valid(children, self.parse_from_import(decorators))
-            elif self.at(TokenKind.EXTERN):
-                self.parse_extern(children, decorators)
-            elif self.at(TokenKind.STRUCT):
-                syntax.append_valid(children, self.parse_struct(decorators))
-            elif self.at(TokenKind.CLASS) or self.at(TokenKind.ABSTRACT):
-                syntax.append_valid(children, self.parse_class(decorators))
-            elif self.at(TokenKind.ENUM):
-                syntax.append_valid(children, self.parse_enum(decorators))
-            elif self.at(TokenKind.UNION):
-                syntax.append_valid(children, self.parse_union(decorators))
-            elif self.at(TokenKind.VARIANT):
-                syntax.append_valid(children, self.parse_variant(decorators))
-            elif self.at(TokenKind.DEF):
-                syntax.append_valid(children, self.parse_function(decorators, false))
-            elif self.at(TokenKind.NAME) and self.token_text_equals(self.current(), "static_assert"):
-                syntax.append_valid(children, self.parse_static_assert())
-            elif self.at(TokenKind.CONST) or (self.at(TokenKind.NAME) and (self.peek(1).kind == TokenKind.COLON or self.peek(1).kind == TokenKind.ASSIGN)):
-                syntax.append_valid(children, self.parse_global())
-            else:
-                self.emit_error(2, self.current())
-                break
-        end = self.expect(TokenKind.EOF, 3)
-        return self.make_node_from_range(SyntaxKind.MODULE, start, end, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_module.parse_module(context)
 
     def parse_decorators(self: &Parser) -> List[NodeId]:
-        decorators: List[NodeId] = []
-        while self.match_kind(TokenKind.AT):
-            at_token = self.previous()
-            name = self.expect(TokenKind.NAME, 5)
-            self.expect(TokenKind.NEWLINE, 6)
-            syntax.append_valid(decorators, self.make_leaf(SyntaxKind.DECORATOR, at_token, name, name, 0))
-        return decorators
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_decorators(context)
 
     def parse_import(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        start = self.expect(TokenKind.IMPORT, 3)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        syntax.append_valid(children, self.parse_dotted_name())
-        if self.match_kind(TokenKind.AS):
-            alias = self.expect(TokenKind.NAME, 7)
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, alias, 1))
-        end = self.expect(TokenKind.NEWLINE, 8)
-        return self.make_node_from_range(SyntaxKind.IMPORT_DECL, start, end, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_import(context, decorators)
 
     def parse_from_import(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        start = self.expect(TokenKind.FROM, 3)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        syntax.append_valid(children, self.parse_dotted_name())
-        self.expect(TokenKind.IMPORT, 9)
-        if self.at(TokenKind.NEWLINE) or self.at(TokenKind.EOF):
-            self.emit_error(10, self.current())
-        while not self.at(TokenKind.NEWLINE) and not self.at(TokenKind.EOF) and not self.failed:
-            name = self.expect(TokenKind.NAME, 10)
-            item_children: List[NodeId] = []
-            syntax.append_valid(item_children, self.make_token_node(SyntaxKind.NAME, name, 0))
-            if self.match_kind(TokenKind.AS):
-                alias = self.expect(TokenKind.NAME, 11)
-                syntax.append_valid(item_children, self.make_token_node(SyntaxKind.NAME, alias, 1))
-            syntax.append_valid(children, self.make_node(SyntaxKind.IMPORT_NAME, name, self.previous(), name, item_children, 0))
-            if not self.match_kind(TokenKind.COMMA):
-                break
-        end = self.expect(TokenKind.NEWLINE, 12)
-        return self.make_node_from_range(SyntaxKind.FROM_IMPORT_DECL, start, end, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_from_import(context, decorators)
 
     def parse_extern(self: &Parser, parent_children: &List[NodeId], decorators: &const List[NodeId]) -> void:
-        start = self.expect(TokenKind.EXTERN, 3)
-        if self.match_kind(TokenKind.IMPORT):
-            header = self.expect(TokenKind.STRING, 13)
-            end = self.expect(TokenKind.NEWLINE, 14)
-            children: List[NodeId] = []
-            syntax.append_all(children, decorators)
-            syntax.append_valid(parent_children, self.make_node(SyntaxKind.EXTERN_IMPORT_DECL, start, end, header, children, 0))
-            return
-
-        abi = self.expect(TokenKind.STRING, 15)
-        self.expect(TokenKind.COLON, 17)
-        self.expect(TokenKind.NEWLINE, 18)
-        self.expect(TokenKind.INDENT, 19)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        while not self.at(TokenKind.DEDENT) and not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            member_decorators = self.parse_decorators()
-            if self.at(TokenKind.NAME) and self.token_text_equals(self.current(), "type"):
-                syntax.append_valid(children, self.parse_extern_type())
-            elif self.at(TokenKind.DEF):
-                syntax.append_valid(children, self.parse_function(member_decorators, true))
-            else:
-                self.emit_error(20, self.current())
-                break
-        end = self.expect(TokenKind.DEDENT, 21)
-        syntax.append_valid(parent_children, self.make_node(SyntaxKind.EXTERN_BLOCK, start, end, abi, children, 0))
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        parser_declarations.parse_extern(context, parent_children, decorators)
 
     def parse_extern_type(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.NAME, 145)
-        name = self.expect(TokenKind.NAME, 146)
-        end = self.expect(TokenKind.NEWLINE, 148)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        return self.make_node(SyntaxKind.EXTERN_TYPE_DECL, start, end, name, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_extern_type(context)
 
     def parse_dotted_name(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.NAME, 22)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, start, 0))
-        end = start
-        while self.match_kind(TokenKind.DOT):
-            name = self.expect(TokenKind.NAME, 23)
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-            end = name
-        return self.make_node(SyntaxKind.DOTTED_NAME, start, end, start, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_dotted_name(context)
 
     def parse_type_params(self: &Parser) -> NodeId:
-        if not self.match_kind(TokenKind.LEFT_BRACKET):
-            return syntax.missing_node()
-        start = self.previous()
-        children: List[NodeId] = []
-        if not self.at(TokenKind.RIGHT_BRACKET):
-            while not self.failed:
-                name = self.expect(TokenKind.NAME, 141)
-                syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-                if not self.match_kind(TokenKind.COMMA):
-                    break
-                if self.at(TokenKind.RIGHT_BRACKET):
-                    break
-        end = self.expect(TokenKind.RIGHT_BRACKET, 143)
-        return self.make_node_from_range(SyntaxKind.TYPE_PARAMS, start, end, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_type_params(context)
 
     def parse_function(self: &Parser, decorators: &const List[NodeId], is_extern: bool) -> NodeId:
-        start = self.expect(TokenKind.DEF, 3)
-        name = self.expect(TokenKind.NAME, 34)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        syntax.append_valid(children, self.parse_type_params())
-        self.expect(TokenKind.LEFT_PAREN, 35)
-        self.parse_parameters(children)
-        close = self.expect(TokenKind.RIGHT_PAREN, 36)
-        end = close
-        if self.match_kind(TokenKind.ARROW):
-            return_type = self.parse_type()
-            syntax.append_valid(children, return_type)
-            end = self.previous()
-        if is_extern:
-            end = self.expect(TokenKind.NEWLINE, 40)
-            return self.make_node(SyntaxKind.FUNCTION_DECL, start, end, name, children, 1)
-        self.expect(TokenKind.COLON, 41)
-        body = self.parse_suite_after_colon(45, 46)
-        syntax.append_valid(children, body)
-        end = self.previous()
-        return self.make_node(SyntaxKind.FUNCTION_DECL, start, end, name, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_function(context, decorators, is_extern)
 
     def parse_parameters(self: &Parser, children: &List[NodeId]) -> void:
-        if self.at(TokenKind.RIGHT_PAREN):
-            return
-        while not self.failed:
-            if self.match_kind(TokenKind.ELLIPSIS):
-                ellipsis = self.previous()
-                syntax.append_valid(children, self.make_token_node(SyntaxKind.PARAMETER, ellipsis, 1))
-                break
-            start = self.expect(TokenKind.NAME, 41)
-            param_children: List[NodeId] = []
-            syntax.append_valid(param_children, self.make_token_node(SyntaxKind.NAME, start, 0))
-            if self.match_kind(TokenKind.COLON):
-                syntax.append_valid(param_children, self.parse_type())
-            syntax.append_valid(children, self.make_node(SyntaxKind.PARAMETER, start, self.previous(), start, param_children, 0))
-            if not self.match_kind(TokenKind.COMMA):
-                break
-            if self.at(TokenKind.RIGHT_PAREN):
-                break
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        parser_declarations.parse_parameters(context, children)
 
     def parse_struct(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        return self.parse_field_method_decl(SyntaxKind.STRUCT_DECL, TokenKind.STRUCT, decorators, 24, 25, 26, 27, 32)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_struct(context, decorators)
 
     def parse_union(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        return self.parse_field_method_decl(SyntaxKind.UNION_DECL, TokenKind.UNION, decorators, 93, 94, 95, 96, 99)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_union(context, decorators)
 
     def parse_field_method_decl(
         self: &Parser,
@@ -319,711 +150,100 @@ struct Parser:
         indent_code: i32,
         dedent_code: i32,
     ) -> NodeId:
-        start = self.expect(opening, 3)
-        name = self.expect(TokenKind.NAME, name_code)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        syntax.append_valid(children, self.parse_type_params())
-        self.expect(TokenKind.COLON, colon_code)
-        self.expect(TokenKind.NEWLINE, newline_code)
-        self.expect(TokenKind.INDENT, indent_code)
-        while not self.at(TokenKind.DEDENT) and not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            member_decorators = self.parse_decorators()
-            if self.at(TokenKind.DEF) and kind == SyntaxKind.STRUCT_DECL:
-                syntax.append_valid(children, self.parse_function(member_decorators, false))
-                continue
-            is_private = self.match_kind(TokenKind.PRIVATE)
-            field = self.expect(TokenKind.NAME, 29)
-            self.expect(TokenKind.COLON, 30)
-            field_children: List[NodeId] = []
-            syntax.append_all(field_children, member_decorators)
-            syntax.append_valid(field_children, self.make_token_node(SyntaxKind.NAME, field, 0))
-            syntax.append_valid(field_children, self.parse_type())
-            end_field = self.expect(TokenKind.NEWLINE, 31)
-            flags: i32 = 0
-            if is_private:
-                flags = 1
-            syntax.append_valid(children, self.make_node(SyntaxKind.FIELD_DECL, field, end_field, field, field_children, flags))
-        end = self.expect(TokenKind.DEDENT, dedent_code)
-        result_kind = SyntaxKind.UNION_DECL
-        if kind == SyntaxKind.STRUCT_DECL:
-            result_kind = SyntaxKind.STRUCT_DECL
-        return self.make_node(result_kind, start, end, name, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_field_method_decl(context, kind, opening, decorators, name_code, colon_code, newline_code, indent_code, dedent_code)
 
     def parse_class(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        is_abstract = self.match_kind(TokenKind.ABSTRACT)
-        start = self.current()
-        if is_abstract:
-            start = self.previous()
-        self.expect(TokenKind.CLASS, 124)
-        name = self.expect(TokenKind.NAME, 125)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        syntax.append_valid(children, self.parse_type_params())
-        if self.match_kind(TokenKind.LEFT_PAREN):
-            while not self.at(TokenKind.RIGHT_PAREN) and not self.at(TokenKind.EOF) and not self.failed:
-                syntax.append_valid(children, self.parse_type())
-                if not self.match_kind(TokenKind.COMMA):
-                    break
-                if self.at(TokenKind.RIGHT_PAREN):
-                    break
-            self.expect(TokenKind.RIGHT_PAREN, 126)
-        self.expect(TokenKind.COLON, 127)
-        self.expect(TokenKind.NEWLINE, 128)
-        self.expect(TokenKind.INDENT, 129)
-        while not self.at(TokenKind.DEDENT) and not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            if self.match_kind(TokenKind.PASS):
-                pass_token = self.previous()
-                end_pass = self.expect(TokenKind.NEWLINE, 130)
-                syntax.append_valid(children, self.make_leaf(SyntaxKind.PASS_STMT, pass_token, end_pass, pass_token, 0))
-                continue
-            member_decorators = self.parse_decorators()
-            if self.at(TokenKind.DEF):
-                syntax.append_valid(children, self.parse_function(member_decorators, false))
-                continue
-            is_private = self.match_kind(TokenKind.PRIVATE)
-            field = self.expect(TokenKind.NAME, 132)
-            self.expect(TokenKind.COLON, 133)
-            field_children: List[NodeId] = []
-            syntax.append_all(field_children, member_decorators)
-            syntax.append_valid(field_children, self.make_token_node(SyntaxKind.NAME, field, 0))
-            syntax.append_valid(field_children, self.parse_type())
-            end_field = self.expect(TokenKind.NEWLINE, 134)
-            flags: i32 = 0
-            if is_private:
-                flags = 1
-            syntax.append_valid(children, self.make_node(SyntaxKind.FIELD_DECL, field, end_field, field, field_children, flags))
-        end = self.expect(TokenKind.DEDENT, 135)
-        flags: i32 = 0
-        if is_abstract:
-            flags = 1
-        return self.make_node(SyntaxKind.CLASS_DECL, start, end, name, children, flags)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_class(context, decorators)
 
     def parse_enum(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        start = self.expect(TokenKind.ENUM, 3)
-        name = self.expect(TokenKind.NAME, 83)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        syntax.append_valid(children, self.parse_type_params())
-        self.expect(TokenKind.COLON, 84)
-        self.expect(TokenKind.NEWLINE, 85)
-        self.expect(TokenKind.INDENT, 86)
-        while not self.at(TokenKind.DEDENT) and not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            member = self.expect(TokenKind.NAME, 87)
-            member_children: List[NodeId] = []
-            if self.match_kind(TokenKind.ASSIGN):
-                if self.match_kind(TokenKind.MINUS):
-                    minus = self.previous()
-                    value = self.expect(TokenKind.INTEGER, 88)
-                    syntax.append_valid(member_children, self.make_leaf(SyntaxKind.EXPR_UNARY, minus, value, minus, cast[i32](TokenKind.MINUS)))
-                else:
-                    value = self.expect(TokenKind.INTEGER, 88)
-                    syntax.append_valid(member_children, self.make_token_node(SyntaxKind.EXPR_LITERAL, value, cast[i32](TokenKind.INTEGER)))
-            end_member = self.expect(TokenKind.NEWLINE, 89)
-            syntax.append_valid(children, self.make_node(SyntaxKind.ENUM_MEMBER_DECL, member, end_member, member, member_children, 0))
-        end = self.expect(TokenKind.DEDENT, 90)
-        return self.make_node(SyntaxKind.ENUM_DECL, start, end, name, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_enum(context, decorators)
 
     def parse_variant(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        start = self.expect(TokenKind.VARIANT, 3)
-        name = self.expect(TokenKind.NAME, 100)
-        children: List[NodeId] = []
-        syntax.append_all(children, decorators)
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        syntax.append_valid(children, self.parse_type_params())
-        self.expect(TokenKind.COLON, 101)
-        self.expect(TokenKind.NEWLINE, 102)
-        self.expect(TokenKind.INDENT, 103)
-        while not self.at(TokenKind.DEDENT) and not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            case_name = self.expect(TokenKind.NAME, 104)
-            case_children: List[NodeId] = []
-            if self.match_kind(TokenKind.LEFT_PAREN):
-                if not self.at(TokenKind.RIGHT_PAREN):
-                    while not self.failed:
-                        field = self.expect(TokenKind.NAME, 105)
-                        self.expect(TokenKind.COLON, 106)
-                        field_children: List[NodeId] = []
-                        syntax.append_valid(field_children, self.make_token_node(SyntaxKind.NAME, field, 0))
-                        syntax.append_valid(field_children, self.parse_type())
-                        syntax.append_valid(case_children, self.make_node(SyntaxKind.FIELD_DECL, field, self.previous(), field, field_children, 0))
-                        if not self.match_kind(TokenKind.COMMA):
-                            break
-                        if self.at(TokenKind.RIGHT_PAREN):
-                            break
-                self.expect(TokenKind.RIGHT_PAREN, 107)
-            end_case = self.expect(TokenKind.NEWLINE, 108)
-            syntax.append_valid(children, self.make_node(SyntaxKind.VARIANT_CASE_DECL, case_name, end_case, case_name, case_children, 0))
-        end = self.expect(TokenKind.DEDENT, 109)
-        return self.make_node(SyntaxKind.VARIANT_DECL, start, end, name, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_variant(context, decorators)
 
     def parse_global(self: &Parser) -> NodeId:
-        start = self.current()
-        is_const = self.match_kind(TokenKind.CONST)
-        name = self.expect(TokenKind.NAME, 44)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        if self.match_kind(TokenKind.COLON):
-            syntax.append_valid(children, self.parse_type())
-        if self.match_kind(TokenKind.ASSIGN):
-            syntax.append_valid(children, self.parse_expression(0))
-        end = self.expect(TokenKind.NEWLINE, 47)
-        flags: i32 = 0
-        if is_const:
-            flags = 1
-        return self.make_node(SyntaxKind.GLOBAL_DECL, start, end, name, children, flags)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_global(context)
 
     def parse_static_assert(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.NAME, 137)
-        children: List[NodeId] = []
-        self.expect(TokenKind.LEFT_PAREN, 137)
-        syntax.append_valid(children, self.parse_expression(0))
-        if self.match_kind(TokenKind.COMMA):
-            message = self.expect(TokenKind.STRING, 138)
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.EXPR_LITERAL, message, cast[i32](TokenKind.STRING)))
-        close = self.expect(TokenKind.RIGHT_PAREN, 139)
-        end = self.expect(TokenKind.NEWLINE, 140)
-        ignored_close = close
-        return self.make_node(SyntaxKind.STATIC_ASSERT_DECL, start, end, start, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_declarations.parse_static_assert(context)
 
     def parse_suite_after_colon(self: &Parser, newline_code: i32, indent_code: i32) -> NodeId:
-        start = self.expect(TokenKind.NEWLINE, newline_code)
-        self.expect(TokenKind.INDENT, indent_code)
-        children: List[NodeId] = []
-        while not self.at(TokenKind.DEDENT) and not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            syntax.append_valid(children, self.parse_statement())
-        end = self.expect(TokenKind.DEDENT, 48)
-        return self.make_node_from_range(SyntaxKind.BLOCK, start, end, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_suite_after_colon(context, newline_code, indent_code)
 
     def parse_statement(self: &Parser) -> NodeId:
-        if self.at(TokenKind.IF):
-            return self.parse_if()
-        if self.at(TokenKind.WHILE):
-            return self.parse_while()
-        if self.at(TokenKind.FOR):
-            return self.parse_for()
-        if self.at(TokenKind.MATCH):
-            return self.parse_match()
-        if self.at(TokenKind.RETURN):
-            start = self.advance()
-            children: List[NodeId] = []
-            if not self.at(TokenKind.NEWLINE):
-                syntax.append_valid(children, self.parse_expression(0))
-            end = self.expect(TokenKind.NEWLINE, 49)
-            return self.make_node_from_range(SyntaxKind.RETURN_STMT, start, end, children, 0)
-        if self.match_kind(TokenKind.BREAK):
-            start = self.previous()
-            end = self.expect(TokenKind.NEWLINE, 50)
-            return self.make_leaf(SyntaxKind.BREAK_STMT, start, end, start, 0)
-        if self.match_kind(TokenKind.CONTINUE):
-            start = self.previous()
-            end = self.expect(TokenKind.NEWLINE, 51)
-            return self.make_leaf(SyntaxKind.CONTINUE_STMT, start, end, start, 0)
-        if self.match_kind(TokenKind.PASS):
-            start = self.previous()
-            end = self.expect(TokenKind.NEWLINE, 52)
-            return self.make_leaf(SyntaxKind.PASS_STMT, start, end, start, 0)
-        if self.match_kind(TokenKind.DEFER):
-            start = self.previous()
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.parse_expression(0))
-            end = self.expect(TokenKind.NEWLINE, 53)
-            return self.make_node_from_range(SyntaxKind.DEFER_STMT, start, end, children, 0)
-        if self.at(TokenKind.WITH):
-            return self.parse_with()
-        if self.match_kind(TokenKind.UNSAFE):
-            start = self.previous()
-            self.expect(TokenKind.COLON, 54)
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.parse_suite_after_colon(54, 54))
-            return self.make_node(SyntaxKind.UNSAFE_STMT, start, self.previous(), start, children, 0)
-        statement = self.parse_simple_statement()
-        self.expect(TokenKind.NEWLINE, 55)
-        return statement
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_statement(context)
 
     def parse_simple_statement(self: &Parser) -> NodeId:
-        is_const = self.match_kind(TokenKind.CONST)
-        if self.at(TokenKind.NAME) and self.peek(1).kind == TokenKind.COLON:
-            name = self.advance()
-            self.advance()
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-            syntax.append_valid(children, self.parse_type())
-            if self.match_kind(TokenKind.ASSIGN):
-                syntax.append_valid(children, self.parse_expression(0))
-            flags: i32 = 0
-            if is_const:
-                flags = 1
-            return self.make_node(SyntaxKind.VAR_DECL_STMT, name, self.previous(), name, children, flags)
-        if is_const:
-            name = self.expect(TokenKind.NAME, 56)
-            self.expect(TokenKind.ASSIGN, 57)
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-            syntax.append_valid(children, self.parse_expression(0))
-            return self.make_node(SyntaxKind.VAR_DECL_STMT, name, self.previous(), name, children, 1)
-        expression = self.parse_expression(0)
-        if is_assignment_kind(self.current().kind):
-            assignment = self.advance()
-            children: List[NodeId] = []
-            syntax.append_valid(children, expression)
-            syntax.append_valid(children, self.parse_expression(0))
-            return self.make_node(SyntaxKind.ASSIGN_STMT, assignment, self.previous(), assignment, children, cast[i32](assignment.kind))
-        children: List[NodeId] = []
-        syntax.append_valid(children, expression)
-        return self.make_node(SyntaxKind.EXPR_STMT, self.previous(), self.previous(), self.previous(), children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_simple_statement(context)
 
     def parse_if(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.IF, 3)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.parse_expression(0))
-        self.expect(TokenKind.COLON, 58)
-        syntax.append_valid(children, self.parse_suite_after_colon(58, 58))
-        while self.match_kind(TokenKind.ELIF):
-            branch = self.previous()
-            branch_children: List[NodeId] = []
-            syntax.append_valid(branch_children, self.parse_expression(0))
-            self.expect(TokenKind.COLON, 59)
-            syntax.append_valid(branch_children, self.parse_suite_after_colon(59, 59))
-            syntax.append_valid(children, self.make_node(SyntaxKind.IF_BRANCH, branch, self.previous(), branch, branch_children, 1))
-        if self.match_kind(TokenKind.ELSE):
-            else_token = self.previous()
-            self.expect(TokenKind.COLON, 60)
-            else_children: List[NodeId] = []
-            syntax.append_valid(else_children, self.parse_suite_after_colon(60, 60))
-            syntax.append_valid(children, self.make_node(SyntaxKind.IF_BRANCH, else_token, self.previous(), else_token, else_children, 2))
-        return self.make_node(SyntaxKind.IF_STMT, start, self.previous(), start, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_if(context)
 
     def parse_while(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.WHILE, 3)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.parse_expression(0))
-        self.expect(TokenKind.COLON, 61)
-        syntax.append_valid(children, self.parse_suite_after_colon(61, 61))
-        return self.make_node(SyntaxKind.WHILE_STMT, start, self.previous(), start, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_while(context)
 
     def parse_with(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.WITH, 3)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.parse_expression(0))
-        self.expect(TokenKind.AS, 90)
-        name = self.expect(TokenKind.NAME, 91)
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        self.expect(TokenKind.COLON, 92)
-        syntax.append_valid(children, self.parse_suite_after_colon(92, 92))
-        return self.make_node(SyntaxKind.WITH_STMT, start, self.previous(), name, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_with(context)
 
     def parse_for(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.FOR, 3)
-        saved = self.index
-        children: List[NodeId] = []
-        if self.at(TokenKind.NAME):
-            name = self.advance()
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-            if self.match_kind(TokenKind.COLON):
-                syntax.append_valid(children, self.parse_type())
-            if self.match_kind(TokenKind.IN):
-                is_comptime = self.match_kind(TokenKind.COMPTIME)
-                syntax.append_valid(children, self.parse_expression(0))
-                self.expect(TokenKind.COLON, 62)
-                syntax.append_valid(children, self.parse_suite_after_colon(62, 62))
-                flags: i32 = 0
-                if is_comptime:
-                    flags = 1
-                return self.make_node(SyntaxKind.FOR_EACH_STMT, start, self.previous(), start, children, flags)
-        self.index = saved
-        children = []
-        if not self.at(TokenKind.SEMICOLON):
-            syntax.append_valid(children, self.parse_simple_statement())
-        self.expect(TokenKind.SEMICOLON, 63)
-        if not self.at(TokenKind.SEMICOLON):
-            syntax.append_valid(children, self.parse_expression(0))
-        self.expect(TokenKind.SEMICOLON, 64)
-        if not self.at(TokenKind.COLON):
-            syntax.append_valid(children, self.parse_simple_statement())
-        self.expect(TokenKind.COLON, 65)
-        syntax.append_valid(children, self.parse_suite_after_colon(65, 65))
-        return self.make_node(SyntaxKind.FOR_C_STMT, start, self.previous(), start, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_for(context)
 
     def parse_match(self: &Parser) -> NodeId:
-        start = self.expect(TokenKind.MATCH, 3)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.parse_expression(0))
-        self.expect(TokenKind.COLON, 112)
-        self.expect(TokenKind.NEWLINE, 113)
-        self.expect(TokenKind.INDENT, 114)
-        while not self.at(TokenKind.DEDENT) and not self.at(TokenKind.EOF) and not self.failed:
-            if self.match_kind(TokenKind.NEWLINE):
-                continue
-            case_start = self.expect(TokenKind.CASE, 115)
-            case_children: List[NodeId] = []
-            syntax.append_valid(case_children, self.parse_match_pattern())
-            if self.match_kind(TokenKind.IF):
-                syntax.append_valid(case_children, self.parse_expression(0))
-            self.expect(TokenKind.COLON, 120)
-            syntax.append_valid(case_children, self.parse_suite_after_colon(120, 120))
-            syntax.append_valid(children, self.make_node(SyntaxKind.MATCH_CASE, case_start, self.previous(), case_start, case_children, 0))
-        end = self.expect(TokenKind.DEDENT, 121)
-        return self.make_node(SyntaxKind.MATCH_STMT, start, end, start, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_match(context)
 
     def parse_match_pattern(self: &Parser) -> NodeId:
-        left = self.parse_match_capture_pattern()
-        if not self.match_kind(TokenKind.PIPE):
-            return left
-        start = self.previous()
-        children: List[NodeId] = []
-        syntax.append_valid(children, left)
-        while true:
-            syntax.append_valid(children, self.parse_match_capture_pattern())
-            if not self.match_kind(TokenKind.PIPE):
-                break
-        return self.make_node(SyntaxKind.PATTERN_OR, start, self.previous(), start, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_match_pattern(context)
 
     def parse_match_capture_pattern(self: &Parser) -> NodeId:
-        pattern = self.parse_match_pattern_atom()
-        if self.match_kind(TokenKind.AT):
-            at_token = self.previous()
-            children: List[NodeId] = []
-            syntax.append_valid(children, pattern)
-            syntax.append_valid(children, self.parse_match_capture_pattern())
-            return self.make_node(SyntaxKind.PATTERN_CAPTURE, at_token, self.previous(), at_token, children, 0)
-        return pattern
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_match_capture_pattern(context)
 
     def parse_match_pattern_atom(self: &Parser) -> NodeId:
-        if self.at(TokenKind.NAME) and self.token_text_equals(self.current(), "_"):
-            token = self.advance()
-            return self.make_token_node(SyntaxKind.PATTERN_WILDCARD, token, 0)
-        if self.match_kind(TokenKind.LEFT_PAREN):
-            start = self.previous()
-            child = self.parse_match_pattern()
-            close = self.expect(TokenKind.RIGHT_PAREN, 119)
-            children: List[NodeId] = []
-            syntax.append_valid(children, child)
-            return self.make_node(SyntaxKind.PATTERN_PATH, start, close, start, children, 1)
-        start = self.current()
-        children: List[NodeId] = []
-        first = self.current()
-        if self.at(TokenKind.NAME) or self.at(TokenKind.NONE):
-            self.advance()
-        else:
-            self.emit_error(116, first)
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, first, 0))
-        while self.match_kind(TokenKind.DOT):
-            name = self.current()
-            if self.at(TokenKind.NAME) or self.at(TokenKind.NONE):
-                self.advance()
-            else:
-                self.emit_error(117, name)
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        if self.match_kind(TokenKind.LEFT_PAREN):
-            if not self.at(TokenKind.RIGHT_PAREN):
-                while not self.failed:
-                    syntax.append_valid(children, self.parse_match_pattern())
-                    if not self.match_kind(TokenKind.COMMA):
-                        break
-                    if self.at(TokenKind.RIGHT_PAREN):
-                        break
-            self.expect(TokenKind.RIGHT_PAREN, 119)
-        return self.make_node(SyntaxKind.PATTERN_PATH, start, self.previous(), first, children, 0)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_statements.parse_match_pattern_atom(context)
 
     def parse_type(self: &Parser) -> NodeId:
-        start = self.current()
-        if self.match_kind(TokenKind.STAR):
-            token = self.previous()
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.parse_type())
-            return self.make_node(SyntaxKind.TYPE_POINTER, token, self.previous(), token, children, 0)
-        if self.match_kind(TokenKind.AMPERSAND):
-            token = self.previous()
-            children: List[NodeId] = []
-            if self.match_kind(TokenKind.DYN):
-                syntax.append_valid(children, self.parse_type())
-                return self.make_node(SyntaxKind.TYPE_DYN, token, self.previous(), token, children, 0)
-            syntax.append_valid(children, self.parse_type())
-            return self.make_node(SyntaxKind.TYPE_REFERENCE, token, self.previous(), token, children, 0)
-        if self.at(TokenKind.LEFT_BRACKET) and self.peek(1).kind == TokenKind.RIGHT_BRACKET:
-            self.advance()
-            token = self.previous()
-            self.advance()
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.parse_type())
-            return self.make_node(SyntaxKind.TYPE_SLICE, token, self.previous(), token, children, 0)
-        if self.match_kind(TokenKind.CONST):
-            token = self.previous()
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.parse_type())
-            return self.make_node(SyntaxKind.TYPE_CONST, token, self.previous(), token, children, 0)
-        if self.match_kind(TokenKind.DEF):
-            token = self.previous()
-            children: List[NodeId] = []
-            self.expect(TokenKind.LEFT_PAREN, 149)
-            self.parse_type_list(children, TokenKind.RIGHT_PAREN)
-            self.expect(TokenKind.RIGHT_PAREN, 150)
-            if self.match_kind(TokenKind.ARROW):
-                syntax.append_valid(children, self.parse_type())
-            return self.make_node(SyntaxKind.TYPE_FUNCTION, token, self.previous(), token, children, 0)
-        if self.at(TokenKind.NAME) and self.token_text_equals(self.current(), "closure"):
-            token = self.advance()
-            children: List[NodeId] = []
-            self.expect(TokenKind.LEFT_BRACKET, 151)
-            syntax.append_valid(children, self.parse_type())
-            self.expect(TokenKind.RIGHT_BRACKET, 152)
-            self.expect(TokenKind.LEFT_PAREN, 153)
-            self.parse_type_list(children, TokenKind.RIGHT_PAREN)
-            self.expect(TokenKind.RIGHT_PAREN, 154)
-            if self.match_kind(TokenKind.ARROW):
-                syntax.append_valid(children, self.parse_type())
-            return self.make_node(SyntaxKind.TYPE_CLOSURE, token, self.previous(), token, children, 0)
-        name = self.expect(TokenKind.NAME, 66)
-        children: List[NodeId] = []
-        syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-        while self.match_kind(TokenKind.DOT):
-            part = self.expect(TokenKind.NAME, 67)
-            syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, part, 0))
-        node = self.make_node(SyntaxKind.TYPE_NAME, start, self.previous(), name, children, 0)
-        if self.match_kind(TokenKind.LEFT_BRACKET):
-            generic_children: List[NodeId] = []
-            syntax.append_valid(generic_children, node)
-            self.parse_type_list(generic_children, TokenKind.RIGHT_BRACKET)
-            self.expect(TokenKind.RIGHT_BRACKET, 68)
-            node = self.make_node(SyntaxKind.TYPE_GENERIC, start, self.previous(), name, generic_children, 0)
-        while true:
-            if self.match_kind(TokenKind.STAR):
-                token = self.previous()
-                postfix_children: List[NodeId] = []
-                syntax.append_valid(postfix_children, node)
-                node = self.make_node(SyntaxKind.TYPE_POINTER, start, token, token, postfix_children, 1)
-                continue
-            if self.match_kind(TokenKind.LEFT_BRACKET):
-                array_children: List[NodeId] = []
-                syntax.append_valid(array_children, node)
-                if not self.at(TokenKind.RIGHT_BRACKET):
-                    length = self.expect(TokenKind.INTEGER, 69)
-                    syntax.append_valid(array_children, self.make_token_node(SyntaxKind.EXPR_LITERAL, length, cast[i32](TokenKind.INTEGER)))
-                close = self.expect(TokenKind.RIGHT_BRACKET, 70)
-                node = self.make_node(SyntaxKind.TYPE_ARRAY, start, close, close, array_children, 0)
-                continue
-            break
-        return node
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_types.parse_type(context)
 
     def parse_type_list(self: &Parser, children: &List[NodeId], closing: TokenKind) -> void:
-        if self.at(closing):
-            return
-        while not self.failed:
-            syntax.append_valid(children, self.parse_type())
-            if not self.match_kind(TokenKind.COMMA):
-                break
-            if self.at(closing):
-                break
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        parser_types.parse_type_list(context, children, closing)
 
     def parse_expression(self: &Parser, minimum_precedence: i32) -> NodeId:
-        left = self.parse_unary()
-        while not self.failed:
-            precedence = binary_precedence(self.current().kind)
-            is_not_in = false
-            if self.at(TokenKind.NOT) and self.peek(1).kind == TokenKind.IN:
-                precedence = binary_precedence(TokenKind.IN)
-                is_not_in = true
-            if precedence == 0 or precedence < minimum_precedence:
-                break
-            operator = self.advance()
-            if is_not_in:
-                self.advance()
-            right = self.parse_expression(precedence + 1)
-            children: List[NodeId] = []
-            syntax.append_valid(children, left)
-            syntax.append_valid(children, right)
-            left = self.make_node(SyntaxKind.EXPR_BINARY, operator, self.previous(), operator, children, cast[i32](operator.kind))
-        return left
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_expressions.parse_expression(context, minimum_precedence)
 
     def parse_unary(self: &Parser) -> NodeId:
-        if self.at(TokenKind.NOT) or self.at(TokenKind.MINUS) or self.at(TokenKind.PLUS) or self.at(TokenKind.TILDE) or self.at(TokenKind.STAR) or self.at(TokenKind.AMPERSAND):
-            operator = self.advance()
-            children: List[NodeId] = []
-            syntax.append_valid(children, self.parse_unary())
-            return self.make_node(SyntaxKind.EXPR_UNARY, operator, self.previous(), operator, children, cast[i32](operator.kind))
-        return self.parse_postfix()
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_expressions.parse_unary(context)
 
     def parse_postfix(self: &Parser) -> NodeId:
-        expression = self.parse_primary()
-        while not self.failed:
-            if self.looks_like_generic_call():
-                type_children: List[NodeId] = []
-                self.expect(TokenKind.LEFT_BRACKET, 68)
-                self.parse_type_list(type_children, TokenKind.RIGHT_BRACKET)
-                self.expect(TokenKind.RIGHT_BRACKET, 68)
-                call_children: List[NodeId] = []
-                syntax.append_valid(call_children, expression)
-                for child in type_children:
-                    syntax.append_valid(call_children, child)
-                self.parse_call_arguments(call_children)
-                expression = self.make_node(SyntaxKind.EXPR_CALL, self.previous(), self.previous(), self.previous(), call_children, 1)
-                continue
-            if self.at(TokenKind.LEFT_PAREN):
-                call_children: List[NodeId] = []
-                syntax.append_valid(call_children, expression)
-                self.parse_call_arguments(call_children)
-                expression = self.make_node(SyntaxKind.EXPR_CALL, self.previous(), self.previous(), self.previous(), call_children, 0)
-                continue
-            if self.match_kind(TokenKind.DOT):
-                dot = self.previous()
-                name = self.expect(TokenKind.NAME, 71)
-                children: List[NodeId] = []
-                syntax.append_valid(children, expression)
-                syntax.append_valid(children, self.make_token_node(SyntaxKind.NAME, name, 0))
-                expression = self.make_node(SyntaxKind.EXPR_ATTRIBUTE, dot, name, name, children, 0)
-                continue
-            if self.match_kind(TokenKind.LEFT_BRACKET):
-                bracket = self.previous()
-                children: List[NodeId] = []
-                syntax.append_valid(children, expression)
-                if self.match_kind(TokenKind.COLON):
-                    if not self.at(TokenKind.RIGHT_BRACKET):
-                        syntax.append_valid(children, self.parse_expression(0))
-                    close = self.expect(TokenKind.RIGHT_BRACKET, 73)
-                    expression = self.make_node(SyntaxKind.EXPR_SLICE, bracket, close, bracket, children, 1)
-                    continue
-                syntax.append_valid(children, self.parse_expression(0))
-                if self.match_kind(TokenKind.COLON):
-                    if not self.at(TokenKind.RIGHT_BRACKET):
-                        syntax.append_valid(children, self.parse_expression(0))
-                    close = self.expect(TokenKind.RIGHT_BRACKET, 74)
-                    expression = self.make_node(SyntaxKind.EXPR_SLICE, bracket, close, bracket, children, 0)
-                    continue
-                close = self.expect(TokenKind.RIGHT_BRACKET, 75)
-                expression = self.make_node(SyntaxKind.EXPR_INDEX, bracket, close, bracket, children, 0)
-                continue
-            if self.match_kind(TokenKind.QUESTION):
-                question = self.previous()
-                children: List[NodeId] = []
-                syntax.append_valid(children, expression)
-                expression = self.make_node(SyntaxKind.EXPR_PROPAGATE, question, question, question, children, 0)
-                continue
-            break
-        return expression
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_expressions.parse_postfix(context)
 
     def parse_call_arguments(self: &Parser, children: &List[NodeId]) -> void:
-        start = self.expect(TokenKind.LEFT_PAREN, 72)
-        if not self.at(TokenKind.RIGHT_PAREN):
-            while not self.failed:
-                arg_start = self.current()
-                arg_children: List[NodeId] = []
-                flags: i32 = 0
-                if self.at(TokenKind.NAME) and self.peek(1).kind == TokenKind.ASSIGN:
-                    name = self.advance()
-                    self.advance()
-                    syntax.append_valid(arg_children, self.make_token_node(SyntaxKind.NAME, name, 0))
-                    flags = 1
-                syntax.append_valid(arg_children, self.parse_expression(0))
-                syntax.append_valid(children, self.make_node(SyntaxKind.EXPR_ARGUMENT, arg_start, self.previous(), arg_start, arg_children, flags))
-                if not self.match_kind(TokenKind.COMMA):
-                    break
-                if self.at(TokenKind.RIGHT_PAREN):
-                    break
-        close = self.expect(TokenKind.RIGHT_PAREN, 76)
-        ignored_start = start
-        ignored_close = close
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        parser_expressions.parse_call_arguments(context, children)
 
     def parse_primary(self: &Parser) -> NodeId:
-        token = self.current()
-        if self.match_kind(TokenKind.INTEGER) or self.match_kind(TokenKind.FLOAT) or self.match_kind(TokenKind.STRING) or self.match_kind(TokenKind.CHAR) or self.match_kind(TokenKind.FSTRING) or self.match_kind(TokenKind.TRUE) or self.match_kind(TokenKind.FALSE) or self.match_kind(TokenKind.NULL) or self.match_kind(TokenKind.NONE):
-            literal = self.previous()
-            kind = SyntaxKind.EXPR_LITERAL
-            if literal.kind == TokenKind.FSTRING:
-                kind = SyntaxKind.EXPR_FSTRING
-            return self.make_token_node(kind, literal, cast[i32](literal.kind))
-        if self.at(TokenKind.NAME) and (self.token_text_equals(self.current(), "cast") or self.token_text_equals(self.current(), "alloc")) and self.peek(1).kind == TokenKind.LEFT_BRACKET:
-            builtin = self.advance()
-            children: List[NodeId] = []
-            self.expect(TokenKind.LEFT_BRACKET, 77)
-            syntax.append_valid(children, self.parse_type())
-            self.expect(TokenKind.RIGHT_BRACKET, 77)
-            self.expect(TokenKind.LEFT_PAREN, 77)
-            if not self.at(TokenKind.RIGHT_PAREN):
-                syntax.append_valid(children, self.parse_expression(0))
-            close = self.expect(TokenKind.RIGHT_PAREN, 78)
-            if self.token_text_equals(builtin, "cast"):
-                return self.make_node(SyntaxKind.EXPR_CAST, builtin, close, builtin, children, 0)
-            return self.make_node(SyntaxKind.EXPR_ALLOC, builtin, close, builtin, children, 0)
-        if self.match_kind(TokenKind.NAME):
-            name = self.previous()
-            return self.make_token_node(SyntaxKind.EXPR_NAME, name, 0)
-        if self.match_kind(TokenKind.LEFT_PAREN):
-            start = self.previous()
-            children: List[NodeId] = []
-            if self.match_kind(TokenKind.RIGHT_PAREN):
-                return self.make_node(SyntaxKind.EXPR_TUPLE, start, self.previous(), start, children, 0)
-            first = self.parse_expression(0)
-            if self.match_kind(TokenKind.COMMA):
-                syntax.append_valid(children, first)
-                while not self.at(TokenKind.RIGHT_PAREN) and not self.failed:
-                    syntax.append_valid(children, self.parse_expression(0))
-                    if not self.match_kind(TokenKind.COMMA):
-                        break
-                    if self.at(TokenKind.RIGHT_PAREN):
-                        break
-                close = self.expect(TokenKind.RIGHT_PAREN, 80)
-                return self.make_node(SyntaxKind.EXPR_TUPLE, start, close, start, children, 0)
-            close = self.expect(TokenKind.RIGHT_PAREN, 81)
-            ignored_close = close
-            return first
-        if self.match_kind(TokenKind.LEFT_BRACKET):
-            start = self.previous()
-            children: List[NodeId] = []
-            if not self.at(TokenKind.RIGHT_BRACKET):
-                while not self.failed:
-                    syntax.append_valid(children, self.parse_expression(0))
-                    if not self.match_kind(TokenKind.COMMA):
-                        break
-                    if self.at(TokenKind.RIGHT_BRACKET):
-                        break
-            close = self.expect(TokenKind.RIGHT_BRACKET, 80)
-            return self.make_node(SyntaxKind.EXPR_LIST, start, close, start, children, 0)
-        if self.match_kind(TokenKind.LEFT_BRACE):
-            start = self.previous()
-            children: List[NodeId] = []
-            if self.match_kind(TokenKind.RIGHT_BRACE):
-                return self.make_node(SyntaxKind.EXPR_MAP, start, self.previous(), start, children, 0)
-            first = self.parse_expression(0)
-            if self.match_kind(TokenKind.COLON):
-                entry_children: List[NodeId] = []
-                syntax.append_valid(entry_children, first)
-                syntax.append_valid(entry_children, self.parse_expression(0))
-                syntax.append_valid(children, self.make_node(SyntaxKind.EXPR_MAP_ENTRY, start, self.previous(), start, entry_children, 0))
-                while self.match_kind(TokenKind.COMMA):
-                    if self.at(TokenKind.RIGHT_BRACE):
-                        break
-                    entry_start = self.current()
-                    key = self.parse_expression(0)
-                    self.expect(TokenKind.COLON, 144)
-                    value = self.parse_expression(0)
-                    more_children: List[NodeId] = []
-                    syntax.append_valid(more_children, key)
-                    syntax.append_valid(more_children, value)
-                    syntax.append_valid(children, self.make_node(SyntaxKind.EXPR_MAP_ENTRY, entry_start, self.previous(), entry_start, more_children, 0))
-                close = self.expect(TokenKind.RIGHT_BRACE, 80)
-                return self.make_node(SyntaxKind.EXPR_MAP, start, close, start, children, 0)
-            syntax.append_valid(children, first)
-            while self.match_kind(TokenKind.COMMA):
-                if self.at(TokenKind.RIGHT_BRACE):
-                    break
-                syntax.append_valid(children, self.parse_expression(0))
-            close = self.expect(TokenKind.RIGHT_BRACE, 80)
-            return self.make_node(SyntaxKind.EXPR_SET, start, close, start, children, 0)
-        self.emit_error(82, token)
-        return syntax.missing_node()
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        return parser_expressions.parse_primary(context)
 
     def looks_like_generic_call(self: &const Parser) -> bool:
         if not self.at(TokenKind.LEFT_BRACKET):

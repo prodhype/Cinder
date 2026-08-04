@@ -1,0 +1,210 @@
+import checker_core
+import checker_types
+import ownership
+import reflection
+import semantic
+import symbols
+import syntax
+import token
+import types
+import variants
+from syntax import NodeId
+
+
+def validate_names(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String) -> void:
+    validate_names_in_scope(checker, arena, root, source, symbols.root_scope(), types.type_void())
+
+
+def validate_names_in_node(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    validate_names_in_scope(checker, arena, id, source, symbols.root_scope(), types.type_void())
+
+
+def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId, expected_return: types.TypeId) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
+        function_scope = checker.symbols.add_scope(current_scope)
+        function_return = checker_core.resolve_declared_type_or_default(checker, arena, id, source, types.type_i32())
+        checker.model.record_scope(id, function_scope)
+        for offset in range(0, node.child_count):
+            validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, function_scope, function_return)
+        return
+    if node.kind == syntax.SyntaxKind.MATCH_CASE:
+        case_scope = checker.symbols.add_scope(current_scope)
+        checker.model.record_scope(id, case_scope)
+        if node.child_count > 0:
+            declare_pattern_bindings(checker, arena, arena.children[node.first_child], source, case_scope)
+        for offset in range(0, node.child_count):
+            validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, case_scope, expected_return)
+        return
+    if node.kind == syntax.SyntaxKind.BLOCK:
+        block_scope = checker.symbols.add_scope(current_scope)
+        checker.model.record_scope(id, block_scope)
+        for offset in range(0, node.child_count):
+            validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, block_scope, expected_return)
+        return
+    if node.kind == syntax.SyntaxKind.PARAMETER or node.kind == syntax.SyntaxKind.VAR_DECL_STMT or node.kind == syntax.SyntaxKind.WITH_STMT:
+        local_type = checker_core.resolve_declared_type_or_default(checker, arena, id, source, types.type_i32())
+        local_kind = symbols.SymbolKind.LOCAL
+        if node.kind == syntax.SyntaxKind.PARAMETER:
+            local_kind = symbols.SymbolKind.PARAMETER
+        symbol = checker.symbols.add_symbol(
+            local_kind,
+            node.value_start,
+            node.value_length,
+            local_type,
+            id,
+            current_scope,
+            0,
+        )
+        checker.model.record_declaration_symbol(id, symbol)
+        if ownership.type_needs_drop_for_table(checker.type_table, local_type):
+            checker.model.record_cleanup(id, local_type, 0)
+        if node.kind == syntax.SyntaxKind.VAR_DECL_STMT:
+            validate_var_decl(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_NAME:
+        if not checker_types.is_builtin_name(source, node.value_start, node.value_length):
+            found = checker.symbols.find_in_scope(source, current_scope, node.value_start, node.value_length)
+            if found.index < 0:
+                checker_core.emit_error(checker, 48, node.start, node.length, node.line, node.column)
+                return
+            checker.model.record_name_symbol(id, found)
+            checker.model.record_expr_type(id, checker.symbols.symbols[found.index].type_id)
+    elif node.kind == syntax.SyntaxKind.EXPR_CALL:
+        checker_types.validate_call(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.RETURN_STMT:
+        if node.child_count == 0:
+            if expected_return.index != types.type_void().index:
+                checker_core.emit_error(checker, 42, node.start, node.length, node.line, node.column)
+            return
+        returned = checker_core.first_child(arena, id)
+        returned_type = checker_types.infer_expression_type(checker, arena, returned, source, current_scope)
+        if expected_return.index != types.type_void().index and returned_type.index != types.type_error().index and not checker_types.types_compatible(checker, expected_return, returned_type):
+            returned_node = arena.nodes[returned.index]
+            checker_core.emit_error(checker, 107, returned_node.start, returned_node.length, returned_node.line, returned_node.column)
+            return
+    elif node.kind == syntax.SyntaxKind.ASSIGN_STMT:
+        declare_assignment_target_if_missing(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.FOR_EACH_STMT:
+        declare_for_each_target_if_missing(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.IF_STMT or node.kind == syntax.SyntaxKind.WHILE_STMT:
+        condition = checker_core.first_child(arena, id)
+        if condition.index >= 0 and checker_types.is_string_literal(arena, condition):
+            checker_core.emit_error(checker, 24, arena.nodes[condition.index].start, arena.nodes[condition.index].length, arena.nodes[condition.index].line, arena.nodes[condition.index].column)
+            return
+    elif node.kind == syntax.SyntaxKind.MATCH_STMT:
+        wildcard = variants.first_wildcard_before_last(arena, id)
+        if wildcard.index >= 0:
+            wildcard_node = arena.nodes[wildcard.index]
+            checker_core.emit_error(checker, 121, wildcard_node.start, wildcard_node.length, wildcard_node.line, wildcard_node.column)
+            return
+    elif node.kind == syntax.SyntaxKind.STATIC_ASSERT_DECL:
+        static_assert = reflection.summarize_static_assert(arena, id)
+        ignored_static_assert = static_assert
+        assertion = checker_core.first_child(arena, id)
+        if assertion.index >= 0:
+            assertion_node = arena.nodes[assertion.index]
+            if assertion_node.kind == syntax.SyntaxKind.EXPR_LITERAL and assertion_node.flags == cast[i32](token.TokenKind.FALSE):
+                checker_core.emit_error(checker, 214, assertion_node.start, assertion_node.length, assertion_node.line, assertion_node.column)
+                return
+    for offset in range(0, node.child_count):
+        validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, current_scope, expected_return)
+
+
+def declare_pattern_bindings(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.PATTERN_PATH:
+        if node.flags == 0 and node.child_count == 1:
+            name_id = arena.children[node.first_child]
+            name = arena.nodes[name_id.index]
+            if name.kind == syntax.SyntaxKind.NAME and is_pattern_binding_name(source, name.value_start, name.value_length):
+                if checker.symbols.find_in_current_scope(source, current_scope, name.value_start, name.value_length).index < 0:
+                    symbol = checker.symbols.add_symbol(
+                        symbols.SymbolKind.LOCAL,
+                        name.value_start,
+                        name.value_length,
+                        types.type_i32(),
+                        name_id,
+                        current_scope,
+                        0,
+                    )
+                    checker.model.record_declaration_symbol(name_id, symbol)
+                return
+        for offset in range(0, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            child = arena.nodes[child_id.index]
+            if child.kind != syntax.SyntaxKind.NAME:
+                declare_pattern_bindings(checker, arena, child_id, source, current_scope)
+        return
+    if node.kind == syntax.SyntaxKind.PATTERN_CAPTURE or node.kind == syntax.SyntaxKind.PATTERN_OR:
+        for offset in range(0, node.child_count):
+            declare_pattern_bindings(checker, arena, arena.children[node.first_child + offset], source, current_scope)
+
+
+def is_pattern_binding_name(source: &const String, start: usize, length: usize) -> bool:
+    if length <= 0:
+        return false
+    first = source.byte_at(start)
+    return first >= 97 and first <= 122
+
+
+def declare_for_each_target_if_missing(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    target = checker_core.first_child(arena, id)
+    if target.index < 0:
+        return
+    target_node = arena.nodes[target.index]
+    if target_node.kind != syntax.SyntaxKind.NAME:
+        return
+    if checker.symbols.find_in_scope(source, current_scope, target_node.value_start, target_node.value_length).index >= 0:
+        return
+    symbol = checker.symbols.add_symbol(
+        symbols.SymbolKind.LOCAL,
+        target_node.value_start,
+        target_node.value_length,
+        types.type_i32(),
+        target,
+        current_scope,
+        0,
+    )
+    checker.model.record_declaration_symbol(target, symbol)
+
+
+def declare_assignment_target_if_missing(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    target = checker_core.first_child(arena, id)
+    if target.index < 0:
+        return
+    target_node = arena.nodes[target.index]
+    if target_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return
+    if checker.symbols.find_in_scope(source, current_scope, target_node.value_start, target_node.value_length).index >= 0:
+        return
+    local_type = checker_types.infer_expression_type(checker, arena, checker_core.second_child(arena, id), source, current_scope)
+    if local_type.index == types.type_error().index:
+        local_type = types.type_i32()
+    symbol = checker.symbols.add_symbol(
+        symbols.SymbolKind.LOCAL,
+        target_node.value_start,
+        target_node.value_length,
+        local_type,
+        target,
+        current_scope,
+        0,
+    )
+    checker.model.record_declaration_symbol(target, symbol)
+
+
+def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    node = arena.nodes[id.index]
+    annotation = checker_core.find_child_type(arena, id)
+    initializer = checker_core.last_child(arena, id)
+    if annotation.index < 0 or initializer.index < 0:
+        return
+    annotation_type = checker.type_table.resolve_type_node(arena, annotation, source)
+    checker.model.record_type_node(annotation, annotation_type)
+    initializer_type = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
+    initializer_node = arena.nodes[initializer.index]
+    if initializer_type.index >= 0 and initializer_type.index != types.type_error().index and not checker_types.types_compatible(checker, annotation_type, initializer_type):
+        checker_core.emit_error(checker, 107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)

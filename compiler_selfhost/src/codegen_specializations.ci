@@ -1,0 +1,556 @@
+import backend_ir
+import codegen_names
+import codegen_type_names
+import project
+import syntax
+import types
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+def collect_module_specialization_names(
+    registry: &codegen_names.SpecializationNameRegistry,
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        collect_module_specialization_names(registry, arena, arena.children[node.first_child + offset], source, prefix, project_name, imports)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0:
+        return
+    base_node = arena.nodes[base.index]
+    if not is_runtime_specialization_name(source, base_node):
+        return
+    canonical_builder = StringBuilder()
+    codegen_type_names.emit_canonical_specialized_type_name(arena, id, source, &canonical_builder, prefix, project_name, imports)
+    readable_builder = StringBuilder()
+    codegen_type_names.emit_readable_specialized_type_name(arena, id, source, &readable_builder)
+    codegen_names.record_specialization_name(registry, canonical_builder.finish(), readable_builder.finish())
+
+def is_runtime_specialization_name(source: &const String, node: &const syntax.SyntaxNode) -> bool:
+    return codegen_type_names.is_runtime_generic_name(source, node, "List") or codegen_type_names.is_runtime_generic_name(source, node, "Set") or codegen_type_names.is_runtime_generic_name(source, node, "Map") or codegen_type_names.is_runtime_generic_name(source, node, "Option") or codegen_type_names.is_runtime_generic_name(source, node, "Result") or codegen_type_names.is_runtime_generic_name(source, node, "Owned") or codegen_type_names.is_runtime_generic_name(source, node, "Tuple")
+
+def emit_semantic_type_specializations(
+    table: &const types.TypeTable,
+    specializations: &const List[types.TypeId],
+    semantic_nodes: &const List[backend_ir.IRNode],
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    emitted: List[String] = []
+    for type_id in specializations:
+        if semantic_specialization_is_inferred_expression(semantic_nodes, arena, type_id):
+            emit_semantic_type_specialization(table, type_id, source, builder, emitted, prefix, project_name, imports, registry)
+
+def semantic_specialization_is_inferred_expression(
+    semantic_nodes: &const List[backend_ir.IRNode],
+    arena: &const SyntaxArena,
+    type_id: types.TypeId,
+) -> bool:
+    for node in semantic_nodes:
+        if node.type_id.index == type_id.index and node.syntax.index >= 0:
+            kind = arena.nodes[node.syntax.index].kind
+            if kind == SyntaxKind.EXPR_LIST or kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_SET or kind == SyntaxKind.EXPR_TUPLE:
+                return true
+    return false
+
+def emit_semantic_type_specialization(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return
+    record = table.types[type_id.index]
+    if record.kind != types.TypeKind.LIST:
+        return
+    if codegen_type_names.semantic_type_is_kind(table, record.inner, types.TypeKind.ERROR):
+        return
+    emit_semantic_type_specialization(table, record.inner, source, builder, emitted, prefix, project_name, imports, registry)
+    name_builder = StringBuilder()
+    codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &name_builder, registry)
+    name = name_builder.finish()
+    if codegen_type_names.string_list_contains(emitted, &name):
+        return
+    emitted.append(name[0:len(name)])
+    builder.append("#ifndef CINDER_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\ntypedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append(";\n#endif\n")
+    builder.append("#ifndef CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    if codegen_type_names.semantic_type_is_kind(table, record.inner, types.TypeKind.ARRAY):
+        emit_semantic_array_pointer_data_declarator(table, record.inner, source, builder, prefix, project_name, imports, registry)
+        builder.append(";\n")
+    else:
+        codegen_type_names.emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
+        builder.append(" *data;\n")
+    builder.append("    size_t length;\n    size_t capacity;\n};\n#endif\n")
+
+def emit_semantic_array_pointer_data_declarator(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    base_type = type_id
+    while codegen_type_names.semantic_type_is_kind(table, base_type, types.TypeKind.ARRAY):
+        base_type = table.types[base_type.index].inner
+    codegen_type_names.emit_semantic_c_type(table, base_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" (*data)")
+    current = type_id
+    while codegen_type_names.semantic_type_is_kind(table, current, types.TypeKind.ARRAY):
+        builder.append("[")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](table.types[current.index].extra))
+        builder.append("]")
+        current = table.types[current.index].inner
+
+def emit_module_type_specialization_forwards(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_type_specialization_forwards(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0 or not is_runtime_specialization_name(source, arena.nodes[base.index]):
+        return
+    name_builder = StringBuilder()
+    codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
+    name = name_builder.finish()
+    if codegen_type_names.string_list_contains(emitted, &name):
+        return
+    builder.append("#ifndef CINDER_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\ntypedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append(";\n#endif\n")
+    emitted.append(name)
+
+def emit_module_type_specializations(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    result_only: bool,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, result_only)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0:
+        return
+    base_node = arena.nodes[base.index]
+    is_list = codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+    is_set = codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+    is_map = codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+    is_owned = codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned")
+    is_option = codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
+    is_tuple = codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
+    is_result = codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
+    if not is_list and not is_set and not is_map and not is_option and not is_result and not is_owned and not is_tuple:
+        return
+    is_late = is_result or is_map or is_set
+    if result_only != is_late:
+        return
+    name_builder = StringBuilder()
+    codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
+    name = name_builder.finish()
+    if codegen_type_names.string_list_contains(emitted, &name):
+        return
+    builder.append("#ifndef CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n")
+    if is_result:
+        emit_module_result_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    elif is_list:
+        emit_module_list_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    elif is_set:
+        emit_module_set_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    elif is_map:
+        emit_module_map_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    elif is_option:
+        emit_module_option_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    elif is_tuple:
+        emit_module_tuple_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    else:
+        emit_module_owned_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    builder.append("#endif\n")
+    emitted.append(name)
+
+def emit_module_list_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    if node.child_count > 1:
+        element = arena.children[node.first_child + 1]
+        if context_type_is_array(arena, element):
+            emit_module_array_pointer_data_declarator(arena, element, source, builder, prefix, project_name, imports, registry)
+            builder.append(";\n")
+        elif specialization_type_has_simple_declarator(arena, element):
+            codegen_type_names.emit_module_c_type(arena, element, source, builder, prefix, project_name, imports, registry)
+            builder.append(" *data;\n")
+        else:
+            builder.append("void *data;\n")
+    else:
+        builder.append("void *data;\n")
+    builder.append("    size_t length;\n    size_t capacity;\n};\n")
+
+def emit_module_array_pointer_data_declarator(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    base_type = type_id
+    while base_type.index >= 0 and context_type_is_array(arena, base_type):
+        base_type = codegen_names.first_child(arena, base_type)
+    codegen_type_names.emit_module_c_type(arena, base_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" (*data)")
+    current = type_id
+    while current.index >= 0 and context_type_is_array(arena, current):
+        builder.append("[")
+        append_node_numeric_literal(builder, arena, source, array_length_node(arena, current))
+        builder.append("]")
+        current = codegen_names.first_child(arena, current)
+
+def emit_module_set_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("typedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry {\n    ")
+    if node.child_count > 1:
+        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 1], source, builder, prefix, project_name, imports, registry)
+    else:
+        builder.append("int32_t")
+    builder.append(" value;\n    uint64_t hash;\n    unsigned char state;\n} ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry;\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entries;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
+
+def emit_module_map_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("typedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry {\n    ")
+    if node.child_count > 1:
+        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 1], source, builder, prefix, project_name, imports, registry)
+    else:
+        builder.append("int32_t")
+    builder.append(" key;\n    ")
+    if node.child_count > 2:
+        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 2], source, builder, prefix, project_name, imports, registry)
+    else:
+        builder.append("int32_t")
+    builder.append(" value;\n    uint64_t hash;\n    bool occupied;\n} ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry;\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entries;\n    size_t entries_length;\n    size_t entries_capacity;\n    size_t *buckets;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
+
+def emit_module_option_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("typedef enum ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_None = 0,\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Some = 1\n} ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag;\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag tag;\n    union {\n        unsigned char _cinder_empty;\n")
+    if node.child_count > 1:
+        value_type = arena.children[node.first_child + 1]
+        if not codegen_type_names.context_type_name_equals(arena, value_type, source, "void"):
+            builder.append("        ")
+            codegen_type_names.emit_module_c_type(arena, value_type, source, builder, prefix, project_name, imports, registry)
+            builder.append(" value;\n")
+    builder.append("    } data;\n};\n")
+
+def emit_module_tuple_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n")
+    if node.child_count <= 1:
+        builder.append("    unsigned char _cinder_empty;\n")
+    offset: i32 = 1
+    while offset < node.child_count:
+        builder.append("    ")
+        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
+        builder.append(" item_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](offset - 1))
+        builder.append(";\n")
+        offset += 1
+    builder.append("};\n")
+
+def emit_module_owned_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    if node.child_count > 1:
+        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 1], source, builder, prefix, project_name, imports, registry)
+    else:
+        builder.append("void")
+    builder.append(" *ptr;\n};\n")
+
+def specialization_type_has_simple_declarator(arena: &const SyntaxArena, id: NodeId) -> bool:
+    if id.index < 0:
+        return false
+    kind = arena.nodes[id.index].kind
+    if kind == SyntaxKind.TYPE_CONST:
+        return specialization_type_has_simple_declarator(arena, codegen_names.first_child(arena, id))
+    return kind != SyntaxKind.TYPE_ARRAY and kind != SyntaxKind.TYPE_FUNCTION and kind != SyntaxKind.TYPE_CLOSURE
+
+def emit_module_result_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    if node.child_count < 3:
+        builder.append("struct ")
+        builder.append(name[0:len(name)])
+        builder.append(" { int32_t _cinder_invalid; };\n")
+        return
+    ok_type = arena.children[node.first_child + 1]
+    error_type = arena.children[node.first_child + 2]
+    builder.append("typedef enum ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag {\n")
+    builder.append("    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Ok = 0,\n")
+    builder.append("    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Err = 1\n")
+    builder.append("} ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag;\n")
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag tag;\n    union {\n        unsigned char _cinder_empty;\n")
+    if not codegen_type_names.context_type_name_equals(arena, ok_type, source, "void"):
+        builder.append("        ")
+        codegen_type_names.emit_module_c_type(arena, ok_type, source, builder, prefix, project_name, imports, registry)
+        builder.append(" ok;\n")
+    if not codegen_type_names.context_type_name_equals(arena, error_type, source, "void"):
+        builder.append("        ")
+        codegen_type_names.emit_module_c_type(arena, error_type, source, builder, prefix, project_name, imports, registry)
+        builder.append(" err;\n")
+    builder.append("    } data;\n};\n")
+
+def context_type_is_array(arena: &const SyntaxArena, type_id: NodeId) -> bool:
+    if type_id.index < 0:
+        return false
+    return codegen_type_names.type_node_kind(arena, type_id) == SyntaxKind.TYPE_ARRAY
+
+def array_length_node(arena: &const SyntaxArena, type_id: NodeId) -> NodeId:
+    if type_id.index < 0 or codegen_type_names.type_node_kind(arena, type_id) != SyntaxKind.TYPE_ARRAY:
+        return syntax.missing_node()
+    return codegen_names.second_child(arena, type_id)
+
+def append_node_numeric_literal(builder: &StringBuilder, arena: &const SyntaxArena, source: &const String, id: NodeId) -> void:
+    if id.index < 0:
+        builder.append("0")
+        return
+    node = arena.nodes[id.index]
+    codegen_names.append_numeric_literal(builder, source, node.value_start, node.value_length)
+
+def emit_module_typed_declarator(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    name_start: usize,
+    name_length: usize,
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    base_type = type_id
+    while base_type.index >= 0 and codegen_type_names.type_node_kind(arena, base_type) == SyntaxKind.TYPE_ARRAY:
+        base_type = codegen_names.first_child(arena, base_type)
+    codegen_type_names.emit_module_c_type(arena, base_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" ")
+    codegen_names.append_source(builder, source, name_start, name_length)
+    current = type_id
+    while current.index >= 0 and codegen_type_names.type_node_kind(arena, current) == SyntaxKind.TYPE_ARRAY:
+        builder.append("[")
+        length = array_length_node(arena, current)
+        if length.index >= 0:
+            length_node = arena.nodes[length.index]
+            codegen_names.append_numeric_literal(builder, source, length_node.value_start, length_node.value_length)
+        builder.append("]")
+        current = codegen_names.first_child(arena, current)
+
+def emit_module_prefixed_typed_declarator(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    name_start: usize,
+    name_length: usize,
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    base_type = type_id
+    while base_type.index >= 0 and codegen_type_names.type_node_kind(arena, base_type) == SyntaxKind.TYPE_ARRAY:
+        base_type = codegen_names.first_child(arena, base_type)
+    codegen_type_names.emit_module_c_type(arena, base_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" ")
+    codegen_names.emit_prefixed_name(builder, prefix, source, name_start, name_length)
+    current = type_id
+    while current.index >= 0 and codegen_type_names.type_node_kind(arena, current) == SyntaxKind.TYPE_ARRAY:
+        builder.append("[")
+        length = array_length_node(arena, current)
+        if length.index >= 0:
+            length_node = arena.nodes[length.index]
+            codegen_names.append_numeric_literal(builder, source, length_node.value_start, length_node.value_length)
+        builder.append("]")
+        current = codegen_names.first_child(arena, current)
