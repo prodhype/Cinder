@@ -536,7 +536,13 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     (source_root / "main.ci").write_text(
         "struct Bundle:\n"
         "    scores: Map[i32, i32]\n\n"
+        "def inferred_scores() -> Map[i32, i32]:\n"
+        "    return {4: 8}\n\n"
+        "def set_length(values: Set[i32]) -> i32:\n"
+        "    return len(values)\n\n"
         "def main() -> i32:\n"
+        "    inferred_unique = {5, 6, 6}\n"
+        "    inferred_map = {3: 4}\n"
         "    unique: Set[i32] = {1, 2, 2}\n"
         "    empty: Set[i32] = set()\n"
         '    text = "alpha"\n'
@@ -561,7 +567,8 @@ def test_gen1_emits_specialized_map_and_set_helpers(
         "        return 1\n"
         "    found.value.append(30)\n"
         "    bundle: Bundle = Bundle(scores=scores)\n"
-        "    return len(unique) + len(empty) + len(names) + len(bundle.scores) + bundle.scores[1] + len(indexed) + len(found.value) + string_scores[\"alpha\"] + nested[1][2]\n",
+        "    returned = inferred_scores()\n"
+        "    return len(unique) + len(empty) + len(names) + len(bundle.scores) + bundle.scores[1] + len(indexed) + len(found.value) + string_scores[\"alpha\"] + nested[1][2] + len(inferred_unique) + inferred_map[3] + returned[4] + set_length({7, 8})\n",
         encoding="utf-8",
     )
     executable = tmp_path / "collections"
@@ -577,7 +584,7 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert built.returncode == 0, built.stderr
     run_env = os.environ.copy()
     run_env["MALLOC_PERTURB_"] = "165"
-    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 36
+    assert subprocess.run([str(executable)], check=False, env=run_env).returncode == 52
 
     header = (tmp_path / "build" / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
     for helper in ("_reserve", "_set", "_lookup", "_lookup_mut", "_get", "_add", "_len", "_drop"):

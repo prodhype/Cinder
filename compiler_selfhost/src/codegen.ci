@@ -688,6 +688,15 @@ def emit_module_c_type(
         builder.append("int32_t")
         return
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+        emit_specialized_type_name(arena, id, source, builder, prefix, project_name, imports)
+        return
+    if node.kind == SyntaxKind.EXPR_LITERAL:
+        if node.flags == cast[i32](token.TokenKind.STRING):
+            builder.append("CinderString")
+        else:
+            builder.append("int32_t")
+        return
     if node.kind == SyntaxKind.TYPE_REFERENCE:
         child = first_child(arena, id)
         value_child = child
@@ -751,6 +760,37 @@ def emit_specialized_type_name(
     imports: &const List[project.ImportBinding],
 ) -> void:
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_MAP:
+        builder.append("CinderMap")
+        key_type = context_map_key_type(arena, id, source)
+        value_type = context_map_value_type(arena, id, source)
+        arguments = [key_type, value_type]
+        for argument in arguments:
+            argument_builder = StringBuilder()
+            emit_specialized_type_name(arena, argument, source, argument_builder, prefix, project_name, imports)
+            argument_name = argument_builder.finish()
+            builder.append("_argument_")
+            append_specialization_decimal(builder, len(argument_name))
+            builder.append("_")
+            builder.append(argument_name[0:len(argument_name)])
+        return
+    if node.kind == SyntaxKind.EXPR_SET:
+        builder.append("CinderSet")
+        argument = context_set_element_type(arena, id)
+        argument_builder = StringBuilder()
+        emit_specialized_type_name(arena, argument, source, argument_builder, prefix, project_name, imports)
+        argument_name = argument_builder.finish()
+        builder.append("_argument_")
+        append_specialization_decimal(builder, len(argument_name))
+        builder.append("_")
+        builder.append(argument_name[0:len(argument_name)])
+        return
+    if node.kind == SyntaxKind.EXPR_LITERAL:
+        if node.flags == cast[i32](token.TokenKind.STRING):
+            builder.append("String")
+        else:
+            builder.append("i32")
+        return
     if node.kind == SyntaxKind.TYPE_POINTER:
         emit_specialized_indirection_name("pointer", arena, first_child(arena, id), source, builder, prefix, project_name, imports)
         return
@@ -963,6 +1003,21 @@ def emit_module_type_specializations(
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
         emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports)
+    if node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+        name_builder = StringBuilder()
+        emit_specialized_type_name(arena, id, source, name_builder, prefix, project_name, imports)
+        name = name_builder.finish()
+        if string_list_contains(emitted, &name):
+            return
+        builder.append("#ifndef CINDER_SPECIALIZED_")
+        builder.append(name[0:len(name)])
+        builder.append("\n#define CINDER_SPECIALIZED_")
+        builder.append(name[0:len(name)])
+        builder.append("\n")
+        emit_map_set_specialization(arena, id, source, builder, &name, prefix, project_name, imports)
+        builder.append("#endif\n")
+        emitted.append(name)
+        return
     if node.kind != SyntaxKind.TYPE_GENERIC:
         return
     base = first_child(arena, id)
@@ -1180,11 +1235,22 @@ def emit_map_set_specialization(
     imports: &const List[project.ImportBinding],
 ) -> void:
     node = arena.nodes[id.index]
-    base_node = arena.nodes[first_child(arena, id).index]
-    key_type = arena.children[node.first_child + 1]
+    is_inferred_map = node.kind == SyntaxKind.EXPR_MAP
+    is_inferred_set = node.kind == SyntaxKind.EXPR_SET
+    base_node = node
+    key_type = syntax.missing_node()
+    if is_inferred_map:
+        key_type = context_map_key_type(arena, id, source)
+    elif is_inferred_set:
+        key_type = context_set_element_type(arena, id)
+    else:
+        base_node = arena.nodes[first_child(arena, id).index]
+        key_type = arena.children[node.first_child + 1]
     value_type = key_type
-    is_map = is_runtime_generic_name(source, base_node, "Map")
-    if is_map and node.child_count > 2:
+    is_map = is_inferred_map or (not is_inferred_set and is_runtime_generic_name(source, base_node, "Map"))
+    if is_inferred_map:
+        value_type = context_map_value_type(arena, id, source)
+    elif is_map and node.child_count > 2:
         value_type = arena.children[node.first_child + 2]
     key_c = StringBuilder()
     emit_module_c_type(arena, key_type, source, key_c, prefix, project_name, imports)
@@ -1953,6 +2019,10 @@ def context_type_is_runtime_generic(arena: &const SyntaxArena, type_id: NodeId, 
     if type_id.index < 0:
         return false
     node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_MAP:
+        return expected == "Map"
+    if node.kind == SyntaxKind.EXPR_SET:
+        return expected == "Set"
     if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
         return context_type_is_runtime_generic(arena, first_child(arena, type_id), source, expected[0:len(expected)])
     if node.kind != SyntaxKind.TYPE_GENERIC:
@@ -1989,6 +2059,9 @@ def context_map_value_type(arena: &const SyntaxArena, type_id: NodeId, source: &
     if type_id.index < 0:
         return syntax.missing_node()
     node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_MAP and node.child_count > 0:
+        entry = arena.children[node.first_child]
+        return second_child(arena, entry)
     if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
         return context_map_value_type(arena, first_child(arena, type_id), source)
     if node.kind == SyntaxKind.TYPE_GENERIC:
@@ -1998,6 +2071,31 @@ def context_map_value_type(arena: &const SyntaxArena, type_id: NodeId, source: &
             if range_text_equals(source, base_node.value_start, base_node.value_length, "Map"):
                 if node.child_count > 2:
                     return arena.children[node.first_child + 2]
+    return syntax.missing_node()
+
+
+def context_map_key_type(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> NodeId:
+    if type_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_MAP and node.child_count > 0:
+        entry = arena.children[node.first_child]
+        return first_child(arena, entry)
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_map_key_type(arena, first_child(arena, type_id), source)
+    if node.kind == SyntaxKind.TYPE_GENERIC and node.child_count > 1:
+        base = first_child(arena, type_id)
+        if base.index >= 0 and range_text_equals(source, arena.nodes[base.index].value_start, arena.nodes[base.index].value_length, "Map"):
+            return arena.children[node.first_child + 1]
+    return syntax.missing_node()
+
+
+def context_set_element_type(arena: &const SyntaxArena, type_id: NodeId) -> NodeId:
+    if type_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_SET and node.child_count > 0:
+        return arena.children[node.first_child]
     return syntax.missing_node()
 
 
@@ -2168,7 +2266,17 @@ def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const
         builder.append(name[0:len(name)])
         builder.append(");\n")
         return
-    if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+    if node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+        name_builder = StringBuilder()
+        emit_specialized_type_name(arena, type_id, source, name_builder, prefix, project_name, imports)
+        collection_name = name_builder.finish()
+        builder.append("    ")
+        builder.append(collection_name[0:len(collection_name)])
+        builder.append("_drop(&")
+        builder.append(name[0:len(name)])
+        builder.append(");\n")
+        return
+    if node.kind == SyntaxKind.EXPR_LIST:
         builder.append("    free(")
         builder.append(name[0:len(name)])
         builder.append(".data);\n")
@@ -2750,6 +2858,8 @@ def emit_module_statement(
                 emit_module_array_initializer(arena, expr, source, builder, prefix, project_name, imports, context)
             elif annotation.index >= 0 and emit_typed_collection_literal(arena, expr, annotation, source, builder, prefix, project_name, imports, context):
                 pass
+            elif annotation.index < 0 and emit_typed_collection_literal(arena, expr, context_expression_type(arena, context, expr, source), source, builder, prefix, project_name, imports, context):
+                pass
             else:
                 emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
             mark_context_expression_moved(arena, context, expr, source)
@@ -3258,7 +3368,8 @@ def emit_module_expression(
         builder.append(" cinder_list; })")
         return
     if node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
-        builder.append("0 /* collection literal requires a Map/Set context */")
+        if not emit_typed_collection_literal(arena, id, id, source, builder, prefix, project_name, imports, context):
+            builder.append("0 /* collection literal requires a Map/Set context */")
         return
     if node.kind == SyntaxKind.EXPR_NAME:
         name = source[node.value_start:node.value_start + node.value_length]
