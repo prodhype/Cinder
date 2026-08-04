@@ -2337,31 +2337,13 @@ def emit_module_nominal_declarations(
         for offset in range(0, node.child_count):
             emit_module_nominal_declarations(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports)
         return
-    if node.kind == SyntaxKind.STRUCT_DECL and not declaration_requires_type_specializations(arena, id, source):
-        emit_module_struct(arena, id, source, builder, prefix, project_name, imports)
+    if node.kind == SyntaxKind.STRUCT_DECL:
         return
     if node.kind == SyntaxKind.ENUM_DECL:
         emit_module_enum(arena, id, source, builder, prefix)
         return
-    if node.kind == SyntaxKind.UNION_DECL and not declaration_requires_type_specializations(arena, id, source):
-        emit_module_union(arena, id, source, builder, prefix, project_name, imports)
+    if node.kind == SyntaxKind.UNION_DECL:
         return
-
-
-def declaration_requires_type_specializations(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
-    if id.index < 0:
-        return false
-    node = arena.nodes[id.index]
-    if node.kind == SyntaxKind.TYPE_GENERIC:
-        base = first_child(arena, id)
-        if base.index >= 0:
-            base_node = arena.nodes[base.index]
-            if is_runtime_generic_name(source, base_node, "List") or is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "Set") or is_runtime_generic_name(source, base_node, "Option") or is_runtime_generic_name(source, base_node, "Result") or is_runtime_generic_name(source, base_node, "Owned") or is_runtime_generic_name(source, base_node, "Tuple"):
-                return true
-    for offset in range(0, node.child_count):
-        if declaration_requires_type_specializations(arena, arena.children[node.first_child + offset], source):
-            return true
-    return false
 
 
 def emit_module_declarations(
@@ -2391,14 +2373,12 @@ def emit_module_declarations(
             emit_module_declarations(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, is_entry)
         return
     if node.kind == SyntaxKind.STRUCT_DECL:
-        if declaration_requires_type_specializations(arena, id, source):
-            emit_module_struct(arena, id, source, builder, prefix, project_name, imports)
+        emit_module_struct(arena, id, source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.ENUM_DECL:
         return
     if node.kind == SyntaxKind.UNION_DECL:
-        if declaration_requires_type_specializations(arena, id, source):
-            emit_module_union(arena, id, source, builder, prefix, project_name, imports)
+        emit_module_union(arena, id, source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.FUNCTION_DECL:
         emit_module_return_type(arena, id, source, builder, prefix, project_name, imports, is_entry)
