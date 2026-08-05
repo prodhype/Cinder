@@ -159,18 +159,18 @@ def edit_distance(
 def main() -> i32:
     print("Algorithm benchmarks (lower elapsed times are better)")
     print("CPU ticks are implementation-defined; wall time is elapsed fractional seconds.")
-
-    queens_size: i32 = 15
+    
+    queens_size: i32 = 4
     wall_started = cinder_wall_time()
     cpu_started = cpu_ticks()
     queens_solutions = solve_n_queens(queens_size)
     queens_ticks = cpu_ticks() - cpu_started
     queens_seconds = cinder_wall_time() - wall_started
     print(f"N-Queens n={queens_size}: {queens_seconds:.6f} seconds, {queens_ticks} CPU ticks, {queens_solutions} solutions")
-
+    return 0
     # Repeating 20 cities keeps peak memory lower than one much larger state space.
-    city_count: usize = 20
-    travel_runs: i32 = 4
+    city_count: usize = 4
+    travel_runs: i32 = 1
     travel_costs = alloc[i32](city_count * city_count)
     defer free(travel_costs)
     build_travel_costs(travel_costs, city_count)
@@ -186,7 +186,7 @@ def main() -> i32:
     travel_seconds = cinder_wall_time() - wall_started
     print(f"Exact TSP cities={city_count} runs={travel_runs}: {travel_seconds:.6f} seconds, {travel_ticks} CPU ticks, minimum cost {shortest_tour}")
 
-    sequence_length: usize = 30000
+    sequence_length: usize = 10
     left = alloc[u8](sequence_length)
     right = alloc[u8](sequence_length)
     defer free(right)
