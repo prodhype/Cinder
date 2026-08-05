@@ -108,6 +108,8 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             if assertion_node.kind == syntax.SyntaxKind.EXPR_LITERAL and assertion_node.flags == cast[i32](token.TokenKind.FALSE):
                 checker_core.emit_error(checker, 214, assertion_node.start, assertion_node.length, assertion_node.line, assertion_node.column)
                 return
+    elif node.kind == syntax.SyntaxKind.TYPE_GENERIC:
+        checker_types.validate_hashable_collection_type(checker, arena, id, source, current_scope)
     for offset in range(0, node.child_count):
         validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, current_scope, expected_return)
 
@@ -181,7 +183,16 @@ def declare_assignment_target_if_missing(checker: &checker_core.Checker, arena: 
         return
     if checker.symbols.find_in_scope(source, current_scope, target_node.value_start, target_node.value_length).index >= 0:
         return
-    local_type = checker_types.infer_expression_type(checker, arena, checker_core.second_child(arena, id), source, current_scope)
+    value = checker_core.second_child(arena, id)
+    local_type = checker_types.infer_expression_type(checker, arena, value, source, current_scope)
+    if local_type.index >= 0 and local_type.index < cast[i32](len(checker.type_table.types)):
+        inferred = checker.type_table.types[local_type.index]
+        if inferred.kind == types.TypeKind.MAP and not checker_types.semantic_type_is_hashable(checker.type_table, inferred.inner, source):
+            value_node = arena.nodes[value.index]
+            checker_core.emit_error(checker, 297, value_node.start, value_node.length, value_node.line, value_node.column)
+        elif inferred.kind == types.TypeKind.SET and not checker_types.semantic_type_is_hashable(checker.type_table, inferred.inner, source):
+            value_node = arena.nodes[value.index]
+            checker_core.emit_error(checker, 300, value_node.start, value_node.length, value_node.line, value_node.column)
     if local_type.index == types.type_error().index:
         local_type = types.type_i32()
     symbol = checker.symbols.add_symbol(
@@ -197,10 +208,20 @@ def declare_assignment_target_if_missing(checker: &checker_core.Checker, arena: 
 
 
 def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
-    node = arena.nodes[id.index]
     annotation = checker_core.find_child_type(arena, id)
     initializer = checker_core.last_child(arena, id)
-    if annotation.index < 0 or initializer.index < 0:
+    if initializer.index < 0:
+        return
+    if annotation.index < 0:
+        inferred = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
+        if inferred.index < 0 or inferred.index >= cast[i32](len(checker.type_table.types)):
+            return
+        inferred_type = checker.type_table.types[inferred.index]
+        initializer_node = arena.nodes[initializer.index]
+        if inferred_type.kind == types.TypeKind.MAP and not checker_types.semantic_type_is_hashable(checker.type_table, inferred_type.inner, source):
+            checker_core.emit_error(checker, 297, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+        elif inferred_type.kind == types.TypeKind.SET and not checker_types.semantic_type_is_hashable(checker.type_table, inferred_type.inner, source):
+            checker_core.emit_error(checker, 300, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
         return
     annotation_type = checker.type_table.resolve_type_node(arena, annotation, source)
     checker.model.record_type_node(annotation, annotation_type)

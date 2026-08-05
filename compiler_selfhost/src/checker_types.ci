@@ -191,6 +191,104 @@ def is_scalar_kind(kind: types.TypeKind) -> bool:
     return kind == types.TypeKind.BOOL or is_numeric_kind(kind) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN
 
 
+def validate_hashable_collection_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind != syntax.SyntaxKind.TYPE_GENERIC or node.child_count <= 1:
+        return
+    base_id = arena.children[node.first_child]
+    base = arena.nodes[base_id.index]
+    code: i32 = 0
+    if checker_core.range_text_equals(source, base.value_start, base.value_length, "Map"):
+        code = 297
+    elif checker_core.range_text_equals(source, base.value_start, base.value_length, "Set"):
+        code = 300
+    if code == 0:
+        return
+    item_id = arena.children[node.first_child + 1]
+    if type_node_is_hashable(checker, arena, item_id, source, current_scope):
+        return
+    item = arena.nodes[item_id.index]
+    checker_core.emit_error(checker, code, item.start, item.length, item.line, item.column)
+
+
+def type_node_is_hashable(checker: &const checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if type_node_is_c_string(arena, id, source):
+        return true
+    if node.kind != syntax.SyntaxKind.TYPE_NAME:
+        return false
+    if type_name_is_hash_scalar(source, &node) or checker_core.range_text_equals(source, node.value_start, node.value_length, "String"):
+        return true
+    type_name = source[node.start:node.start + node.length]
+    if checker_core.string_list_contains(&checker.imported_enum_names, &type_name):
+        return true
+    found = checker.symbols.find_in_scope(source, current_scope, node.value_start, node.value_length)
+    return found.index >= 0 and checker.symbols.symbols[found.index].kind == symbols.SymbolKind.ENUM
+
+
+def type_node_is_c_string(arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.TYPE_CONST:
+        pointer = checker_core.first_child(arena, id)
+        if pointer.index < 0 or arena.nodes[pointer.index].kind != syntax.SyntaxKind.TYPE_POINTER:
+            return false
+        return type_node_is_exact_name(arena, checker_core.first_child(arena, pointer), source, "char")
+    if node.kind == syntax.SyntaxKind.TYPE_POINTER:
+        const_type = checker_core.first_child(arena, id)
+        if const_type.index < 0 or arena.nodes[const_type.index].kind != syntax.SyntaxKind.TYPE_CONST:
+            return false
+        return type_node_is_exact_name(arena, checker_core.first_child(arena, const_type), source, "char")
+    return false
+
+
+def type_node_is_exact_name(arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, expected: String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    return node.kind == syntax.SyntaxKind.TYPE_NAME and checker_core.range_text_equals(source, node.value_start, node.value_length, expected)
+
+
+def type_name_is_hash_scalar(source: &const String, node: &const syntax.SyntaxNode) -> bool:
+    return checker_core.range_text_equals(source, node.value_start, node.value_length, "bool") or checker_core.range_text_equals(source, node.value_start, node.value_length, "char") or checker_core.range_text_equals(source, node.value_start, node.value_length, "i8") or checker_core.range_text_equals(source, node.value_start, node.value_length, "i16") or checker_core.range_text_equals(source, node.value_start, node.value_length, "i32") or checker_core.range_text_equals(source, node.value_start, node.value_length, "i64") or checker_core.range_text_equals(source, node.value_start, node.value_length, "u8") or checker_core.range_text_equals(source, node.value_start, node.value_length, "u16") or checker_core.range_text_equals(source, node.value_start, node.value_length, "u32") or checker_core.range_text_equals(source, node.value_start, node.value_length, "u64") or checker_core.range_text_equals(source, node.value_start, node.value_length, "isize") or checker_core.range_text_equals(source, node.value_start, node.value_length, "usize") or checker_core.range_text_equals(source, node.value_start, node.value_length, "c_int") or checker_core.range_text_equals(source, node.value_start, node.value_length, "c_long") or checker_core.range_text_equals(source, node.value_start, node.value_length, "c_size_t")
+
+
+def semantic_type_is_hashable(table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return true
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.ERROR or record.kind == types.TypeKind.BOOL or record.kind == types.TypeKind.I32 or record.kind == types.TypeKind.I64 or record.kind == types.TypeKind.CHAR or record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.ENUM:
+        return true
+    if semantic_type_is_c_string(table, type_id):
+        return true
+    if record.kind != types.TypeKind.NAMED:
+        return false
+    name = source[record.name_start:record.name_start + record.name_length]
+    return name == "i8" or name == "i16" or name == "i32" or name == "i64" or name == "u8" or name == "u16" or name == "u32" or name == "u64" or name == "isize" or name == "usize" or name == "c_int" or name == "c_long" or name == "c_size_t"
+
+
+def semantic_type_is_c_string(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.CONST:
+        if record.inner.index < 0 or record.inner.index >= cast[i32](len(table.types)):
+            return false
+        pointer = table.types[record.inner.index]
+        return pointer.kind == types.TypeKind.POINTER and pointer.inner.index >= 0 and pointer.inner.index < cast[i32](len(table.types)) and table.types[pointer.inner.index].kind == types.TypeKind.CHAR
+    if record.kind == types.TypeKind.POINTER:
+        if record.inner.index < 0 or record.inner.index >= cast[i32](len(table.types)):
+            return false
+        const_type = table.types[record.inner.index]
+        return const_type.kind == types.TypeKind.CONST and const_type.inner.index >= 0 and const_type.inner.index < cast[i32](len(table.types)) and table.types[const_type.inner.index].kind == types.TypeKind.CHAR
+    return false
+
+
 def is_string_literal(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
     node = arena.nodes[id.index]
     return node.kind == syntax.SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING)

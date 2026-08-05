@@ -1,4 +1,4 @@
-def binary_sort(values: []i32) -> void:
+def binary_sort(values: List[i32]) -> void:
     index: usize = 1
     while index < values.length:
         value = values[index]
