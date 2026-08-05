@@ -8,7 +8,7 @@ rm -rf "$PROOF"
 mkdir -p "$PROOF"
 
 # Stage0 Python compiler builds the first native Cinder compiler.
-python -m cinder build "$PROJECT" \
+python3.14 -m cinder build "$PROJECT" \
   -o "$PROOF/cinder-gen1" \
   --build-dir "$PROOF/gen1-build"
 
