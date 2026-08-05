@@ -18,6 +18,7 @@ struct Checker:
     symbols: symbols.SymbolTable
     model: semantic.SemanticModel
     diagnostics: List[CheckerDiagnostic]
+    imported_enum_names: List[String]
 
     def emit_error(self: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
         if len(self.diagnostics) > 0:
@@ -29,7 +30,8 @@ struct Checker:
 
 def new_checker() -> Checker:
     diagnostics: List[CheckerDiagnostic] = []
-    return Checker(type_table=types.new_type_table(), symbols=symbols.new_symbol_table(), model=semantic.new_semantic_model(), diagnostics=diagnostics)
+    imported_enum_names: List[String] = []
+    return Checker(type_table=types.new_type_table(), symbols=symbols.new_symbol_table(), model=semantic.new_semantic_model(), diagnostics=diagnostics, imported_enum_names=imported_enum_names)
 
 
 def emit_error(checker: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
@@ -114,3 +116,10 @@ def range_text_equals(source: &const String, start: usize, length: usize, text: 
             return false
         offset += 1
     return true
+
+
+def string_list_contains(values: &const List[String], expected: &const String) -> bool:
+    for value in values:
+        if value == expected:
+            return true
+    return false

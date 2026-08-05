@@ -477,8 +477,8 @@ def test_gen1_preserves_runtime_generic_specializations(
         encoding="utf-8",
     )
     (source_root / "main.ci").write_text(
-        "struct Resource:\n"
-        "    value: i32\n\n"
+        "enum Resource:\n"
+        "    value\n\n"
         "def preserve(\n"
         "    lists: List[List[i32]],\n"
         "    resources: Set[Resource],\n"
@@ -635,6 +635,271 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     )
     assert built.returncode == 0, built.stderr
     assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+def test_gen1_map_set_hash_and_equality_strategies(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "map_set_hashing.ci"
+    source.write_text(
+        "enum Tone:\n"
+        "    red\n"
+        "    green\n"
+        "    blue\n"
+        "\n"
+        "def make_alpha() -> *char:\n"
+        "    text = alloc[char](6)\n"
+        "    text[0] = 'a'\n"
+        "    text[1] = 'l'\n"
+        "    text[2] = 'p'\n"
+        "    text[3] = 'h'\n"
+        "    text[4] = 'a'\n"
+        "    text[5] = '\\0'\n"
+        "    return text\n"
+        "\n"
+        "def check_c_strings() -> i32:\n"
+        "    first = make_alpha()\n"
+        "    second = make_alpha()\n"
+        "    if first == second:\n"
+        "        return 10\n"
+        "    scores: Map[const char*, i32] = {first: 7}\n"
+        "    names: Set[const char*] = {first}\n"
+        "    if scores[second] != 7:\n"
+        "        return 11\n"
+        "    names.add(second)\n"
+        "    if len(names) != 1:\n"
+        "        return 12\n"
+        "    scores[second] = 9\n"
+        "    names.add(second)\n"
+        "    if len(scores) != 1 or len(names) != 1:\n"
+        "        return 13\n"
+        "    first[0] = 'z'\n"
+        "    free(first)\n"
+        "    if scores[second] != 9:\n"
+        "        return 14\n"
+        "    names.add(second)\n"
+        "    if len(names) != 1:\n"
+        "        return 15\n"
+        "    free(second)\n"
+        "    return 0\n"
+        "\n"
+        "def check_enums() -> i32:\n"
+        "    scores: Map[Tone, i32] = {Tone.red: 10, Tone.green: 20}\n"
+        "    tones: Set[Tone] = {Tone.red, Tone.green, Tone.red}\n"
+        "    scores[Tone.blue] = 30\n"
+        "    scores[Tone.green] = 21\n"
+        "    tones.add(Tone.blue)\n"
+        "    tones.add(Tone.green)\n"
+        "    if len(scores) != 3 or len(tones) != 3:\n"
+        "        return 20\n"
+        "    if scores[Tone.red] != 10 or scores[Tone.green] != 21:\n"
+        "        return 21\n"
+        "    if scores[Tone.blue] != 30:\n"
+        "        return 22\n"
+        "    return 0\n"
+        "\n"
+        "def check_strings() -> i32:\n"
+        "    scores: Map[String, i32] = {\"alpha\": 7}\n"
+        "    names: Set[String] = {\"alpha\", \"alpha\"}\n"
+        "    if scores[\"alpha\"] != 7 or len(names) != 1:\n"
+        "        return 25\n"
+        "    return 0\n"
+        "\n"
+        "def check_scalar_types() -> i32:\n"
+        "    bools: Set[bool] = {true}\n"
+        "    chars: Set[char] = {'a'}\n"
+        "    i8s: Set[i8] = {cast[i8](1)}\n"
+        "    i16s: Set[i16] = {cast[i16](1)}\n"
+        "    i64s: Set[i64] = {cast[i64](1)}\n"
+        "    u8s: Set[u8] = {cast[u8](1)}\n"
+        "    u16s: Set[u16] = {cast[u16](1)}\n"
+        "    u32s: Set[u32] = {cast[u32](1)}\n"
+        "    u64s: Set[u64] = {cast[u64](1)}\n"
+        "    isizes: Set[isize] = {cast[isize](1)}\n"
+        "    usizes: Set[usize] = {cast[usize](1)}\n"
+        "    c_ints: Set[c_int] = {cast[c_int](1)}\n"
+        "    c_longs: Set[c_long] = {cast[c_long](1)}\n"
+        "    c_sizes: Set[c_size_t] = {cast[c_size_t](1)}\n"
+        "    return cast[i32](len(bools) + len(chars) + len(i8s) + len(i16s)"
+        " + len(i64s) + len(u8s) + len(u16s) + len(u32s) + len(u64s)"
+        " + len(isizes) + len(usizes) + len(c_ints) + len(c_longs)"
+        " + len(c_sizes)) - 14\n"
+        "\n"
+        "def check_scalar_growth() -> i32:\n"
+        "    scores: Map[i32, i32] = {}\n"
+        "    values: Set[i32] = {0}\n"
+        "    for index in range(0, 128):\n"
+        "        scores[index] = index * 3\n"
+        "        values.add(index)\n"
+        "    for index in range(0, 128):\n"
+        "        scores[index] = scores[index] + 1\n"
+        "        values.add(index)\n"
+        "    if len(scores) != 128 or len(values) != 128:\n"
+        "        return 30\n"
+        "    for index in range(0, 128):\n"
+        "        if scores[index] != index * 3 + 1:\n"
+        "            return 31\n"
+        "    return 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    result = check_c_strings()\n"
+        "    if result != 0:\n"
+        "        return result\n"
+        "    result = check_enums()\n"
+        "    if result != 0:\n"
+        "        return result\n"
+        "    result = check_strings()\n"
+        "    if result != 0:\n"
+        "        return result\n"
+        "    result = check_scalar_types()\n"
+        "    if result != 0:\n"
+        "        return result\n"
+        "    return check_scalar_growth()\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(source),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    generated_text = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((generated / "cinder_gen").glob("*.[ch]"))
+    )
+    assert "cinder_hash_string(key)" in generated_text
+    assert "cinder_hash_string(value)" in generated_text
+    assert "cinder_string_equal(left, right)" in generated_text
+    assert "cinder_string_hash_value(&(key))" in generated_text
+    assert "cinder_string_equal_value(&(left), &(right))" in generated_text
+    assert "cinder_clone_string(key)" in generated_text
+    assert "cinder_clone_string(value)" in generated_text
+    assert "free((void *)(self->entries[index].key));" in generated_text
+    assert "free((void *)(self->entries[index].value));" in generated_text
+    assert "free((void *)(key));" not in generated_text
+    assert "free((void *)(value));" not in generated_text
+    assert "cinder_hash_u64((uint64_t)(key))" in generated_text
+    assert "cinder_hash_u64((uint64_t)(value))" in generated_text
+    assert "_hash(old_entries[index].value)" in generated_text
+    assert "_hash(self->entries[entry_index].key)" in generated_text
+
+    executable = tmp_path / "map-set-hashing"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+def test_gen1_map_set_supports_imported_enum_keys(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\nname = \"enum_keys\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        encoding="utf-8",
+    )
+    (source_root / "tones.ci").write_text(
+        "enum Tone:\n"
+        "    red\n"
+        "    green\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import tones\n"
+        "from tones import Tone as Shade\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    scores: Map[Shade, i32] = {Shade.red: 1}\n"
+        "    shades: Set[tones.Tone] = {Shade.red, Shade.green}\n"
+        "    scores[Shade.green] = 2\n"
+        "    if len(scores) != 2 or len(shades) != 2:\n"
+        "        return 1\n"
+        "    return scores[Shade.green] - 2\n",
+        encoding="utf-8",
+    )
+    executable = tmp_path / "imported-enum-keys"
+
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("source_text", "code"),
+    [
+        ("def reject(value: Map[f64, i32]) -> void:\n    pass\n", 297),
+        ("def reject(value: Map[*i32, i32]) -> void:\n    pass\n", 297),
+        (
+            "def reject(value: Map[Map[i32, i32], i32]) -> void:\n"
+            "    pass\n",
+            297,
+        ),
+        (
+            "struct Item:\n"
+            "    value: i32\n"
+            "\n"
+            "def reject(value: Map[Item, i32]) -> void:\n"
+            "    pass\n",
+            297,
+        ),
+        ("def reject(value: Set[f64]) -> void:\n    pass\n", 300),
+        ("def reject(value: Set[*i32]) -> void:\n    pass\n", 300),
+        (
+            "def reject(value: Set[Map[i32, i32]]) -> void:\n"
+            "    pass\n",
+            300,
+        ),
+        (
+            "def main() -> i32:\n"
+            "    values = {1.5: 1}\n"
+            "    return 0\n",
+            297,
+        ),
+        (
+            "def main() -> i32:\n"
+            "    values = {1.5}\n"
+            "    return 0\n",
+            300,
+        ),
+    ],
+)
+def test_gen1_rejects_non_hashable_map_and_set_types(
+    gen1_compiler: Path,
+    tmp_path: Path,
+    source_text: str,
+    code: int,
+) -> None:
+    source = tmp_path / "invalid_hash_type.ci"
+    source.write_text(source_text, encoding="utf-8")
+
+    checked = run_gen1(gen1_compiler, "check", str(source))
+
+    assert checked.returncode == 1
+    assert checked.stdout.startswith(f"E {code} ")
 
 
 def test_gen1_emits_inferred_list_specialization(

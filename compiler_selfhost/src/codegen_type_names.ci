@@ -534,7 +534,7 @@ def emit_semantic_c_type(
         builder.append("int32_t")
 
 def is_specialization_builtin_text(name: &const String) -> bool:
-    return name == "u8" or name == "u16" or name == "u32" or name == "u64" or name == "i8" or name == "i16" or name == "f32" or name == "usize" or name == "isize" or name == "c_long" or name == "c_size_t"
+    return name == "u8" or name == "u16" or name == "u32" or name == "u64" or name == "i8" or name == "i16" or name == "f32" or name == "usize" or name == "isize" or name == "c_int" or name == "c_long" or name == "c_size_t"
 
 def emit_semantic_builtin_c_type(builder: &StringBuilder, name: &const String) -> void:
     if name == "u8":
@@ -563,6 +563,9 @@ def emit_semantic_builtin_c_type(builder: &StringBuilder, name: &const String) -
         return
     if name == "isize":
         builder.append("ptrdiff_t")
+        return
+    if name == "c_int":
+        builder.append("int")
         return
     builder.append("long")
 

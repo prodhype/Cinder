@@ -7,12 +7,21 @@ import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
+enum ManagedHashKind:
+    UNSUPPORTED
+    SCALAR
+    STRING
+    C_STRING
+
+
 struct ManagedTypeInfo:
     c_type: String
     token: String
     helper: String
     is_string: bool
+    is_c_string: bool
     is_complete: bool
+    hash_kind: ManagedHashKind
 
 
 def collect_module_specialization_names(
@@ -27,6 +36,10 @@ def collect_module_specialization_names(
     if id.index < 0:
         return
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.ENUM_DECL:
+        enum_builder = StringBuilder()
+        codegen_names.emit_prefixed_name(&enum_builder, prefix, source, node.value_start, node.value_length)
+        codegen_names.record_enum_name(registry, enum_builder.finish())
     for offset in range(0, node.child_count):
         collect_module_specialization_names(registry, arena, arena.children[node.first_child + offset], source, prefix, project_name, imports)
     if node.kind != SyntaxKind.TYPE_GENERIC:
@@ -393,7 +406,15 @@ def emit_module_option_specialization(
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> void:
     node = arena.nodes[id.index]
-    value_info = ManagedTypeInfo(c_type=String(), token=String(), helper=String(), is_string=false, is_complete=false)
+    value_info = ManagedTypeInfo(
+        c_type=String(),
+        token=String(),
+        helper=String(),
+        is_string=false,
+        is_c_string=false,
+        is_complete=false,
+        hash_kind=ManagedHashKind.UNSUPPORTED,
+    )
     builder.append("typedef enum ")
     builder.append(name[0:len(name)])
     builder.append("_Tag {\n    ")
@@ -605,18 +626,30 @@ def module_managed_type_info(
 ) -> ManagedTypeInfo:
     c_builder = StringBuilder()
     codegen_type_names.emit_module_c_type(arena, type_id, source, &c_builder, prefix, project_name, imports, registry)
+    c_type = c_builder.finish()
     token_builder = StringBuilder()
     codegen_type_names.emit_readable_specialized_type_name(arena, type_id, source, &token_builder)
     helper_builder = StringBuilder()
-    is_string = codegen_type_names.context_type_name_equals(arena, type_id, source, "String")
+    is_string = module_type_is_exact_name(arena, type_id, source, "String")
+    is_c_string = module_type_is_c_string(arena, type_id, source)
+    is_enum = codegen_names.is_registered_enum_name(registry, &c_type)
+    hash_kind = ManagedHashKind.UNSUPPORTED
+    if is_string:
+        hash_kind = ManagedHashKind.STRING
+    elif is_c_string:
+        hash_kind = ManagedHashKind.C_STRING
+    elif module_type_is_hash_scalar(arena, type_id, source) or is_enum:
+        hash_kind = ManagedHashKind.SCALAR
     is_complete = false
     if type_id.index >= 0:
         type_node = arena.nodes[type_id.index]
         is_complete = (
             type_node.kind == SyntaxKind.TYPE_POINTER
             or type_node.kind == SyntaxKind.TYPE_REFERENCE
-            or (type_node.kind == SyntaxKind.TYPE_GENERIC and module_type_has_value_helper(arena, type_id, source))
+            or (type_node.kind == SyntaxKind.TYPE_GENERIC and module_type_has_value_helper(arena, type_id, source, prefix, project_name, imports, registry))
             or (type_node.kind == SyntaxKind.TYPE_NAME and codegen_type_names.is_specialization_builtin_name(source, &type_node))
+            or is_c_string
+            or is_enum
         )
     if type_id.index >= 0 and codegen_type_names.type_node_kind(arena, type_id) == SyntaxKind.TYPE_GENERIC:
         base = codegen_names.first_child(arena, type_id)
@@ -629,11 +662,13 @@ def module_managed_type_info(
         ):
             codegen_type_names.emit_specialized_type_name(arena, type_id, source, &helper_builder, prefix, project_name, imports, registry)
     return ManagedTypeInfo(
-        c_type=c_builder.finish(),
+        c_type=c_type,
         token=token_builder.finish(),
         helper=helper_builder.finish(),
         is_string=is_string,
+        is_c_string=is_c_string,
         is_complete=is_complete,
+        hash_kind=hash_kind,
     )
 
 
@@ -654,25 +689,114 @@ def semantic_managed_type_info(
     kind = types.TypeKind.ERROR
     if type_id.index >= 0 and type_id.index < cast[i32](len(table.types)):
         kind = table.types[type_id.index].kind
+    is_string = kind == types.TypeKind.STRING
+    is_c_string = semantic_type_is_c_string(table, type_id)
+    c_type = c_builder.finish()
+    hash_kind = ManagedHashKind.UNSUPPORTED
+    if is_string:
+        hash_kind = ManagedHashKind.STRING
+    elif is_c_string:
+        hash_kind = ManagedHashKind.C_STRING
+    elif semantic_type_is_hash_scalar(table, type_id, source) or codegen_names.is_registered_enum_name(registry, &c_type):
+        hash_kind = ManagedHashKind.SCALAR
     if kind == types.TypeKind.LIST or kind == types.TypeKind.MAP or kind == types.TypeKind.SET or kind == types.TypeKind.OPTION:
         codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &helper_builder, registry)
     return ManagedTypeInfo(
-        c_type=c_builder.finish(),
+        c_type=c_type,
         token=token_builder.finish(),
         helper=helper_builder.finish(),
-        is_string=kind == types.TypeKind.STRING,
-        is_complete=semantic_type_has_value_helper(table, type_id),
+        is_string=is_string,
+        is_c_string=is_c_string,
+        is_complete=semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR,
+        hash_kind=hash_kind,
     )
 
 
-def module_type_has_value_helper(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+def module_type_is_exact_name(arena: &const SyntaxArena, type_id: NodeId, source: &const String, expected: String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    return node.kind == SyntaxKind.TYPE_NAME and codegen_names.range_text_equals(source, node.value_start, node.value_length, expected)
+
+
+def module_type_is_c_string(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_CONST:
+        pointer = codegen_names.first_child(arena, type_id)
+        if pointer.index < 0 or arena.nodes[pointer.index].kind != SyntaxKind.TYPE_POINTER:
+            return false
+        return module_type_is_exact_name(arena, codegen_names.first_child(arena, pointer), source, "char")
+    if node.kind == SyntaxKind.TYPE_POINTER:
+        const_type = codegen_names.first_child(arena, type_id)
+        if const_type.index < 0 or arena.nodes[const_type.index].kind != SyntaxKind.TYPE_CONST:
+            return false
+        return module_type_is_exact_name(arena, codegen_names.first_child(arena, const_type), source, "char")
+    return false
+
+
+def module_type_is_hash_scalar(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind != SyntaxKind.TYPE_NAME:
+        return false
+    return codegen_names.range_text_equals(source, node.value_start, node.value_length, "bool") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "char") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "i8") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "i16") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "i32") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "i64") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "u8") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "u16") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "u32") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "u64") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "isize") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "usize") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "c_int") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "c_long") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "c_size_t")
+
+
+def semantic_type_is_c_string(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.CONST:
+        if record.inner.index < 0 or record.inner.index >= cast[i32](len(table.types)):
+            return false
+        pointer = table.types[record.inner.index]
+        return pointer.kind == types.TypeKind.POINTER and codegen_type_names.semantic_type_is_kind(table, pointer.inner, types.TypeKind.CHAR)
+    if record.kind == types.TypeKind.POINTER:
+        if record.inner.index < 0 or record.inner.index >= cast[i32](len(table.types)):
+            return false
+        const_type = table.types[record.inner.index]
+        return const_type.kind == types.TypeKind.CONST and codegen_type_names.semantic_type_is_kind(table, const_type.inner, types.TypeKind.CHAR)
+    return false
+
+
+def semantic_type_is_hash_scalar(table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.BOOL or record.kind == types.TypeKind.I32 or record.kind == types.TypeKind.I64 or record.kind == types.TypeKind.CHAR or record.kind == types.TypeKind.ENUM:
+        return true
+    if record.kind != types.TypeKind.NAMED:
+        return false
+    name = source[record.name_start:record.name_start + record.name_length]
+    return name == "i8" or name == "i16" or name == "i32" or name == "i64" or name == "u8" or name == "u16" or name == "u32" or name == "u64" or name == "isize" or name == "usize" or name == "c_int" or name == "c_long" or name == "c_size_t"
+
+
+def module_type_has_value_helper(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> bool:
     if type_id.index < 0:
         return false
     node = arena.nodes[type_id.index]
     if node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_REFERENCE:
         return true
+    if node.kind == SyntaxKind.TYPE_CONST:
+        return module_type_has_value_helper(arena, codegen_names.first_child(arena, type_id), source, prefix, project_name, imports, registry)
     if node.kind == SyntaxKind.TYPE_NAME:
-        return codegen_type_names.is_specialization_builtin_name(source, &node)
+        if codegen_type_names.is_specialization_builtin_name(source, &node):
+            return true
+        c_builder = StringBuilder()
+        codegen_type_names.emit_module_c_type(arena, type_id, source, &c_builder, prefix, project_name, imports, registry)
+        c_type = c_builder.finish()
+        return codegen_names.is_registered_enum_name(registry, &c_type)
     if node.kind != SyntaxKind.TYPE_GENERIC:
         return false
     base = codegen_names.first_child(arena, type_id)
@@ -684,12 +808,12 @@ def module_type_has_value_helper(arena: &const SyntaxArena, type_id: NodeId, sou
         or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
         or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
     ):
-        return node.child_count > 1 and module_type_has_value_helper(arena, arena.children[node.first_child + 1], source)
+        return node.child_count > 1 and module_type_has_value_helper(arena, arena.children[node.first_child + 1], source, prefix, project_name, imports, registry)
     if codegen_type_names.is_runtime_generic_name(source, &base_node, "Map"):
         return (
             node.child_count > 2
-            and module_type_has_value_helper(arena, arena.children[node.first_child + 1], source)
-            and module_type_has_value_helper(arena, arena.children[node.first_child + 2], source)
+            and module_type_has_value_helper(arena, arena.children[node.first_child + 1], source, prefix, project_name, imports, registry)
+            and module_type_has_value_helper(arena, arena.children[node.first_child + 2], source, prefix, project_name, imports, registry)
         )
     return false
 
@@ -705,10 +829,13 @@ def semantic_type_has_value_helper(table: &const types.TypeTable, type_id: types
         or record.kind == types.TypeKind.F64
         or record.kind == types.TypeKind.CHAR
         or record.kind == types.TypeKind.STRING
+        or record.kind == types.TypeKind.ENUM
         or record.kind == types.TypeKind.POINTER
         or record.kind == types.TypeKind.REFERENCE
     ):
         return true
+    if record.kind == types.TypeKind.CONST:
+        return semantic_type_has_value_helper(table, record.inner)
     if record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.OPTION:
         return semantic_type_has_value_helper(table, record.inner)
     if record.kind == types.TypeKind.MAP:
@@ -721,6 +848,10 @@ def emit_clone_expression(builder: &StringBuilder, info: &const ManagedTypeInfo,
         builder.append("cinder_string_clone(&(")
         builder.append(expression[0:len(expression)])
         builder.append("))")
+    elif info.is_c_string:
+        builder.append("cinder_clone_string(")
+        builder.append(expression[0:len(expression)])
+        builder.append(")")
     elif len(info.helper) > 0:
         builder.append(info.helper[0:len(info.helper)])
         builder.append("_clone(&(")
@@ -735,6 +866,10 @@ def emit_drop_statement(builder: &StringBuilder, info: &const ManagedTypeInfo, e
         builder.append("cinder_string_drop(&(")
         builder.append(expression[0:len(expression)])
         builder.append("));\n")
+    elif info.is_c_string:
+        builder.append("free((void *)(")
+        builder.append(expression[0:len(expression)])
+        builder.append("));\n")
     elif len(info.helper) > 0:
         builder.append(info.helper[0:len(info.helper)])
         builder.append("_drop(&(")
@@ -743,10 +878,14 @@ def emit_drop_statement(builder: &StringBuilder, info: &const ManagedTypeInfo, e
 
 
 def emit_hash_expression(builder: &StringBuilder, info: &const ManagedTypeInfo, expression: String) -> void:
-    if info.is_string:
+    if info.hash_kind == ManagedHashKind.STRING:
         builder.append("cinder_string_hash_value(&(")
         builder.append(expression[0:len(expression)])
         builder.append("))")
+    elif info.hash_kind == ManagedHashKind.C_STRING:
+        builder.append("cinder_hash_string(")
+        builder.append(expression[0:len(expression)])
+        builder.append(")")
     else:
         builder.append("cinder_hash_u64((uint64_t)(")
         builder.append(expression[0:len(expression)])
@@ -754,12 +893,18 @@ def emit_hash_expression(builder: &StringBuilder, info: &const ManagedTypeInfo, 
 
 
 def emit_equal_expression(builder: &StringBuilder, info: &const ManagedTypeInfo, left: String, right: String) -> void:
-    if info.is_string:
+    if info.hash_kind == ManagedHashKind.STRING:
         builder.append("cinder_string_equal_value(&(")
         builder.append(left[0:len(left)])
         builder.append("), &(")
         builder.append(right[0:len(right)])
         builder.append("))")
+    elif info.hash_kind == ManagedHashKind.C_STRING:
+        builder.append("cinder_string_equal(")
+        builder.append(left[0:len(left)])
+        builder.append(", ")
+        builder.append(right[0:len(right)])
+        builder.append(")")
     else:
         builder.append("((")
         builder.append(left[0:len(left)])
@@ -938,7 +1083,7 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append("_Entry {\n    ")
     builder.append(element_info.c_type[0:len(element_info.c_type)])
     builder.append(" value;\n    uint64_t hash;\n    unsigned char state;\n};\n")
-    if not element_info.is_complete:
+    if not element_info.is_complete or element_info.hash_kind == ManagedHashKind.UNSUPPORTED:
         builder.append("static inline void ")
         builder.append(name[0:len(name)])
         builder.append("_drop(")
@@ -997,9 +1142,11 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append(name[0:len(name)])
     builder.append("_Entry));\n    if (self->entries == NULL) cinder_panic(\"allocation failed\");\n")
     builder.append("    self->capacity = capacity;\n    self->length = 0;\n    self->tombstones = 0;\n")
-    builder.append("    for (size_t index = 0; index < old_capacity; index += 1) {\n        if (old_entries[index].state != 1) continue;\n        bool found = false;\n        size_t slot = ")
+    builder.append("    for (size_t index = 0; index < old_capacity; index += 1) {\n        if (old_entries[index].state != 1) continue;\n        uint64_t hash = ")
     builder.append(name[0:len(name)])
-    builder.append("_find_slot(self, old_entries[index].value, old_entries[index].hash, &found);\n        self->entries[slot] = old_entries[index];\n        self->length += 1;\n    }\n    free(old_entries);\n}\n")
+    builder.append("_hash(old_entries[index].value);\n        old_entries[index].hash = hash;\n        bool found = false;\n        size_t slot = ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_slot(self, old_entries[index].value, hash, &found);\n        self->entries[slot] = old_entries[index];\n        self->length += 1;\n    }\n    free(old_entries);\n}\n")
 
     builder.append("static inline bool ")
     builder.append(name[0:len(name)])
@@ -1016,10 +1163,17 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append(name[0:len(name)])
     builder.append("_hash(value);\n    bool found = false;\n    size_t slot = ")
     builder.append(name[0:len(name)])
-    builder.append("_find_slot(self, value, hash, &found);\n    if (found) {\n        ")
-    emit_drop_statement(builder, element_info, "value")
+    builder.append("_find_slot(self, value, hash, &found);\n    if (found) {\n")
+    if not element_info.is_c_string:
+        builder.append("        ")
+        emit_drop_statement(builder, element_info, "value")
     builder.append("        return false;\n    }\n    if (self->entries[slot].state == 2) self->tombstones -= 1;\n")
-    builder.append("    self->entries[slot].value = value;\n    self->entries[slot].hash = hash;\n    self->entries[slot].state = 1;\n    self->length += 1;\n    return true;\n}\n")
+    builder.append("    self->entries[slot].value = ")
+    if element_info.is_c_string:
+        emit_clone_expression(builder, element_info, "value")
+    else:
+        builder.append("value")
+    builder.append(";\n    self->entries[slot].hash = hash;\n    self->entries[slot].state = 1;\n    self->length += 1;\n    return true;\n}\n")
 
     builder.append("static inline bool ")
     builder.append(name[0:len(name)])
@@ -1052,7 +1206,10 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append("_reserve(&result, self->capacity);\n    for (size_t index = 0; index < self->capacity; index += 1) {\n        if (self->entries[index].state != 1) continue;\n        ")
     builder.append(element_info.c_type[0:len(element_info.c_type)])
     builder.append(" value = ")
-    emit_clone_expression(builder, element_info, "self->entries[index].value")
+    if element_info.is_c_string:
+        builder.append("self->entries[index].value")
+    else:
+        emit_clone_expression(builder, element_info, "self->entries[index].value")
     builder.append(";\n        (void)")
     builder.append(name[0:len(name)])
     builder.append("_add(&result, value);\n    }\n    return result;\n}\n")
@@ -1062,7 +1219,7 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append("_drop(")
     builder.append(name[0:len(name)])
     builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"set dropped during iteration\");\n")
-    if element_info.is_string or len(element_info.helper) > 0:
+    if element_info.is_string or element_info.is_c_string or len(element_info.helper) > 0:
         builder.append("    for (size_t index = 0; index < self->capacity; index += 1) {\n        if (self->entries[index].state != 1) continue;\n        ")
         emit_drop_statement(builder, element_info, "self->entries[index].value")
         builder.append("    }\n")
@@ -1088,7 +1245,7 @@ def emit_map_specialization_body(
     builder.append(" key;\n    ")
     builder.append(value_info.c_type[0:len(value_info.c_type)])
     builder.append(" value;\n    uint64_t hash;\n    bool occupied;\n};\n")
-    if not key_info.is_complete or not value_info.is_complete:
+    if not key_info.is_complete or key_info.hash_kind == ManagedHashKind.UNSUPPORTED or not value_info.is_complete:
         builder.append("static inline void ")
         builder.append(name[0:len(name)])
         builder.append("_drop(")
@@ -1135,7 +1292,9 @@ def emit_map_specialization_body(
     builder.append(" *self, size_t minimum) {\n")
     builder.append("    if (self->capacity >= minimum) return;\n    size_t capacity = self->capacity < 8 ? 8 : self->capacity;\n    while (capacity < minimum) capacity *= 2;\n")
     builder.append("    size_t *buckets = (size_t *)malloc(capacity * sizeof(size_t));\n    if (buckets == NULL) cinder_panic(\"allocation failed\");\n    for (size_t index = 0; index < capacity; index += 1) buckets[index] = SIZE_MAX;\n")
-    builder.append("    for (size_t entry_index = 0; entry_index < self->entries_length; entry_index += 1) {\n        if (!self->entries[entry_index].occupied) continue;\n        size_t slot = (size_t)self->entries[entry_index].hash & (capacity - 1);\n        while (buckets[slot] != SIZE_MAX) slot = (slot + 1) & (capacity - 1);\n        buckets[slot] = entry_index;\n    }\n")
+    builder.append("    for (size_t entry_index = 0; entry_index < self->entries_length; entry_index += 1) {\n        if (!self->entries[entry_index].occupied) continue;\n        self->entries[entry_index].hash = ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(self->entries[entry_index].key);\n        size_t slot = (size_t)self->entries[entry_index].hash & (capacity - 1);\n        while (buckets[slot] != SIZE_MAX) slot = (slot + 1) & (capacity - 1);\n        buckets[slot] = entry_index;\n    }\n")
     builder.append("    free(self->buckets);\n    self->buckets = buckets;\n    self->capacity = capacity;\n    self->tombstones = 0;\n}\n")
 
     builder.append("static inline ")
@@ -1179,7 +1338,8 @@ def emit_map_specialization_body(
     builder.append(" *existing = ")
     builder.append(name[0:len(name)])
     builder.append("_lookup_mut(self, key);\n    if (existing != NULL) {\n        ")
-    emit_drop_statement(builder, key_info, "key")
+    if not key_info.is_c_string:
+        emit_drop_statement(builder, key_info, "key")
     builder.append("        ")
     emit_drop_statement(builder, value_info, "*existing")
     builder.append("        *existing = value;\n        return;\n    }\n")
@@ -1190,7 +1350,12 @@ def emit_map_specialization_body(
     builder.append(name[0:len(name)])
     builder.append("_Entry *)cinder_grow_array(self->entries, &self->entries_capacity, entry_index + 1, sizeof(")
     builder.append(name[0:len(name)])
-    builder.append("_Entry));\n    self->entries_length += 1;\n    self->entries[entry_index].key = key;\n    self->entries[entry_index].value = value;\n    self->entries[entry_index].hash = ")
+    builder.append("_Entry));\n    self->entries_length += 1;\n    self->entries[entry_index].key = ")
+    if key_info.is_c_string:
+        emit_clone_expression(builder, key_info, "key")
+    else:
+        builder.append("key")
+    builder.append(";\n    self->entries[entry_index].value = value;\n    self->entries[entry_index].hash = ")
     builder.append(name[0:len(name)])
     builder.append("_hash(key);\n    self->entries[entry_index].occupied = true;\n")
     builder.append("    size_t slot = (size_t)self->entries[entry_index].hash & (self->capacity - 1);\n    while (self->buckets[slot] != SIZE_MAX) slot = (slot + 1) & (self->capacity - 1);\n    self->buckets[slot] = entry_index;\n    self->length += 1;\n}\n")
@@ -1252,7 +1417,10 @@ def emit_map_specialization_body(
     builder.append("_reserve(&result, self->capacity);\n    for (size_t index = 0; index < self->entries_length; index += 1) {\n        if (!self->entries[index].occupied) continue;\n        ")
     builder.append(key_info.c_type[0:len(key_info.c_type)])
     builder.append(" key = ")
-    emit_clone_expression(builder, key_info, "self->entries[index].key")
+    if key_info.is_c_string:
+        builder.append("self->entries[index].key")
+    else:
+        emit_clone_expression(builder, key_info, "self->entries[index].key")
     builder.append(";\n        ")
     builder.append(value_info.c_type[0:len(value_info.c_type)])
     builder.append(" value = ")
@@ -1266,7 +1434,7 @@ def emit_map_specialization_body(
     builder.append("_drop(")
     builder.append(name[0:len(name)])
     builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"map dropped during iteration\");\n")
-    if key_info.is_string or len(key_info.helper) > 0 or value_info.is_string or len(value_info.helper) > 0:
+    if key_info.is_string or key_info.is_c_string or len(key_info.helper) > 0 or value_info.is_string or value_info.is_c_string or len(value_info.helper) > 0:
         builder.append("    for (size_t index = 0; index < self->entries_length; index += 1) {\n        if (!self->entries[index].occupied) continue;\n        ")
         emit_drop_statement(builder, key_info, "self->entries[index].key")
         builder.append("        ")
