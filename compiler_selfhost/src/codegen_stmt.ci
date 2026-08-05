@@ -8,6 +8,7 @@ import codegen_type_names
 import project
 import syntax
 import token
+import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
@@ -28,7 +29,7 @@ def emit_module_block(
     for offset in range(0, node.child_count):
         emit_module_statement(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
     emit_module_defers(arena, source, builder, prefix, project_name, imports, context, defer_start)
-    codegen_context.emit_context_drops(arena, context, source, builder, local_start)
+    codegen_context.emit_context_drops(arena, context, source, builder, local_start, prefix, project_name, imports)
     while len(context.local_types) > local_start:
         context.local_types.pop()
     while len(context.pointer_names) > pointer_start:
@@ -69,6 +70,7 @@ def emit_module_return_cleanups(
         builder.append("    fclose(")
         builder.append(context.with_resources[index])
         builder.append(");\n")
+    codegen_context.emit_context_collection_drops(arena, context, source, builder, prefix, project_name, imports)
 
 def emit_module_statement(
     arena: &const SyntaxArena,
@@ -85,7 +87,7 @@ def emit_module_statement(
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
         expr = codegen_names.first_child(arena, id)
-        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0
+        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or codegen_context.context_has_live_collection_drops(arena, context, source)
         if not has_cleanups:
             builder.append("    return")
             if expr.index >= 0:
@@ -159,6 +161,33 @@ def emit_module_statement(
     if node.kind == SyntaxKind.ASSIGN_STMT:
         builder.append("    ")
         target = codegen_names.first_child(arena, id)
+        if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_INDEX:
+            receiver = codegen_names.first_child(arena, target)
+            key = codegen_names.second_child(arena, target)
+            if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+                receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+                codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+                builder.append("_set(")
+                if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+                    builder.append("&")
+                codegen_expr.emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+                builder.append(", ")
+                previous_expected = context.expected_type
+                key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
+                if key_type.index >= 0:
+                    context.expected_type = key_type
+                codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
+                builder.append(", ")
+                value = codegen_names.second_child(arena, id)
+                value_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 1)
+                if value_type.index >= 0:
+                    context.expected_type = value_type
+                codegen_expr.emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+                context.expected_type = previous_expected
+                builder.append(");\n")
+                codegen_context.mark_context_expression_moved(arena, context, key, source)
+                codegen_context.mark_context_expression_moved(arena, context, value, source)
+                return
         if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
             target_node = arena.nodes[target.index]
             if not codegen_context.context_has_name(context, source, target_node.value_start, target_node.value_length):

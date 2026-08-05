@@ -561,6 +561,82 @@ def test_gen1_preserves_runtime_generic_specializations(
     assert subprocess.run([str(executable)], check=False).returncode == 0
 
 
+def test_gen1_emits_specialized_map_and_set_helpers(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "maps_sets.ci"
+    source.write_text(
+        "struct Bundle:\n"
+        "    scores: Map[i32, i32]\n\n"
+        "def main() -> i32:\n"
+        "    values = {1, 2, 2}\n"
+        "    values.add(3)\n"
+        "    bundle = Bundle(scores={1: 10, 2: 20})\n"
+        "    groups: Map[i32, List[i32]] = {1: [10]}\n"
+        "    groups[2] = [20]\n"
+        "    groups[2] = [21]\n"
+        "    maybe: Option[List[i32]] = groups.get(1)\n"
+        "    if len(values) != 3:\n"
+        "        return 1\n"
+        "    if len(bundle.scores) != 2:\n"
+        "        return 2\n"
+        "    if bundle.scores[1] != 10:\n"
+        "        return 3\n"
+        "    if groups[2][0] != 21:\n"
+        "        return 4\n"
+        "    if not maybe.is_some:\n"
+        "        return 5\n"
+        "    if maybe.value[0] != 10:\n"
+        "        return 6\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(source),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    header = next((generated / "cinder_gen").glob("*.cinder.h")).read_text(encoding="utf-8")
+    generated_source = next((generated / "cinder_gen").glob("*.c")).read_text(encoding="utf-8")
+    for helper in (
+        "CinderSet_i32_add",
+        "CinderSet_i32_len",
+        "CinderSet_i32_drop",
+        "CinderMap_i32_i32_at",
+        "CinderMap_i32_i32_len",
+        "CinderMap_i32_CinderList_i32_set",
+        "CinderMap_i32_CinderList_i32_get",
+        "CinderMap_i32_CinderList_i32_drop",
+    ):
+        assert helper in header or helper in generated_source
+    assert "CinderList_i32_drop(&(*existing));" in header
+    assert "CinderList_i32_drop(&(self->entries[index].value));" in header
+    assert "CinderSet_i32_add(&values, 3)" in generated_source
+    assert "CinderMap_i32_CinderList_i32_set(&groups, 2" in generated_source
+    assert "CinderMap_i32_CinderList_i32_get(&groups, 1)" in generated_source
+    assert "CinderMap_i32_CinderList_i32_drop(&groups);" in generated_source
+
+    executable = tmp_path / "maps-sets"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
 def test_gen1_emits_inferred_list_specialization(
     gen1_compiler: Path,
     tmp_path: Path,

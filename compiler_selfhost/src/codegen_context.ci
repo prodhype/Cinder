@@ -225,7 +225,12 @@ def context_type_needs_drop(arena: &const SyntaxArena, type_id: NodeId, source: 
         if base.index < 0:
             return false
         base_node = arena.nodes[base.index]
-        return codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List")
+        return (
+            codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List")
+            or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Map")
+            or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Set")
+            or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Option")
+        )
     return false
 
 def mark_context_expression_moved(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> void:
@@ -396,6 +401,44 @@ def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.T
             return node.type_id
     return types.missing_type()
 
+
+def context_expression_is_collection(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+    generic_name: String,
+    semantic_kind: types.TypeKind,
+) -> bool:
+    syntax_type = context_expression_type(arena, context, id, source)
+    if context_type_is_runtime_generic(context.type_arena, syntax_type, context.type_source, generic_name):
+        return true
+    semantic_type = context_semantic_type(context, id)
+    return codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, semantic_kind)
+
+
+def emit_context_expression_specialization_name(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    generic_name: String,
+    semantic_kind: types.TypeKind,
+) -> bool:
+    syntax_type = context_expression_type(arena, context, id, source)
+    if context_type_is_runtime_generic(context.type_arena, syntax_type, context.type_source, generic_name):
+        codegen_type_names.emit_module_c_type(context.type_arena, syntax_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        return true
+    semantic_type = context_semantic_type(context, id)
+    if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, semantic_kind):
+        codegen_type_names.emit_semantic_c_type(context.type_table, semantic_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        return true
+    return false
+
 def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> NodeId:
     if id.index < 0:
         return syntax.missing_node()
@@ -444,9 +487,19 @@ def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenCo
         name = source[node.value_start:node.value_start + node.value_length]
         return context_name_type(context, &name)
     if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
-        return context_field_type_for_receiver(arena, context, codegen_names.first_child(arena, id), codegen_names.second_child(arena, id), source)
+        receiver = codegen_names.first_child(arena, id)
+        member = codegen_names.second_child(arena, id)
+        if member.index >= 0:
+            member_node = arena.nodes[member.index]
+            if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "value"):
+                receiver_type = context_expression_type(arena, context, receiver, source)
+                if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Option"):
+                    return context_generic_argument(context.type_arena, receiver_type, 0)
+        return context_field_type_for_receiver(arena, context, receiver, member, source)
     if node.kind == SyntaxKind.EXPR_INDEX:
         receiver_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
+        if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Map"):
+            return context_generic_argument(context.type_arena, receiver_type, 1)
         return context_list_element_type(context.type_arena, receiver_type, context.type_source)
     if node.kind == SyntaxKind.EXPR_PROPAGATE:
         source_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
@@ -484,14 +537,77 @@ def context_expression_is_pointer_initializer(arena: &const SyntaxArena, context
         return true
     return context_expression_is_pointer_like(arena, context, id, source)
 
-def emit_context_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, builder: &StringBuilder, local_start: usize) -> void:
+def emit_context_drops(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    source: &const String,
+    builder: &StringBuilder,
+    local_start: usize,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
     index = len(context.local_types)
     while index > local_start:
         index -= 1
         if not context.local_types[index].moved:
-            emit_context_drop(arena, context.local_types[index].type_id, source, builder, &context.local_types[index].name)
+            emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
 
-def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const String, builder: &StringBuilder, name: &const String) -> void:
+
+def context_type_is_map_or_set(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
+        return true
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return false
+    base = codegen_names.first_child(arena, type_id)
+    if base.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
+    return (
+        codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Map")
+        or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Set")
+    )
+
+
+def context_has_live_collection_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String) -> bool:
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if not context.local_types[index].moved and context_type_is_map_or_set(arena, context.local_types[index].type_id, source):
+            return true
+    return false
+
+
+def emit_context_collection_drops(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        if not context.local_types[index].moved and context_type_is_map_or_set(arena, context.local_types[index].type_id, source):
+            emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
+
+
+def emit_context_drop(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
     if type_id.index < 0 or len(name) == 0:
         return
     node = arena.nodes[type_id.index]
@@ -506,9 +622,19 @@ def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const
         builder.append(");\n")
         return
     if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
-        builder.append("    free(")
-        builder.append(name[0:len(name)])
-        builder.append(".data);\n")
+        semantic_type = context_semantic_type(context, type_id)
+        if semantic_type.index >= 0:
+            semantic_record = context.type_table.types[semantic_type.index]
+            if node.kind == SyntaxKind.EXPR_LIST and not semantic_collection_inner_needs_drop(context.type_table, semantic_record.inner):
+                builder.append("    free(")
+                builder.append(name[0:len(name)])
+                builder.append(".data);\n")
+            else:
+                builder.append("    ")
+                codegen_type_names.emit_semantic_specialized_type_name(context.type_table, semantic_type, context.type_source, builder, context.specialization_names)
+                builder.append("_drop(&")
+                builder.append(name[0:len(name)])
+                builder.append(");\n")
         return
     if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
         return
@@ -529,10 +655,37 @@ def emit_context_drop(arena: &const SyntaxArena, type_id: NodeId, source: &const
         if base.index >= 0:
             base_node = arena.nodes[base.index]
             if codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List"):
-                builder.append("    free(")
+                element = context_generic_argument(arena, type_id, 0)
+                if not context_type_needs_drop(arena, element, source):
+                    builder.append("    free(")
+                    builder.append(name[0:len(name)])
+                    builder.append(".data);\n")
+                    return
+            if (
+                codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "List")
+                or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Map")
+                or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Set")
+                or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Option")
+            ):
+                builder.append("    ")
+                codegen_type_names.emit_specialized_type_name(context.type_arena, type_id, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+                builder.append("_drop(&")
                 builder.append(name[0:len(name)])
-                builder.append(".data);\n")
+                builder.append(");\n")
                 return
+
+
+def semantic_collection_inner_needs_drop(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    kind = table.types[type_id.index].kind
+    return (
+        kind == types.TypeKind.STRING
+        or kind == types.TypeKind.LIST
+        or kind == types.TypeKind.MAP
+        or kind == types.TypeKind.SET
+        or kind == types.TypeKind.OPTION
+    )
 
 def context_type_is_string(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
     if type_id.index < 0:

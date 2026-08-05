@@ -125,6 +125,76 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
                 builder.append("));")
         builder.append(" cinder_list; })")
         return
+    if node.kind == SyntaxKind.EXPR_SET:
+        set_type = context.expected_type
+        has_specialized_set = codegen_context.context_type_is_runtime_generic(context.type_arena, set_type, context.type_source, "Set")
+        semantic_set_type = codegen_context.context_semantic_type(context, id)
+        has_semantic_set = codegen_type_names.semantic_type_is_kind(type_table, semantic_set_type, types.TypeKind.SET)
+        set_name_builder = StringBuilder()
+        if has_specialized_set:
+            codegen_type_names.emit_module_c_type(context.type_arena, set_type, context.type_source, &set_name_builder, prefix, project_name, imports, context.specialization_names)
+        elif has_semantic_set:
+            codegen_type_names.emit_semantic_c_type(type_table, semantic_set_type, context.type_source, &set_name_builder, prefix, project_name, imports, context.specialization_names)
+        else:
+            builder.append("((CinderSet){0})")
+            return
+        set_name = set_name_builder.finish()
+        builder.append("({ ")
+        builder.append(set_name[0:len(set_name)])
+        builder.append(" cinder_set = {0};")
+        element_type = codegen_context.context_generic_argument(context.type_arena, set_type, 0)
+        for offset in range(0, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            builder.append(" (void)")
+            builder.append(set_name[0:len(set_name)])
+            builder.append("_add(&cinder_set, ")
+            previous_expected = context.expected_type
+            if element_type.index >= 0:
+                context.expected_type = element_type
+            emit_module_expression_state(state, child_id)
+            context.expected_type = previous_expected
+            builder.append(");")
+        builder.append(" cinder_set; })")
+        return
+    if node.kind == SyntaxKind.EXPR_MAP:
+        map_type = context.expected_type
+        has_specialized_map = codegen_context.context_type_is_runtime_generic(context.type_arena, map_type, context.type_source, "Map")
+        semantic_map_type = codegen_context.context_semantic_type(context, id)
+        has_semantic_map = codegen_type_names.semantic_type_is_kind(type_table, semantic_map_type, types.TypeKind.MAP)
+        map_name_builder = StringBuilder()
+        if has_specialized_map:
+            codegen_type_names.emit_module_c_type(context.type_arena, map_type, context.type_source, &map_name_builder, prefix, project_name, imports, context.specialization_names)
+        elif has_semantic_map:
+            codegen_type_names.emit_semantic_c_type(type_table, semantic_map_type, context.type_source, &map_name_builder, prefix, project_name, imports, context.specialization_names)
+        else:
+            builder.append("((CinderMap){0})")
+            return
+        map_name = map_name_builder.finish()
+        builder.append("({ ")
+        builder.append(map_name[0:len(map_name)])
+        builder.append(" cinder_map = {0};")
+        key_type = codegen_context.context_generic_argument(context.type_arena, map_type, 0)
+        value_type = codegen_context.context_generic_argument(context.type_arena, map_type, 1)
+        for offset in range(0, node.child_count):
+            entry_id = arena.children[node.first_child + offset]
+            entry = arena.nodes[entry_id.index]
+            if entry.kind != SyntaxKind.EXPR_MAP_ENTRY or entry.child_count < 2:
+                continue
+            builder.append(" ")
+            builder.append(map_name[0:len(map_name)])
+            builder.append("_set(&cinder_map, ")
+            previous_expected = context.expected_type
+            if key_type.index >= 0:
+                context.expected_type = key_type
+            emit_module_expression_state(state, arena.children[entry.first_child])
+            builder.append(", ")
+            if value_type.index >= 0:
+                context.expected_type = value_type
+            emit_module_expression_state(state, arena.children[entry.first_child + 1])
+            context.expected_type = previous_expected
+            builder.append(");")
+        builder.append(" cinder_map; })")
+        return
     if node.kind == SyntaxKind.EXPR_TUPLE:
         tuple_type = context.expected_type
         if codegen_context.context_type_is_runtime_generic(context.type_arena, tuple_type, context.type_source, "Tuple"):

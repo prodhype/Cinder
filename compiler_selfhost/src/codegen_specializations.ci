@@ -7,6 +7,14 @@ import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
+struct ManagedTypeInfo:
+    c_type: String
+    token: String
+    helper: String
+    is_string: bool
+    is_complete: bool
+
+
 def collect_module_specialization_names(
     registry: &codegen_names.SpecializationNameRegistry,
     arena: &const SyntaxArena,
@@ -81,11 +89,19 @@ def emit_semantic_type_specialization(
     if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
         return
     record = table.types[type_id.index]
-    if record.kind != types.TypeKind.LIST:
+    if (
+        record.kind != types.TypeKind.LIST
+        and record.kind != types.TypeKind.MAP
+        and record.kind != types.TypeKind.SET
+    ):
         return
     if codegen_type_names.semantic_type_is_kind(table, record.inner, types.TypeKind.ERROR):
         return
     emit_semantic_type_specialization(table, record.inner, source, builder, emitted, prefix, project_name, imports, registry)
+    if record.kind == types.TypeKind.MAP:
+        if codegen_type_names.semantic_type_is_kind(table, record.second, types.TypeKind.ERROR):
+            return
+        emit_semantic_type_specialization(table, record.second, source, builder, emitted, prefix, project_name, imports, registry)
     name_builder = StringBuilder()
     codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &name_builder, registry)
     name = name_builder.finish()
@@ -105,16 +121,14 @@ def emit_semantic_type_specialization(
     builder.append(name[0:len(name)])
     builder.append("\n#define CINDER_SPECIALIZED_")
     builder.append(name[0:len(name)])
-    builder.append("\nstruct ")
-    builder.append(name[0:len(name)])
-    builder.append(" {\n    ")
-    if codegen_type_names.semantic_type_is_kind(table, record.inner, types.TypeKind.ARRAY):
-        emit_semantic_array_pointer_data_declarator(table, record.inner, source, builder, prefix, project_name, imports, registry)
-        builder.append(";\n")
+    builder.append("\n")
+    if record.kind == types.TypeKind.LIST:
+        emit_semantic_list_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
+    elif record.kind == types.TypeKind.MAP:
+        emit_semantic_map_specialization(table, record.inner, record.second, source, builder, &name, prefix, project_name, imports, registry)
     else:
-        codegen_type_names.emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
-        builder.append(" *data;\n")
-    builder.append("    size_t length;\n    size_t capacity;\n};\n#endif\n")
+        emit_semantic_set_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
+    builder.append("#endif\n")
 
 def emit_semantic_array_pointer_data_declarator(
     table: &const types.TypeTable,
@@ -207,12 +221,46 @@ def emit_module_type_specializations(
     is_result = codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
     if not is_list and not is_set and not is_map and not is_option and not is_result and not is_owned and not is_tuple:
         return
-    is_late = is_result or is_map or is_set
-    if result_only != is_late:
-        return
     name_builder = StringBuilder()
     codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
     name = name_builder.finish()
+    is_late = is_result
+    if is_map or is_set:
+        phase_builder = StringBuilder()
+        phase_builder.append(name[0:len(name)])
+        if result_only:
+            phase_builder.append("_helpers")
+        else:
+            phase_builder.append("_layout")
+        phase_name = phase_builder.finish()
+        if codegen_type_names.string_list_contains(emitted, &phase_name):
+            return
+        if result_only:
+            builder.append("#ifndef CINDER_COLLECTION_HELPERS_")
+            builder.append(name[0:len(name)])
+            builder.append("\n#define CINDER_COLLECTION_HELPERS_")
+            builder.append(name[0:len(name)])
+            builder.append("\n")
+            if is_map:
+                emit_module_map_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+            else:
+                emit_module_set_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+            builder.append("#endif\n")
+        else:
+            builder.append("#ifndef CINDER_SPECIALIZED_")
+            builder.append(name[0:len(name)])
+            builder.append("\n#define CINDER_SPECIALIZED_")
+            builder.append(name[0:len(name)])
+            builder.append("\n")
+            if is_map:
+                emit_map_specialization_layout(builder, &name)
+            else:
+                emit_set_specialization_layout(builder, &name)
+            builder.append("#endif\n")
+        emitted.append(phase_name)
+        return
+    if result_only != is_late:
+        return
     if codegen_type_names.string_list_contains(emitted, &name):
         return
     builder.append("#ifndef CINDER_SPECIALIZED_")
@@ -224,10 +272,6 @@ def emit_module_type_specializations(
         emit_module_result_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     elif is_list:
         emit_module_list_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
-    elif is_set:
-        emit_module_set_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
-    elif is_map:
-        emit_module_map_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     elif is_option:
         emit_module_option_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     elif is_tuple:
@@ -265,6 +309,11 @@ def emit_module_list_specialization(
     else:
         builder.append("void *data;\n")
     builder.append("    size_t length;\n    size_t capacity;\n};\n")
+    if node.child_count > 1:
+        element = arena.children[node.first_child + 1]
+        element_info = module_managed_type_info(arena, element, source, prefix, project_name, imports, registry)
+        if element_info.is_complete:
+            emit_list_helper_suite(builder, name, &element_info)
 
 def emit_module_array_pointer_data_declarator(
     arena: &const SyntaxArena,
@@ -300,20 +349,14 @@ def emit_module_set_specialization(
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> void:
     node = arena.nodes[id.index]
-    builder.append("typedef struct ")
-    builder.append(name[0:len(name)])
-    builder.append("_Entry {\n    ")
-    if node.child_count > 1:
-        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 1], source, builder, prefix, project_name, imports, registry)
-    else:
-        builder.append("int32_t")
-    builder.append(" value;\n    uint64_t hash;\n    unsigned char state;\n} ")
-    builder.append(name[0:len(name)])
-    builder.append("_Entry;\nstruct ")
-    builder.append(name[0:len(name)])
-    builder.append(" {\n    ")
-    builder.append(name[0:len(name)])
-    builder.append("_Entry *entries;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
+    if node.child_count <= 1:
+        builder.append("struct ")
+        builder.append(name[0:len(name)])
+        builder.append(" { int32_t _cinder_invalid; };\n")
+        return
+    element = arena.children[node.first_child + 1]
+    element_info = module_managed_type_info(arena, element, source, prefix, project_name, imports, registry)
+    emit_set_specialization_body(builder, name, &element_info)
 
 def emit_module_map_specialization(
     arena: &const SyntaxArena,
@@ -327,25 +370,16 @@ def emit_module_map_specialization(
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> void:
     node = arena.nodes[id.index]
-    builder.append("typedef struct ")
-    builder.append(name[0:len(name)])
-    builder.append("_Entry {\n    ")
-    if node.child_count > 1:
-        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 1], source, builder, prefix, project_name, imports, registry)
-    else:
-        builder.append("int32_t")
-    builder.append(" key;\n    ")
-    if node.child_count > 2:
-        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 2], source, builder, prefix, project_name, imports, registry)
-    else:
-        builder.append("int32_t")
-    builder.append(" value;\n    uint64_t hash;\n    bool occupied;\n} ")
-    builder.append(name[0:len(name)])
-    builder.append("_Entry;\nstruct ")
-    builder.append(name[0:len(name)])
-    builder.append(" {\n    ")
-    builder.append(name[0:len(name)])
-    builder.append("_Entry *entries;\n    size_t entries_length;\n    size_t entries_capacity;\n    size_t *buckets;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
+    if node.child_count <= 2:
+        builder.append("struct ")
+        builder.append(name[0:len(name)])
+        builder.append(" { int32_t _cinder_invalid; };\n")
+        return
+    key = arena.children[node.first_child + 1]
+    value = arena.children[node.first_child + 2]
+    key_info = module_managed_type_info(arena, key, source, prefix, project_name, imports, registry)
+    value_info = module_managed_type_info(arena, value, source, prefix, project_name, imports, registry)
+    emit_map_specialization_body(builder, name, &key_info, &value_info)
 
 def emit_module_option_specialization(
     arena: &const SyntaxArena,
@@ -359,6 +393,7 @@ def emit_module_option_specialization(
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> void:
     node = arena.nodes[id.index]
+    value_info = ManagedTypeInfo(c_type=String(), token=String(), helper=String(), is_string=false, is_complete=false)
     builder.append("typedef enum ")
     builder.append(name[0:len(name)])
     builder.append("_Tag {\n    ")
@@ -374,11 +409,14 @@ def emit_module_option_specialization(
     builder.append("_Tag tag;\n    union {\n        unsigned char _cinder_empty;\n")
     if node.child_count > 1:
         value_type = arena.children[node.first_child + 1]
+        value_info = module_managed_type_info(arena, value_type, source, prefix, project_name, imports, registry)
         if not codegen_type_names.context_type_name_equals(arena, value_type, source, "void"):
             builder.append("        ")
             codegen_type_names.emit_module_c_type(arena, value_type, source, builder, prefix, project_name, imports, registry)
             builder.append(" value;\n")
     builder.append("    } data;\n};\n")
+    if node.child_count > 1:
+        emit_option_drop_helper(builder, name, &value_info)
 
 def emit_module_tuple_specialization(
     arena: &const SyntaxArena,
@@ -554,3 +592,684 @@ def emit_module_prefixed_typed_declarator(
             codegen_names.append_numeric_literal(builder, source, length_node.value_start, length_node.value_length)
         builder.append("]")
         current = codegen_names.first_child(arena, current)
+
+
+def module_managed_type_info(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> ManagedTypeInfo:
+    c_builder = StringBuilder()
+    codegen_type_names.emit_module_c_type(arena, type_id, source, &c_builder, prefix, project_name, imports, registry)
+    token_builder = StringBuilder()
+    codegen_type_names.emit_readable_specialized_type_name(arena, type_id, source, &token_builder)
+    helper_builder = StringBuilder()
+    is_string = codegen_type_names.context_type_name_equals(arena, type_id, source, "String")
+    is_complete = false
+    if type_id.index >= 0:
+        type_node = arena.nodes[type_id.index]
+        is_complete = (
+            type_node.kind == SyntaxKind.TYPE_POINTER
+            or type_node.kind == SyntaxKind.TYPE_REFERENCE
+            or (type_node.kind == SyntaxKind.TYPE_GENERIC and module_type_has_value_helper(arena, type_id, source))
+            or (type_node.kind == SyntaxKind.TYPE_NAME and codegen_type_names.is_specialization_builtin_name(source, &type_node))
+        )
+    if type_id.index >= 0 and codegen_type_names.type_node_kind(arena, type_id) == SyntaxKind.TYPE_GENERIC:
+        base = codegen_names.first_child(arena, type_id)
+        base_node = arena.nodes[base.index]
+        if (
+            codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
+        ):
+            codegen_type_names.emit_specialized_type_name(arena, type_id, source, &helper_builder, prefix, project_name, imports, registry)
+    return ManagedTypeInfo(
+        c_type=c_builder.finish(),
+        token=token_builder.finish(),
+        helper=helper_builder.finish(),
+        is_string=is_string,
+        is_complete=is_complete,
+    )
+
+
+def semantic_managed_type_info(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> ManagedTypeInfo:
+    c_builder = StringBuilder()
+    codegen_type_names.emit_semantic_c_type(table, type_id, source, &c_builder, prefix, project_name, imports, registry)
+    token_builder = StringBuilder()
+    codegen_type_names.emit_semantic_readable_type_name(table, type_id, source, &token_builder)
+    helper_builder = StringBuilder()
+    kind = types.TypeKind.ERROR
+    if type_id.index >= 0 and type_id.index < cast[i32](len(table.types)):
+        kind = table.types[type_id.index].kind
+    if kind == types.TypeKind.LIST or kind == types.TypeKind.MAP or kind == types.TypeKind.SET or kind == types.TypeKind.OPTION:
+        codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &helper_builder, registry)
+    return ManagedTypeInfo(
+        c_type=c_builder.finish(),
+        token=token_builder.finish(),
+        helper=helper_builder.finish(),
+        is_string=kind == types.TypeKind.STRING,
+        is_complete=semantic_type_has_value_helper(table, type_id),
+    )
+
+
+def module_type_has_value_helper(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_REFERENCE:
+        return true
+    if node.kind == SyntaxKind.TYPE_NAME:
+        return codegen_type_names.is_specialization_builtin_name(source, &node)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return false
+    base = codegen_names.first_child(arena, type_id)
+    if base.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
+    if (
+        codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
+    ):
+        return node.child_count > 1 and module_type_has_value_helper(arena, arena.children[node.first_child + 1], source)
+    if codegen_type_names.is_runtime_generic_name(source, &base_node, "Map"):
+        return (
+            node.child_count > 2
+            and module_type_has_value_helper(arena, arena.children[node.first_child + 1], source)
+            and module_type_has_value_helper(arena, arena.children[node.first_child + 2], source)
+        )
+    return false
+
+
+def semantic_type_has_value_helper(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if (
+        record.kind == types.TypeKind.BOOL
+        or record.kind == types.TypeKind.I32
+        or record.kind == types.TypeKind.I64
+        or record.kind == types.TypeKind.F64
+        or record.kind == types.TypeKind.CHAR
+        or record.kind == types.TypeKind.STRING
+        or record.kind == types.TypeKind.POINTER
+        or record.kind == types.TypeKind.REFERENCE
+    ):
+        return true
+    if record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.OPTION:
+        return semantic_type_has_value_helper(table, record.inner)
+    if record.kind == types.TypeKind.MAP:
+        return semantic_type_has_value_helper(table, record.inner) and semantic_type_has_value_helper(table, record.second)
+    return false
+
+
+def emit_clone_expression(builder: &StringBuilder, info: &const ManagedTypeInfo, expression: String) -> void:
+    if info.is_string:
+        builder.append("cinder_string_clone(&(")
+        builder.append(expression[0:len(expression)])
+        builder.append("))")
+    elif len(info.helper) > 0:
+        builder.append(info.helper[0:len(info.helper)])
+        builder.append("_clone(&(")
+        builder.append(expression[0:len(expression)])
+        builder.append("))")
+    else:
+        builder.append(expression[0:len(expression)])
+
+
+def emit_drop_statement(builder: &StringBuilder, info: &const ManagedTypeInfo, expression: String) -> void:
+    if info.is_string:
+        builder.append("cinder_string_drop(&(")
+        builder.append(expression[0:len(expression)])
+        builder.append("));\n")
+    elif len(info.helper) > 0:
+        builder.append(info.helper[0:len(info.helper)])
+        builder.append("_drop(&(")
+        builder.append(expression[0:len(expression)])
+        builder.append("));\n")
+
+
+def emit_hash_expression(builder: &StringBuilder, info: &const ManagedTypeInfo, expression: String) -> void:
+    if info.is_string:
+        builder.append("cinder_string_hash_value(&(")
+        builder.append(expression[0:len(expression)])
+        builder.append("))")
+    else:
+        builder.append("cinder_hash_u64((uint64_t)(")
+        builder.append(expression[0:len(expression)])
+        builder.append("))")
+
+
+def emit_equal_expression(builder: &StringBuilder, info: &const ManagedTypeInfo, left: String, right: String) -> void:
+    if info.is_string:
+        builder.append("cinder_string_equal_value(&(")
+        builder.append(left[0:len(left)])
+        builder.append("), &(")
+        builder.append(right[0:len(right)])
+        builder.append("))")
+    else:
+        builder.append("((")
+        builder.append(left[0:len(left)])
+        builder.append(") == (")
+        builder.append(right[0:len(right)])
+        builder.append("))")
+
+
+def emit_semantic_list_specialization(
+    table: &const types.TypeTable,
+    element_type: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    element_info = semantic_managed_type_info(table, element_type, source, prefix, project_name, imports, registry)
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" { ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" *data; size_t length; size_t capacity; };\n")
+    if element_info.is_complete:
+        emit_list_helper_suite(builder, name, &element_info)
+
+
+def emit_semantic_set_specialization(
+    table: &const types.TypeTable,
+    element_type: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    element_info = semantic_managed_type_info(table, element_type, source, prefix, project_name, imports, registry)
+    emit_set_specialization_layout(builder, name)
+    emit_set_specialization_body(builder, name, &element_info)
+
+
+def emit_semantic_map_specialization(
+    table: &const types.TypeTable,
+    key_type: types.TypeId,
+    value_type: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    key_info = semantic_managed_type_info(table, key_type, source, prefix, project_name, imports, registry)
+    value_info = semantic_managed_type_info(table, value_type, source, prefix, project_name, imports, registry)
+    emit_map_specialization_layout(builder, name)
+    emit_map_specialization_body(builder, name, &key_info, &value_info)
+
+
+def emit_list_helper_suite(builder: &StringBuilder, name: &const String, element_info: &const ManagedTypeInfo) -> void:
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_clone(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append(" result = {0};\n    if (self == NULL) return result;\n    for (size_t index = 0; index < self->length; index += 1) {\n        ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value = ")
+    emit_clone_expression(builder, element_info, "self->data[index]")
+    builder.append(";\n        cinder_selfhost_list_append_value(&result, value);\n    }\n    return result;\n}\n")
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self == NULL) return;\n")
+    if element_info.is_string or len(element_info.helper) > 0:
+        builder.append("    for (size_t index = 0; index < self->length; index += 1) {\n        ")
+        emit_drop_statement(builder, element_info, "self->data[index]")
+        builder.append("    }\n")
+    builder.append("    free(self->data);\n    self->data = NULL;\n    self->length = 0;\n    self->capacity = 0;\n}\n")
+
+
+def emit_option_drop_helper(builder: &StringBuilder, name: &const String, value_info: &const ManagedTypeInfo) -> void:
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_clone(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append(" result = {0};\n    if (self == NULL) return result;\n    result.tag = self->tag;\n    if (self->tag == ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Some) result.data.value = ")
+    emit_clone_expression(builder, value_info, "self->data.value")
+    builder.append(";\n    return result;\n}\n")
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->tag == ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Some) {\n        ")
+    emit_drop_statement(builder, value_info, "self->data.value")
+    builder.append("    }\n    self->tag = ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_None;\n}\n")
+
+
+def emit_inline_option_specialization(builder: &StringBuilder, name: &const String, value_info: &const ManagedTypeInfo) -> void:
+    builder.append("#ifndef CINDER_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\ntypedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append(";\n#endif\n#ifndef CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_SPECIALIZED_")
+    builder.append(name[0:len(name)])
+    builder.append("\ntypedef enum ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_None = 0,\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Some = 1\n} ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag;\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag tag;\n    union {\n        unsigned char _cinder_empty;\n        ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" value;\n    } data;\n};\n")
+    emit_option_drop_helper(builder, name, value_info)
+    builder.append("#endif\n")
+
+
+def emit_set_specialization_layout(builder: &StringBuilder, name: &const String) -> void:
+    builder.append("typedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry;\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entries;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
+
+
+def emit_map_specialization_layout(builder: &StringBuilder, name: &const String) -> void:
+    builder.append("typedef struct ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry;\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entries;\n    size_t entries_length;\n    size_t entries_capacity;\n    size_t *buckets;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
+
+
+def emit_set_specialization_body(builder: &StringBuilder, name: &const String, element_info: &const ManagedTypeInfo) -> void:
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry {\n    ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value;\n    uint64_t hash;\n    unsigned char state;\n};\n")
+    if not element_info.is_complete:
+        builder.append("static inline void ")
+        builder.append(name[0:len(name)])
+        builder.append("_drop(")
+        builder.append(name[0:len(name)])
+        builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"set dropped during iteration\");\n    free(self->entries);\n    self->entries = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
+        return
+
+    builder.append("static inline uint64_t ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value) { return ")
+    emit_hash_expression(builder, element_info, "value")
+    builder.append("; }\n")
+
+    builder.append("static inline bool ")
+    builder.append(name[0:len(name)])
+    builder.append("_equal(")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" left, ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" right) { return ")
+    emit_equal_expression(builder, element_info, "left", "right")
+    builder.append("; }\n")
+
+    builder.append("static inline size_t ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_slot(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value, uint64_t hash, bool *found) {\n")
+    builder.append("    size_t mask = self->capacity - 1;\n    size_t slot = (size_t)hash & mask;\n    size_t first_tombstone = SIZE_MAX;\n")
+    builder.append("    for (;;) {\n        const ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entry = &self->entries[slot];\n")
+    builder.append("        if (entry->state == 0) { *found = false; return first_tombstone == SIZE_MAX ? slot : first_tombstone; }\n")
+    builder.append("        if (entry->state == 2) { if (first_tombstone == SIZE_MAX) first_tombstone = slot; }\n")
+    builder.append("        else if (entry->hash == hash && ")
+    builder.append(name[0:len(name)])
+    builder.append("_equal(entry->value, value)) { *found = true; return slot; }\n")
+    builder.append("        slot = (slot + 1) & mask;\n    }\n}\n")
+
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, size_t minimum) {\n")
+    builder.append("    if (self->capacity >= minimum) return;\n    size_t capacity = self->capacity < 8 ? 8 : self->capacity;\n    while (capacity < minimum) capacity *= 2;\n")
+    builder.append("    ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *old_entries = self->entries;\n    size_t old_capacity = self->capacity;\n")
+    builder.append("    self->entries = (")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *)calloc(capacity, sizeof(")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry));\n    if (self->entries == NULL) cinder_panic(\"allocation failed\");\n")
+    builder.append("    self->capacity = capacity;\n    self->length = 0;\n    self->tombstones = 0;\n")
+    builder.append("    for (size_t index = 0; index < old_capacity; index += 1) {\n        if (old_entries[index].state != 1) continue;\n        bool found = false;\n        size_t slot = ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_slot(self, old_entries[index].value, old_entries[index].hash, &found);\n        self->entries[slot] = old_entries[index];\n        self->length += 1;\n    }\n    free(old_entries);\n}\n")
+
+    builder.append("static inline bool ")
+    builder.append(name[0:len(name)])
+    builder.append("_add(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value) {\n")
+    builder.append("    if (self->active_iterators != 0) cinder_panic(\"set mutated during iteration\");\n")
+    builder.append("    if (self->capacity == 0 || (self->length + self->tombstones + 1) * 4 >= self->capacity * 3) ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(self, self->capacity == 0 ? 8 : self->capacity * 2);\n")
+    builder.append("    uint64_t hash = ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(value);\n    bool found = false;\n    size_t slot = ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_slot(self, value, hash, &found);\n    if (found) {\n        ")
+    emit_drop_statement(builder, element_info, "value")
+    builder.append("        return false;\n    }\n    if (self->entries[slot].state == 2) self->tombstones -= 1;\n")
+    builder.append("    self->entries[slot].value = value;\n    self->entries[slot].hash = hash;\n    self->entries[slot].state = 1;\n    self->length += 1;\n    return true;\n}\n")
+
+    builder.append("static inline bool ")
+    builder.append(name[0:len(name)])
+    builder.append("_contains(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value) {\n    if (self == NULL || self->capacity == 0) return false;\n    bool found = false;\n    (void)")
+    builder.append(name[0:len(name)])
+    builder.append("_find_slot(self, value, ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(value), &found);\n    return found;\n}\n")
+
+    builder.append("static inline size_t ")
+    builder.append(name[0:len(name)])
+    builder.append("_len(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { return self == NULL ? 0 : self->length; }\n")
+
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_clone(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append(" result = {0};\n    if (self == NULL) return result;\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(&result, self->capacity);\n    for (size_t index = 0; index < self->capacity; index += 1) {\n        if (self->entries[index].state != 1) continue;\n        ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value = ")
+    emit_clone_expression(builder, element_info, "self->entries[index].value")
+    builder.append(";\n        (void)")
+    builder.append(name[0:len(name)])
+    builder.append("_add(&result, value);\n    }\n    return result;\n}\n")
+
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"set dropped during iteration\");\n")
+    if element_info.is_string or len(element_info.helper) > 0:
+        builder.append("    for (size_t index = 0; index < self->capacity; index += 1) {\n        if (self->entries[index].state != 1) continue;\n        ")
+        emit_drop_statement(builder, element_info, "self->entries[index].value")
+        builder.append("    }\n")
+    builder.append("    free(self->entries);\n    self->entries = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
+
+
+def emit_map_specialization_body(
+    builder: &StringBuilder,
+    name: &const String,
+    key_info: &const ManagedTypeInfo,
+    value_info: &const ManagedTypeInfo,
+) -> void:
+    option_builder = StringBuilder()
+    option_builder.append("CinderOption_")
+    option_builder.append(value_info.token[0:len(value_info.token)])
+    option_name = option_builder.finish()
+    emit_inline_option_specialization(builder, &option_name, value_info)
+
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry {\n    ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key;\n    ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" value;\n    uint64_t hash;\n    bool occupied;\n};\n")
+    if not key_info.is_complete or not value_info.is_complete:
+        builder.append("static inline void ")
+        builder.append(name[0:len(name)])
+        builder.append("_drop(")
+        builder.append(name[0:len(name)])
+        builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"map dropped during iteration\");\n    free(self->entries);\n    free(self->buckets);\n    self->entries = NULL;\n    self->entries_length = 0;\n    self->entries_capacity = 0;\n    self->buckets = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
+        return
+
+    builder.append("static inline uint64_t ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key) { return ")
+    emit_hash_expression(builder, key_info, "key")
+    builder.append("; }\n")
+
+    builder.append("static inline bool ")
+    builder.append(name[0:len(name)])
+    builder.append("_equal(")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" left, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" right) { return ")
+    emit_equal_expression(builder, key_info, "left", "right")
+    builder.append("; }\n")
+
+    builder.append("static inline size_t ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_bucket(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key, uint64_t hash) {\n")
+    builder.append("    if (self == NULL || self->capacity == 0) return SIZE_MAX;\n    size_t mask = self->capacity - 1;\n    size_t slot = (size_t)hash & mask;\n")
+    builder.append("    for (size_t probes = 0; probes < self->capacity; probes += 1) {\n        size_t entry_index = self->buckets[slot];\n        if (entry_index == SIZE_MAX) return SIZE_MAX;\n        const ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entry = &self->entries[entry_index];\n        if (entry->occupied && entry->hash == hash && ")
+    builder.append(name[0:len(name)])
+    builder.append("_equal(entry->key, key)) return slot;\n        slot = (slot + 1) & mask;\n    }\n    return SIZE_MAX;\n}\n")
+
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, size_t minimum) {\n")
+    builder.append("    if (self->capacity >= minimum) return;\n    size_t capacity = self->capacity < 8 ? 8 : self->capacity;\n    while (capacity < minimum) capacity *= 2;\n")
+    builder.append("    size_t *buckets = (size_t *)malloc(capacity * sizeof(size_t));\n    if (buckets == NULL) cinder_panic(\"allocation failed\");\n    for (size_t index = 0; index < capacity; index += 1) buckets[index] = SIZE_MAX;\n")
+    builder.append("    for (size_t entry_index = 0; entry_index < self->entries_length; entry_index += 1) {\n        if (!self->entries[entry_index].occupied) continue;\n        size_t slot = (size_t)self->entries[entry_index].hash & (capacity - 1);\n        while (buckets[slot] != SIZE_MAX) slot = (slot + 1) & (capacity - 1);\n        buckets[slot] = entry_index;\n    }\n")
+    builder.append("    free(self->buckets);\n    self->buckets = buckets;\n    self->capacity = capacity;\n    self->tombstones = 0;\n}\n")
+
+    builder.append("static inline ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" *")
+    builder.append(name[0:len(name)])
+    builder.append("_lookup_mut(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key) {\n    size_t bucket = ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_bucket(self, key, ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(key));\n    if (bucket == SIZE_MAX) return NULL;\n    return &self->entries[self->buckets[bucket]].value;\n}\n")
+
+    builder.append("static inline const ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" *")
+    builder.append(name[0:len(name)])
+    builder.append("_lookup(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key) {\n    size_t bucket = ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_bucket(self, key, ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(key));\n    if (bucket == SIZE_MAX) return NULL;\n    return &self->entries[self->buckets[bucket]].value;\n}\n")
+
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_set(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key, ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" value) {\n    if (self->active_iterators != 0) cinder_panic(\"map mutated during iteration\");\n    ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" *existing = ")
+    builder.append(name[0:len(name)])
+    builder.append("_lookup_mut(self, key);\n    if (existing != NULL) {\n        ")
+    emit_drop_statement(builder, key_info, "key")
+    builder.append("        ")
+    emit_drop_statement(builder, value_info, "*existing")
+    builder.append("        *existing = value;\n        return;\n    }\n")
+    builder.append("    if (self->capacity == 0 || (self->length + 1) * 4 >= self->capacity * 3) ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(self, self->capacity == 0 ? 8 : self->capacity * 2);\n")
+    builder.append("    size_t entry_index = self->entries_length;\n    self->entries = (")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *)cinder_grow_array(self->entries, &self->entries_capacity, entry_index + 1, sizeof(")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry));\n    self->entries_length += 1;\n    self->entries[entry_index].key = key;\n    self->entries[entry_index].value = value;\n    self->entries[entry_index].hash = ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(key);\n    self->entries[entry_index].occupied = true;\n")
+    builder.append("    size_t slot = (size_t)self->entries[entry_index].hash & (self->capacity - 1);\n    while (self->buckets[slot] != SIZE_MAX) slot = (slot + 1) & (self->capacity - 1);\n    self->buckets[slot] = entry_index;\n    self->length += 1;\n}\n")
+
+    builder.append("static inline ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_at(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key) {\n    const ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" *value = ")
+    builder.append(name[0:len(name)])
+    builder.append("_lookup(self, key);\n    if (value == NULL) cinder_panic(\"missing map key\");\n    return ")
+    emit_clone_expression(builder, value_info, "*value")
+    builder.append(";\n}\n")
+
+    builder.append("static inline ")
+    builder.append(option_name[0:len(option_name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_get(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key) {\n    ")
+    builder.append(option_name[0:len(option_name)])
+    builder.append(" result = {0};\n    const ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" *value = ")
+    builder.append(name[0:len(name)])
+    builder.append("_lookup(self, key);\n    if (value == NULL) { result.tag = ")
+    builder.append(option_name[0:len(option_name)])
+    builder.append("_Tag_None; return result; }\n    result.tag = ")
+    builder.append(option_name[0:len(option_name)])
+    builder.append("_Tag_Some;\n    result.data.value = ")
+    emit_clone_expression(builder, value_info, "*value")
+    builder.append(";\n    return result;\n}\n")
+
+    builder.append("static inline size_t ")
+    builder.append(name[0:len(name)])
+    builder.append("_len(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { return self == NULL ? 0 : self->length; }\n")
+
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_clone(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append(" result = {0};\n    if (self == NULL) return result;\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(&result, self->capacity);\n    for (size_t index = 0; index < self->entries_length; index += 1) {\n        if (!self->entries[index].occupied) continue;\n        ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key = ")
+    emit_clone_expression(builder, key_info, "self->entries[index].key")
+    builder.append(";\n        ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" value = ")
+    emit_clone_expression(builder, value_info, "self->entries[index].value")
+    builder.append(";\n        ")
+    builder.append(name[0:len(name)])
+    builder.append("_set(&result, key, value);\n    }\n    return result;\n}\n")
+
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"map dropped during iteration\");\n")
+    if key_info.is_string or len(key_info.helper) > 0 or value_info.is_string or len(value_info.helper) > 0:
+        builder.append("    for (size_t index = 0; index < self->entries_length; index += 1) {\n        if (!self->entries[index].occupied) continue;\n        ")
+        emit_drop_statement(builder, key_info, "self->entries[index].key")
+        builder.append("        ")
+        emit_drop_statement(builder, value_info, "self->entries[index].value")
+        builder.append("    }\n")
+    builder.append("    free(self->entries);\n    free(self->buckets);\n    self->entries = NULL;\n    self->entries_length = 0;\n    self->entries_capacity = 0;\n    self->buckets = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")

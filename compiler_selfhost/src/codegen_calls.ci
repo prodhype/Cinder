@@ -8,6 +8,7 @@ import codegen_type_names
 import project
 import syntax
 import token
+import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
@@ -324,13 +325,20 @@ def emit_nominal_constructor(
             if emitted:
                 builder.append(", ")
             named = codegen_names.first_child(arena, child_id)
+            field_type = syntax.missing_node()
             if child.flags == 1 and named.index >= 0:
                 named_node = arena.nodes[named.index]
                 builder.append(".")
                 codegen_names.append_source(builder, source, named_node.value_start, named_node.value_length)
                 builder.append(" = ")
+                field_name = source[named_node.value_start:named_node.value_start + named_node.value_length]
+                field_type = codegen_context.context_field_type(context, name, &field_name)
             value = codegen_names.last_child(arena, child_id)
+            previous_expected = context.expected_type
+            if field_type.index >= 0:
+                context.expected_type = field_type
             emit_nested(state, value)
+            context.expected_type = previous_expected
             codegen_context.mark_context_expression_moved(arena, context, value, source)
             emitted = true
     builder.append("}")
@@ -369,6 +377,22 @@ def emit_len_call(
     if codegen_specializations.context_type_is_array(context.type_arena, arg_type):
         length = codegen_specializations.array_length_node(context.type_arena, arg_type)
         codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+        return
+    if codegen_context.context_expression_is_collection(arena, context, arg, source, "Map", types.TypeKind.MAP):
+        codegen_context.emit_context_expression_specialization_name(arena, context, arg, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+        builder.append("_len(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+            builder.append("&")
+        emit_nested(state, arg)
+        builder.append(")")
+        return
+    if codegen_context.context_expression_is_collection(arena, context, arg, source, "Set", types.TypeKind.SET):
+        codegen_context.emit_context_expression_specialization_name(arena, context, arg, source, builder, prefix, project_name, imports, "Set", types.TypeKind.SET)
+        builder.append("_len(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+            builder.append("&")
+        emit_nested(state, arg)
+        builder.append(")")
         return
     emit_nested(state, arg)
     if codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
