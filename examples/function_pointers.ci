@@ -14,4 +14,4 @@ def main() -> i32:
     # typed: def(i32) -> i32 = double
     # return apply(callback, 21) + typed(0)
     print(apply(callback, 21) + double(0))
-    return apply(callback, 21) + double(0)
+    return 0 # apply(callback, 21) + double(0)
