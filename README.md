@@ -158,7 +158,6 @@ cinder run app.ci -- first second
 ## Language example
 
 ```python
-import stdio
 import math
 
 
@@ -174,7 +173,7 @@ abstract class Shape:
         pass
 
     def describe(self) -> void:
-        stdio.printf("%s: %.2f\n", self.name, self.area())
+        print(f"{self.name}: {self.area():.2f}")
 
 
 @reflect
@@ -191,7 +190,7 @@ class Circle(Shape):
 
 
 def describe(shape: &dyn Shape) -> void:
-    stdio.printf("runtime type: %s\n", type_name(shape))
+    print(f"runtime type: {type_name(shape)}")
     shape.describe()
 
 
@@ -200,7 +199,7 @@ def main() -> i32:
     describe(circle)
 
     for field in fields(circle):
-        stdio.printf("field: %s at %zu\n", field.name, field.offset)
+        print(f"field: {field.name} at {field.offset}")
 
     return 0
 ```
@@ -330,7 +329,7 @@ user = User(id=42, name="Cinder", active=true)
 info = type_info(user)
 
 for field in fields(user):
-    stdio.printf("%s: %s\n", field.name, field.type_name)
+    print(f"{field.name}: {field.type_name}")
 ```
 
 `type_info`, `fields`, and `methods` need `@reflect`.
@@ -346,7 +345,7 @@ static_assert(has_field(User, "name"))
 static_assert(size_of(User) >= 17)
 
 for field in comptime fields_of(User):
-    stdio.printf("%s: %zu\n", field.name, field.offset)
+    print(f"{field.name}: {field.offset}")
 ```
 
 The compiler implements these queries:
@@ -872,13 +871,13 @@ At an extern or compiler-provided builtin call boundary, a `String` argument can
 That pointer exists only for the call: it cannot be assigned, stored, or returned.
 There is no implicit conversion from `const char*` to `String`; use an API that explicitly copies and validates external text.
 
-Built-in modules map common C APIs into checked namespaces:
+Built-in modules map common C APIs into checked namespaces.
+`math` is one example; `stdio` remains available when you need the C API directly:
 
 ```python
 import math
-import stdio
 
-stdio.printf("%.2f\n", math.sqrt(9.0))
+print(f"{math.sqrt(9.0):.2f}")
 ```
 
 For common console output, `print(...)` is available without an import:
