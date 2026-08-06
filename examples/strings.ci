@@ -39,29 +39,31 @@ def main() -> i32:
     # Literals infer String; String() is the empty owner.
     empty = String()
     text = "Aé中Z"
-    print("greeting:", GREETING)
-    print("empty length:", len(empty))
-    print("text:", text, "bytes:", len(text))
+    print("greeting: {GREETING}")
+    print("empty length: {len(empty)}")
+    print("text: {text} bytes: {len(text)}")
 
     # Byte access and owned slices (endpoints must be UTF-8 boundaries).
-    print("first byte:", text.byte_at(0))
-    print("é lead byte:", text.byte_at(1))
+    print("first byte: {text.byte_at(0)}")
+    print("é lead byte: {text.byte_at(1)}")
     middle = text[1:6]
-    print("slice:", middle, "bytes:", len(middle))
+    print("slice: {middle} bytes: {len(middle)}")
 
     # Mutation uses copy-on-write for static literals; clone keeps an independent copy.
     working = text.clone()
     working.reserve(64)
     working.append("!")
     working.append_char('?')
-    print("working:", working)
-    print("original unchanged:", text)
+    print("working: {working}")
+    print("original unchanged: {text}")
 
     # + borrows both sides and returns a fresh String.
     joined = "alpha" + "beta"
-    print("joined:", joined)
-    print("alpha < beta:", "alpha" < "beta")
-    print("same content:", joined == "alphabeta")
+    alpha_less = "alpha" < "beta"
+    same_content = joined == "alphabeta"
+    print("joined: {joined}")
+    print("alpha < beta: {alpha_less}")
+    print("same content: {same_content}")
 
     # StringBuilder for incremental construction; finish consumes the builder.
     builder = StringBuilder()
@@ -70,52 +72,54 @@ def main() -> i32:
     builder.append_char('-')
     builder.append("up")
     built = builder.finish()
-    print("built:", built)
+    print("built: {built}")
 
     # Conversion helpers borrow String; to_string returns owned text.
     match parse_i32("42"):
         case Ok(value):
-            print("parsed:", to_string(value))
+            print("parsed: {to_string(value)}")
         case Err(error):
-            print("parse failed:", cast[i32](error))
+            print("parse failed: {cast[i32](error)}")
             return 1
-    print("bool:", to_string(true), "char:", to_string('Z'))
+    print("bool: {to_string(true)} char: {to_string('Z')}")
 
     # Collections hash and compare String by UTF-8 content; insertion clones keys.
     key = "alpha"
     scores: Map[String, i32] = {key: 7}
     names: Set[String] = {key}
     key.append(" changed")
-    print("map still has alpha:", scores["alpha"])
-    print("alpha in set:", "alpha" in names)
-    print("mutated key:", key)
+    alpha_score = scores["alpha"]
+    alpha_present = "alpha" in names
+    print("map still has alpha: {alpha_score}")
+    print("alpha in set: {alpha_present}")
+    print("mutated key: {key}")
 
     words: List[String] = ["zeta", "éclair", "alpha"]
     defer words.clear()
     sort(words)
-    print("sorted:", words)
+    print("sorted: {words}")
 
     # Moves through locals, fields, parameters, and returns.
     owned = "move-me"
     transferred = owned
-    print("moved length:", take_owned(transferred))
+    print("moved length: {take_owned(transferred)}")
 
     label = make_label("field")
-    print("label:", label.text)
+    print("label: {label.text}")
     cleared = label.text.clone()
     cleared.clear()
-    print("cleared length:", len(cleared))
+    print("cleared length: {len(cleared)}")
 
     # Call-boundary borrow: String may be passed where const char* is expected.
     c_text = "hello"
-    print("strlen borrow:", cast[i32](strlen(c_text)))
-    print("still owned after borrow:", c_text)
+    print("strlen borrow: {cast[i32](strlen(c_text))}")
+    print("still owned after borrow: {c_text}")
 
     # Explicit C-string context when a raw pointer is required.
     raw: const char* = "c-string"
-    print("explicit const char*:", raw)
+    print("explicit const char*: {raw}")
 
     entry: Tuple[i32, String] = (7, "ready")
-    print("tuple:", entry)
+    print("tuple: {entry}")
 
     return 0
