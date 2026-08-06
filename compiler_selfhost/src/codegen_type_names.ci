@@ -60,7 +60,10 @@ def emit_module_c_type(
     if node.kind == SyntaxKind.TYPE_SLICE:
         builder.append("CinderList")
         return
-    if node.kind == SyntaxKind.TYPE_DYN or node.kind == SyntaxKind.TYPE_FUNCTION or node.kind == SyntaxKind.TYPE_CLOSURE:
+    if node.kind == SyntaxKind.TYPE_CLOSURE:
+        emit_specialized_type_name(arena, id, source, builder, prefix, project_name, imports, registry)
+        return
+    if node.kind == SyntaxKind.TYPE_DYN or node.kind == SyntaxKind.TYPE_FUNCTION:
         builder.append("void *")
         return
     if node.kind == SyntaxKind.TYPE_ARRAY:
@@ -145,6 +148,8 @@ def emit_readable_specialized_type_name(
                 builder.append("_argument_")
             emit_readable_specialized_type_name(arena, arena.children[node.first_child + offset], source, builder)
             offset += 1
+        if node.kind == SyntaxKind.TYPE_CLOSURE and not has_return:
+            builder.append("_returns_void")
         builder.append("_end")
         return
     if node.kind == SyntaxKind.TYPE_GENERIC:
@@ -226,6 +231,8 @@ def emit_canonical_specialized_type_name(
             builder.append("_")
             builder.append(child_name[0:len(child_name)])
             offset += 1
+        if node.kind == SyntaxKind.TYPE_CLOSURE and not has_return:
+            builder.append("_returns_4_void")
         builder.append("_end")
         return
     if node.kind == SyntaxKind.TYPE_GENERIC:
@@ -462,6 +469,17 @@ def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: typ
             builder.append("_")
             emit_semantic_readable_type_name(table, table.type_args[cast[usize](record.extra + offset)], source, builder)
             offset += 1
+    elif record.kind == types.TypeKind.CLOSURE:
+        builder.append("closure_argument_")
+        emit_semantic_readable_type_name(table, record.second, source, builder)
+        offset: i32 = 0
+        while offset < record.flags:
+            builder.append("_argument_")
+            emit_semantic_readable_type_name(table, table.type_args[cast[usize](record.extra + offset)], source, builder)
+            offset += 1
+        builder.append("_returns_")
+        emit_semantic_readable_type_name(table, record.inner, source, builder)
+        builder.append("_end")
     elif record.name_length > 0:
         append_semantic_readable_nominal(builder, source, record.name_start, record.name_length)
     else:
@@ -517,7 +535,7 @@ def emit_semantic_c_type(
         emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.ARRAY:
         builder.append("CinderList")
-    elif record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.RESULT or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.TUPLE:
+    elif record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.RESULT or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.TUPLE or record.kind == types.TypeKind.CLOSURE:
         emit_semantic_specialized_type_name(table, type_id, source, builder, registry)
     elif record.name_length > 0:
         name = source[record.name_start:record.name_start + record.name_length]

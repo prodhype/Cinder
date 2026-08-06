@@ -24,12 +24,20 @@ def emit_module_call(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
+    type_table: &const types.TypeTable = context.type_table
     node = arena.nodes[id.index]
     callee = codegen_names.first_child(arena, id)
     if callee.index >= 0:
         callee_node = arena.nodes[callee.index]
+        callee_type = codegen_context.context_semantic_type(context, callee)
+        if codegen_type_names.semantic_type_is_kind(type_table, callee_type, types.TypeKind.CLOSURE):
+            emit_closure_call(arena, id, callee, source, builder, prefix, project_name, imports, context, callee_type, state, emit_nested)
+            return
         if callee_node.kind == SyntaxKind.EXPR_NAME:
             name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+            if name == "closure":
+                emit_closure_constructor(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                return
             if name == "Ok" or name == "Err":
                 if emit_result_constructor(arena, id, source, builder, prefix, project_name, imports, context, &name, state, emit_nested):
                     return
@@ -128,6 +136,87 @@ def emit_module_call(
             argument_index += 1
     builder.append(")")
     return
+
+
+def emit_closure_constructor(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    type_table: &const types.TypeTable = context.type_table
+    closure_type = codegen_context.context_semantic_type(context, id)
+    if not codegen_type_names.semantic_type_is_kind(type_table, closure_type, types.TypeKind.CLOSURE):
+        builder.append("0")
+        return
+    environment = codegen_names.call_argument_at(arena, id, 0)
+    adapter = codegen_names.call_argument_at(arena, id, 1)
+    builder.append("((")
+    codegen_type_names.emit_semantic_c_type(type_table, closure_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+    builder.append("){ .env = ")
+    emit_nested(state, environment)
+    builder.append(", .call = ")
+    emit_nested(state, adapter)
+    builder.append(" })")
+    codegen_context.mark_context_expression_moved(arena, context, environment, source)
+
+
+def emit_closure_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    callee: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    closure_type: types.TypeId,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    type_table: &const types.TypeTable = context.type_table
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("({ __auto_type ")
+    append_closure_temporary_name(builder, temporary_index)
+    builder.append(" = &(")
+    emit_nested(state, callee)
+    builder.append("); ")
+    append_closure_temporary_name(builder, temporary_index)
+    builder.append("->call(&")
+    append_closure_temporary_name(builder, temporary_index)
+    builder.append("->env")
+    call = arena.nodes[id.index]
+    record = type_table.types[closure_type.index]
+    argument_index: i32 = 0
+    for offset in range(1, call.child_count):
+        child_id = arena.children[call.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        argument = codegen_names.last_child(arena, child_id)
+        builder.append(", ")
+        if argument_index < record.flags:
+            parameter_type = type_table.type_args[cast[usize](record.extra + argument_index)]
+            if codegen_type_names.semantic_type_is_kind(type_table, parameter_type, types.TypeKind.REFERENCE) and not codegen_context.context_expression_is_pointer_like(arena, context, argument, source):
+                builder.append("&")
+        emit_nested(state, argument)
+        codegen_context.mark_context_expression_moved(arena, context, argument, source)
+        argument_index += 1
+    builder.append("); })")
+
+
+def append_closure_temporary_name(builder: &StringBuilder, index: i32) -> void:
+    builder.append("cinder_closure_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](index))
+
 
 def emit_option_none(
     builder: &StringBuilder,

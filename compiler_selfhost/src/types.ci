@@ -122,7 +122,6 @@ struct TypeTable:
 
     def closure_from_args(self: &TypeTable, environment: TypeId, args: &const List[TypeId], return_type: TypeId) -> TypeId:
         first = cast[i32](len(self.type_args))
-        self.type_args.append(environment)
         index: usize = 0
         while index < len(args):
             self.type_args.append(args[index])
@@ -154,6 +153,8 @@ struct TypeTable:
             if left_type.kind == TypeKind.FUNCTION or left_type.kind == TypeKind.CLOSURE:
                 if not self.same(left_type.inner, right_type.inner):
                     return false
+            if left_type.kind == TypeKind.CLOSURE and not self.same(left_type.second, right_type.second):
+                return false
             offset: i32 = 0
             while offset < left_type.flags:
                 if not self.same(self.type_args[cast[usize](left_type.extra + offset)], self.type_args[cast[usize](right_type.extra + offset)]):
@@ -244,16 +245,17 @@ struct TypeTable:
         if is_closure and node.child_count > 0:
             environment = self.resolve_type_node(arena, child_at(arena, id, 0), source)
             offset = 1
-        while offset < node.child_count:
-            child_id = child_at(arena, id, offset)
-            if offset + 1 == node.child_count:
-                return_type = self.resolve_type_node(arena, child_id, source)
-                if is_closure:
-                    return self.closure_from_args(environment, args, return_type)
-                return self.function_from_args(args, return_type)
-            args.append(self.resolve_type_node(arena, child_id, source))
+        parameter_end = node.child_count
+        return_type = type_void()
+        if callable_type_has_return(source, &node) and parameter_end > offset:
+            parameter_end -= 1
+            return_type = self.resolve_type_node(arena, child_at(arena, id, parameter_end), source)
+        while offset < parameter_end:
+            args.append(self.resolve_type_node(arena, child_at(arena, id, offset), source))
             offset += 1
-        return self.function_from_args(args, type_void())
+        if is_closure:
+            return self.closure_from_args(environment, args, return_type)
+        return self.function_from_args(args, return_type)
 
 
 def missing_type() -> TypeId:
@@ -333,6 +335,30 @@ def array_length_from_node(arena: &const syntax.SyntaxArena, id: NodeId, source:
             value = value * 10 + cast[i32](byte - 48)
         offset += 1
     return value
+
+
+def callable_type_has_return(source: &const String, node: &const syntax.SyntaxNode) -> bool:
+    offset = node.start
+    end = node.start + node.length
+    paren_depth: i32 = 0
+    bracket_depth: i32 = 0
+    while offset + 1 < end:
+        if source[offset:offset + 1] == "#":
+            while offset < end and not (source[offset:offset + 1] == "\n"):
+                offset += 1
+            continue
+        if paren_depth == 0 and bracket_depth == 0 and source[offset:offset + 2] == "->":
+            return true
+        if source[offset:offset + 1] == "(":
+            paren_depth += 1
+        if source[offset:offset + 1] == ")":
+            paren_depth -= 1
+        if source[offset:offset + 1] == "[":
+            bracket_depth += 1
+        if source[offset:offset + 1] == "]":
+            bracket_depth -= 1
+        offset += 1
+    return false
 
 
 def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:
