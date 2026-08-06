@@ -231,6 +231,74 @@ def test_gen1_emits_bitwise_and_shift_compound_assigns(
     assert executed.returncode == 5
 
 
+def test_gen1_parse_i32_uses_runtime_helper_not_mangled_name(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "parse_i32_builtin.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        "    result = parse_i32(\"42\")\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "cinder_selfhost_parse_i32" in emitted.stdout
+    assert "cinder_parse_i32" in emitted.stdout
+    assert "__parse_i32" not in emitted.stdout
+
+    output = tmp_path / "parse_i32_builtin"
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
+def test_gen1_matches_parse_i32_result_tags_and_captures(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "parse_i32_match.ci"
+    source.write_text(
+        "def parse_or_error(text: String) -> i32:\n"
+        "    match parse_i32(text):\n"
+        "        case Ok(value):\n"
+        "            return value\n"
+        "        case Err(error):\n"
+        "            return cast[i32](error)\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    if parse_or_error("42") != 42:\n'
+        "        return 1\n"
+        '    if parse_or_error("invalid") != 1:\n'
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert (
+        "cinder_match_value.tag == "
+        "CinderResult_i32_n_CinderParseError_Tag_Ok"
+    ) in emitted.stdout
+    assert (
+        "cinder_match_value.tag == "
+        "CinderResult_i32_n_CinderParseError_Tag_Err"
+    ) in emitted.stdout
+    assert "__auto_type value = cinder_match_value.data.ok;" in emitted.stdout
+    assert "__auto_type error = cinder_match_value.data.err;" in emitted.stdout
+    assert "if (false)" not in emitted.stdout
+
+    output = tmp_path / "parse_i32_match"
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
 def test_gen1_emit_c_cleans_up_with_scope_before_return(
     gen1_compiler: Path,
     tmp_path: Path,

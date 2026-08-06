@@ -395,6 +395,7 @@ def emit_module_match(
 ) -> void:
     subject = codegen_names.first_child(arena, id)
     subject_type = codegen_context.context_expression_type(arena, context, subject, source)
+    result_c_name = match_result_c_name(arena, subject, source, prefix, project_name, imports, context, subject_type)
     builder.append("    {\n    __auto_type cinder_match_value = ")
     previous_expected = context.expected_type
     context.expected_type = subject_type
@@ -413,11 +414,11 @@ def emit_module_match(
             builder.append("    else if (")
         else:
             builder.append("    if (")
-        emit_match_pattern_condition(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type)
+        emit_match_pattern_condition(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type, &result_c_name)
         builder.append(") {\n")
         local_start = len(context.local_types)
         pointer_start = len(context.pointer_names)
-        emit_match_pattern_captures(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type)
+        emit_match_pattern_captures(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type, &result_c_name)
         body = codegen_names.find_child_kind(arena, case_id, SyntaxKind.BLOCK)
         if body.index >= 0:
             emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
@@ -429,6 +430,33 @@ def emit_module_match(
         emitted_case = true
     builder.append("    }\n")
 
+def match_result_c_name(
+    arena: &const SyntaxArena,
+    subject: NodeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    subject_type: NodeId,
+) -> String:
+    if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
+        name_builder = StringBuilder()
+        codegen_type_names.emit_specialized_type_name(context.type_arena, subject_type, context.type_source, &name_builder, prefix, project_name, imports, context.specialization_names)
+        return name_builder.finish()
+    if subject.index < 0:
+        return ""
+    subject_node = arena.nodes[subject.index]
+    if subject_node.kind != SyntaxKind.EXPR_CALL:
+        return ""
+    callee = codegen_names.first_child(arena, subject)
+    if callee.index < 0:
+        return ""
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_i32"):
+        return "CinderResult_i32_n_CinderParseError"
+    return ""
+
 def emit_match_pattern_condition(
     arena: &const SyntaxArena,
     pattern: NodeId,
@@ -439,6 +467,7 @@ def emit_match_pattern_condition(
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
     subject_type: NodeId,
+    result_c_name: &const String,
 ) -> void:
     if pattern.index < 0:
         builder.append("false")
@@ -448,14 +477,14 @@ def emit_match_pattern_condition(
         builder.append("true")
         return
     if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
-        emit_match_pattern_condition(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type)
+        emit_match_pattern_condition(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type, result_c_name)
         return
     if node.kind == SyntaxKind.PATTERN_OR:
         builder.append("(")
         for offset in range(0, node.child_count):
             if offset > 0:
                 builder.append(" || ")
-            emit_match_pattern_condition(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, subject_type)
+            emit_match_pattern_condition(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, subject_type, result_c_name)
         builder.append(")")
         return
     if node.kind != SyntaxKind.PATTERN_PATH or node.child_count <= 0:
@@ -466,13 +495,10 @@ def emit_match_pattern_condition(
     if node.child_count == 1 and first_node.kind == SyntaxKind.NAME and codegen_names.is_lowercase_start(source, first_node.value_start):
         builder.append("true")
         return
-    if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
+    if len(result_c_name) > 0:
         if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok") or codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Err"):
-            name_builder = StringBuilder()
-            codegen_type_names.emit_specialized_type_name(context.type_arena, subject_type, context.type_source, &name_builder, prefix, project_name, imports, context.specialization_names)
-            name = name_builder.finish()
             builder.append("cinder_match_value.tag == ")
-            builder.append(name[0:len(name)])
+            builder.append(result_c_name[0:len(result_c_name)])
             if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok"):
                 builder.append("_Tag_Ok")
             else:
@@ -503,26 +529,30 @@ def emit_match_pattern_captures(
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
     subject_type: NodeId,
+    result_c_name: &const String,
 ) -> void:
     if pattern.index < 0:
         return
     node = arena.nodes[pattern.index]
     if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
-        emit_match_pattern_captures(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type)
+        emit_match_pattern_captures(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type, result_c_name)
         return
     if node.kind != SyntaxKind.PATTERN_PATH or node.child_count <= 1:
         return
     first = arena.children[node.first_child]
     first_node = arena.nodes[first.index]
-    if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
+    if len(result_c_name) > 0:
         is_ok = codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok")
         is_err = codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Err")
         if (is_ok or is_err) and node.child_count > 1:
             nested = arena.children[node.first_child + 1]
-            payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 0)
+            payload_type = syntax.missing_node()
+            if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
+                payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 0)
             access = ".data.ok"
             if is_err:
-                payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 1)
+                if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
+                    payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 1)
                 access = ".data.err"
             emit_match_capture_binding(arena, nested, source, builder, context, payload_type, &access)
             return

@@ -53,6 +53,11 @@ def emit_module_call(
                 emit_nested(state, codegen_names.first_call_argument(arena, id))
                 builder.append(")")
                 return
+            if name == "parse_i32":
+                builder.append("cinder_selfhost_parse_i32(")
+                emit_nested(state, codegen_names.first_call_argument(arena, id))
+                builder.append(")")
+                return
             if name == "sort":
                 emit_sort_call(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
                 return
