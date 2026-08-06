@@ -289,7 +289,7 @@ def emit_module_nominal_declarations(
         for offset in range(0, node.child_count):
             emit_module_nominal_declarations(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
         return
-    if node.kind == SyntaxKind.STRUCT_DECL:
+    if node.kind == SyntaxKind.STRUCT_DECL or node.kind == SyntaxKind.CLASS_DECL:
         emit_module_struct(arena, id, source, builder, prefix, project_name, imports, context)
         return
     if node.kind == SyntaxKind.ENUM_DECL:
@@ -501,9 +501,10 @@ def emit_module_return_type(
     return_type = codegen_type_names.find_child_type(arena, id)
     codegen_type_names.emit_module_c_type(arena, return_type, source, builder, prefix, project_name, imports, registry)
 
-def emit_module_parameters(
+def emit_module_method_parameters(
     arena: &const SyntaxArena,
-    id: NodeId,
+    owner_id: NodeId,
+    function_id: NodeId,
     source: &const String,
     builder: &StringBuilder,
     prefix: &const String,
@@ -511,7 +512,8 @@ def emit_module_parameters(
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> void:
-    node = arena.nodes[id.index]
+    owner = arena.nodes[owner_id.index]
+    node = arena.nodes[function_id.index]
     emitted_parameter = false
     for offset in range(0, node.child_count):
         child_id = arena.children[node.first_child + offset]
@@ -519,7 +521,13 @@ def emit_module_parameters(
         if child.kind == SyntaxKind.PARAMETER:
             if emitted_parameter:
                 builder.append(", ")
-            emit_module_parameter(arena, child_id, source, builder, prefix, project_name, imports, registry)
+            parameter_type = codegen_type_names.find_child_type(arena, child_id)
+            if not emitted_parameter and parameter_type.index < 0 and codegen_names.range_text_equals(source, child.value_start, child.value_length, "self"):
+                codegen_names.emit_prefixed_name(builder, prefix, source, owner.value_start, owner.value_length)
+                builder.append(" *")
+                codegen_names.append_source(builder, source, child.value_start, child.value_length)
+            else:
+                emit_module_parameter(arena, child_id, source, builder, prefix, project_name, imports, registry)
             emitted_parameter = true
     if not emitted_parameter:
         builder.append("void")
@@ -746,7 +754,7 @@ def emit_module_methods(
             builder.append("_")
             codegen_names.append_source(builder, source, child.value_start, child.value_length)
             builder.append("(")
-            emit_module_parameters(arena, child_id, source, builder, prefix, project_name, imports, registry)
+            emit_module_method_parameters(arena, id, child_id, source, builder, prefix, project_name, imports, registry)
             if declarations_only:
                 builder.append(");\n")
                 builder.append("#define ")

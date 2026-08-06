@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-06 01:20:25 UTC
+# date:   2026-08-06 01:49:30 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -79,73 +79,73 @@ examples/module_project           FAIL  gen3_toolchain_error
 ### examples/aggregate_ownership.ci
 gen3 exit=2
 kind: gen3_toolchain_error
-elapsed: 0.4s
+elapsed: 0.3s
 
 --- gen3 stdout ---
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:1:
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:155:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:155:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   155 |         cinder_selfhost_list_append_value(&result, value);
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:226:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:226:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   226 |         cinder_selfhost_list_append_value(&result, value);
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:299:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-  299 |     self->label = label;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:303:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:332:9: warning: '__init__' macro redefined [-Wmacro-redefined]
+  332 | #define __init__ cinder_aggregate_ownership_aggregate_ownership__Portfolio___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:316:9: note: previous definition is here
+  316 | #define __init__ cinder_aggregate_ownership_aggregate_ownership__Resource___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:300:1: warning: non-void function does not return a value [-Wreturn-type]
+  300 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:303:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   303 |     ({ printf("drop Resource("); printf("%lld", (long long)(self->label)); printf(")"); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:303:67: error: member reference type 'int32_t' (aka 'int') is not a pointer
-  303 |     ({ printf("drop Resource("); printf("%lld", (long long)(self->label)); printf(")"); printf("\n"); 0; });
-      |                                                             ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:303:103: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:303:103: warning: expression result unused [-Wunused-value]
   303 |     ({ printf("drop Resource("); printf("%lld", (long long)(self->label)); printf(")"); printf("\n"); 0; });
       |                                                                                                       ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:307:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-  307 |     self->holdings = holdings;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:308:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-  308 |     self->groups = groups;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:309:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-  309 |     self->log = log;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:313:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-  313 |     self->holdings = holdings;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:324:128: error: variable has incomplete type 'cinder_aggregate_ownership_aggregate_ownership__Resource' (aka 'struct cinder_aggregate_ownership_aggregate_ownership__Resource')
-  324 | int32_t cinder_aggregate_ownership_aggregate_ownership__take_resource(cinder_aggregate_ownership_aggregate_ownership__Resource resource) {
-      |                                                                                                                                ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:96:16: note: forward declaration of 'struct cinder_aggregate_ownership_aggregate_ownership__Resource'
-   96 | typedef struct cinder_aggregate_ownership_aggregate_ownership__Resource cinder_aggregate_ownership_aggregate_ownership__Resource;
-      |                ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:324:128: warning: unused parameter 'resource' [-Wunused-parameter]
-  324 | int32_t cinder_aggregate_ownership_aggregate_ownership__take_resource(cinder_aggregate_ownership_aggregate_ownership__Resource resource) {
-      |                                                                                                                                ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:330:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:304:1: warning: non-void function does not return a value [-Wreturn-type]
+  304 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:310:1: warning: non-void function does not return a value [-Wreturn-type]
+  310 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:314:1: warning: non-void function does not return a value [-Wreturn-type]
+  314 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:330:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   330 |     __auto_type cinder_match_value = result;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:332:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:332:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   332 |     __auto_type values = cinder_match_value.data.ok;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:336:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:336:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   336 |     __auto_type code = cinder_match_value.data.err;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:343:41: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:340:1: warning: non-void function does not return a value in all control paths [-Wreturn-type]
+  340 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:343:41: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   343 |     CinderList_CinderList_i32 nested = ({ CinderList_CinderList_i32 cinder_list = (CinderList_CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_list; }))); cinder_selfhost_list_append_value(&cinder_list, (({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; }))); cinder_list; });
       |                                         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:343:115: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
-  343 |     CinderList_CinderList_i32 nested = ({ CinderList_CinderList_i32 cinder_list = (CinderList_CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_list; }))); cinder_selfhost_lis
-... [truncated 84459 chars]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:343:115: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+  343 |     CinderList_CinderList_i32 nested = ({ CinderList_CinderList_i32 cinder_list = (CinderList_CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_list; }))); cinder_selfhost_list_append_value(&cinder_list, (({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; }))); cinder_list; });
+      |                                                                                                                   ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+   22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
+      |                                                             ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:343:165: warning: use of GNU statement expression extension from macro expansion [-Wgnu-statement-expression-from-macro-expansion]
+  343 |     CinderList_CinderList_i32 nested = ({ CinderList_CinderList_i32 cinder_list = (CinderList_CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_list; }))); cinder_selfhost_list_append_value(&cinder_list, (({ CinderList_i
+... [truncated 78170 chars]
 
 ### examples/anti_examples.ci
 gen3 exit=2
@@ -156,58 +156,79 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:1:
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:139:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:139:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   139 |         cinder_selfhost_list_append_value(&result, value);
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:163:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:163:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   163 |         cinder_selfhost_list_append_value(&result, value);
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:232:5: error: unknown type name 'cinder_anti_examples_anti_examples__T'
-  232 |     cinder_anti_examples_anti_examples__T value;
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:198:9: warning: '__init__' macro redefined [-Wmacro-redefined]
+  198 | #define __init__ cinder_anti_examples_anti_examples__Child___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:192:9: note: previous definition is here
+  192 | #define __init__ cinder_anti_examples_anti_examples__Base___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:203:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+  203 | struct cinder_anti_examples_anti_examples__Named {
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:208:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+  208 | struct cinder_anti_examples_anti_examples__User {
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:212:9: warning: 'name_code' macro redefined [-Wmacro-redefined]
+  212 | #define name_code cinder_anti_examples_anti_examples__User_name_code
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:207:9: note: previous definition is here
+  207 | #define name_code cinder_anti_examples_anti_examples__Named_name_code
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:213:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+  213 | struct cinder_anti_examples_anti_examples__Shape {
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:223:9: warning: '__init__' macro redefined [-Wmacro-redefined]
+  223 | #define __init__ cinder_anti_examples_anti_examples__Square___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:198:9: note: previous definition is here
+  198 | #define __init__ cinder_anti_examples_anti_examples__Child___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:225:9: warning: 'area' macro redefined [-Wmacro-redefined]
+  225 | #define area cinder_anti_examples_anti_examples__Square_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:217:9: note: previous definition is here
+  217 | #define area cinder_anti_examples_anti_examples__Shape_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:231:9: warning: '__init__' macro redefined [-Wmacro-redefined]
+  231 | #define __init__ cinder_anti_examples_anti_examples__Secret___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:223:9: note: previous definition is here
+  223 | #define __init__ cinder_anti_examples_anti_examples__Square___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:239:9: warning: '__init__' macro redefined [-Wmacro-redefined]
+  239 | #define __init__ cinder_anti_examples_anti_examples__Resource___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:231:9: note: previous definition is here
+  231 | #define __init__ cinder_anti_examples_anti_examples__Secret___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:287:5: error: unknown type name 'cinder_anti_examples_anti_examples__T'
+  287 |     cinder_anti_examples_anti_examples__T value;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:124:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.c:124:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   124 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:124:27: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.c:124:27: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   124 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:124:79: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.c:124:79: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   124 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                                                                               ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
-   22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
-      |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:124:133: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
-  124 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
-      |                                                                                                                                     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
-   22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
-      |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:124:187: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
-  124 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
-      |                                                                                                                                                                                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
-   22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
-      |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:125:15: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
-  125 |     values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (6)); cinder_list; });
-      |               ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:125:59: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
-  125 |     values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (6)); cinder_list; });
-      |                                                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
-   22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
-      |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/anti_examples.ci-build/cinder_gen/anti_examples.c:125:113: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
-  125 |     values = ({ CinderList cinder_list = (CinderList){0}; cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_lis
-... [truncated 30229 chars]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/anti_examples.ci-build/cinder_gen/anti_examples.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+   22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, si
+... [truncated 40558 chars]
 
 ### examples/classes.ci
 gen3 exit=2
@@ -218,68 +239,75 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:4:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-    4 |     self->name = name;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:7:51: warning: unused parameter 'self' [-Wunused-parameter]
-    7 | double cinder_classes_classes__Shape_area(int32_t self) {
-      |                                                   ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:12:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.cinder.h:113:9: warning: '__init__' macro redefined [-Wmacro-redefined]
+  113 | #define __init__ cinder_classes_classes__Circle___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.cinder.h:103:9: note: previous definition is here
+  103 | #define __init__ cinder_classes_classes__Shape___init__
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.cinder.h:115:9: warning: 'area' macro redefined [-Wmacro-redefined]
+  115 | #define area cinder_classes_classes__Circle_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.cinder.h:105:9: note: previous definition is here
+  105 | #define area cinder_classes_classes__Shape_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:5:1: warning: non-void function does not return a value [-Wreturn-type]
+    5 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:7:74: warning: unused parameter 'self' [-Wunused-parameter]
+    7 | double cinder_classes_classes__Shape_area(cinder_classes_classes__Shape *self) {
+      |                                                                          ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:9:1: warning: non-void function does not return a value [-Wreturn-type]
+    9 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:12:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    12 |     ({ cinder_selfhost_print_string_fragment(self->name); printf(": "); printf("%.2f", (double)(area(self))); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:12:52: error: member reference type 'int32_t' (aka 'int') is not a pointer
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:12:102: warning: incompatible pointer types passing 'cinder_classes_classes__Shape *' (aka 'struct cinder_classes_classes__Shape *') to parameter of type 'cinder_classes_classes__Circle *' (aka 'struct cinder_classes_classes__Circle *') [-Wincompatible-pointer-types]
    12 |     ({ cinder_selfhost_print_string_fragment(self->name); printf(": "); printf("%.2f", (double)(area(self))); printf("\n"); 0; });
-      |                                              ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:12:97: error: call to undeclared function 'area'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-   12 |     ({ cinder_selfhost_print_string_fragment(self->name); printf(": "); printf("%.2f", (double)(area(self))); printf("\n"); 0; });
-      |                                                                                                 ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:12:125: warning: expression result unused [-Wunused-value]
+      |                                                                                                      ^~~~
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.cinder.h:114:76: note: passing argument to parameter 'self' here
+  114 | double cinder_classes_classes__Circle_area(cinder_classes_classes__Circle *self);
+      |                                                                            ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:12:125: warning: expression result unused [-Wunused-value]
    12 |     ({ cinder_selfhost_print_string_fragment(self->name); printf(": "); printf("%.2f", (double)(area(self))); printf("\n"); 0; });
       |                                                                                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:16:5: error: call to undeclared function '__init__'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-   16 |     __init__(&cinder_classes_classes__super(), cinder_string_from_cstr("circle"));
-      |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:16:15: error: call to undeclared function 'cinder_classes_classes__super'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:16:15: error: call to undeclared function 'cinder_classes_classes__super'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    16 |     __init__(&cinder_classes_classes__super(), cinder_string_from_cstr("circle"));
       |               ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:16:14: error: cannot take the address of an rvalue of type 'int'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:16:14: error: cannot take the address of an rvalue of type 'int'
    16 |     __init__(&cinder_classes_classes__super(), cinder_string_from_cstr("circle"));
       |              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:17:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-   17 |     self->radius = radius;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:21:32: error: member reference type 'int32_t' (aka 'int') is not a pointer
-   21 |     return ((CINDER_PI * self->radius) * self->radius);
-      |                          ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:21:48: error: member reference type 'int32_t' (aka 'int') is not a pointer
-   21 |     return ((CINDER_PI * self->radius) * self->radius);
-      |                                          ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:25:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:25:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    25 |     ({ printf("runtime type: "); printf("%lld", (long long)(cinder_classes_classes__type_name(shape))); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:25:61: error: call to undeclared function 'cinder_classes_classes__type_name'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:25:61: error: call to undeclared function 'cinder_classes_classes__type_name'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    25 |     ({ printf("runtime type: "); printf("%lld", (long long)(cinder_classes_classes__type_name(shape))); printf("\n"); 0; });
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:25:61: note: did you mean 'cinder_classes_classes__Shape_area'?
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:7:8: note: 'cinder_classes_classes__Shape_area' declared here
-    7 | double cinder_classes_classes__Shape_area(int32_t self) {
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:25:61: note: did you mean 'cinder_classes_classes__Shape_area'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:7:8: note: 'cinder_classes_classes__Shape_area' declared here
+    7 | double cinder_classes_classes__Shape_area(cinder_classes_classes__Shape *self) {
       |        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:26:5: error: call to undeclared function 'describe'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:26:14: warning: incompatible pointer types passing 'void **' to parameter of type 'cinder_classes_classes__Shape *' (aka 'struct cinder_classes_classes__Shape *') [-Wincompatible-pointer-types]
    26 |     describe(&shape);
-      |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:25:119: warning: expression result unused [-Wunused-value]
+      |              ^~~~~~
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:11:76: note: passing argument to parameter 'self' here
+   11 | void cinder_classes_classes__Shape_describe(cinder_classes_classes__Shape *self) {
+      |                                                                            ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:25:119: warning: expression result unused [-Wunused-value]
    25 |     ({ printf("runtime type: "); printf("%lld", (long long)(cinder_classes_classes__type_name(shape))); printf("\n"); 0; });
       |                                                                                                                       ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:30:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:30:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    30 |     __auto_type circle = (cinder_classes_classes__Circle){.radius = 4.0};
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.c:30:26: error: variable has incomplete type 'cinder_classes_classes__Circle' (aka 'struct cinder_classes_classes__Circle')
-   30 |     __auto_type circle = (cinder_classes_classes__Circle){.radius = 4.0};
-      |                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/classes.ci-build/cinder_gen/classes.cinder.h:97:16: note: forward declaration of 'struct cinder_classes_classes__Circle'
-   97 | typedef struct cinder_classes_classes__Circle cinder_classes_classes__Circle;
-      |                ^
-6 warnings and 12 errors generated.
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:31:38: error: passing 'cinder_classes_classes__Circle' (aka 'struct cinder_classes_classes__Circle') to parameter of incompatible type 'void *'
+   31 |     cinder_classes_classes__describe(circle);
+      |                                      ^~~~~~
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/classes.ci-build/cinder_gen/classes.c:24:46: note: passing argument to parameter 'shape' here
+   24 | void cinder_classes_classes__describe(void * shape) {
+      |                                              ^
+12 warnings and 4 errors generated.
 
 ### examples/closures.ci
 gen3 exit=2
@@ -290,17 +318,17 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:13:20: error: called object type 'void *' is not a function or function pointer
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:13:20: error: called object type 'void *' is not a function or function pointer
    13 |     return callback(value);
       |            ~~~~~~~~^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    17 |     __auto_type add_two = cinder_closures_closures__closure((cinder_closures_closures__AddEnv){.delta = 2}, cinder_closures_closures__add_with_env);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:17:27: error: call to undeclared function 'cinder_closures_closures__closure'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:17:27: error: call to undeclared function 'cinder_closures_closures__closure'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    17 |     __auto_type add_two = cinder_closures_closures__closure((cinder_closures_closures__AddEnv){.delta = 2}, cinder_closures_closures__add_with_env);
       |                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:17:27: note: did you mean 'cinder_closures_closures__apply'?
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:12:9: note: 'cinder_closures_closures__apply' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:17:27: note: did you mean 'cinder_closures_closures__apply'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:12:9: note: 'cinder_closures_closures__apply' declared here
    12 | int32_t cinder_closures_closures__apply(void * callback, int32_t value) {
       |         ^
    13 |     return callback(value);
@@ -310,37 +338,37 @@ toolchain error: C compiler failed
    17 |     __auto_type add_two = cinder_closures_closures__closure((cinder_closures_closures__AddEnv){.delta = 2}, cinder_closures_closures__add_with_env);
       |                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       |                           cinder_closures_closures__apply
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:18:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:18:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    18 |     __auto_type counter = cinder_closures_closures__closure((cinder_closures_closures__CounterEnv){.value = 10}, cinder_closures_closures__next_counter);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:19:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:19:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    19 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("add:"), true); cinder_selfhost_print_integer_value((long long)(cinder_closures_closures__apply(add_two, 40)), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:19:163: error: incompatible integer to pointer conversion passing 'int' to parameter of type 'void *' [-Wint-conversion]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:19:163: error: incompatible integer to pointer conversion passing 'int' to parameter of type 'void *' [-Wint-conversion]
    19 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("add:"), true); cinder_selfhost_print_integer_value((long long)(cinder_closures_closures__apply(add_two, 40)), false); printf("\n"); 0; });
       |                                                                                                                                                                   ^~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:12:48: note: passing argument to parameter 'callback' here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:12:48: note: passing argument to parameter 'callback' here
    12 | int32_t cinder_closures_closures__apply(void * callback, int32_t value) {
       |                                                ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:20:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:20:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    20 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("counter:"), true); cinder_selfhost_print_integer_value((long long)(counter(5)), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:20:142: error: called object type 'int' is not a function or function pointer
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:20:142: error: called object type 'int' is not a function or function pointer
    20 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("counter:"), true); cinder_selfhost_print_integer_value((long long)(counter(5)), false); printf("\n"); 0; });
       |                                                                                                                                       ~~~~~~~^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:21:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:21:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    21 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("counter:"), true); cinder_selfhost_print_integer_value((long long)(counter(7)), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:21:142: error: called object type 'int' is not a function or function pointer
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:21:142: error: called object type 'int' is not a function or function pointer
    21 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("counter:"), true); cinder_selfhost_print_integer_value((long long)(counter(7)), false); printf("\n"); 0; });
       |                                                                                                                                       ~~~~~~~^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:19:200: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:19:200: warning: expression result unused [-Wunused-value]
    19 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("add:"), true); cinder_selfhost_print_integer_value((long long)(cinder_closures_closures__apply(add_two, 40)), false); printf("\n"); 0; });
       |                                                                                                                                                                                                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:20:170: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:20:170: warning: expression result unused [-Wunused-value]
    20 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("counter:"), true); cinder_selfhost_print_integer_value((long long)(counter(5)), false); printf("\n"); 0; });
       |                                                                                                                                                                          ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/closures.ci-build/cinder_gen/closures.c:21:170: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/closures.ci-build/cinder_gen/closures.c:21:170: warning: expression result unused [-Wunused-value]
    21 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("counter:"), true); cinder_selfhost_print_integer_value((long long)(counter(7)), false); printf("\n"); 0; });
       |                                                                                                                                                                          ^
 8 warnings and 5 errors generated.
@@ -348,52 +376,52 @@ toolchain error: C compiler failed
 ### examples/collections.ci
 gen3 exit=2
 kind: gen3_toolchain_error
-elapsed: 0.2s
+elapsed: 0.1s
 
 --- gen3 stdout ---
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:26:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:26:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    26 |         cinder_selfhost_list_append_value(&result, value);
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:388:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:388:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   388 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:388:27: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:388:27: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   388 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:388:79: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:388:79: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   388 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                                                                               ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:388:133: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:388:133: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   388 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                                                                                                                                     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:388:187: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:388:187: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   388 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                                                                                                                                                                                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:388:241: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:388:241: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   388 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                                                                                                                                                                                                                                                 ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.c:388:295: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.c:388:295: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   388 |     __auto_type values = ({ CinderList_i32 cinder_list = (CinderList_i32){0}; cinder_selfhost_list_append_value(&cinder_list, (5)); cinder_selfhost_list_append_value(&cinder_list, (1)); cinder_selfhost_list_append_value(&cinder_list, (4)); cinder_selfhost_list_append_value(&cinder_list, (2)); cinder_selfhost_list_append_value(&cinder_list, (3)); cinder_list; });
       |                                                                                                                                                                                                                                                                                                       ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/collections.ci-build/cinder_gen/collections.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |             
 ... [truncated 24249 chars]
@@ -407,33 +435,33 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:1:
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.cinder.h:111:9: error: unknown type name 'cinder_convert_convert__ConvertError'
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.cinder.h:111:9: error: unknown type name 'cinder_convert_convert__ConvertError'
   111 |         cinder_convert_convert__ConvertError err;
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:4:12: error: returning 'CinderResult_i32_n_CinderParseError' (aka 'struct CinderResult_i32_n_CinderParseError') from a function with incompatible result type 'CinderResult_i32_ConvertError' (aka 'struct CinderResult_i32_ConvertError')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:4:12: error: returning 'CinderResult_i32_n_CinderParseError' (aka 'struct CinderResult_i32_n_CinderParseError') from a function with incompatible result type 'CinderResult_i32_ConvertError' (aka 'struct CinderResult_i32_ConvertError')
     4 |     return cinder_selfhost_parse_i32(text);
       |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:8:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:8:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
     8 |     __auto_type value = ({ CinderResult_i32_ConvertError cinder_result = cinder_convert_convert__require_i32(text); if (cinder_result.tag == CinderResult_i32_ConvertError_Tag_Err) return (CinderResult_i32_ConvertError){ .tag = CinderResult_i32_ConvertError_Tag_Err, .data.err = cinder_result.data.err }; cinder_result.data.ok; });
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:8:26: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:8:26: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
     8 |     __auto_type value = ({ CinderResult_i32_ConvertError cinder_result = cinder_convert_convert__require_i32(text); if (cinder_result.tag == CinderResult_i32_ConvertError_Tag_Err) return (CinderResult_i32_ConvertError){ .tag = CinderResult_i32_ConvertError_Tag_Err, .data.err = cinder_result.data.err }; cinder_result.data.ok; });
       |                          ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:14:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:14:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    14 |     __auto_type cinder_match_value = cinder_convert_convert__doubled(cinder_string_from_cstr("21"));
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:16:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:16:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    16 |     __auto_type value = cinder_match_value.data.ok;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    17 |     __auto_type text = cinder_convert_convert__to_string(value);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:17:24: error: call to undeclared function 'cinder_convert_convert__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:17:24: error: call to undeclared function 'cinder_convert_convert__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    17 |     __auto_type text = cinder_convert_convert__to_string(value);
       |                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:17:24: note: did you mean 'cinder_convert_convert__doubled'?
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:7:31: note: 'cinder_convert_convert__doubled' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:17:24: note: did you mean 'cinder_convert_convert__doubled'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:7:31: note: 'cinder_convert_convert__doubled' declared here
     7 | CinderResult_i32_ConvertError cinder_convert_convert__doubled(CinderString text) {
       |                               ^
     8 |     __auto_type value = ({ CinderResult_i32_ConvertError cinder_result = cinder_convert_convert__require_i32(text); if (cinder_result.tag == CinderResult_i32_ConvertError_Tag_Err) return (CinderResult_i32_ConvertError){ .tag = CinderResult_i32_ConvertError_Tag_Err, .data.err = cinder_result.data.err }; cinder_result.data.ok; });
@@ -448,32 +476,32 @@ In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-ge
    17 |     __auto_type text = cinder_convert_convert__to_string(value);
       |                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       |                        cinder_convert_convert__doubled
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:18:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:18:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    18 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("doubled:"), true); cinder_selfhost_print_string_value(text, false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:22:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:22:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    22 |     __auto_type error = cinder_match_value.data.err;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:23:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:23:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    23 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("parse failed:"), true); cinder_selfhost_print_integer_value((long long)((int32_t)(error)), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:28:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:28:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    28 |     __auto_type cinder_match_value = cinder_convert_convert__parse_bool(cinder_string_from_cstr("true"));
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:28:38: error: call to undeclared function 'cinder_convert_convert__parse_bool'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:28:38: error: call to undeclared function 'cinder_convert_convert__parse_bool'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    28 |     __auto_type cinder_match_value = cinder_convert_convert__parse_bool(cinder_string_from_cstr("true"));
       |                                      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:28:38: note: did you mean 'cinder_convert_convert__doubled'?
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:7:31: note: 'cinder_convert_convert__doubled' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:28:38: note: did you mean 'cinder_convert_convert__doubled'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:7:31: note: 'cinder_convert_convert__doubled' declared here
     7 | CinderResult_i32_ConvertError cinder_convert_convert__doubled(CinderString text) {
       |                               ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:30:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:30:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    30 |     __auto_type flag_text = cinder_convert_convert__to_string(flag);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:30:29: error: call to undeclared function 'cinder_convert_convert__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:30:29: error: call to undeclared function 'cinder_convert_convert__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    30 |     __auto_type flag_text = cinder_convert_convert__to_string(flag);
       |                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/convert.ci-build/cinder_gen/convert.c:30:63: error: use of undeclared identifier 'flag'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/convert.ci-build/cinder_gen/convert.c:30:63: error: use of undeclared identifier 'flag'
    30 |     __auto_type flag_text = cinder_convert_convert__to_string(flag);
       |                                                               ^
 /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/c
@@ -488,66 +516,69 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:7:72: warning: unused parameter 'self' [-Wunused-parameter]
-    7 | void cinder_dijkstra_showcase_dijkstra_showcase__Reporter_emit(int32_t self, cinder_dijkstra_showcase_dijkstra_showcase__SearchEvent event) {
-      |                                                                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:7:134: warning: unused parameter 'event' [-Wunused-parameter]
-    7 | void cinder_dijkstra_showcase_dijkstra_showcase__Reporter_emit(int32_t self, cinder_dijkstra_showcase_dijkstra_showcase__SearchEvent event) {
-      |                                                                                                                                      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:12:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-   12 |     self->label = label;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.cinder.h:139:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+  139 | struct cinder_dijkstra_showcase_dijkstra_showcase__Reporter {
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.cinder.h:151:9: warning: 'emit' macro redefined [-Wmacro-redefined]
+  151 | #define emit cinder_dijkstra_showcase_dijkstra_showcase__ConsoleReporter_emit
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.cinder.h:143:9: note: previous definition is here
+  143 | #define emit cinder_dijkstra_showcase_dijkstra_showcase__Reporter_emit
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:7:118: warning: unused parameter 'self' [-Wunused-parameter]
+    7 | void cinder_dijkstra_showcase_dijkstra_showcase__Reporter_emit(cinder_dijkstra_showcase_dijkstra_showcase__Reporter *self, cinder_dijkstra_showcase_dijkstra_showcase__SearchEvent event) {
+      |                                                                                                                      ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:7:180: warning: unused parameter 'event' [-Wunused-parameter]
+    7 | void cinder_dijkstra_showcase_dijkstra_showcase__Reporter_emit(cinder_dijkstra_showcase_dijkstra_showcase__Reporter *self, cinder_dijkstra_showcase_dijkstra_showcase__SearchEvent event) {
+      |                                                                                                                                                                                    ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:13:1: warning: non-void function does not return a value [-Wreturn-type]
+   13 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    17 |     __auto_type cinder_match_value = event;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:19:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:19:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    19 |     __auto_type vertex = cinder_match_value.data.Visiting.vertex;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:20:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:20:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    20 |     __auto_type distance = cinder_match_value.data.Visiting.distance;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:21:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:21:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    21 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" visit "); printf("%lld", (long long)(vertex)); printf(" at distance "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:21:52: error: member reference type 'int32_t' (aka 'int') is not a pointer
-   21 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" visit "); printf("%lld", (long long)(vertex)); printf(" at distance "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
-      |                                              ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:24:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:24:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    24 |     __auto_type source = cinder_match_value.data.Relaxed.source;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:25:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:25:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    25 |     __auto_type target = cinder_match_value.data.Relaxed.target;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:26:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:26:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    26 |     __auto_type distance = cinder_match_value.data.Relaxed.distance;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:27:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:27:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    27 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" relax "); printf("%lld", (long long)(source)); printf(" -> "); printf("%lld", (long long)(target)); printf(" to "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:27:52: error: member reference type 'int32_t' (aka 'int') is not a pointer
-   27 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" relax "); printf("%lld", (long long)(source)); printf(" -> "); printf("%lld", (long long)(target)); printf(" to "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
-      |                                              ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:30:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:30:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    30 |     __auto_type distance = cinder_match_value.data.Finished.distance;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:31:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:31:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    31 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" shortest distance: "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:31:52: error: member reference type 'int32_t' (aka 'int') is not a pointer
-   31 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" shortest distance: "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
-      |                                              ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:21:194: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:21:194: warning: expression result unused [-Wunused-value]
    21 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" visit "); printf("%lld", (long long)(vertex)); printf(" at distance "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
       |                                                                                                                                                                                                  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:27:238: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:27:238: warning: expression result unused [-Wunused-value]
    27 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" relax "); printf("%lld", (long long)(source)); printf(" -> "); printf("%lld", (long long)(target)); printf(" to "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
       |                                                                                                                                                                                                                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:31:145: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:31:145: warning: expression result unused [-Wunused-value]
    31 |     ({ cinder_selfhost_print_string_fragment(self->label); printf(" shortest distance: "); printf("%lld", (long long)(distance)); printf("\n"); 0; });
       |                                                                                                                                                 ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:47:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
-   47 |    
-... [truncated 167156 chars]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:47:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+   47 |     ({ cinder_selfhost_print_integer_value((long long)(vertex), true); printf("\n"); 0; });
+      |      ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:47:86: wa
+... [truncated 168101 chars]
 
 ### examples/expressive_match.ci
 gen3 exit=2
@@ -558,72 +589,72 @@ elapsed: 0.1s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:1:
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:115:37: error: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:115:37: error: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
   115 |         CinderResult_i32_ParseError value;
       |                                     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:99:16: note: forward declaration of 'struct CinderResult_i32_ParseError'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:99:16: note: forward declaration of 'struct CinderResult_i32_ParseError'
    99 | typedef struct CinderResult_i32_ParseError CinderResult_i32_ParseError;
       |                ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:7:16: warning: equality comparison with extraneous parentheses [-Wparentheses-equality]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:7:16: warning: equality comparison with extraneous parentheses [-Wparentheses-equality]
     7 |     if ((value == 0)) {
       |          ~~~~~~^~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:7:16: note: remove extraneous parentheses around the comparison to silence this warning
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:7:16: note: remove extraneous parentheses around the comparison to silence this warning
     7 |     if ((value == 0)) {
       |         ~      ^   ~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:7:16: note: use '=' to turn this equality comparison into an assignment
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:7:16: note: use '=' to turn this equality comparison into an assignment
     7 |     if ((value == 0)) {
       |                ^~
       |                =
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:18:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:18:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    18 |     __auto_type cinder_match_value = value;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:20:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:20:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    20 |     ({ printf("large score: "); printf("%lld", (long long)(score)); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:20:60: error: use of undeclared identifier 'score'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:20:60: error: use of undeclared identifier 'score'
    20 |     ({ printf("large score: "); printf("%lld", (long long)(score)); printf("\n"); 0; });
       |                                                            ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:21:12: error: use of undeclared identifier 'score'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:21:12: error: use of undeclared identifier 'score'
    21 |     return score;
       |            ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:24:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:24:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    24 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("no usable score"), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:28:9: error: use of undeclared identifier 'original'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:28:9: error: use of undeclared identifier 'original'
    28 |     if (original.is_some) {
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:29:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:29:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    29 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("small captured score"), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:20:83: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:20:83: warning: expression result unused [-Wunused-value]
    20 |     ({ printf("large score: "); printf("%lld", (long long)(score)); printf("\n"); 0; });
       |                                                                                   ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:24:108: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:24:108: warning: expression result unused [-Wunused-value]
    24 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("no usable score"), true); printf("\n"); 0; });
       |                                                                                                            ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:29:113: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:29:113: warning: expression result unused [-Wunused-value]
    29 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("small captured score"), true); printf("\n"); 0; });
       |                                                                                                                 ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:38:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:38:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    38 |     __auto_type cinder_match_value = shape;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:40:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:40:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    40 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("point with discarded coordinates"), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:43:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:43:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    43 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("origin"), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:40:125: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:40:125: warning: expression result unused [-Wunused-value]
    40 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("point with discarded coordinates"), true); printf("\n"); 0; });
       |                                                                                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:43:99: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:43:99: warning: expression result unused [-Wunused-value]
    43 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("origin"), true); printf("\n"); 0; });
       |                                                                                                   ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:50:62: error: passing 'int' to parameter of incompatible type 'cinder_expressive_match_expressive_match__Shape' (aka 'struct cinder_expressive_match_expressive_match__Shape')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:50:62: error: passing 'int' to parameter of incompatible type 'cinder_expressive_match_expressive_match__Shape' (aka 'struct cinder_expressive_match_expressive_match__Shape')
    50 |     cinder_expressive_match_expressive_match__describe_shape(cinder_expressive_match_expressive_match__Shape_Origin);
       |                                                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/expressive_match.ci-build/cinder_gen/expressive_match.c:36:111: note: passing argument to parameter 'shape' here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/expressive_match.ci-build/cinder_gen/expressive_match.c:36:111: note: passing argument to parameter 'shape' here
    36 | void cinder_expressive_match_expressive_match__describe_shape(cinder_expressive_match_expressive_match__Shape shape) {
       |                                                                                                               ^
 /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.
@@ -638,80 +669,83 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.c:1:
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:101:5: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:101:5: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
   101 |     cinder_generics_generics__T value;
       |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~
       |     cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
    96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
       |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:101:33: error: field has incomplete type 'cinder_generics_generics__Box' (aka 'struct cinder_generics_generics__Box')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:101:33: error: field has incomplete type 'cinder_generics_generics__Box' (aka 'struct cinder_generics_generics__Box')
   101 |     cinder_generics_generics__T value;
       |                                 ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:100:8: note: definition of 'struct cinder_generics_generics__Box' is not complete until the closing '}'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:100:8: note: definition of 'struct cinder_generics_generics__Box' is not complete until the closing '}'
   100 | struct cinder_generics_generics__Box {
       |        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:104:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:104:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
   104 | cinder_generics_generics__T cinder_generics_generics__Box_get(const cinder_generics_generics__Box * self);
       | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
       | cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
    96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
       |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:115:13: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:115:13: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
   115 |             cinder_generics_generics__T value;
       |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~
       |             cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
    96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
       |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:120:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
-  120 | cinder_generics_generics__T cinder_generics_generics__identity(cinder_generics_generics__T value);
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:120:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+  120 | struct cinder_generics_generics__Writer {
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:123:85: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+  123 | void cinder_generics_generics__Writer_write(cinder_generics_generics__Writer *self, cinder_generics_generics__T item);
+      |                                                                                     ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                                                                     cinder_generics_generics__Box
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+   96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
+      |                                              ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:125:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+  125 | struct cinder_generics_generics__IntWriter {
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:129:9: warning: 'write' macro redefined [-Wmacro-redefined]
+  129 | #define write cinder_generics_generics__IntWriter_write
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:124:9: note: previous definition is here
+  124 | #define write cinder_generics_generics__Writer_write
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:130:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+  130 | cinder_generics_generics__T cinder_generics_generics__identity(cinder_generics_generics__T value);
       | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
       | cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
    96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
       |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:120:64: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
-  120 | cinder_generics_generics__T cinder_generics_generics__identity(cinder_generics_generics__T value);
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:130:64: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+  130 | cinder_generics_generics__T cinder_generics_generics__identity(cinder_generics_generics__T value);
       |                                                                ^~~~~~~~~~~~~~~~~~~~~~~~~~~
       |                                                                cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
    96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
       |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.c:3:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.c:3:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
     3 | cinder_generics_generics__T cinder_generics_generics__Box_get(const cinder_generics_generics__Box * self) {
       | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
       | cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
    96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
       |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.c:7:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.c:7:1: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
     7 | cinder_generics_generics__T cinder_generics_generics__identity(cinder_generics_generics__T value) {
       | ^~~~~~~~~~~~~~~~~~~~~~~~~~~
       | cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
    96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
       |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.c:7:64: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
-    7 | cinder_generics_generics__T cinder_generics_generics__identity(cinder_generics_generics__T value) {
-      |                                                                ^~~~~~~~~~~~~~~~~~~~~~~~~~~
-      |                                                                cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
-   96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
-      |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.c:11:59: error: unknown type name 'cinder_generics_generics__T'; did you mean 'cinder_generics_generics__Box'?
-   11 | void cinder_generics_generics__Writer_write(int32_t self, cinder_generics_generics__T item) {
-      |                                                           ^~~~~~~~~~~~~~~~~~~~~~~~~~~
-      |                                                           cinder_generics_generics__Box
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.cinder.h:96:46: note: 'cinder_generics_generics__Box' declared here
-   96 | typedef struct cinder_generics_generics__Box cinder_generics_generics__Box;
-      |                                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/generics.ci-build/cinder_gen/generics.c:11:53: warning: unused parameter 'self' [-Wunused-parameter]
-   11 | void cinder_generics_generics__Writer_write(int32_t self, cinder_generics_generics__T item) {
-      |                                        
-... [truncated 3283 chars]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/gen
+... [truncated 4743 chars]
 
 ### examples/owned.ci
 gen3 exit=2
@@ -722,157 +756,160 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:4:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-    4 |     self->label = label;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:8:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:5:1: warning: non-void function does not return a value [-Wreturn-type]
+    5 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:8:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
     8 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("drop"), true); cinder_selfhost_print_integer_value((long long)(self->label), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:8:137: error: member reference type 'int32_t' (aka 'int') is not a pointer
-    8 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("drop"), true); cinder_selfhost_print_integer_value((long long)(self->label), false); printf("\n"); 0; });
-      |                                                                                                                                   ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:8:167: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:8:167: warning: expression result unused [-Wunused-value]
     8 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("drop"), true); cinder_selfhost_print_integer_value((long long)(self->label), false); printf("\n"); 0; });
       |                                                                                                                                                                       ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:16:31: error: use of undeclared identifier 'cinder_owned_owned__Owned'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:9:1: warning: non-void function does not return a value [-Wreturn-type]
+    9 | }
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:16:31: error: use of undeclared identifier 'cinder_owned_owned__Owned'
    16 |     CinderOwned_i32 number = (cinder_owned_owned__Owned){40};
       |                               ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:17:5: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:17:5: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
    17 |     *number = (*number + 2);
       |     ^~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:17:16: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:17:16: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
    17 |     *number = (*number + 2);
       |                ^~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:18:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:18:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    18 |     ({ cinder_selfhost_print_integer_value((long long)(*number), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:18:56: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:18:56: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
    18 |     ({ cinder_selfhost_print_integer_value((long long)(*number), true); printf("\n"); 0; });
       |                                                        ^~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:19:38: error: use of undeclared identifier 'cinder_owned_owned__Owned'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:19:38: error: use of undeclared identifier 'cinder_owned_owned__Owned'
    19 |     CinderOwned_Resource resource = (cinder_owned_owned__Owned){(cinder_owned_owned__Resource){1}};
       |                                      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:20:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:20:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    20 |     ({ cinder_selfhost_print_integer_value((long long)(*resource.label), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:20:66: error: no member named 'label' in 'struct CinderOwned_Resource'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:20:66: error: no member named 'label' in 'struct CinderOwned_Resource'
    20 |     ({ cinder_selfhost_print_integer_value((long long)(*resource.label), true); printf("\n"); 0; });
       |                                                         ~~~~~~~~ ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:21:30: error: use of undeclared identifier 'cinder_owned_owned__Owned'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:21:30: error: use of undeclared identifier 'cinder_owned_owned__Owned'
    21 |     CinderOwned_Node leaf = (cinder_owned_owned__Owned){(cinder_owned_owned__Node){.value = 10, .next = ((CinderOption_CinderOwned_Node){ .tag = CinderOption_CinderOwned_Node_Tag_None })}};
       |                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:22:30: error: use of undeclared identifier 'cinder_owned_owned__Owned'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:22:30: error: use of undeclared identifier 'cinder_owned_owned__Owned'
    22 |     CinderOwned_Node root = (cinder_owned_owned__Owned){(cinder_owned_owned__Node){.value = 20, .next = ((CinderOption_CinderOwned_Node){ .tag = CinderOption_CinderOwned_Node_Tag_Some, .data.value = leaf })}};
       |                              ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:23:31: error: indirection requires pointer operand ('CinderOwned_Node' (aka 'struct CinderOwned_Node') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:23:31: error: indirection requires pointer operand ('CinderOwned_Node' (aka 'struct CinderOwned_Node') invalid)
    23 |     cinder_owned_owned__bump(&*root);
       |                               ^~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:24:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:24:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    24 |     ({ cinder_selfhost_print_integer_value((long long)(*root.value), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:24:62: error: no member named 'value' in 'struct CinderOwned_Node'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:24:62: error: no member named 'value' in 'struct CinderOwned_Node'
    24 |     ({ cinder_selfhost_print_integer_value((long long)(*root.value), true); printf("\n"); 0; });
       |                                                         ~~~~ ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:25:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:25:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    25 |     __auto_type moved = root;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:26:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:26:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    26 |     ({ cinder_selfhost_print_integer_value((long long)(*moved.value), true); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:26:63: error: no member named 'value' in 'struct CinderOwned_Node'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:26:63: error: no member named 'value' in 'struct CinderOwned_Node'
    26 |     ({ cinder_selfhost_print_integer_value((long long)(*moved.value), true); printf("\n"); 0; });
       |                                                         ~~~~~ ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:27:12: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:27:12: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
    27 |     return *number;
       |            ^~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:18:87: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:18:87: warning: expression result unused [-Wunused-value]
    18 |     ({ cinder_selfhost_print_integer_value((long long)(*number), true); printf("\n"); 0; });
       |                                                                                       ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/owned.ci-build/cinder_gen/owned.c:20:95: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:20:95: warning: expression result unused [-Wunused-value]
    20 |     ({ cinder_selfhost_print_integer_value((long long)(*resource.label), true); printf("\n"); 0; });
-      |                                                           
-... [truncated 823 chars]
+      |                                                                                               ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/owned.ci-build/cinder_gen/owned.c:24:91: warning: expression result unused [-Wunused-value]
+   24 |     ({ cinder_selfhost_print_integer_value((long long)(*root.value), true); printf("\n"); 0; });
+      |                           
+... [truncated 478 chars]
 
 ### examples/read_file.ci
 gen3 exit=2
 kind: gen3_toolchain_error
-elapsed: 0.1s
+elapsed: 0.2s
 
 --- gen3 stdout ---
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:15:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:15:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    15 |         cinder_selfhost_list_append_value(&result, value);
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:49:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:49:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    49 |     ({ printf("failed while writing "); cinder_selfhost_print_string_fragment(path); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:51:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:51:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    51 |     __auto_type cinder_return_value = 1;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:62:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:62:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    62 |     __auto_type counted = read(file, &chunk);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:62:27: error: call to undeclared function 'read'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:62:27: error: call to undeclared function 'read'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    62 |     __auto_type counted = read(file, &chunk);
       |                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:62:27: note: did you mean 'fread'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:62:27: note: did you mean 'fread'?
 /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/include/_stdio.h:248:9: note: 'fread' declared here
   248 | size_t   fread(void * __restrict _LIBC_SIZE(__size * __nitems) __ptr, size_t __size, size_t __nitems, FILE * __restrict __stream);
       |          ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:63:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:63:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    63 |     ({ printf("read "); printf("%lld", (long long)(counted)); printf(" bytes:"); cinder_selfhost_print_unsigned_value((unsigned long long)(chunk[0]), false); cinder_selfhost_print_unsigned_value((unsigned long long)(chunk[1]), false); cinder_selfhost_print_unsigned_value((unsigned long long)(chunk[2]), false); cinder_selfhost_print_unsigned_value((unsigned long long)(chunk[3]), false); cinder_selfhost_print_unsigned_value((unsigned long long)(chunk[4]), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:66:11: error: redefinition of 'file'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:66:11: error: redefinition of 'file'
    66 |     FILE *file = fopen(cinder_string_cstr(&path), "rb");
       |           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:58:11: note: previous definition is here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:58:11: note: previous definition is here
    58 |     FILE *file = fopen(cinder_string_cstr(&path), "rb");
       |           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:69:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:69:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    69 |     __auto_type first = read_line(file);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:69:25: error: call to undeclared function 'read_line'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:69:25: error: call to undeclared function 'read_line'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    69 |     __auto_type first = read_line(file);
       |                         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:70:14: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:70:14: error: member reference base type 'int' is not a structure or union
    70 |     if (first.is_none) {
       |         ~~~~~^~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:72:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:72:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    72 |     __auto_type cinder_return_value = 1;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:77:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:77:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    77 |     __auto_type second = read_line(file);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:78:15: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:78:15: error: member reference base type 'int' is not a structure or union
    78 |     if (second.is_none) {
       |         ~~~~~~^~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:80:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:80:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    80 |     __auto_type cinder_return_value = 1;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:85:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:85:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    85 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("read_line:"), true); cinder_selfhost_print_integer_value((long long)(first.value), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:85:142: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:85:142: error: member reference base type 'int' is not a structure or union
    85 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("read_line:"), true); cinder_selfhost_print_integer_value((long long)(first.value), false); printf("\n"); 0; });
       |                                                                                                                                         ~~~~~^~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:86:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:86:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    86 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("read_line:"), true); cinder_selfhost_print_integer_value((long long)(second.value), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:86:143: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:86:143: error: member reference base type 'int' is not a structure or union
    86 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("read_line:"), true); cinder_selfhost_print_integer_value((long long)(second.value), false); printf("\n"); 0; });
       |                                                                                                                                         ~~~~~~^~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:89:11: error: redefinition of 'file'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:89:11: error: redefinition of 'file'
    89 |     FILE *file = fopen(cinder_string_cstr(&path), "rb");
       |           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:58:11: note: previous definition is here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:58:11: note: previous definition is here
    58 |     FILE *file = fopen(cinder_string_cstr(&path), "rb");
       |           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/read_file.ci-build/cinder_gen/read_file.c:92:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/read_file.ci-build/cinder_gen/read_file.c:92:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    92 |     __auto_type
 ... [truncated 7515 chars]
 
@@ -885,11 +922,11 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:8:50: error: call to undeclared function 'cinder_reflection_reflection__fields_of'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:8:50: error: call to undeclared function 'cinder_reflection_reflection__fields_of'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
     8 |     for (size_t cinder_index = 0; cinder_index < cinder_reflection_reflection__fields_of(User).length; ++cinder_index) {
       |                                                  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:8:50: note: did you mean 'cinder_reflection_reflection__User_enabled'?
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:3:6: note: 'cinder_reflection_reflection__User_enabled' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:8:50: note: did you mean 'cinder_reflection_reflection__User_enabled'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:3:6: note: 'cinder_reflection_reflection__User_enabled' declared here
     3 | bool cinder_reflection_reflection__User_enabled(const cinder_reflection_reflection__User * self) {
       |      ^
     4 |     return self->active;
@@ -899,32 +936,32 @@ toolchain error: C compiler failed
     8 |     for (size_t cinder_index = 0; cinder_index < cinder_reflection_reflection__fields_of(User).length; ++cinder_index) {
       |                                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       |                                                  cinder_reflection_reflection__User_enabled
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:8:90: error: use of undeclared identifier 'User'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:8:90: error: use of undeclared identifier 'User'
     8 |     for (size_t cinder_index = 0; cinder_index < cinder_reflection_reflection__fields_of(User).length; ++cinder_index) {
       |                                                                                          ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:9:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:9:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
     9 |     __auto_type field = ((char *)cinder_reflection_reflection__fields_of(User).data)[cinder_index];
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:9:74: error: use of undeclared identifier 'User'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:9:74: error: use of undeclared identifier 'User'
     9 |     __auto_type field = ((char *)cinder_reflection_reflection__fields_of(User).data)[cinder_index];
       |                                                                          ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:10:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:10:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    10 |     ({ printf("compile-time field: "); cinder_selfhost_print_string_fragment(field.name); printf(", offset="); printf("%lld", (long long)(field.offset)); printf(", size="); printf("%lld", (long long)(field.size)); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:10:229: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:10:229: warning: expression result unused [-Wunused-value]
    10 |     ({ printf("compile-time field: "); cinder_selfhost_print_string_fragment(field.name); printf(", offset="); printf("%lld", (long long)(field.offset)); printf(", size="); printf("%lld", (long long)(field.size)); printf("\n"); 0; });
       |                                                                                                                                                                                                                                     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:15:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:15:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    15 |     __auto_type user = (cinder_reflection_reflection__User){.id = 42, .name = cinder_string_from_cstr("Cinder"), .active = true};
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:16:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:16:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    16 |     __auto_type info = cinder_reflection_reflection__type_info(user);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:16:24: error: call to undeclared function 'cinder_reflection_reflection__type_info'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:16:24: error: call to undeclared function 'cinder_reflection_reflection__type_info'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    16 |     __auto_type info = cinder_reflection_reflection__type_info(user);
       |                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:16:24: note: did you mean 'cinder_reflection_reflection__User_enabled'?
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:3:6: note: 'cinder_reflection_reflection__User_enabled' declared here
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:16:24: note: did you mean 'cinder_reflection_reflection__User_enabled'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:3:6: note: 'cinder_reflection_reflection__User_enabled' declared here
     3 | bool cinder_reflection_reflection__User_enabled(const cinder_reflection_reflection__User * self) {
       |      ^
     4 |     return self->active;
@@ -942,16 +979,16 @@ toolchain error: C compiler failed
    16 |     __auto_type info = cinder_reflection_reflection__type_info(user);
       |                        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
       |                        cinder_reflection_reflection__User_enabled
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:17:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:17:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    17 |     ({ printf("type: "); cinder_selfhost_print_string_fragment(info.name); printf(", fields="); printf("%lld", (long long)(info.field_count)); printf(", methods="); printf("%lld", (long long)(info.method_count)); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:17:68: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:17:68: error: member reference base type 'int' is not a structure or union
    17 |     ({ printf("type: "); cinder_selfhost_print_string_fragment(info.name); printf(", fields="); printf("%lld", (long long)(info.field_count)); printf(", methods="); printf("%lld", (long long)(info.method_count)); printf("\n"); 0; });
       |                                                                ~~~~^~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:17:128: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:17:128: error: member reference base type 'int' is not a structure or union
    17 |     ({ printf("type: "); cinder_selfhost_print_string_fragment(info.name); printf(", fields="); printf("%lld", (long long)(info.field_count)); printf(", methods="); printf("%lld", (long long)(info.method_count)); printf("\n"); 0; });
       |                                                                                                                            ~~~~^~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/reflection.ci-build/cinder_gen/reflection.c:17:197: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/reflection.ci-build/cinder_gen/reflection.c:17:197: error: member reference base type 'int' is not a structure or union
    1
 ... [truncated 3714 chars]
 
@@ -964,65 +1001,65 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:1:
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.cinder.h:150:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.cinder.h:150:9: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   150 |         cinder_selfhost_list_append_value(&result, value);
       |         ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:386:55: error: initializer element is not a compile-time constant
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:386:55: error: initializer element is not a compile-time constant
   386 | const CinderString cinder_strings_strings__GREETING = cinder_string_from_cstr("héllo");
       |                                                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:397:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:397:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   397 |     __auto_type empty = cinder_string_from_cstr("");
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:398:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:398:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   398 |     __auto_type text = cinder_string_from_cstr("Aé中Z");
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:399:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:399:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   399 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("greeting:"), true); cinder_selfhost_print_integer_value((long long)(cinder_strings_strings__GREETING), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:399:135: error: operand of type 'CinderString' (aka 'struct CinderString') where arithmetic or pointer type is required
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:399:135: error: operand of type 'CinderString' (aka 'struct CinderString') where arithmetic or pointer type is required
   399 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("greeting:"), true); cinder_selfhost_print_integer_value((long long)(cinder_strings_strings__GREETING), false); printf("\n"); 0; });
       |                                                                                                                                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:400:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:400:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   400 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("empty length:"), true); cinder_selfhost_print_integer_value((long long)(empty.length), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:401:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:401:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   401 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("text:"), true); cinder_selfhost_print_string_value(text, false); cinder_selfhost_print_string_value(cinder_string_from_cstr("bytes:"), false); cinder_selfhost_print_integer_value((long long)(text.length), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:402:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:402:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   402 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("first byte:"), true); cinder_selfhost_print_integer_value((long long)(cinder_selfhost_string_byte_at_value(text, 0)), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:403:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:403:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   403 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("é lead byte:"), true); cinder_selfhost_print_integer_value((long long)(cinder_selfhost_string_byte_at_value(text, 1)), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:404:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:404:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   404 |     __auto_type middle = cinder_string_slice(&text, 1, 6);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:405:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:405:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
   405 |     ({ cinder_selfhost_print_string_value(cinder_string_from_cstr("slice:"), true); cinder_selfhost_print_string_value(middle, false); cinder_selfhost_print_string_value(cinder_string_from_cstr("bytes:"), false); cinder_selfhost_print_integer_value((long long)(middle.length), false); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:406:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:406:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   406 |     __auto_type working = clone(&text);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:406:27: error: call to undeclared function 'clone'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:406:27: error: call to undeclared function 'clone'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
   406 |     __auto_type working = clone(&text);
       |                           ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:407:5: error: call to undeclared function 'reserve'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:407:5: error: call to undeclared function 'reserve'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
   407 |     reserve(&working, 64);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:408:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:408:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
   408 |     cinder_selfhost_list_append_value(&working, (cinder_string_from_cstr("!")));
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.cinder.h:22:61: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.c:408:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.c:408:5: error: member reference base type 'int' is not a structure or union
   408 |     cinder_selfhost_list_append_value(&working, (cinder_string_from_cstr("!")));
       |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/strings.ci-build/cinder_gen/strings.cinder.h:22:97: note: expanded from macro 'cinder_selfhost_list_append_value'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/strings.ci-build/cinder_gen/strings.cinder.h:22:97: note: expanded from macro 'cinder_selfhost_list_append_value'
    22 | #define cinder_selfhost_list_append_value(list, value) do { __auto_type cinder_value = (value); cinder_selfhost_list_append((list), &cinder_value, sizeof(cinder_value)); } while (0)
       |                                                                                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 /var/folders/
@@ -1037,52 +1074,75 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/shapes.c:3:56: warning: unused parameter 'self' [-Wunused-parameter]
-    3 | double cinder_class_project_shapes__Shape_area(int32_t self) {
-      |                                                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/shapes.c:5:1: warning: non-void function does not return a value [-Wreturn-type]
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.cinder.h:97:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+   97 | struct cinder_class_project_shapes__Shape {
+      | ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.c:3:84: warning: unused parameter 'self' [-Wunused-parameter]
+    3 | double cinder_class_project_shapes__Shape_area(cinder_class_project_shapes__Shape *self) {
+      |                                                                                    ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.c:5:1: warning: non-void function does not return a value [-Wreturn-type]
     5 | }
       | ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/shapes.c:8:13: error: call to undeclared function 'area'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-    8 |     return (area(self) * factor);
-      |             ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/shapes.c:12:12: error: call to undeclared function 'scaled'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.c:12:19: warning: incompatible pointer types passing 'void **' to parameter of type 'cinder_class_project_shapes__Shape *' (aka 'struct cinder_class_project_shapes__Shape *') [-Wincompatible-pointer-types]
    12 |     return scaled(&shape, 2.0);
-      |            ^
-2 warnings and 2 errors generated.
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/models.c:4:11: error: member reference type 'int32_t' (aka 'int') is not a pointer
-    4 |     self->radius = radius;
-      |     ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/models.c:8:32: error: member reference type 'int32_t' (aka 'int') is not a pointer
-    8 |     return ((CINDER_PI * self->radius) * self->radius);
-      |                          ~~~~  ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/models.c:8:48: error: member reference type 'int32_t' (aka 'int') is not a pointer
-    8 |     return ((CINDER_PI * self->radius) * self->radius);
-      |                                          ~~~~  ^
-3 errors generated.
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/main.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+      |                   ^~~~~~
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.c:7:86: note: passing argument to parameter 'self' here
+    7 | double cinder_class_project_shapes__Shape_scaled(cinder_class_project_shapes__Shape *self, double factor) {
+      |                                                                                      ^
+4 warnings generated.
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/models.c:1:
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/models.cinder.h:95:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.cinder.h:97:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+   97 | struct cinder_class_project_shapes__Shape {
+      | ^
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/models.c:1:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/models.cinder.h:105:9: warning: 'area' macro redefined [-Wmacro-redefined]
+  105 | #define area cinder_class_project_models__Circle_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.cinder.h:101:9: note: previous definition is here
+  101 | #define area cinder_class_project_shapes__Shape_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/models.c:5:1: warning: non-void function does not return a value [-Wreturn-type]
+    5 | }
+      | ^
+3 warnings generated.
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:1:
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.cinder.h:95:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.cinder.h:97:1: warning: empty struct is a GNU extension [-Wgnu-empty-struct]
+   97 | struct cinder_class_project_shapes__Shape {
+      | ^
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:1:
+In file included from /var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.cinder.h:96:
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/models.cinder.h:105:9: warning: 'area' macro redefined [-Wmacro-redefined]
+  105 | #define area cinder_class_project_models__Circle_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.cinder.h:101:9: note: previous definition is here
+  101 | #define area cinder_class_project_shapes__Shape_area
+      |         ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
     4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/main.c:4:26: error: variable has incomplete type 'cinder_class_project_models__Circle' (aka 'struct cinder_class_project_models__Circle')
-    4 |     __auto_type circle = (cinder_class_project_models__Circle){2.0};
-      |                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/models.cinder.h:97:16: note: forward declaration of 'struct cinder_class_project_models__Circle'
-   97 | typedef struct cinder_class_project_models__Circle cinder_class_project_models__Circle;
-      |                ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/main.c:5:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:5:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
     5 |     ({ printf("%lld", (long long)(cinder_class_project_main__type_name(circle))); printf(": "); printf("%.2f", (double)(cinder_class_project_shapes__measure(circle))); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/main.c:5:35: error: call to undeclared function 'cinder_class_project_main__type_name'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:5:35: error: call to undeclared function 'cinder_class_project_main__type_name'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
     5 |     ({ printf("%lld", (long long)(cinder_class_project_main__type_name(circle))); printf(": "); printf("%.2f", (double)(cinder_class_project_shapes__measure(circle))); printf("\n"); 0; });
       |                                   ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/main.c:5:35: note: did you mean 'cinder_class_project_shapes__measure'?
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/shapes.cinder.h:97:8: note: 'cinder_class_project_shapes__measure' declared here
-   97 | double cinder_class_project_shapes__measure(void * shape);
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:5:35: note: did you mean 'cinder_class_project_shapes__Shape_area'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.cinder.h:100:8: note: 'cinder_class_project_shapes__Shape_area' declared here
+  100 | double cinder_class_project_shapes__Shape_area(cinder_class_project_shapes__Shape *self);
       |        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/class_project-build/cinder_gen/main.c:5:183: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:5:158: error: passing 'cinder_class_project_models__Circle' (aka 'struct cinder_class_project_models__Circle') to parameter of incompatible type 'void *'
+    5 |     ({ printf("%lld", (long long)(cinder_class_project_main__type_name(circle))); printf(": "); printf("%.2f", (double)(cinder_class_project_shapes__measure(circle))); printf("\n"); 0; });
+      |                                                                                                                                                              ^~~~~~
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/shapes.cinder.h:104:52: note: passing argument to parameter 'shape' here
+  104 | double cinder_class_project_shapes__measure(void * shape);
+      |                                                    ^
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/class_project-build/cinder_gen/main.c:5:183: warning: expression result unused [-Wunused-value]
     5 |     ({ printf("%lld", (long long)(cinder_class_project_main__type_name(circle))); printf(": "); printf("%.2f", (double)(cinder_class_project_shapes__measure(circle))); printf("\n"); 0; });
       |                                                                                                                                                                                       ^
-3 warnings and 2 errors generated.
+5 warnings and 2 errors generated.
 
 ### examples/module_project
 gen3 exit=2
@@ -1093,53 +1153,53 @@ elapsed: 0.2s
 
 --- gen3 stderr ---
 toolchain error: C compiler failed
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/support/parser.c:5:104: error: unexpected type name 'cinder_module_demo_model__ParseError': expected expression
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/support/parser.c:5:104: error: unexpected type name 'cinder_module_demo_model__ParseError': expected expression
     5 |     return ((CinderResult_Token_ParseError){ .tag = CinderResult_Token_ParseError_Tag_Err, .data.err = cinder_module_demo_model__ParseError.negative });
       |                                                                                                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/support/parser.c:8:104: error: unexpected type name 'cinder_module_demo_model__ParseError': expected expression
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/support/parser.c:8:104: error: unexpected type name 'cinder_module_demo_model__ParseError': expected expression
     8 |     return ((CinderResult_Token_ParseError){ .tag = CinderResult_Token_ParseError_Tag_Err, .data.err = cinder_module_demo_model__ParseError.too_large });
       |                                                                                                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/support/parser.c:10:102: error: call to undeclared function 'Integer'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/support/parser.c:10:102: error: call to undeclared function 'Integer'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
    10 |     return ((CinderResult_Token_ParseError){ .tag = CinderResult_Token_ParseError_Tag_Ok, .data.ok = Integer(&cinder_module_demo_model__Token, value) });
       |                                                                                                      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/support/parser.c:10:111: error: unexpected type name 'cinder_module_demo_model__Token': expected expression
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/support/parser.c:10:111: error: unexpected type name 'cinder_module_demo_model__Token': expected expression
    10 |     return ((CinderResult_Token_ParseError){ .tag = CinderResult_Token_ParseError_Tag_Ok, .data.ok = Integer(&cinder_module_demo_model__Token, value) });
       |                                                                                                               ^
 4 errors generated.
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:4:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
     4 |     __auto_type token = 0;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:6:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:6:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
     6 |     __auto_type cinder_match_value = token;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:8:99: error: use of undeclared identifier 'parsed'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:8:99: error: use of undeclared identifier 'parsed'
     8 |     return ((CinderResult_i32_ParseError){ .tag = CinderResult_i32_ParseError_Tag_Ok, .data.ok = (parsed + cinder_module_demo_model__offset) });
       |                                                                                                   ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:3:72: warning: unused parameter 'value' [-Wunused-parameter]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:3:72: warning: unused parameter 'value' [-Wunused-parameter]
     3 | CinderResult_i32_ParseError cinder_module_demo_main__increment(int32_t value) {
       |                                                                        ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:17:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    17 |     __auto_type result = cinder_module_demo_main__increment(41);
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:19:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:19:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    19 |     __auto_type cinder_match_value = result;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:21:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:21:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    21 |     __auto_type value = cinder_match_value.data.ok;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:22:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:22:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    22 |     ({ printf("value="); printf("%lld", (long long)(value)); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:25:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:25:5: warning: '__auto_type' is a GNU extension [-Wgnu-auto-type]
    25 |     __auto_type error = cinder_match_value.data.err;
       |     ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:26:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:26:6: warning: use of GNU statement expression extension [-Wgnu-statement-expression]
    26 |     ({ printf("error="); printf("%lld", (long long)((int32_t)(error))); printf("\n"); 0; });
       |      ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:22:76: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:22:76: warning: expression result unused [-Wunused-value]
    22 |     ({ printf("value="); printf("%lld", (long long)(value)); printf("\n"); 0; });
       |                                                                            ^
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.ha6i2npl/module_project-build/cinder_gen/main.c:26:87: warning: expression result unused [-Wunused-value]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.xzdt4k4k/module_project-build/cinder_gen/main.c:26:87: warning: expression result unused [-Wunused-value]
    26 |     ({ printf("error="); printf("%lld", (long long)((int32_t)(error))); printf("\n"); 0; });
       |                                                                                       ^
 11 warnings and 1 error generated.

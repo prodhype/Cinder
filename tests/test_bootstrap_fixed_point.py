@@ -143,6 +143,70 @@ def write_project(tmp_path: Path) -> Path:
     return tmp_path / "cinder.toml"
 
 
+def write_class_foundation_project(tmp_path: Path) -> Path:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        'name = "class_foundation"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "class Counter:\n"
+        "    value: i32\n"
+        "\n"
+        "    def read(self) -> i32:\n"
+        "        return read_counter(self)\n"
+        "\n"
+        "    def read_const(self: &const Counter) -> i32:\n"
+        "        return read_counter(self)\n"
+        "\n"
+        "def read_counter(counter: &const Counter) -> i32:\n"
+        "    return counter.value\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    return tmp_path / "cinder.toml"
+
+
+def assert_compiler_emits_class_foundation(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    manifest = write_class_foundation_project(tmp_path)
+    generated = tmp_path / "generated"
+    emitted = run_gen1(
+        compiler,
+        "emit-project",
+        str(manifest),
+        "-o",
+        str(generated),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+
+    header = (generated / "cinder_gen" / "main.cinder.h").read_text(encoding="utf-8")
+    source = (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    counter = "cinder_class_foundation_main__Counter"
+    assert f"struct {counter} {{\n    int32_t value;\n}};" in header
+    assert f"{counter} *self" in header
+    assert f"const {counter} * self" in header
+    assert "int32_t self" not in header
+    assert f"{counter} *self" in source
+    assert "cinder_class_foundation_main__read_counter(self)" in source
+    assert "cinder_class_foundation_main__read_counter(&self)" not in source
+
+    executable = tmp_path / (
+        "class-foundation.exe" if shutil.which("cl") and not shutil.which("cc") else "class-foundation"
+    )
+    compiled = compile_generated_project(generated, executable)
+    assert compiled.returncode == 0, compiled.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
 def collect_normalized_tree(root: Path) -> dict[str, str]:
     generated_root = root / "cinder_gen"
     assert generated_root.is_dir()
@@ -601,6 +665,21 @@ def test_gen1_emit_project_build_and_run(
 
     ran = run_gen1(gen1_compiler, "run", str(manifest))
     assert ran.returncode == 42
+
+
+def test_gen1_emits_complete_class_with_owner_typed_self(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_emits_class_foundation(gen1_compiler, tmp_path)
+
+
+def test_gen2_emits_complete_class_with_owner_typed_self(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_emits_class_foundation(gen2, tmp_path)
 
 
 def test_gen1_preserves_runtime_generic_specializations(
