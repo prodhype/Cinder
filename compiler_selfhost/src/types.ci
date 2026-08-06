@@ -32,6 +32,9 @@ enum TypeKind:
     LIST
     MAP
     SET
+    MAP_KEYS
+    MAP_VALUES
+    MAP_ITEMS
     FILE
 
 
@@ -104,6 +107,9 @@ struct TypeTable:
     def generic2(self: &TypeTable, kind: TypeKind, start: usize, length: usize, first: TypeId, second: TypeId) -> TypeId:
         return self.add_full(kind, start, length, first, second, 0, 2)
 
+    def map_view(self: &TypeTable, kind: TypeKind, map_type: TypeId) -> TypeId:
+        return self.generic1(kind, 0, 0, map_type)
+
     def tuple_from_args(self: &TypeTable, args: &const List[TypeId]) -> TypeId:
         first = cast[i32](len(self.type_args))
         index: usize = 0
@@ -145,7 +151,7 @@ struct TypeTable:
             return self.same(left_type.inner, right_type.inner)
         if left_type.kind == TypeKind.MAP or left_type.kind == TypeKind.RESULT:
             return self.same(left_type.inner, right_type.inner) and self.same(left_type.second, right_type.second)
-        if left_type.kind == TypeKind.OPTION or left_type.kind == TypeKind.OWNED or left_type.kind == TypeKind.LIST or left_type.kind == TypeKind.SET:
+        if left_type.kind == TypeKind.OPTION or left_type.kind == TypeKind.OWNED or left_type.kind == TypeKind.LIST or left_type.kind == TypeKind.SET or is_map_view_kind(left_type.kind):
             return self.same(left_type.inner, right_type.inner)
         if left_type.kind == TypeKind.TUPLE or left_type.kind == TypeKind.FUNCTION or left_type.kind == TypeKind.CLOSURE:
             if left_type.flags != right_type.flags:
@@ -226,6 +232,12 @@ struct TypeTable:
             return self.generic1(TypeKind.SET, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source))
         if range_text_equals(source, base.value_start, base.value_length, "Map"):
             return self.generic2(TypeKind.MAP, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source), self.resolve_type_node(arena, second_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "MapKeys"):
+            return self.map_view(TypeKind.MAP_KEYS, self.generic2(TypeKind.MAP, 0, 0, self.resolve_type_node(arena, first_arg, source), self.resolve_type_node(arena, second_arg, source)))
+        if range_text_equals(source, base.value_start, base.value_length, "MapValues"):
+            return self.map_view(TypeKind.MAP_VALUES, self.generic2(TypeKind.MAP, 0, 0, self.resolve_type_node(arena, first_arg, source), self.resolve_type_node(arena, second_arg, source)))
+        if range_text_equals(source, base.value_start, base.value_length, "MapItems"):
+            return self.map_view(TypeKind.MAP_ITEMS, self.generic2(TypeKind.MAP, 0, 0, self.resolve_type_node(arena, first_arg, source), self.resolve_type_node(arena, second_arg, source)))
         if range_text_equals(source, base.value_start, base.value_length, "Result"):
             return self.generic2(TypeKind.RESULT, base.value_start, base.value_length, self.resolve_type_node(arena, first_arg, source), self.resolve_type_node(arena, second_arg, source))
         if range_text_equals(source, base.value_start, base.value_length, "Tuple"):
@@ -260,6 +272,10 @@ struct TypeTable:
 
 def missing_type() -> TypeId:
     return TypeId(index=-1)
+
+
+def is_map_view_kind(kind: TypeKind) -> bool:
+    return kind == TypeKind.MAP_KEYS or kind == TypeKind.MAP_VALUES or kind == TypeKind.MAP_ITEMS
 
 
 def new_type_table() -> TypeTable:

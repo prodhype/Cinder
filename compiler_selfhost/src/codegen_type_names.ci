@@ -52,7 +52,7 @@ def emit_module_c_type(
         base = codegen_names.first_child(arena, id)
         if base.index >= 0:
             base_node = arena.nodes[base.index]
-            if is_runtime_generic_name(source, base_node, "List") or is_runtime_generic_name(source, base_node, "Set") or is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "Option") or is_runtime_generic_name(source, base_node, "Result") or is_runtime_generic_name(source, base_node, "Owned") or is_runtime_generic_name(source, base_node, "Tuple"):
+            if is_runtime_generic_name(source, base_node, "List") or is_runtime_generic_name(source, base_node, "Set") or is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "MapKeys") or is_runtime_generic_name(source, base_node, "MapValues") or is_runtime_generic_name(source, base_node, "MapItems") or is_runtime_generic_name(source, base_node, "Option") or is_runtime_generic_name(source, base_node, "Result") or is_runtime_generic_name(source, base_node, "Owned") or is_runtime_generic_name(source, base_node, "Tuple"):
                 emit_specialized_type_name(arena, id, source, builder, prefix, project_name, imports, registry)
                 return
         emit_module_nominal_type(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports)
@@ -462,6 +462,20 @@ def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: typ
         emit_semantic_readable_type_name(table, record.inner, source, builder)
         builder.append("_")
         emit_semantic_readable_type_name(table, record.second, source, builder)
+    elif types.is_map_view_kind(record.kind):
+        if record.kind == types.TypeKind.MAP_KEYS:
+            builder.append("CinderMapKeys_")
+        elif record.kind == types.TypeKind.MAP_VALUES:
+            builder.append("CinderMapValues_")
+        else:
+            builder.append("CinderMapItems_")
+        if record.inner.index >= 0 and record.inner.index < cast[i32](len(table.types)):
+            map_record = table.types[record.inner.index]
+            emit_semantic_readable_type_name(table, map_record.inner, source, builder)
+            builder.append("_")
+            emit_semantic_readable_type_name(table, map_record.second, source, builder)
+        else:
+            builder.append("error_error")
     elif record.kind == types.TypeKind.TUPLE:
         builder.append("CinderTuple")
         offset: i32 = 0
@@ -535,7 +549,7 @@ def emit_semantic_c_type(
         emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.ARRAY:
         builder.append("CinderList")
-    elif record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.RESULT or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.TUPLE or record.kind == types.TypeKind.CLOSURE:
+    elif record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.MAP or types.is_map_view_kind(record.kind) or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.RESULT or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.TUPLE or record.kind == types.TypeKind.CLOSURE:
         emit_semantic_specialized_type_name(table, type_id, source, builder, registry)
     elif record.name_length > 0:
         name = source[record.name_start:record.name_start + record.name_length]

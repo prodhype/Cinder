@@ -1,5 +1,11 @@
 # Cinder
 
+```
+Progress:       66.6%
+[####################----------]
+start                          done
+```
+
 Cinder is a systems language with static types.
 Its syntax is near to Python.
 The compiler writes readable C11.

@@ -89,6 +89,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             return
     elif node.kind == syntax.SyntaxKind.ASSIGN_STMT:
         declare_assignment_target_if_missing(checker, arena, id, source, current_scope)
+        validate_set_compound_assignment(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.FOR_EACH_STMT:
         declare_for_each_target_if_missing(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.IF_STMT or node.kind == syntax.SyntaxKind.WHILE_STMT:
@@ -165,16 +166,76 @@ def declare_for_each_target_if_missing(checker: &checker_core.Checker, arena: &c
         return
     if checker.symbols.find_in_scope(source, current_scope, target_node.value_start, target_node.value_length).index >= 0:
         return
+    local_type = for_each_element_type(checker, arena, id, source, current_scope)
+    if local_type.index < 0 or local_type.index == types.type_error().index:
+        local_type = types.type_i32()
     symbol = checker.symbols.add_symbol(
         symbols.SymbolKind.LOCAL,
         target_node.value_start,
         target_node.value_length,
-        types.type_i32(),
+        local_type,
         target,
         current_scope,
         0,
     )
     checker.model.record_declaration_symbol(target, symbol)
+    checker.model.record_expr_type(target, local_type)
+
+
+def for_each_element_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
+    iterable = for_each_iterable(arena, id)
+    if iterable.index < 0:
+        return types.type_error()
+    iterable_type = checker_types.strip_collection_indirection(checker.type_table, checker_types.infer_expression_type(checker, arena, iterable, source, current_scope))
+    if iterable_type.index < 0 or iterable_type.index >= cast[i32](len(checker.type_table.types)):
+        return types.type_error()
+    record = checker.type_table.types[iterable_type.index]
+    if record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        return record.inner
+    if record.kind == types.TypeKind.MAP:
+        return record.inner
+    if types.is_map_view_kind(record.kind):
+        if record.inner.index < 0 or record.inner.index >= cast[i32](len(checker.type_table.types)):
+            return types.type_error()
+        map_record = checker.type_table.types[record.inner.index]
+        if map_record.kind != types.TypeKind.MAP:
+            return types.type_error()
+        if record.kind == types.TypeKind.MAP_KEYS:
+            return map_record.inner
+        if record.kind == types.TypeKind.MAP_VALUES:
+            return map_record.second
+        tuple_args: List[types.TypeId] = []
+        tuple_args.append(map_record.inner)
+        tuple_args.append(map_record.second)
+        return checker.type_table.tuple_from_args(tuple_args)
+    return types.type_error()
+
+
+def for_each_iterable(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind != syntax.SyntaxKind.NAME and not checker_core.is_type_kind(child.kind) and child.kind != syntax.SyntaxKind.BLOCK:
+            return child_id
+    return syntax.missing_node()
+
+
+def validate_set_compound_assignment(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    operator = arena.nodes[id.index].flags
+    if operator != cast[i32](token.TokenKind.PIPE_ASSIGN) and operator != cast[i32](token.TokenKind.AMPERSAND_ASSIGN) and operator != cast[i32](token.TokenKind.MINUS_ASSIGN) and operator != cast[i32](token.TokenKind.CARET_ASSIGN):
+        return
+    target = checker_core.first_child(arena, id)
+    value = checker_core.second_child(arena, id)
+    if target.index < 0 or value.index < 0:
+        return
+    target_type = checker_types.strip_collection_indirection(checker.type_table, checker_types.infer_expression_type(checker, arena, target, source, current_scope))
+    if not checker_types.semantic_type_is_kind(checker.type_table, target_type, types.TypeKind.SET):
+        return
+    value_type = checker_types.strip_collection_indirection(checker.type_table, checker_types.infer_expression_type(checker, arena, value, source, current_scope))
+    if not checker.type_table.same(target_type, value_type):
+        value_node = arena.nodes[value.index]
+        checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
 
 
 def declare_assignment_target_if_missing(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:

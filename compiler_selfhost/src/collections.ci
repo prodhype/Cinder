@@ -27,6 +27,16 @@ def map_type(table: &types.TypeTable, key: TypeId, value: TypeId) -> TypeId:
     return table.generic2(types.TypeKind.MAP, 0, 0, key, value)
 
 
+def map_view_type(table: &types.TypeTable, map_type_id: TypeId, name: &const String) -> TypeId:
+    if text_equals(name, "keys"):
+        return table.map_view(types.TypeKind.MAP_KEYS, map_type_id)
+    if text_equals(name, "values"):
+        return table.map_view(types.TypeKind.MAP_VALUES, map_type_id)
+    if text_equals(name, "items"):
+        return table.map_view(types.TypeKind.MAP_ITEMS, map_type_id)
+    return types.type_error()
+
+
 def method_is_mutating(kind: CollectionKind, name: &const String) -> bool:
     if kind == CollectionKind.STRING:
         return text_equals(name, "append") or text_equals(name, "append_char") or text_equals(name, "reserve") or text_equals(name, "clear")
@@ -35,7 +45,7 @@ def method_is_mutating(kind: CollectionKind, name: &const String) -> bool:
     if kind == CollectionKind.MAP:
         return text_equals(name, "pop") or text_equals(name, "clear") or text_equals(name, "update")
     if kind == CollectionKind.SET:
-        return text_equals(name, "add") or text_equals(name, "remove") or text_equals(name, "clear")
+        return text_equals(name, "add") or text_equals(name, "discard") or text_equals(name, "remove") or text_equals(name, "pop") or text_equals(name, "clear") or text_equals(name, "update")
     return false
 
 
