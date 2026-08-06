@@ -839,6 +839,247 @@ def test_gen2_emits_complete_class_with_owner_typed_self(
     assert_compiler_emits_class_foundation(gen2, tmp_path)
 
 
+def assert_compiler_monomorphizes_user_generics(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    emitted = run_gen1(compiler, "emit-c", str(ROOT / "examples" / "generics.ci"))
+    assert emitted.returncode == 0, emitted.stderr
+    c_source = emitted.stdout
+    for name in ("__Box_i32", "__Tagged_i32", "__identity_i32", "__Writer_i32"):
+        assert name in c_source
+    assert "int32_t value;" in c_source
+    assert "int32_t item" in c_source
+    assert "CinderVTable_" in c_source
+    assert "Writer_i32" in c_source
+    assert "__T value" not in c_source
+    assert "__T item" not in c_source
+    assert c_source.count("__identity_i32(int32_t value)") == 2
+
+    executable = tmp_path / (
+        "generics.exe" if shutil.which("cl") and not shutil.which("cc") else "generics"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(ROOT / "examples" / "generics.ci"),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    result = subprocess.run(
+        [str(executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.stdout == "40\n"
+    assert result.returncode == 42
+
+
+def test_gen1_monomorphizes_user_generics(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_monomorphizes_user_generics(gen1_compiler, tmp_path)
+
+
+def test_gen2_monomorphizes_user_generics(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_monomorphizes_user_generics(gen2, tmp_path)
+
+
+def test_gen1_reports_specialization_only_type_error(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "bad_generic.ci"
+    source.write_text(
+        "struct Marker:\n"
+        "    value: i32\n"
+        "\n"
+        "def add_one[T](value: T) -> T:\n"
+        "    return value + 1\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    marker = Marker(value=1)\n"
+        "    add_one[Marker](marker)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    checked = run_gen1(gen1_compiler, "check", str(source))
+    assert checked.returncode == 1
+    assert "E 107" in checked.stdout
+
+
+def test_gen1_emits_explicit_and_multiple_user_specializations(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "multiple_generics.ci"
+    source.write_text(
+        "struct Box[T]:\n"
+        "    value: T\n"
+        "    def get(self: &const Box[T]) -> T:\n"
+        "        return self.value\n"
+        "\n"
+        "def identity[T](value: T) -> T:\n"
+        "    return value\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    integer: Box[i32] = Box(value=1)\n"
+        "    decimal: Box[f64] = Box(value=2.5)\n"
+        "    return identity[i32](integer.get()) + cast[i32](decimal.get()) - 2\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "__Box_i32" in emitted.stdout
+    assert "__Box_f64" in emitted.stdout
+    assert "__Box_i32_get" in emitted.stdout
+    assert "__Box_f64_get" in emitted.stdout
+    assert "__identity_i32" in emitted.stdout
+    assert "__identity_i32(int32_t value)" in emitted.stdout
+    assert "#define get" not in emitted.stdout
+    assert "__T value" not in emitted.stdout
+
+
+def test_gen1_substitutes_nested_user_generic_types(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "nested_generics.ci"
+    source.write_text(
+        "struct Box[T]:\n"
+        "    value: T\n"
+        "\n"
+        "struct Wrapper[T]:\n"
+        "    inner: Box[T]\n"
+        "\n"
+        "def echo[T](value: T) -> T:\n"
+        "    return value\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    box: Box[i32] = Box(value=1)\n"
+        "    wrapped: Wrapper[i32] = Wrapper(inner=box)\n"
+        "    echoed: Box[i32] = echo[Box[i32]](wrapped.inner)\n"
+        "    return echoed.value\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "__Wrapper_i32" in emitted.stdout
+    assert "__Box_i32 inner;" in emitted.stdout
+    assert "__echo_Box_i32" in emitted.stdout
+    assert "__T" not in emitted.stdout
+
+    executable = tmp_path / (
+        "nested-generics.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "nested-generics"
+    )
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "nested-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 1
+
+
+def test_gen1_validates_specialized_abstract_override(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "bad_generic_override.ci"
+    source.write_text(
+        "abstract class Writer[T]:\n"
+        "    @abstractmethod\n"
+        "    def write(self, item: T) -> void:\n"
+        "        pass\n"
+        "\n"
+        "class BadWriter(Writer[i32]):\n"
+        "    def write(self, item: f64) -> void:\n"
+        "        pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    checked = run_gen1(gen1_compiler, "check", str(source))
+    assert checked.returncode == 1
+    assert "E 179" in checked.stdout
+
+
+def test_gen1_monomorphizes_anti_example_box(
+    gen1_compiler: Path,
+) -> None:
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-c",
+        str(ROOT / "examples" / "anti_examples.ci"),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    assert "__Box_i32" in emitted.stdout
+    assert "int32_t value;" in emitted.stdout
+    assert "__T value" not in emitted.stdout
+
+
+@pytest.mark.parametrize(
+    ("name", "source_text", "code"),
+    [
+        (
+            "bare_generic",
+            "struct Box[T]:\n"
+            "    value: T\n\n"
+            "def main() -> i32:\n"
+            "    value: Box = Box(value=1)\n"
+            "    return 0\n",
+            352,
+        ),
+        (
+            "generic_arity",
+            "struct Box[T]:\n"
+            "    value: T\n\n"
+            "def main() -> i32:\n"
+            "    value: Box[i32, i32] = Box(value=1)\n"
+            "    return 0\n",
+            352,
+        ),
+        (
+            "generic_inference",
+            "def identity[T](value: T) -> T:\n"
+            "    return value\n\n"
+            "def main() -> i32:\n"
+            "    identity()\n"
+            "    return 0\n",
+            355,
+        ),
+    ],
+)
+def test_gen1_reports_user_generic_diagnostics(
+    gen1_compiler: Path,
+    tmp_path: Path,
+    name: str,
+    source_text: str,
+    code: int,
+) -> None:
+    source = tmp_path / f"{name}.ci"
+    source.write_text(source_text, encoding="utf-8")
+    checked = run_gen1(gen1_compiler, "check", str(source))
+    assert checked.returncode == 1
+    assert f"E {code}" in checked.stdout
+
+
 def test_gen1_preserves_runtime_generic_specializations(
     gen1_compiler: Path,
     tmp_path: Path,

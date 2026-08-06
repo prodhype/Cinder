@@ -96,6 +96,7 @@ def emit_module_call(
                 else:
                     builder.append(prefix[0:len(prefix)])
                     builder.append(name)
+                codegen_context.append_call_specialization_suffix(context, id, builder)
         if callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
             if emit_variant_constructor(arena, id, callee, source, builder, prefix, project_name, imports, context, state, emit_nested):
                 return
@@ -359,12 +360,19 @@ def emit_variant_constructor(
     case_id = codegen_names.find_variant_case_declaration(context.type_arena, variant_id, context.type_source, &case_name)
     if case_id.index < 0:
         return false
+    variant_builder = StringBuilder()
+    expected_type = context.expected_type
+    if expected_type.index >= 0 and arena.nodes[expected_type.index].kind == SyntaxKind.TYPE_GENERIC:
+        expected_base = codegen_names.first_child(arena, expected_type)
+        if expected_base.index >= 0 and codegen_names.range_text_equals(source, arena.nodes[expected_base.index].value_start, arena.nodes[expected_base.index].value_length, owner_name[0:len(owner_name)]):
+            codegen_context.emit_context_c_type(arena, expected_type, source, &variant_builder, prefix, project_name, imports, context)
+    variant_name = variant_builder.finish()
+    if len(variant_name) == 0:
+        variant_name = prefix[0:len(prefix)] + owner_name[0:len(owner_name)]
     builder.append("((")
-    builder.append(prefix[0:len(prefix)])
-    builder.append(owner_name[0:len(owner_name)])
+    builder.append(variant_name[0:len(variant_name)])
     builder.append("){ .tag = ")
-    builder.append(prefix[0:len(prefix)])
-    builder.append(owner_name[0:len(owner_name)])
+    builder.append(variant_name[0:len(variant_name)])
     builder.append("_")
     builder.append(case_name[0:len(case_name)])
     case_node = codegen_names.arena_node_at(context.type_arena, case_id)
@@ -411,8 +419,17 @@ def emit_nominal_constructor(
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
     imported = codegen_names.find_import_member(imports, name)
+    specialized_builder = StringBuilder()
+    expected_type = context.expected_type
+    if expected_type.index >= 0 and arena.nodes[expected_type.index].kind == SyntaxKind.TYPE_GENERIC:
+        expected_base = codegen_names.first_child(arena, expected_type)
+        if expected_base.index >= 0 and codegen_names.range_text_equals(source, arena.nodes[expected_base.index].value_start, arena.nodes[expected_base.index].value_length, name[0:len(name)]):
+            codegen_context.emit_context_c_type(arena, expected_type, source, &specialized_builder, prefix, project_name, imports, context)
+    specialized_name = specialized_builder.finish()
     builder.append("(")
-    if len(imported.module_name) > 0 and len(imported.member) > 0:
+    if len(specialized_name) > 0:
+        builder.append(specialized_name[0:len(specialized_name)])
+    elif len(imported.module_name) > 0 and len(imported.member) > 0:
         builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
         builder.append(imported.member)
     else:

@@ -368,14 +368,52 @@ def emit_attribute_call(
         emit_nested(state, receiver)
         builder.append(")")
         return
-    if member_name == "write":
+    if member_name == "write" and receiver_is_file(arena, receiver, source, context):
         emit_file_write_call(arena, receiver, codegen_names.first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context, state, emit_nested)
         return
+    receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+    type_arena: &const SyntaxArena = context.type_arena
+    if receiver_type.index >= 0 and type_arena.nodes[receiver_type.index].kind == SyntaxKind.TYPE_GENERIC:
+        codegen_context.emit_context_c_type(type_arena, receiver_type, context.type_source, builder, prefix, project_name, imports, context)
+        builder.append("_")
     codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
     builder.append("(")
     emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
     builder.append(")")
+
+
+def receiver_is_file(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    source: &const String,
+    context: &codegen_context.ModuleCodegenContext,
+) -> bool:
+    type_arena: &const SyntaxArena = context.type_arena
+    type_table: &const types.TypeTable = context.type_table
+    receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+    if codegen_type_names.context_type_name_equals(type_arena, receiver_type, context.type_source, "File"):
+        return true
+    if receiver_type.index >= 0:
+        receiver_type_node = type_arena.nodes[receiver_type.index]
+        if receiver_type_node.kind == SyntaxKind.EXPR_CALL:
+            callee = codegen_names.first_child(type_arena, receiver_type)
+            if callee.index >= 0:
+                callee_node = type_arena.nodes[callee.index]
+                if callee_node.kind == SyntaxKind.EXPR_NAME:
+                    if codegen_names.range_text_equals(context.type_source, callee_node.value_start, callee_node.value_length, "open"):
+                        return true
+                    if codegen_names.is_uppercase_start(context.type_source, callee_node.value_start):
+                        return false
+        elif receiver_type_node.kind == SyntaxKind.TYPE_NAME:
+            return false
+    semantic_type = codegen_context.context_semantic_type(context, receiver)
+    if semantic_type.index >= 0 and semantic_type.index < cast[i32](len(type_table.types)):
+        if codegen_type_names.semantic_type_is_kind(type_table, semantic_type, types.TypeKind.FILE):
+            return true
+        if types.is_nominal_kind(type_table.types[semantic_type.index].kind):
+            return false
+    return true
 
 
 def access_expression_creates_owned_set(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
@@ -636,7 +674,7 @@ def emit_module_index(
     if element_type.index >= 0:
         receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
         builder.append("((")
-        codegen_type_names.emit_module_c_type(arena, element_type, source, builder, prefix, project_name, imports, context.specialization_names)
+        codegen_context.emit_context_c_type(arena, element_type, source, builder, prefix, project_name, imports, context)
         builder.append(" *)")
         emit_nested(state, receiver)
         if codegen_context.context_type_is_pointer_like(arena, receiver_type):
@@ -856,7 +894,7 @@ def emit_module_slice(
                 builder.append(".length")
         builder.append(", sizeof(")
         if element_type.index >= 0:
-            codegen_type_names.emit_module_c_type(context.type_arena, element_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+            codegen_context.emit_context_c_type(context.type_arena, element_type, context.type_source, builder, prefix, project_name, imports, context)
         else:
             builder.append("char")
         builder.append("))")
@@ -993,7 +1031,7 @@ def emit_option_expression_name(
         builder.append("CinderOption_String")
         return true
     if codegen_context.context_type_is_runtime_generic(context.type_arena, expression_type, context.type_source, "Option"):
-        codegen_type_names.emit_module_c_type(context.type_arena, expression_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        codegen_context.emit_context_c_type(context.type_arena, expression_type, context.type_source, builder, prefix, project_name, imports, context)
         return true
     semantic_type = codegen_context.context_semantic_type(context, expression)
     if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.OPTION):

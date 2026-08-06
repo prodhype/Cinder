@@ -27,6 +27,9 @@ STDIN = {
     "fizzbuzz.ci": "15\n",
     "towers_of_hanoi.ci": "3\n",
 }
+EXPECTED_EXIT = {
+    "generics.ci": 42,
+}
 
 _CLANG_GCC_DIAGNOSTIC = re.compile(
     r"^(?P<file>.+?):(?P<line>\d+):(?P<column>\d+):\s+"
@@ -73,10 +76,16 @@ def log(msg: str) -> None:
         fh.write(line + "\n")
 
 
-def classify(exit_code: int, stdout: str, stderr: str, timed_out: bool) -> str:
+def classify(
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    timed_out: bool,
+    expected_exit: int = 0,
+) -> str:
     if timed_out:
         return "gen3_timeout"
-    if exit_code == 0:
+    if exit_code == expected_exit:
         return "ok"
     blob = (stdout + "\n" + stderr).lower()
     if any(x in blob for x in ("toolchain", "undefined reference", "linker", "ld:", "collect2", "clang: error", "fatal error:")):
@@ -118,6 +127,7 @@ def run_one(
     out_bin = tmp_path / f"{name}.bin"
     build_dir = tmp_path / f"{name}-build"
     stdin_data = STDIN.get(name if target.is_file() else "", "")
+    expected_exit = EXPECTED_EXIT.get(name if target.is_file() else "", 0)
     cmd = [str(gen3), "run", str(target), "-o", str(out_bin), "--build-dir", str(build_dir)]
     timed_out = False
     stdout = ""
@@ -149,8 +159,8 @@ def run_one(
             stdout, stderr = "", ""
         exit_code = -9
     elapsed = time.time() - t0
-    kind = classify(exit_code, stdout or "", stderr or "", timed_out)
-    status = "OK" if (not timed_out and exit_code == 0) else "FAIL"
+    kind = classify(exit_code, stdout or "", stderr or "", timed_out, expected_exit)
+    status = "OK" if (not timed_out and exit_code == expected_exit) else "FAIL"
     first_c_error = extract_first_c_error(
         target_name=rel,
         target_path=target,

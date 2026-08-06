@@ -55,7 +55,7 @@ def emit_module_c_type(
             if is_runtime_generic_name(source, base_node, "List") or is_runtime_generic_name(source, base_node, "Set") or is_runtime_generic_name(source, base_node, "Map") or is_runtime_generic_name(source, base_node, "MapKeys") or is_runtime_generic_name(source, base_node, "MapValues") or is_runtime_generic_name(source, base_node, "MapItems") or is_runtime_generic_name(source, base_node, "Option") or is_runtime_generic_name(source, base_node, "Result") or is_runtime_generic_name(source, base_node, "Owned") or is_runtime_generic_name(source, base_node, "Tuple"):
                 emit_specialized_type_name(arena, id, source, builder, prefix, project_name, imports, registry)
                 return
-        emit_module_nominal_type(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports)
+        emit_user_specialized_nominal_type(arena, id, source, builder, prefix, project_name, imports)
         return
     if node.kind == SyntaxKind.TYPE_SLICE:
         builder.append("CinderList")
@@ -74,6 +74,25 @@ def emit_module_c_type(
         emit_module_nominal_type(arena, id, source, builder, prefix, project_name, imports)
         return
     builder.append("int32_t")
+
+
+def emit_user_specialized_nominal_type(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    node = arena.nodes[id.index]
+    emit_module_nominal_type(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports)
+    offset: i32 = 1
+    while offset < node.child_count:
+        builder.append("_")
+        emit_readable_specialized_type_name(arena, arena.children[node.first_child + offset], source, builder)
+        offset += 1
+
 
 def is_runtime_generic_name(source: &const String, node: &const syntax.SyntaxNode, expected: String) -> bool:
     return codegen_names.range_text_equals(source, node.value_start, node.value_length, expected)
@@ -495,7 +514,14 @@ def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: typ
         emit_semantic_readable_type_name(table, record.inner, source, builder)
         builder.append("_end")
     elif record.name_length > 0:
+        if record.flags > 0:
+            builder.append("Cinder")
         append_semantic_readable_nominal(builder, source, record.name_start, record.name_length)
+        offset: i32 = 0
+        while offset < record.flags:
+            builder.append("_")
+            emit_semantic_readable_type_name(table, table.type_args[cast[usize](record.extra + offset)], source, builder)
+            offset += 1
     else:
         builder.append("value")
 
@@ -562,6 +588,11 @@ def emit_semantic_c_type(
         else:
             builder.append(prefix[0:len(prefix)])
             builder.append(name)
+        offset: i32 = 0
+        while offset < record.flags:
+            builder.append("_")
+            emit_semantic_readable_type_name(table, table.type_args[cast[usize](record.extra + offset)], source, builder)
+            offset += 1
     else:
         builder.append("int32_t")
 
