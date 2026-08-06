@@ -237,7 +237,8 @@ def emit_attribute_call(
         return
     if member_name == "append":
         arg = codegen_names.first_call_argument(arena, call_id)
-        if receiver_is_builder(arena, receiver, source):
+        receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+        if codegen_type_names.context_type_name_equals(context.type_arena, receiver_type, context.type_source, "StringBuilder"):
             emit_builder_append_call(arena, receiver, arg, source, builder, prefix, project_name, imports, context, state, emit_nested)
         else:
             builder.append("cinder_selfhost_list_append_value(")
@@ -836,19 +837,6 @@ def emit_remaining_call_arguments(
                 codegen_context.mark_context_expression_moved(arena, context, arg, source)
             emitted_argument = true
             argument_index += 1
-
-def receiver_is_builder(arena: &const SyntaxArena, receiver: NodeId, source: &const String) -> bool:
-    if receiver.index < 0:
-        return false
-    node = arena.nodes[receiver.index]
-    if node.kind == SyntaxKind.EXPR_NAME:
-        return codegen_names.range_text_equals(source, node.value_start, node.value_length, "builder")
-    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
-        member = codegen_names.second_child(arena, receiver)
-        if member.index >= 0:
-            member_node = arena.nodes[member.index]
-            return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "builder")
-    return false
 
 def emit_c_string_argument(
     arena: &const SyntaxArena,

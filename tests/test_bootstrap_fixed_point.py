@@ -195,6 +195,39 @@ def test_gen1_build_emits_top_level_globals(
     assert executed.returncode == 42
 
 
+def test_gen1_dispatches_append_by_receiver_type(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "append_dispatch.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        "    text_parts = StringBuilder()\n"
+        '    text_parts.append("alpha")\n'
+        "    text = text_parts.finish()\n"
+        "    builder: List[i32] = []\n"
+        "    builder.append(42)\n"
+        "    return cast[i32](len(text)) + builder[0] - 47\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert (
+        'cinder_selfhost_string_builder_append_cstr(&text_parts, "alpha")'
+        in emitted.stdout
+    )
+    assert "cinder_selfhost_list_append_value(&builder, (42))" in emitted.stdout
+    assert "cinder_selfhost_list_append_value(&text_parts" not in emitted.stdout
+    assert "cinder_selfhost_string_builder_append_value(&builder" not in emitted.stdout
+
+    output = tmp_path / "append-dispatch"
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
 def test_gen1_emits_bitwise_and_shift_compound_assigns(
     gen1_compiler: Path,
     tmp_path: Path,
@@ -1347,6 +1380,26 @@ def test_gen1_builds_compiler_sources_into_gen2(
     assert not (build_dir / "cinder_selfhost_gen2.c").exists()
 
     assert not (build_dir / "cinder_selfhost_replay.c").exists()
+
+    specializations = (
+        build_dir / "cinder_gen" / "codegen_specializations.c"
+    ).read_text(encoding="utf-8")
+    assert "cinder_selfhost_string_builder_append_value(&phase_builder," in specializations
+    assert (
+        'cinder_selfhost_string_builder_append_cstr(&phase_builder, "_helpers")'
+        in specializations
+    )
+    assert (
+        'cinder_selfhost_string_builder_append_cstr(&phase_builder, "_layout")'
+        in specializations
+    )
+    assert (
+        'cinder_selfhost_string_builder_append_cstr(&option_builder, "CinderOption_")'
+        in specializations
+    )
+    assert "cinder_selfhost_string_builder_append_value(&option_builder," in specializations
+    assert "cinder_selfhost_list_append_value(&phase_builder" not in specializations
+    assert "cinder_selfhost_list_append_value(&option_builder" not in specializations
 
     source = write_single_source(tmp_path)
     checked = run_gen1_without_python_on_path(gen2, tmp_path, "check", str(source))
