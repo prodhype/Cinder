@@ -45,7 +45,7 @@ def ownership_kind(table: &const types.TypeTable, type_id: TypeId) -> OwnershipK
     if type_id.index < 0:
         return OwnershipKind.COPYABLE
     record = table.types[type_id.index]
-    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.DYN:
+    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.DYN or types.is_map_view_kind(record.kind):
         return OwnershipKind.BORROWED
     if type_needs_drop_record(table, record):
         return OwnershipKind.MOVE_ONLY

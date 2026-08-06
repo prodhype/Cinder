@@ -15,6 +15,9 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     if callee.index < 0:
         return
     callee_node = arena.nodes[callee.index]
+    if callee_node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        validate_collection_method_call(checker, arena, id, callee, source, current_scope)
+        return
     if callee_node.kind != syntax.SyntaxKind.EXPR_NAME:
         return
     if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "closure"):
@@ -238,14 +241,34 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         result = infer_set_literal_type(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_TUPLE:
         result = infer_tuple_literal_type(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_INDEX:
+        receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope))
+        result = indexed_element_type(checker.type_table, arena, checker_core.second_child(arena, id), source, receiver_type)
+    elif node.kind == syntax.SyntaxKind.EXPR_SLICE or node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_UNARY:
         result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_BINARY:
         operator = node.flags
-        if operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN):
+        if operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):
+            if operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):
+                infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+                infer_expression_type(checker, arena, checker_core.second_child(arena, id), source, current_scope)
             result = types.type_bool()
         else:
-            result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+            left = checker_core.first_child(arena, id)
+            right = checker_core.second_child(arena, id)
+            left_type = infer_expression_type(checker, arena, left, source, current_scope)
+            right_type = infer_expression_type(checker, arena, right, source, current_scope)
+            if is_set_algebra_operator(operator) and semantic_type_is_kind(checker.type_table, left_type, types.TypeKind.SET):
+                if not checker.type_table.same(left_type, right_type):
+                    right_node = arena.nodes[right.index]
+                    checker_core.emit_error(checker, 107, right_node.start, right_node.length, right_node.line, right_node.column)
+                    result = types.type_error()
+                else:
+                    result = left_type
+            else:
+                result = left_type
     checker.model.record_expr_type(id, result)
     return result
 
@@ -288,6 +311,109 @@ def infer_tuple_literal_type(checker: &checker_core.Checker, arena: &const synta
     return checker.type_table.tuple_from_args(args)
 
 
+def indexed_element_type(table: &const types.TypeTable, arena: &const syntax.SyntaxArena, index: NodeId, source: &const String, receiver_type: types.TypeId) -> types.TypeId:
+    if receiver_type.index < 0 or receiver_type.index >= cast[i32](len(table.types)):
+        return types.type_error()
+    record = table.types[receiver_type.index]
+    if record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.SLICE:
+        return record.inner
+    if record.kind == types.TypeKind.MAP:
+        return record.second
+    if record.kind != types.TypeKind.TUPLE or index.index < 0:
+        return receiver_type
+    index_node = arena.nodes[index.index]
+    if index_node.kind != syntax.SyntaxKind.EXPR_LITERAL:
+        return types.type_error()
+    offset = parse_decimal_index(source, index_node.value_start, index_node.value_length)
+    if offset < 0 or offset >= record.flags:
+        return types.type_error()
+    return table.type_args[cast[usize](record.extra + offset)]
+
+
+def parse_decimal_index(source: &const String, start: usize, length: usize) -> i32:
+    result: i32 = 0
+    for offset in range(0, length):
+        byte = source.byte_at(start + offset)
+        if byte < 48 or byte > 57:
+            return -1
+        result = result * 10 + cast[i32](byte - 48)
+    return result
+
+
+def validate_collection_method_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callee_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    receiver = checker_core.first_child(arena, callee_id)
+    member = checker_core.second_child(arena, callee_id)
+    if receiver.index < 0 or member.index < 0:
+        return
+    receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, receiver, source, current_scope))
+    if receiver_type.index < 0 or receiver_type.index >= cast[i32](len(checker.type_table.types)):
+        return
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    receiver_record = checker.type_table.types[receiver_type.index]
+    if receiver_record.kind == types.TypeKind.MAP and (collections.text_equals(&member_name, "keys") or collections.text_equals(&member_name, "values") or collections.text_equals(&member_name, "items")):
+        validate_collection_method_argument_count(checker, arena, call_id, 0)
+        checker.model.record_expr_type(call_id, collections.map_view_type(checker.type_table, receiver_type, &member_name))
+        return
+    if receiver_record.kind == types.TypeKind.MAP and collections.text_equals(&member_name, "get"):
+        validate_collection_method_argument_count(checker, arena, call_id, 1)
+        argument = call_argument_value(arena, call_id, 0)
+        if argument.index >= 0:
+            infer_expression_type(checker, arena, argument, source, current_scope)
+        checker.model.record_expr_type(call_id, checker.type_table.generic1(types.TypeKind.OPTION, 0, 0, receiver_record.second))
+        return
+    if receiver_record.kind == types.TypeKind.SET:
+        is_algebra = collections.text_equals(&member_name, "union") or collections.text_equals(&member_name, "intersection") or collections.text_equals(&member_name, "difference") or collections.text_equals(&member_name, "symmetric_difference")
+        is_update = collections.text_equals(&member_name, "update")
+        if is_algebra or is_update:
+            validate_collection_method_argument_count(checker, arena, call_id, 1)
+            argument = call_argument_value(arena, call_id, 0)
+            if argument.index >= 0:
+                argument_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, argument, source, current_scope))
+                if not checker.type_table.same(receiver_type, argument_type):
+                    argument_node = arena.nodes[argument.index]
+                    checker_core.emit_error(checker, 107, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+            if is_algebra:
+                checker.model.record_expr_type(call_id, receiver_type)
+            else:
+                checker.model.record_expr_type(call_id, types.type_void())
+
+
+def validate_collection_method_argument_count(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, call_id: NodeId, expected: i32) -> void:
+    call = arena.nodes[call_id.index]
+    actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    if actual < expected:
+        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+    elif actual > expected:
+        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+
+
+def strip_collection_indirection(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        kind = table.types[current.index].kind
+        if kind != types.TypeKind.CONST and kind != types.TypeKind.REFERENCE and kind != types.TypeKind.POINTER:
+            break
+        current = table.types[current.index].inner
+    return current
+
+
+def semantic_type_is_kind(table: &const types.TypeTable, type_id: types.TypeId, kind: types.TypeKind) -> bool:
+    value_type = strip_collection_indirection(table, type_id)
+    return value_type.index >= 0 and value_type.index < cast[i32](len(table.types)) and table.types[value_type.index].kind == kind
+
+
+def is_set_algebra_operator(operator: i32) -> bool:
+    return operator == cast[i32](token.TokenKind.PIPE) or operator == cast[i32](token.TokenKind.AMPERSAND) or operator == cast[i32](token.TokenKind.MINUS) or operator == cast[i32](token.TokenKind.CARET)
+
+
 def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId) -> bool:
     if checker.type_table.same(expected, actual):
         return true
@@ -297,6 +423,8 @@ def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, act
     actual_kind = checker.type_table.types[actual.index].kind
     if expected_kind == types.TypeKind.ERROR or actual_kind == types.TypeKind.ERROR:
         return true
+    if types.is_map_view_kind(expected_kind) or types.is_map_view_kind(actual_kind):
+        return checker.type_table.same(expected, actual)
     if is_numeric_kind(expected_kind) and is_numeric_kind(actual_kind):
         return true
     if expected_kind == types.TypeKind.BOOL and is_scalar_kind(actual_kind):

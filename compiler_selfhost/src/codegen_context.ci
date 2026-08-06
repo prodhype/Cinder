@@ -18,6 +18,11 @@ struct ModuleFieldTypeBinding:
     field: String
     type_id: NodeId
 
+struct ModuleTupleItemBinding:
+    name: String
+    first_is_string: bool
+    second_is_string: bool
+
 struct ModuleCodegenContext:
     root: NodeId
     type_arena: &const SyntaxArena
@@ -27,6 +32,9 @@ struct ModuleCodegenContext:
     type_table: &const types.TypeTable
     local_types: List[ModuleNameTypeBinding]
     pointer_names: List[String]
+    tuple_items: List[ModuleTupleItemBinding]
+    semantic_string_names: List[String]
+    iterator_guard_names: List[String]
     field_types: List[ModuleFieldTypeBinding]
     current_owner: String
     local_start: usize
@@ -59,6 +67,9 @@ def make_module_codegen_context(
 ) -> ModuleCodegenContext:
     local_types: List[ModuleNameTypeBinding] = []
     pointer_names: List[String] = []
+    tuple_items: List[ModuleTupleItemBinding] = []
+    semantic_string_names: List[String] = []
+    iterator_guard_names: List[String] = []
     field_types: List[ModuleFieldTypeBinding] = []
     deferred_expressions: List[NodeId] = []
     with_resources: List[String] = []
@@ -73,6 +84,9 @@ def make_module_codegen_context(
         type_table=type_table,
         local_types=local_types,
         pointer_names=pointer_names,
+        tuple_items=tuple_items,
+        semantic_string_names=semantic_string_names,
+        iterator_guard_names=iterator_guard_names,
         field_types=field_types,
         current_owner="",
         local_start=0,
@@ -283,6 +297,49 @@ def context_has_name(context: &ModuleCodegenContext, source: &const String, star
             return true
     return false
 
+def register_context_tuple_item_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize, first_is_string: bool, second_is_string: bool) -> void:
+    context.tuple_items.append(ModuleTupleItemBinding(name=source[start:start + length], first_is_string=first_is_string, second_is_string=second_is_string))
+
+
+def context_name_is_tuple_item(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> bool:
+    name = source[start:start + length]
+    index = len(context.tuple_items)
+    while index > 0:
+        index -= 1
+        if context.tuple_items[index].name == name[0:len(name)]:
+            return true
+    return false
+
+
+def context_tuple_item_is_string(context: &const ModuleCodegenContext, source: &const String, receiver_start: usize, receiver_length: usize, item_start: usize, item_length: usize) -> bool:
+    name = source[receiver_start:receiver_start + receiver_length]
+    index = len(context.tuple_items)
+    while index > 0:
+        index -= 1
+        binding: &const ModuleTupleItemBinding = &context.tuple_items[index]
+        if binding.name == name[0:len(name)]:
+            if codegen_names.range_text_equals(source, item_start, item_length, "0"):
+                return binding.first_is_string
+            if codegen_names.range_text_equals(source, item_start, item_length, "1"):
+                return binding.second_is_string
+            return false
+    return false
+
+
+def register_context_semantic_string_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
+    context.semantic_string_names.append(source[start:start + length])
+
+
+def context_name_is_semantic_string(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> bool:
+    name = source[start:start + length]
+    index = len(context.semantic_string_names)
+    while index > 0:
+        index -= 1
+        if context.semantic_string_names[index] == name[0:len(name)]:
+            return true
+    return false
+
+
 def context_name_is_pointer(arena: &const SyntaxArena, context: &ModuleCodegenContext, name: &const String) -> bool:
     pointer_index = len(context.pointer_names)
     while pointer_index > context.pointer_start:
@@ -456,7 +513,13 @@ def emit_context_expression_specialization_name(
 ) -> bool:
     syntax_type = context_expression_type(arena, context, id, source)
     if context_type_is_runtime_generic(context.type_arena, syntax_type, context.type_source, generic_name):
-        codegen_type_names.emit_module_c_type(context.type_arena, syntax_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        runtime_type = syntax_type
+        while runtime_type.index >= 0:
+            runtime_kind = codegen_type_names.type_node_kind(context.type_arena, runtime_type)
+            if runtime_kind != SyntaxKind.TYPE_REFERENCE and runtime_kind != SyntaxKind.TYPE_POINTER and runtime_kind != SyntaxKind.TYPE_CONST:
+                break
+            runtime_type = codegen_names.first_child(context.type_arena, runtime_type)
+        codegen_type_names.emit_module_c_type(context.type_arena, runtime_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
         return true
     semantic_type = context_semantic_type(context, syntax_type)
     if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, semantic_kind):
@@ -774,6 +837,8 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenC
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
         return true
+    if node.kind == SyntaxKind.EXPR_NAME and context_name_is_semantic_string(context, source, node.value_start, node.value_length):
+        return true
     if node.kind == SyntaxKind.EXPR_SLICE:
         receiver = codegen_names.first_child(arena, id)
         receiver_type = context_expression_type(arena, context, receiver, source)
@@ -784,6 +849,12 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenC
         return expression_may_be_string(arena, context, codegen_names.first_child(arena, id), source) or expression_may_be_string(arena, context, codegen_names.second_child(arena, id), source)
     if node.kind == SyntaxKind.EXPR_INDEX:
         receiver = codegen_names.first_child(arena, id)
+        item = codegen_names.second_child(arena, id)
+        if receiver.index >= 0 and item.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_NAME and arena.nodes[item.index].kind == SyntaxKind.EXPR_LITERAL:
+            receiver_node = arena.nodes[receiver.index]
+            item_node = arena.nodes[item.index]
+            if context_tuple_item_is_string(context, source, receiver_node.value_start, receiver_node.value_length, item_node.value_start, item_node.value_length):
+                return true
         if receiver.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_ATTRIBUTE:
             member = codegen_names.second_child(arena, receiver)
             if member.index >= 0:

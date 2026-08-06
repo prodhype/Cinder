@@ -1825,3 +1825,169 @@ def test_gen1_and_gen2_emit_same_compiler_project_tree(
     assert gen2_emitted.stdout.strip() == str(gen2_generated.resolve())
 
     assert collect_normalized_tree(gen2_generated) == collect_normalized_tree(gen1_generated)
+
+
+def test_gen1_map_views_and_set_algebra_end_to_end(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "collection_parity.ci"
+    source.write_text(
+        "def view_contains(words: &const Map[String, i32], wanted: String) -> bool:\n"
+        "    for key in words.keys():\n"
+        "        if key == wanted:\n"
+        "            return true\n"
+        "    return false\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    words: Map[String, i32] = {"one": 1, "two": 2}\n'
+        "    keys: MapKeys[String, i32] = words.keys()\n"
+        "    values: MapValues[String, i32] = words.values()\n"
+        "    items: MapItems[String, i32] = words.items()\n"
+        '    words["three"] = 3\n'
+        "    if len(keys) != 3 or len(values) != 3 or len(items) != 3:\n"
+        "        return 1\n"
+        '    if "three" not in keys or 3 not in values or ("two", 2) not in items:\n'
+        "        return 2\n"
+        "    key_count: i32 = 0\n"
+        "    for key in keys:\n"
+        "        key_count += 1\n"
+        "    value_total: i32 = 0\n"
+        "    for value in values:\n"
+        "        value_total += value\n"
+        "    item_total: i32 = 0\n"
+        "    for item in items:\n"
+        "        item_total += item[1]\n"
+        "    if key_count != 3 or value_total != 6 or item_total != 6:\n"
+        "        return 3\n"
+        '    if not view_contains(&words, "two"):\n'
+        "        return 10\n"
+        '    words["four"] = 4\n'
+        '    if len(keys) != 4 or "four" not in keys:\n'
+        "        return 11\n"
+        "    left = {1, 2, 3}\n"
+        "    right = {3, 4}\n"
+        "    united = left | right\n"
+        "    common = left & right\n"
+        "    difference = left - right\n"
+        "    symmetric = left ^ right\n"
+        "    if len(united) != 4 or 4 not in united or len(common) != 1 or 3 not in common:\n"
+        "        return 4\n"
+        "    if len(difference) != 2 or 1 not in difference or len(symmetric) != 3 or 4 not in symmetric:\n"
+        "        return 5\n"
+        "    method_union = left.union(right)\n"
+        "    method_intersection = left.intersection(right)\n"
+        "    method_difference = left.difference(right)\n"
+        "    method_symmetric = left.symmetric_difference(right)\n"
+        "    if len(method_union) != 4 or len(method_intersection) != 1:\n"
+        "        return 6\n"
+        "    if len(method_difference) != 2 or len(method_symmetric) != 3:\n"
+        "        return 7\n"
+        "    left |= right\n"
+        "    left &= {2, 3, 4}\n"
+        "    left -= {3}\n"
+        "    left ^= {5}\n"
+        "    left.update({6, 7})\n"
+        "    if len(left) != 5 or 2 not in left or 4 not in left or 5 not in left or 6 not in left or 7 not in left:\n"
+        "        return 8\n"
+        '    string_left: Set[String] = {"a", "b"}\n'
+        '    string_right: Set[String] = {"b", "c"}\n'
+        "    string_union = string_left | string_right\n"
+        '    if len(string_union) != 3 or "a" not in string_union or "c" not in string_union:\n'
+        "        return 9\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "struct CinderMapKeys_String_i32" in emitted.stdout
+    assert "struct CinderMapValues_String_i32" in emitted.stdout
+    assert "struct CinderMapItems_String_i32" in emitted.stdout
+    assert "CinderSet_i32_union" in emitted.stdout
+    assert "CinderSet_i32_intersection" in emitted.stdout
+    assert "CinderSet_i32_difference" in emitted.stdout
+    assert "CinderSet_i32_symmetric_difference" in emitted.stdout
+    assert "CinderSet_i32_update" in emitted.stdout
+
+    output = tmp_path / "collection-parity"
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr
+
+
+def test_gen1_map_views_cross_module_boundaries(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        'name = "map_view_project"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "views.ci").write_text(
+        "def keys(values: &const Map[i32, String]) -> MapKeys[i32, String]:\n"
+        "    return values.keys()\n"
+        "\n"
+        "def values(values: &const Map[i32, String]) -> MapValues[i32, String]:\n"
+        "    return values.values()\n"
+        "\n"
+        "def items(values: &const Map[i32, String]) -> MapItems[i32, String]:\n"
+        "    return values.items()\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import views\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    words: Map[i32, String] = {1: "one", 2: "two"}\n'
+        "    keys: MapKeys[i32, String] = views.keys(&words)\n"
+        "    values: MapValues[i32, String] = views.values(&words)\n"
+        "    items: MapItems[i32, String] = views.items(&words)\n"
+        '    words[3] = "three"\n'
+        "    if len(keys) != 3 or 3 not in keys:\n"
+        "        return 1\n"
+        '    if "three" not in values or (2, "two") not in items:\n'
+        "        return 2\n"
+        "    seen: i32 = 0\n"
+        "    for item in items:\n"
+        '        if item[0] == 2 and item[1] == "two":\n'
+        "            seen = 1\n"
+        "    if seen != 1:\n"
+        "        return 3\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    generated = tmp_path / "generated"
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    header = (generated / "cinder_gen" / "views.cinder.h").read_text(encoding="utf-8")
+    assert "CinderMapKeys_i32_String" in header
+    assert "CinderMapValues_i32_String" in header
+    assert "CinderMapItems_i32_String" in header
+
+    output = tmp_path / "map-view-project"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr

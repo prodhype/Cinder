@@ -81,7 +81,7 @@ def collect_module_specialization_names(
     codegen_names.record_specialization_name(registry, canonical_builder.finish(), readable_builder.finish())
 
 def is_runtime_specialization_name(source: &const String, node: &const syntax.SyntaxNode) -> bool:
-    return codegen_type_names.is_runtime_generic_name(source, node, "List") or codegen_type_names.is_runtime_generic_name(source, node, "Set") or codegen_type_names.is_runtime_generic_name(source, node, "Map") or codegen_type_names.is_runtime_generic_name(source, node, "Option") or codegen_type_names.is_runtime_generic_name(source, node, "Result") or codegen_type_names.is_runtime_generic_name(source, node, "Owned") or codegen_type_names.is_runtime_generic_name(source, node, "Tuple")
+    return codegen_type_names.is_runtime_generic_name(source, node, "List") or codegen_type_names.is_runtime_generic_name(source, node, "Set") or codegen_type_names.is_runtime_generic_name(source, node, "Map") or codegen_type_names.is_runtime_generic_name(source, node, "MapKeys") or codegen_type_names.is_runtime_generic_name(source, node, "MapValues") or codegen_type_names.is_runtime_generic_name(source, node, "MapItems") or codegen_type_names.is_runtime_generic_name(source, node, "Option") or codegen_type_names.is_runtime_generic_name(source, node, "Result") or codegen_type_names.is_runtime_generic_name(source, node, "Owned") or codegen_type_names.is_runtime_generic_name(source, node, "Tuple")
 
 def emit_semantic_type_specializations(
     table: &const types.TypeTable,
@@ -116,7 +116,7 @@ def semantic_specialization_is_inferred_expression(
     for node in semantic_nodes:
         if node.type_id.index == type_id.index and node.syntax.index >= 0:
             kind = arena.nodes[node.syntax.index].kind
-            if kind == SyntaxKind.EXPR_LIST or kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_SET or kind == SyntaxKind.EXPR_TUPLE:
+            if kind == SyntaxKind.EXPR_LIST or kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_SET or kind == SyntaxKind.EXPR_TUPLE or kind == SyntaxKind.NAME:
                 return true
     return false
 
@@ -138,6 +138,7 @@ def emit_semantic_type_specialization(
         record.kind != types.TypeKind.LIST
         and record.kind != types.TypeKind.MAP
         and record.kind != types.TypeKind.SET
+        and not types.is_map_view_kind(record.kind)
         and record.kind != types.TypeKind.TUPLE
         and record.kind != types.TypeKind.CLOSURE
     ):
@@ -191,6 +192,8 @@ def emit_semantic_type_specialization(
         emit_semantic_list_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.MAP:
         emit_semantic_map_specialization(table, record.inner, record.second, source, builder, &name, prefix, project_name, imports, registry)
+    elif types.is_map_view_kind(record.kind):
+        emit_semantic_map_view_specialization(table, record.inner, source, builder, &name, registry)
     elif record.kind == types.TypeKind.TUPLE:
         emit_semantic_tuple_specialization(table, type_id, source, builder, &name, prefix, project_name, imports, registry)
     else:
@@ -313,6 +316,7 @@ def emit_module_type_specializations(
     is_list = false
     is_set = false
     is_map = false
+    is_map_view = false
     is_owned = false
     is_option = false
     is_tuple = false
@@ -327,11 +331,12 @@ def emit_module_type_specializations(
         is_list = codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
         is_set = codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
         is_map = codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+        is_map_view = codegen_type_names.is_runtime_generic_name(source, &base_node, "MapKeys") or codegen_type_names.is_runtime_generic_name(source, &base_node, "MapValues") or codegen_type_names.is_runtime_generic_name(source, &base_node, "MapItems")
         is_owned = codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned")
         is_option = codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
         is_tuple = codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
         is_result = codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
-        if not is_list and not is_set and not is_map and not is_option and not is_result and not is_owned and not is_tuple:
+        if not is_list and not is_set and not is_map and not is_map_view and not is_option and not is_result and not is_owned and not is_tuple:
             return
     name_builder = StringBuilder()
     codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
@@ -390,6 +395,8 @@ def emit_module_type_specializations(
         emit_module_option_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     elif is_tuple:
         emit_module_tuple_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    elif is_map_view:
+        emit_module_map_view_specialization(arena, id, source, builder, &name)
     else:
         emit_module_owned_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     builder.append("#endif\n")
@@ -1472,6 +1479,99 @@ def emit_semantic_set_specialization(
     emit_set_specialization_body(builder, name, &element_info)
 
 
+def map_view_name(map_name: &const String, prefix: String) -> String:
+    builder = StringBuilder()
+    builder.append(prefix[0:len(prefix)])
+    if len(map_name) > 10:
+        builder.append(map_name[10:len(map_name)])
+    return builder.finish()
+
+
+def emit_map_view_layout(builder: &StringBuilder, map_name: &const String, view_name: &const String) -> void:
+    builder.append("#ifndef CINDER_DECLARED_")
+    builder.append(view_name[0:len(view_name)])
+    builder.append("\n#define CINDER_DECLARED_")
+    builder.append(view_name[0:len(view_name)])
+    builder.append("\ntypedef struct ")
+    builder.append(view_name[0:len(view_name)])
+    builder.append(" ")
+    builder.append(view_name[0:len(view_name)])
+    builder.append(";\n#endif\n#ifndef CINDER_SPECIALIZED_")
+    builder.append(view_name[0:len(view_name)])
+    builder.append("\n#define CINDER_SPECIALIZED_")
+    builder.append(view_name[0:len(view_name)])
+    builder.append("\nstruct ")
+    builder.append(view_name[0:len(view_name)])
+    builder.append(" { const ")
+    builder.append(map_name[0:len(map_name)])
+    builder.append(" *map; };\n#endif\n")
+
+
+def emit_map_view_layouts(builder: &StringBuilder, map_name: &const String) -> void:
+    keys_name = map_view_name(map_name, "CinderMapKeys_")
+    values_name = map_view_name(map_name, "CinderMapValues_")
+    items_name = map_view_name(map_name, "CinderMapItems_")
+    emit_map_view_layout(builder, map_name, &keys_name)
+    emit_map_view_layout(builder, map_name, &values_name)
+    emit_map_view_layout(builder, map_name, &items_name)
+
+
+def emit_semantic_map_view_specialization(
+    table: &const types.TypeTable,
+    map_type: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    map_name_builder = StringBuilder()
+    codegen_type_names.emit_semantic_specialized_type_name(table, map_type, source, &map_name_builder, registry)
+    map_name = map_name_builder.finish()
+    builder.append("#ifndef CINDER_DECLARED_")
+    builder.append(map_name[0:len(map_name)])
+    builder.append("\n#define CINDER_DECLARED_")
+    builder.append(map_name[0:len(map_name)])
+    builder.append("\ntypedef struct ")
+    builder.append(map_name[0:len(map_name)])
+    builder.append(" ")
+    builder.append(map_name[0:len(map_name)])
+    builder.append(";\n#endif\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" { const ")
+    builder.append(map_name[0:len(map_name)])
+    builder.append(" *map; };\n")
+
+
+def emit_module_map_view_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+) -> void:
+    node = arena.nodes[id.index]
+    map_name_builder = StringBuilder()
+    map_name_builder.append("CinderMap_")
+    if node.child_count > 2:
+        codegen_type_names.emit_readable_specialized_type_name(arena, arena.children[node.first_child + 1], source, &map_name_builder)
+        map_name_builder.append("_")
+        codegen_type_names.emit_readable_specialized_type_name(arena, arena.children[node.first_child + 2], source, &map_name_builder)
+    map_name = map_name_builder.finish()
+    builder.append("#ifndef CINDER_DECLARED_")
+    builder.append(map_name[0:len(map_name)])
+    builder.append("\n#define CINDER_DECLARED_")
+    builder.append(map_name[0:len(map_name)])
+    builder.append("\ntypedef struct ")
+    builder.append(map_name[0:len(map_name)])
+    builder.append(" ")
+    builder.append(map_name[0:len(map_name)])
+    builder.append(";\n#endif\nstruct ")
+    builder.append(name[0:len(name)])
+    builder.append(" { const ")
+    builder.append(map_name[0:len(map_name)])
+    builder.append(" *map; };\n")
+
+
 def emit_semantic_map_specialization(
     table: &const types.TypeTable,
     key_type: types.TypeId,
@@ -1597,6 +1697,7 @@ def emit_map_specialization_layout(builder: &StringBuilder, name: &const String)
     builder.append(" {\n    ")
     builder.append(name[0:len(name)])
     builder.append("_Entry *entries;\n    size_t entries_length;\n    size_t entries_capacity;\n    size_t *buckets;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
+    emit_map_view_layouts(builder, name)
 
 
 def emit_collection_clear_helper(builder: &StringBuilder, name: &const String, collection_name: String) -> void:
@@ -1749,6 +1850,8 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append(name[0:len(name)])
     builder.append("_add(&result, value);\n    }\n    return result;\n}\n")
 
+    emit_set_algebra_helpers(builder, name, element_info)
+
     builder.append("static inline void ")
     builder.append(name[0:len(name)])
     builder.append("_drop(")
@@ -1760,6 +1863,126 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
         builder.append("    }\n")
     builder.append("    free(self->entries);\n    self->entries = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
     emit_collection_clear_helper(builder, name, "Set")
+
+
+def emit_set_algebra_helpers(builder: &StringBuilder, name: &const String, element_info: &const ManagedTypeInfo) -> void:
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_update(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *other) {\n    if (self == NULL || other == NULL || self == other) return;\n    for (size_t index = 0; index < other->capacity; index += 1) {\n        if (other->entries[index].state != 1) continue;\n        ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value = ")
+    if element_info.is_c_string:
+        builder.append("other->entries[index].value")
+    else:
+        emit_clone_expression(builder, element_info, "other->entries[index].value")
+    builder.append(";\n        (void)")
+    builder.append(name[0:len(name)])
+    builder.append("_add(self, value);\n    }\n}\n")
+
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_union(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *left, const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *right) {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append(" result = ")
+    builder.append(name[0:len(name)])
+    builder.append("_clone(left);\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_update(&result, right);\n    return result;\n}\n")
+
+    emit_set_filtered_algebra_helper(builder, name, element_info, "intersection", false)
+    emit_set_filtered_algebra_helper(builder, name, element_info, "difference", true)
+
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_symmetric_difference(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *left, const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *right) {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append(" result = {0};\n    if (left != NULL) ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(&result, left->length + (right == NULL ? 0 : right->length));\n")
+    emit_set_filtered_copy_loop(builder, name, element_info, "left", "right", true)
+    emit_set_filtered_copy_loop(builder, name, element_info, "right", "left", true)
+    builder.append("    return result;\n}\n")
+
+
+def emit_set_filtered_algebra_helper(
+    builder: &StringBuilder,
+    name: &const String,
+    element_info: &const ManagedTypeInfo,
+    operation: String,
+    negate_contains: bool,
+) -> void:
+    builder.append("static inline ")
+    builder.append(name[0:len(name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_")
+    builder.append(operation[0:len(operation)])
+    builder.append("(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *left, const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *right) {\n    ")
+    builder.append(name[0:len(name)])
+    builder.append(" result = {0};\n    if (left != NULL) ")
+    builder.append(name[0:len(name)])
+    builder.append("_reserve(&result, left->length);\n")
+    emit_set_filtered_copy_loop(builder, name, element_info, "left", "right", negate_contains)
+    builder.append("    return result;\n}\n")
+
+
+def emit_set_filtered_copy_loop(
+    builder: &StringBuilder,
+    name: &const String,
+    element_info: &const ManagedTypeInfo,
+    source_name: String,
+    other_name: String,
+    negate_contains: bool,
+) -> void:
+    builder.append("    if (")
+    builder.append(source_name[0:len(source_name)])
+    builder.append(" != NULL) for (size_t index = 0; index < ")
+    builder.append(source_name[0:len(source_name)])
+    builder.append("->capacity; index += 1) {\n        if (")
+    builder.append(source_name[0:len(source_name)])
+    builder.append("->entries[index].state != 1) continue;\n        if (")
+    if negate_contains:
+        builder.append("!")
+    builder.append(name[0:len(name)])
+    builder.append("_contains(")
+    builder.append(other_name[0:len(other_name)])
+    builder.append(", ")
+    builder.append(source_name[0:len(source_name)])
+    builder.append("->entries[index].value)) {\n            ")
+    builder.append(element_info.c_type[0:len(element_info.c_type)])
+    builder.append(" value = ")
+    if element_info.is_c_string:
+        builder.append(source_name[0:len(source_name)])
+        builder.append("->entries[index].value")
+    else:
+        expression_builder = StringBuilder()
+        expression_builder.append(source_name[0:len(source_name)])
+        expression_builder.append("->entries[index].value")
+        expression = expression_builder.finish()
+        emit_clone_expression(builder, element_info, expression)
+    builder.append(";\n            (void)")
+    builder.append(name[0:len(name)])
+    builder.append("_add(&result, value);\n        }\n    }\n")
 
 
 def emit_map_specialization_body(
@@ -1914,6 +2137,20 @@ def emit_map_specialization_body(
     builder.append(";\n}\n")
 
     builder.append("static inline ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" *")
+    builder.append(name[0:len(name)])
+    builder.append("_at_mut(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key) {\n    ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    builder.append(" *value = ")
+    builder.append(name[0:len(name)])
+    builder.append("_lookup_mut(self, key);\n    if (value == NULL) cinder_panic(\"missing map key\");\n    return value;\n}\n")
+
+    builder.append("static inline ")
     builder.append(option_name[0:len(option_name)])
     builder.append(" ")
     builder.append(name[0:len(name)])
@@ -1940,6 +2177,8 @@ def emit_map_specialization_body(
     builder.append("_len(const ")
     builder.append(name[0:len(name)])
     builder.append(" *self) { return self == NULL ? 0 : self->length; }\n")
+
+    emit_map_view_helpers(builder, name, key_info, value_info)
 
     builder.append("static inline ")
     builder.append(name[0:len(name)])
@@ -1979,3 +2218,86 @@ def emit_map_specialization_body(
         builder.append("    }\n")
     builder.append("    free(self->entries);\n    free(self->buckets);\n    self->entries = NULL;\n    self->entries_length = 0;\n    self->entries_capacity = 0;\n    self->buckets = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
     emit_collection_clear_helper(builder, name, "Map")
+
+
+def emit_map_view_helpers(
+    builder: &StringBuilder,
+    name: &const String,
+    key_info: &const ManagedTypeInfo,
+    value_info: &const ManagedTypeInfo,
+) -> void:
+    keys_name = map_view_name(name, "CinderMapKeys_")
+    values_name = map_view_name(name, "CinderMapValues_")
+    items_name = map_view_name(name, "CinderMapItems_")
+
+    builder.append("static inline ")
+    builder.append(keys_name[0:len(keys_name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_keys(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { ")
+    builder.append(keys_name[0:len(keys_name)])
+    builder.append(" result = { .map = self }; return result; }\n")
+    builder.append("static inline ")
+    builder.append(values_name[0:len(values_name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_values(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { ")
+    builder.append(values_name[0:len(values_name)])
+    builder.append(" result = { .map = self }; return result; }\n")
+    builder.append("static inline ")
+    builder.append(items_name[0:len(items_name)])
+    builder.append(" ")
+    builder.append(name[0:len(name)])
+    builder.append("_items(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) { ")
+    builder.append(items_name[0:len(items_name)])
+    builder.append(" result = { .map = self }; return result; }\n")
+
+    builder.append("static inline bool ")
+    builder.append(name[0:len(name)])
+    builder.append("_keys_contains(const ")
+    builder.append(keys_name[0:len(keys_name)])
+    builder.append(" *view, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key) { return view != NULL && view->map != NULL && ")
+    builder.append(name[0:len(name)])
+    builder.append("_find_bucket(view->map, key, ")
+    builder.append(name[0:len(name)])
+    builder.append("_hash(key)) != SIZE_MAX; }\n")
+
+    builder.append("static inline bool ")
+    builder.append(name[0:len(name)])
+    builder.append("_values_contains(const ")
+    builder.append(values_name[0:len(values_name)])
+    builder.append(" *view, ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    if value_info.hash_kind == ManagedHashKind.UNSUPPORTED:
+        builder.append(" value) { (void)view; (void)value; return false; }\n")
+    else:
+        builder.append(" value) {\n    if (view == NULL || view->map == NULL) return false;\n    for (size_t index = 0; index < view->map->entries_length; index += 1) {\n        if (!view->map->entries[index].occupied) continue;\n        if (")
+        emit_equal_expression(builder, value_info, "view->map->entries[index].value", "value")
+        builder.append(") return true;\n    }\n    return false;\n}\n")
+
+    builder.append("static inline bool ")
+    builder.append(name[0:len(name)])
+    builder.append("_items_contains(const ")
+    builder.append(items_name[0:len(items_name)])
+    builder.append(" *view, ")
+    builder.append(key_info.c_type[0:len(key_info.c_type)])
+    builder.append(" key, ")
+    builder.append(value_info.c_type[0:len(value_info.c_type)])
+    if value_info.hash_kind == ManagedHashKind.UNSUPPORTED:
+        builder.append(" value) { (void)view; (void)key; (void)value; return false; }\n")
+    else:
+        builder.append(" value) {\n    if (view == NULL || view->map == NULL) return false;\n    const ")
+        builder.append(value_info.c_type[0:len(value_info.c_type)])
+        builder.append(" *found = ")
+        builder.append(name[0:len(name)])
+        builder.append("_lookup(view->map, key);\n    return found != NULL && ")
+        emit_equal_expression(builder, value_info, "*found", "value")
+        builder.append(";\n}\n")

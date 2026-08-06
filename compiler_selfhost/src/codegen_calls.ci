@@ -120,6 +120,15 @@ def emit_module_call(
                 emitted_argument = true
                 argument_index += 1
                 continue
+            if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_SLICE and codegen_context.context_expression_is_collection(arena, context, arg, source, "List", types.TypeKind.LIST):
+                builder.append("({ __auto_type cinder_slice_list = ")
+                if not codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+                    builder.append("&")
+                emit_nested(state, arg)
+                builder.append("; (CinderList){ .data = (void *)cinder_slice_list->data, .length = cinder_slice_list->length, .capacity = 0 }; })")
+                emitted_argument = true
+                argument_index += 1
+                continue
             borrow_argument = codegen_context.should_borrow_named_argument(arena, context, arg, source)
             if not borrow_argument:
                 borrow_argument = codegen_context.should_borrow_for_callee(arena, context, callee, arg, source, argument_index)
@@ -472,6 +481,13 @@ def emit_len_call(
         length = codegen_specializations.array_length_node(context.type_arena, arg_type)
         codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
         return
+    table: &const types.TypeTable = context.type_table
+    semantic_arg_type = len_strip_semantic_indirection(table, codegen_context.context_semantic_type(context, arg))
+    if semantic_arg_type.index >= 0 and semantic_arg_type.index < cast[i32](len(table.types)) and types.is_map_view_kind(table.types[semantic_arg_type.index].kind):
+        builder.append("({ __auto_type cinder_view = ")
+        emit_nested(state, arg)
+        builder.append("; cinder_view.map == NULL ? 0 : cinder_view.map->length; })")
+        return
     if codegen_context.context_expression_is_collection(arena, context, arg, source, "Map", types.TypeKind.MAP):
         codegen_context.emit_context_expression_specialization_name(arena, context, arg, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
         builder.append("_len(")
@@ -493,6 +509,16 @@ def emit_len_call(
         builder.append("->length")
     else:
         builder.append(".length")
+
+
+def len_strip_semantic_indirection(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        kind = table.types[current.index].kind
+        if kind != types.TypeKind.CONST and kind != types.TypeKind.REFERENCE and kind != types.TypeKind.POINTER:
+            break
+        current = table.types[current.index].inner
+    return current
 
 def emit_sort_call(
     arena: &const SyntaxArena,

@@ -244,6 +244,10 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         codegen_names.append_source(builder, source, node.value_start, node.value_length)
         return
     if node.kind == SyntaxKind.EXPR_BINARY:
+        if emit_set_algebra_binary(arena, id, source, builder, prefix, project_name, imports, context, state):
+            return
+        if emit_collection_membership_binary(arena, id, source, builder, prefix, project_name, imports, context, state):
+            return
         if node.flags == cast[i32](token.TokenKind.AND):
             builder.append("(")
             emit_module_expression_state(state, codegen_names.first_child(arena, id))
@@ -341,6 +345,187 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         codegen_access.emit_module_attribute(arena, id, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
         return
     codegen_names.append_source(builder, source, node.start, node.length)
+
+def emit_set_algebra_binary(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+) -> bool:
+    operator = arena.nodes[id.index].flags
+    operation = ""
+    if operator == cast[i32](token.TokenKind.PIPE):
+        operation = "union"
+    elif operator == cast[i32](token.TokenKind.AMPERSAND):
+        operation = "intersection"
+    elif operator == cast[i32](token.TokenKind.MINUS):
+        operation = "difference"
+    elif operator == cast[i32](token.TokenKind.CARET):
+        operation = "symmetric_difference"
+    else:
+        return false
+    left = codegen_names.first_child(arena, id)
+    right = codegen_names.second_child(arena, id)
+    if not codegen_context.context_expression_is_collection(arena, context, left, source, "Set", types.TypeKind.SET):
+        return false
+    name_builder = StringBuilder()
+    if not codegen_context.emit_context_expression_specialization_name(arena, context, left, source, &name_builder, prefix, project_name, imports, "Set", types.TypeKind.SET):
+        return false
+    name = name_builder.finish()
+    builder.append("({ ")
+    builder.append(name[0:len(name)])
+    builder.append(" cinder_left = ")
+    emit_module_expression_state(state, left)
+    builder.append("; ")
+    builder.append(name[0:len(name)])
+    builder.append(" cinder_right = ")
+    emit_module_expression_state(state, right)
+    builder.append("; ")
+    builder.append(name[0:len(name)])
+    builder.append(" cinder_result = ")
+    builder.append(name[0:len(name)])
+    builder.append("_")
+    builder.append(operation[0:len(operation)])
+    builder.append("(&cinder_left, &cinder_right); ")
+    if expression_creates_owned_set(arena, left, source):
+        builder.append(name[0:len(name)])
+        builder.append("_drop(&cinder_left); ")
+    if expression_creates_owned_set(arena, right, source):
+        builder.append(name[0:len(name)])
+        builder.append("_drop(&cinder_right); ")
+    builder.append("cinder_result; })")
+    return true
+
+
+def emit_collection_membership_binary(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+) -> bool:
+    operator = arena.nodes[id.index].flags
+    if operator != cast[i32](token.TokenKind.IN) and operator != cast[i32](token.TokenKind.NOT):
+        return false
+    member = codegen_names.first_child(arena, id)
+    collection = codegen_names.second_child(arena, id)
+    table: &const types.TypeTable = context.type_table
+    collection_type = strip_semantic_indirection(table, codegen_context.context_semantic_type(context, collection))
+    if collection_type.index < 0 or collection_type.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[collection_type.index]
+    is_not_in = operator == cast[i32](token.TokenKind.NOT)
+    if record.kind == types.TypeKind.SET or record.kind == types.TypeKind.MAP:
+        name_builder = StringBuilder()
+        codegen_type_names.emit_semantic_specialized_type_name(table, collection_type, context.type_source, &name_builder, context.specialization_names)
+        name = name_builder.finish()
+        builder.append("({ ")
+        builder.append(name[0:len(name)])
+        builder.append(" cinder_collection = ")
+        emit_module_expression_state(state, collection)
+        builder.append("; bool cinder_contains = ")
+        if record.kind == types.TypeKind.SET:
+            builder.append(name[0:len(name)])
+            builder.append("_contains(&cinder_collection, ")
+            emit_module_expression_state(state, member)
+            builder.append(")")
+        else:
+            builder.append(name[0:len(name)])
+            builder.append("_lookup(&cinder_collection, ")
+            emit_module_expression_state(state, member)
+            builder.append(") != NULL")
+        builder.append("; ")
+        if expression_creates_owned_collection(arena, collection, source):
+            builder.append(name[0:len(name)])
+            builder.append("_drop(&cinder_collection); ")
+        if is_not_in:
+            builder.append("!")
+        builder.append("cinder_contains; })")
+        return true
+    if not types.is_map_view_kind(record.kind):
+        return false
+    if record.inner.index < 0 or record.inner.index >= cast[i32](len(table.types)):
+        return false
+    map_name_builder = StringBuilder()
+    codegen_type_names.emit_semantic_specialized_type_name(table, record.inner, context.type_source, &map_name_builder, context.specialization_names)
+    map_name = map_name_builder.finish()
+    builder.append("({ __auto_type cinder_view = ")
+    emit_module_expression_state(state, collection)
+    builder.append("; ")
+    if record.kind == types.TypeKind.MAP_ITEMS:
+        builder.append("__auto_type cinder_item = ")
+        emit_module_expression_state(state, member)
+        builder.append("; ")
+    if is_not_in:
+        builder.append("!")
+    builder.append(map_name[0:len(map_name)])
+    if record.kind == types.TypeKind.MAP_KEYS:
+        builder.append("_keys_contains(&cinder_view, ")
+        emit_module_expression_state(state, member)
+    elif record.kind == types.TypeKind.MAP_VALUES:
+        builder.append("_values_contains(&cinder_view, ")
+        emit_module_expression_state(state, member)
+    else:
+        builder.append("_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1")
+    builder.append("); })")
+    return true
+
+
+def strip_semantic_indirection(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        kind = table.types[current.index].kind
+        if kind != types.TypeKind.CONST and kind != types.TypeKind.REFERENCE and kind != types.TypeKind.POINTER:
+            break
+        current = table.types[current.index].inner
+    return current
+
+
+def expression_creates_owned_set(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_SET or node.kind == SyntaxKind.EXPR_BINARY:
+        return true
+    if node.kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0:
+        return true
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return true
+    member = codegen_names.second_child(arena, callee)
+    if member.index < 0:
+        return true
+    member_node = arena.nodes[member.index]
+    return (
+        codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "union")
+        or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "intersection")
+        or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "difference")
+        or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "symmetric_difference")
+    )
+
+
+def expression_creates_owned_collection(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    kind = arena.nodes[id.index].kind
+    if kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_SET:
+        return true
+    if kind == SyntaxKind.EXPR_BINARY or kind == SyntaxKind.EXPR_CALL:
+        return expression_creates_owned_set(arena, id, source)
+    return false
+
 
 def emit_module_propagate(
     arena: &const SyntaxArena,

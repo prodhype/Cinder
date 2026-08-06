@@ -206,6 +206,16 @@ def emit_attribute_call(
         context.expected_type = previous_expected
         builder.append(")")
         return
+    if (member_name == "keys" or member_name == "values" or member_name == "items") and codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+        codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+        builder.append("_")
+        builder.append(member_name[0:len(member_name)])
+        builder.append("(")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+            builder.append("&")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
     if member_name == "add" and codegen_context.context_expression_is_collection(arena, context, receiver, source, "Set", types.TypeKind.SET):
         receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
         codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Set", types.TypeKind.SET)
@@ -223,6 +233,50 @@ def emit_attribute_call(
         context.expected_type = previous_expected
         codegen_context.mark_context_expression_moved(arena, context, argument, source)
         builder.append(")")
+        return
+    if (member_name == "union" or member_name == "intersection" or member_name == "difference" or member_name == "symmetric_difference" or member_name == "update") and codegen_context.context_expression_is_collection(arena, context, receiver, source, "Set", types.TypeKind.SET):
+        receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+        name_builder = StringBuilder()
+        codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, &name_builder, prefix, project_name, imports, "Set", types.TypeKind.SET)
+        name = name_builder.finish()
+        argument = codegen_names.first_call_argument(arena, call_id)
+        previous_expected = context.expected_type
+        context.expected_type = receiver_type
+        builder.append("({ ")
+        builder.append(name[0:len(name)])
+        builder.append(" cinder_argument = ")
+        emit_nested(state, argument)
+        context.expected_type = previous_expected
+        builder.append("; ")
+        if member_name == "update":
+            builder.append(name[0:len(name)])
+            builder.append("_update(")
+            if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+                builder.append("&")
+            emit_nested(state, receiver)
+            builder.append(", &cinder_argument); ")
+            if access_expression_creates_owned_set(arena, argument, source):
+                builder.append(name[0:len(name)])
+                builder.append("_drop(&cinder_argument); ")
+            builder.append("(void)0; })")
+            return
+        builder.append(name[0:len(name)])
+        builder.append(" cinder_receiver = ")
+        emit_nested(state, receiver)
+        builder.append("; ")
+        builder.append(name[0:len(name)])
+        builder.append(" cinder_result = ")
+        builder.append(name[0:len(name)])
+        builder.append("_")
+        builder.append(member_name[0:len(member_name)])
+        builder.append("(&cinder_receiver, &cinder_argument); ")
+        if access_expression_creates_owned_set(arena, receiver, source):
+            builder.append(name[0:len(name)])
+            builder.append("_drop(&cinder_receiver); ")
+        if access_expression_creates_owned_set(arena, argument, source):
+            builder.append(name[0:len(name)])
+            builder.append("_drop(&cinder_argument); ")
+        builder.append("cinder_result; })")
         return
     if member_name == "clear":
         receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
@@ -276,12 +330,12 @@ def emit_attribute_call(
         emit_nested(state, codegen_names.first_call_argument(arena, call_id))
         builder.append(")")
         return
-    if member_name == "pop":
-        builder.append("cinder_selfhost_list_pop(")
+    if member_name == "pop" and not codegen_context.context_expression_is_collection(arena, context, receiver, source, "Set", types.TypeKind.SET):
+        builder.append("({ __auto_type cinder_list = ")
         if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
             builder.append("&")
         emit_nested(state, receiver)
-        builder.append(")")
+        builder.append("; if (cinder_list->length == 0) cinder_panic(\"pop from empty list\"); cinder_list->data[--cinder_list->length]; })")
         return
     if member_name == "finish":
         builder.append("cinder_string_builder_finish(&")
@@ -322,6 +376,33 @@ def emit_attribute_call(
     emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
     builder.append(")")
+
+
+def access_expression_creates_owned_set(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_SET or node.kind == SyntaxKind.EXPR_BINARY:
+        return true
+    if node.kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0:
+        return true
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return true
+    member = codegen_names.second_child(arena, callee)
+    if member.index < 0:
+        return true
+    member_node = arena.nodes[member.index]
+    return (
+        codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "union")
+        or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "intersection")
+        or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "difference")
+        or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "symmetric_difference")
+    )
+
 
 def emit_builder_append_call(
     arena: &const SyntaxArena,
@@ -517,6 +598,17 @@ def emit_module_index(
     receiver = codegen_names.first_child(arena, id)
     index = codegen_names.second_child(arena, id)
     receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+    table: &const types.TypeTable = context.type_table
+    semantic_receiver_type = access_strip_semantic_indirection(table, codegen_context.context_semantic_type(context, receiver))
+    receiver_node = arena.nodes[receiver.index]
+    is_tuple_item_name = receiver_node.kind == SyntaxKind.EXPR_NAME and codegen_context.context_name_is_tuple_item(context, source, receiver_node.value_start, receiver_node.value_length)
+    is_tuple = codegen_type_names.semantic_type_is_kind(table, semantic_receiver_type, types.TypeKind.TUPLE) or codegen_context.context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Tuple") or is_tuple_item_name
+    if is_tuple and index.index >= 0 and arena.nodes[index.index].kind == SyntaxKind.EXPR_LITERAL:
+        emit_nested(state, receiver)
+        builder.append(".item_")
+        index_node = arena.nodes[index.index]
+        codegen_names.append_numeric_literal(builder, source, index_node.value_start, index_node.value_length)
+        return
     if codegen_specializations.context_type_is_array(context.type_arena, receiver_type):
         emit_nested(state, receiver)
         builder.append("[")
@@ -557,6 +649,16 @@ def emit_module_index(
     builder.append("[")
     emit_nested(state, index)
     builder.append("]")
+
+def access_strip_semantic_indirection(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        kind = table.types[current.index].kind
+        if kind != types.TypeKind.CONST and kind != types.TypeKind.REFERENCE and kind != types.TypeKind.POINTER:
+            break
+        current = table.types[current.index].inner
+    return current
+
 
 def emit_known_list_index(
     arena: &const SyntaxArena,

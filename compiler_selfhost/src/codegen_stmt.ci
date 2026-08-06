@@ -25,6 +25,8 @@ def emit_module_block(
     node = arena.nodes[id.index]
     local_start = len(context.local_types)
     pointer_start = len(context.pointer_names)
+    tuple_item_start = len(context.tuple_items)
+    semantic_string_start = len(context.semantic_string_names)
     defer_start = len(context.deferred_expressions)
     for offset in range(0, node.child_count):
         emit_module_statement(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
@@ -34,6 +36,10 @@ def emit_module_block(
         context.local_types.pop()
     while len(context.pointer_names) > pointer_start:
         context.pointer_names.pop()
+    while len(context.tuple_items) > tuple_item_start:
+        context.tuple_items.pop()
+    while len(context.semantic_string_names) > semantic_string_start:
+        context.semantic_string_names.pop()
     while len(context.deferred_expressions) > defer_start:
         context.deferred_expressions.pop()
 
@@ -54,6 +60,20 @@ def emit_module_defers(
         codegen_expr.emit_module_expression(arena, context.deferred_expressions[index], source, builder, prefix, project_name, imports, context)
         builder.append(";\n")
 
+def emit_module_iterator_guard_cleanups(builder: &StringBuilder, context: &const codegen_model.ModuleCodegenContext) -> void:
+    guard_names: &const List[String] = &context.iterator_guard_names
+    index = len(guard_names)
+    while index > 0:
+        index -= 1
+        builder.append("    if (")
+        builder.append(guard_names[index])
+        builder.append(" != NULL && ")
+        builder.append(guard_names[index])
+        builder.append("->active_iterators > 0) ")
+        builder.append(guard_names[index])
+        builder.append("->active_iterators -= 1;\n")
+
+
 def emit_module_return_cleanups(
     arena: &const SyntaxArena,
     source: &const String,
@@ -63,6 +83,7 @@ def emit_module_return_cleanups(
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
 ) -> void:
+    emit_module_iterator_guard_cleanups(builder, context)
     emit_module_defers(arena, source, builder, prefix, project_name, imports, context, 0)
     index = len(context.with_resources)
     while index > 0:
@@ -87,7 +108,7 @@ def emit_module_statement(
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
         expr = codegen_names.first_child(arena, id)
-        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or codegen_context.context_has_live_collection_drops(arena, context, source)
+        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or len(context.iterator_guard_names) > 0 or codegen_context.context_has_live_collection_drops(arena, context, source)
         if not has_cleanups:
             builder.append("    return")
             if expr.index >= 0:
@@ -161,6 +182,8 @@ def emit_module_statement(
     if node.kind == SyntaxKind.ASSIGN_STMT:
         builder.append("    ")
         target = codegen_names.first_child(arena, id)
+        if emit_set_compound_assignment(arena, id, target, source, builder, prefix, project_name, imports, context):
+            return
         if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_INDEX:
             receiver = codegen_names.first_child(arena, target)
             key = codegen_names.second_child(arena, target)
@@ -255,6 +278,67 @@ def emit_module_statement(
     if node.kind == SyntaxKind.PASS_STMT:
         builder.append("    ;\n")
 
+def emit_set_compound_assignment(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    target: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    operator = arena.nodes[id.index].flags
+    operation = ""
+    if operator == cast[i32](token.TokenKind.PIPE_ASSIGN):
+        operation = "union"
+    elif operator == cast[i32](token.TokenKind.AMPERSAND_ASSIGN):
+        operation = "intersection"
+    elif operator == cast[i32](token.TokenKind.MINUS_ASSIGN):
+        operation = "difference"
+    elif operator == cast[i32](token.TokenKind.CARET_ASSIGN):
+        operation = "symmetric_difference"
+    else:
+        return false
+    if not codegen_context.context_expression_is_collection(arena, context, target, source, "Set", types.TypeKind.SET):
+        return false
+    name_builder = StringBuilder()
+    if not codegen_context.emit_context_expression_specialization_name(arena, context, target, source, &name_builder, prefix, project_name, imports, "Set", types.TypeKind.SET):
+        return false
+    name = name_builder.finish()
+    value = codegen_names.second_child(arena, id)
+    builder.append("{ ")
+    builder.append(name[0:len(name)])
+    builder.append(" cinder_rhs = ")
+    codegen_expr.emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+    builder.append("; ")
+    builder.append(name[0:len(name)])
+    builder.append(" cinder_result = ")
+    builder.append(name[0:len(name)])
+    builder.append("_")
+    builder.append(operation[0:len(operation)])
+    builder.append("(")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, target, source):
+        builder.append("&")
+    codegen_expr.emit_module_expression(arena, target, source, builder, prefix, project_name, imports, context)
+    builder.append(", &cinder_rhs); ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, target, source):
+        builder.append("&")
+    codegen_expr.emit_module_expression(arena, target, source, builder, prefix, project_name, imports, context)
+    builder.append("); ")
+    emit_module_assignment_target(arena, target, source, builder, prefix, project_name, imports, context)
+    builder.append(" = cinder_result; ")
+    if codegen_expr.expression_creates_owned_set(arena, value, source):
+        builder.append(name[0:len(name)])
+        builder.append("_drop(&cinder_rhs); ")
+    builder.append("}\n")
+    codegen_context.mark_context_expression_live(context, target, arena, source)
+    return true
+
+
 def emit_module_assignment_target(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -267,6 +351,20 @@ def emit_module_assignment_target(
 ) -> void:
     if id.index >= 0:
         node = arena.nodes[id.index]
+        if node.kind == SyntaxKind.EXPR_INDEX:
+            receiver = codegen_names.first_child(arena, id)
+            key = codegen_names.second_child(arena, id)
+            if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+                builder.append("(*")
+                codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+                builder.append("_at_mut(")
+                if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+                    builder.append("&")
+                codegen_expr.emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
+                builder.append(", ")
+                codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
+                builder.append("))")
+                return
         if node.kind == SyntaxKind.EXPR_NAME:
             name = source[node.value_start:node.value_start + node.value_length]
             type_id = codegen_context.context_name_type(context, &name)
@@ -440,6 +538,12 @@ def match_result_c_name(
     context: &codegen_model.ModuleCodegenContext,
     subject_type: NodeId,
 ) -> String:
+    table: &const types.TypeTable = context.type_table
+    semantic_subject_type = statement_strip_semantic_indirection(table, codegen_context.context_semantic_type(context, subject))
+    if codegen_type_names.semantic_type_is_kind(table, semantic_subject_type, types.TypeKind.OPTION):
+        semantic_name_builder = StringBuilder()
+        codegen_type_names.emit_semantic_specialized_type_name(table, semantic_subject_type, context.type_source, &semantic_name_builder, context.specialization_names)
+        return semantic_name_builder.finish()
     if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
         name_builder = StringBuilder()
         codegen_type_names.emit_specialized_type_name(context.type_arena, subject_type, context.type_source, &name_builder, prefix, project_name, imports, context.specialization_names)
@@ -496,6 +600,14 @@ def emit_match_pattern_condition(
         builder.append("true")
         return
     if len(result_c_name) > 0:
+        if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Some") or codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "None"):
+            builder.append("cinder_match_value.tag == ")
+            builder.append(result_c_name[0:len(result_c_name)])
+            if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Some"):
+                builder.append("_Tag_Some")
+            else:
+                builder.append("_Tag_None")
+            return
         if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok") or codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Err"):
             builder.append("cinder_match_value.tag == ")
             builder.append(result_c_name[0:len(result_c_name)])
@@ -554,6 +666,12 @@ def emit_match_pattern_captures(
                 if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
                     payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 1)
                 access = ".data.err"
+            emit_match_capture_binding(arena, nested, source, builder, context, payload_type, &access)
+            return
+        if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Some") and node.child_count > 1:
+            nested = arena.children[node.first_child + 1]
+            payload_type = syntax.missing_node()
+            access = ".data.value"
             emit_match_capture_binding(arena, nested, source, builder, context, payload_type, &access)
             return
     if node.child_count < 2:
@@ -733,6 +851,8 @@ def emit_module_for_each(
             context.local_types.pop()
         builder.append("    }\n")
         return
+    if emit_semantic_collection_for_each(arena, iterable, target, body, source, builder, prefix, project_name, imports, context):
+        return
     element_type = codegen_context.context_expression_list_element_type(arena, context, iterable, source)
     if element_type.index < 0:
         element_type = codegen_type_names.find_child_type(arena, id)
@@ -775,6 +895,152 @@ def emit_module_for_each(
         if len(context.local_types) > 0:
             context.local_types.pop()
     builder.append("    }\n")
+
+def emit_semantic_collection_for_each(
+    arena: &const SyntaxArena,
+    iterable: NodeId,
+    target: NodeId,
+    body: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    table: &const types.TypeTable = context.type_table
+    semantic_type = statement_strip_semantic_indirection(table, codegen_context.context_semantic_type(context, iterable))
+    if semantic_type.index < 0 or semantic_type.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[semantic_type.index]
+    if record.kind != types.TypeKind.SET and record.kind != types.TypeKind.MAP and not types.is_map_view_kind(record.kind):
+        return false
+    collection_type = semantic_type
+    view_kind = types.TypeKind.ERROR
+    if types.is_map_view_kind(record.kind):
+        view_kind = record.kind
+        collection_type = record.inner
+    collection_record = table.types[collection_type.index]
+    name_builder = StringBuilder()
+    codegen_type_names.emit_semantic_specialized_type_name(table, collection_type, context.type_source, &name_builder, context.specialization_names)
+    name = name_builder.finish()
+    guard_name_builder = StringBuilder()
+    guard_name_builder.append("cinder_collection_")
+    codegen_type_names.append_specialization_decimal(&guard_name_builder, cast[usize](iterable.index))
+    guard_name = guard_name_builder.finish()
+    target_node = arena.nodes[target.index]
+    iterable_node = arena.nodes[iterable.index]
+    owns_iteration_value = view_kind == types.TypeKind.ERROR and iterable_node.kind != SyntaxKind.EXPR_NAME and not codegen_context.context_expression_is_pointer_like(arena, context, iterable, source)
+
+    builder.append("    {\n")
+    if view_kind != types.TypeKind.ERROR:
+        builder.append("    __auto_type cinder_view = ")
+        codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+        builder.append(";\n    ")
+        builder.append(name[0:len(name)])
+        builder.append(" *")
+        builder.append(guard_name[0:len(guard_name)])
+        builder.append(" = (")
+        builder.append(name[0:len(name)])
+        builder.append(" *)cinder_view.map;\n")
+    elif owns_iteration_value:
+        builder.append("    ")
+        builder.append(name[0:len(name)])
+        builder.append(" cinder_iteration_value = ")
+        codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+        builder.append(";\n    ")
+        builder.append(name[0:len(name)])
+        builder.append(" *")
+        builder.append(guard_name[0:len(guard_name)])
+        builder.append(" = &cinder_iteration_value;\n")
+    else:
+        builder.append("    ")
+        builder.append(name[0:len(name)])
+        builder.append(" *")
+        builder.append(guard_name[0:len(guard_name)])
+        builder.append(" = ")
+        if not codegen_context.context_expression_is_pointer_like(arena, context, iterable, source):
+            builder.append("&")
+        codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+        builder.append(";\n")
+    builder.append("    ")
+    builder.append(name[0:len(name)])
+    builder.append(" *cinder_collection = ")
+    builder.append(guard_name[0:len(guard_name)])
+    builder.append(";\n")
+    builder.append("    if (cinder_collection != NULL) cinder_collection->active_iterators += 1;\n")
+    builder.append("    for (size_t cinder_index = 0; cinder_collection != NULL && cinder_index < cinder_collection->")
+    if collection_record.kind == types.TypeKind.SET:
+        builder.append("capacity")
+    else:
+        builder.append("entries_length")
+    builder.append("; ++cinder_index) {\n")
+    if collection_record.kind == types.TypeKind.SET:
+        builder.append("    if (cinder_collection->entries[cinder_index].state != 1) continue;\n")
+    else:
+        builder.append("    if (!cinder_collection->entries[cinder_index].occupied) continue;\n")
+    builder.append("    ")
+    registered_semantic_string = false
+    if view_kind == types.TypeKind.MAP_ITEMS:
+        target_type = codegen_context.context_semantic_type(context, target)
+        if codegen_type_names.semantic_type_is_kind(table, target_type, types.TypeKind.TUPLE):
+            codegen_type_names.emit_semantic_c_type(table, target_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        else:
+            builder.append("__auto_type")
+        builder.append(" ")
+        codegen_names.append_source(builder, source, target_node.value_start, target_node.value_length)
+        builder.append(" = { .item_0 = cinder_collection->entries[cinder_index].key, .item_1 = cinder_collection->entries[cinder_index].value };\n")
+    else:
+        builder.append("__auto_type ")
+        codegen_names.append_source(builder, source, target_node.value_start, target_node.value_length)
+        builder.append(" = cinder_collection->entries[cinder_index].")
+        if collection_record.kind == types.TypeKind.SET:
+            builder.append("value")
+        elif view_kind == types.TypeKind.MAP_VALUES:
+            builder.append("value")
+        else:
+            builder.append("key")
+        builder.append(";\n")
+    if view_kind == types.TypeKind.MAP_ITEMS:
+        key_type = statement_strip_semantic_indirection(table, collection_record.inner)
+        value_type = statement_strip_semantic_indirection(table, collection_record.second)
+        key_is_string = codegen_type_names.semantic_type_is_kind(table, key_type, types.TypeKind.STRING)
+        value_is_string = codegen_type_names.semantic_type_is_kind(table, value_type, types.TypeKind.STRING)
+        codegen_context.register_context_tuple_item_name(context, source, target_node.value_start, target_node.value_length, key_is_string, value_is_string)
+    else:
+        iteration_type = collection_record.inner
+        if view_kind == types.TypeKind.MAP_VALUES:
+            iteration_type = collection_record.second
+        iteration_type = statement_strip_semantic_indirection(table, iteration_type)
+        if codegen_type_names.semantic_type_is_kind(table, iteration_type, types.TypeKind.STRING):
+            codegen_context.register_context_semantic_string_name(context, source, target_node.value_start, target_node.value_length)
+            registered_semantic_string = true
+    context.iterator_guard_names.append(guard_name[0:len(guard_name)])
+    emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+    context.iterator_guard_names.pop()
+    if view_kind == types.TypeKind.MAP_ITEMS and len(context.tuple_items) > 0:
+        context.tuple_items.pop()
+    if registered_semantic_string and len(context.semantic_string_names) > 0:
+        context.semantic_string_names.pop()
+    builder.append("    }\n")
+    builder.append("    if (cinder_collection != NULL) cinder_collection->active_iterators -= 1;\n")
+    if owns_iteration_value:
+        builder.append("    ")
+        builder.append(name[0:len(name)])
+        builder.append("_drop(&cinder_iteration_value);\n")
+    builder.append("    }\n")
+    return true
+
+
+def statement_strip_semantic_indirection(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        kind = table.types[current.index].kind
+        if kind != types.TypeKind.CONST and kind != types.TypeKind.REFERENCE and kind != types.TypeKind.POINTER:
+            break
+        current = table.types[current.index].inner
+    return current
+
 
 def for_each_iterable(arena: &const SyntaxArena, id: NodeId) -> NodeId:
     node = arena.nodes[id.index]

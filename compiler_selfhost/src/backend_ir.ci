@@ -143,6 +143,10 @@ def collect_specialization_type(result: &List[TypeId], table: &const types.TypeT
         collect_specialization_type(result, table, record.inner)
         collect_specialization_type(result, table, record.second)
         return
+    if types.is_map_view_kind(record.kind):
+        append_specialization_once(result, type_id)
+        collect_specialization_type(result, table, record.inner)
+        return
     if record.kind == types.TypeKind.TUPLE:
         append_specialization_once(result, type_id)
         offset: i32 = 0
@@ -248,7 +252,7 @@ def ir_kind_for_syntax(kind: SyntaxKind) -> IRNodeKind:
 
 
 def ir_type_for_node(kind: SyntaxKind, id: NodeId, model: &const semantic.SemanticModel) -> TypeId:
-    if is_expression_kind(kind):
+    if is_expression_kind(kind) or kind == SyntaxKind.NAME:
         return model.expr_type(id)
     if is_type_kind(kind):
         return model.type_node(id)
