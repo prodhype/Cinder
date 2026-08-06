@@ -298,8 +298,19 @@ def emit_attribute_call(
         emit_nested(state, codegen_names.first_call_argument(arena, call_id))
         builder.append(")")
         return
+    if member_name == "read":
+        emit_file_read_call(arena, receiver, codegen_names.first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+    if member_name == "read_line":
+        emit_file_read_line_call(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
     if member_name == "read_text":
         builder.append("cinder_read_all_text(")
+        emit_nested(state, receiver)
+        builder.append(")")
+        return
+    if member_name == "read_all":
+        builder.append("cinder_selfhost_file_read_all(")
         emit_nested(state, receiver)
         builder.append(")")
         return
@@ -395,6 +406,102 @@ def emit_file_write_call(
     emit_nested(state, receiver)
     builder.append(")")
 
+def emit_file_read_call(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    arg: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    arg_type = codegen_context.context_expression_type(arena, context, arg, source)
+    if arg.index >= 0 and arena.nodes[arg.index].kind == SyntaxKind.EXPR_SLICE:
+        emit_file_read_slice_call(arena, receiver, arg, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+    builder.append("({ size_t cinder_read_length = ")
+    if codegen_specializations.context_type_is_array(context.type_arena, arg_type):
+        length = codegen_specializations.array_length_node(context.type_arena, arg_type)
+        codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+    elif codegen_context.context_type_is_list(context.type_arena, arg_type, context.type_source) or codegen_type_names.type_node_kind(context.type_arena, arg_type) == SyntaxKind.EXPR_SLICE:
+        emit_nested(state, arg)
+        if codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+            builder.append("->length")
+        else:
+            builder.append(".length")
+    else:
+        builder.append("0")
+    builder.append("; size_t cinder_read_count = fread(")
+    if codegen_specializations.context_type_is_array(context.type_arena, arg_type):
+        builder.append("(void *)")
+        emit_nested(state, arg)
+    elif codegen_context.context_type_is_list(context.type_arena, arg_type, context.type_source) or codegen_type_names.type_node_kind(context.type_arena, arg_type) == SyntaxKind.EXPR_SLICE:
+        emit_nested(state, arg)
+        if codegen_context.context_expression_is_pointer_like(arena, context, arg, source):
+            builder.append("->data")
+        else:
+            builder.append(".data")
+    else:
+        builder.append("NULL")
+    builder.append(", 1, cinder_read_length, ")
+    emit_nested(state, receiver)
+    builder.append("); if (cinder_read_count < cinder_read_length && ferror(")
+    emit_nested(state, receiver)
+    builder.append(")) cinder_panic(\"File.read failed\"); cinder_read_count; })")
+
+def emit_file_read_slice_call(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    arg: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("({ __auto_type ")
+    append_file_read_slice_name(builder, temporary_index)
+    builder.append(" = ")
+    emit_nested(state, arg)
+    builder.append("; size_t cinder_read_length = ")
+    append_file_read_slice_name(builder, temporary_index)
+    builder.append(".length; size_t cinder_read_count = fread(")
+    append_file_read_slice_name(builder, temporary_index)
+    builder.append(".data, 1, cinder_read_length, ")
+    emit_nested(state, receiver)
+    builder.append("); if (cinder_read_count < cinder_read_length && ferror(")
+    emit_nested(state, receiver)
+    builder.append(")) cinder_panic(\"File.read failed\"); cinder_read_count; })")
+
+def append_file_read_slice_name(builder: &StringBuilder, index: i32) -> void:
+    builder.append("cinder_read_slice_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](index))
+
+def emit_file_read_line_call(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    builder.append("({ CinderOption_String cinder_line = { CinderOption_String_Tag_None, { 0 } }; CinderString cinder_text = {0}; if (cinder_read_line(")
+    emit_nested(state, receiver)
+    builder.append(", &cinder_text)) { cinder_line.tag = CinderOption_String_Tag_Some; cinder_line.data.value = cinder_text; } cinder_line; })")
+
 def emit_module_index(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -483,6 +590,13 @@ def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source:
     if receiver.index < 0:
         return ""
     receiver_node = arena.nodes[receiver.index]
+    if codegen_context.context_type_is_file_read_call(arena, receiver, source, "read_all"):
+        return "uint8_t"
+    if receiver_node.kind == SyntaxKind.EXPR_NAME:
+        receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+        receiver_type = codegen_context.context_name_type(context, &receiver_name)
+        if codegen_context.context_type_is_file_read_call(context.type_arena, receiver_type, context.type_source, "read_all"):
+            return "uint8_t"
     if receiver_node.kind != SyntaxKind.EXPR_ATTRIBUTE:
         return ""
     object = codegen_names.first_child(arena, receiver)
@@ -773,6 +887,9 @@ def emit_option_expression_name(
     context: &codegen_model.ModuleCodegenContext,
 ) -> bool:
     expression_type = codegen_context.context_expression_type(arena, context, expression, source)
+    if codegen_context.context_type_is_file_read_call(context.type_arena, expression_type, context.type_source, "read_line"):
+        builder.append("CinderOption_String")
+        return true
     if codegen_context.context_type_is_runtime_generic(context.type_arena, expression_type, context.type_source, "Option"):
         codegen_type_names.emit_module_c_type(context.type_arena, expression_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
         return true

@@ -416,6 +416,163 @@ def test_gen1_emit_c_cleans_up_with_scope_before_return(
     assert materialized_return < cleanup < returned
 
 
+def test_gen1_lowers_file_reads_and_scopes_repeated_with_bindings(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "file_reads.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        '    path = "selfhost_file_reads.bin"\n'
+        "\n"
+        '    with open(path, "wb") as file:\n'
+        "        payload: u8[12] = [104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100, 10]\n"
+        "        if file.write(payload) != 12:\n"
+        "            return 1\n"
+        "\n"
+        '    with open(path, "rb") as file:\n'
+        "        chunk: u8[5]\n"
+        "        counted = file.read(chunk)\n"
+        "        if counted != 5:\n"
+        "            return 2\n"
+        "        if chunk[0] != 104 or chunk[4] != 111:\n"
+        "            return 3\n"
+        "        blank = file.read_line()\n"
+        "        if blank.is_none or len(blank.value) != 0:\n"
+        "            return 4\n"
+        "\n"
+        '    with open(path, "rb") as file:\n'
+        "        first = file.read_line()\n"
+        "        if first.is_none or len(first.value) != 5:\n"
+        "            return 5\n"
+        "        if first.value.byte_at(0) != 104 or first.value.byte_at(4) != 111:\n"
+        "            return 6\n"
+        "        second = file.read_line()\n"
+        "        if second.is_none or len(second.value) != 5:\n"
+        "            return 7\n"
+        "        if second.value.byte_at(0) != 119 or second.value.byte_at(4) != 100:\n"
+        "            return 8\n"
+        "        eof = file.read_line()\n"
+        "        if eof.is_some:\n"
+        "            return 9\n"
+        "\n"
+        '    with open(path, "rb") as file:\n'
+        "        text = file.read_text()\n"
+        "        if len(text) != 12:\n"
+        "            return 10\n"
+        "        if text.byte_at(0) != 104 or text.byte_at(11) != 10:\n"
+        "            return 11\n"
+        "\n"
+        '    with open(path, "rb") as file:\n'
+        "        data = file.read_all()\n"
+        "        if len(data) != 12:\n"
+        "            return 12\n"
+        "        if data[0] != 104 or data[11] != 10:\n"
+        "            return 13\n"
+        "        print(data)\n"
+        "\n"
+        '    with open(path, "rb") as file:\n'
+        "        sliced: u8[5]\n"
+        "        counted_slice = file.read(sliced[0:5])\n"
+        "        if counted_slice != 5:\n"
+        "            return 14\n"
+        "        if sliced[0] != 104 or sliced[4] != 111:\n"
+        "            return 15\n"
+        "\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "fread((void *)chunk, 1, cinder_read_length, file)" in emitted.stdout
+    assert "__auto_type counted = read(" not in emitted.stdout
+    assert "cinder_read_line(file" in emitted.stdout
+    assert "= read_line(" not in emitted.stdout
+    assert "CinderOption_String" in emitted.stdout
+    assert "CinderOption_String_Tag_None" in emitted.stdout
+    assert "cinder_selfhost_file_read_all(file)" in emitted.stdout
+    assert "cinder_selfhost_print_u64_list" in emitted.stdout
+    assert "cinder_read_slice_" in emitted.stdout
+    assert emitted.stdout.count("FILE *file = fopen") == 6
+
+    output = tmp_path / (
+        "file_reads.exe" if shutil.which("cl") and not shutil.which("cc") else "file_reads"
+    )
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run(
+        [str(output)],
+        check=False,
+        text=True,
+        capture_output=True,
+        cwd=tmp_path,
+    )
+    assert executed.returncode == 0, executed.stderr
+
+
+def test_gen1_does_not_borrow_imported_call_string_slice_rvalue(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        'name = "rvalue_slice"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "lexer.ci").write_text(
+        "struct Lexer:\n"
+        "    source: String\n"
+        "\n"
+        "def new_lexer(source: String) -> Lexer:\n"
+        "    return Lexer(source=source)\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import lexer\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    module_source = "abc"\n'
+        "    scan = lexer.new_lexer(module_source[0:len(module_source)])\n"
+        "    return len(scan.source) - 3\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    generated_source = (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    assert "cinder_string_slice(&module_source, 0, module_source.length)" in generated_source
+    assert "&cinder_string_slice(" not in generated_source
+
+    output = tmp_path / (
+        "rvalue_slice.exe" if shutil.which("cl") and not shutil.which("cc") else "rvalue_slice"
+    )
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
 @pytest.mark.parametrize(
     "source_text",
     [

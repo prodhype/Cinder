@@ -666,6 +666,8 @@ def emit_module_with(
     name = codegen_names.second_child(arena, id)
     body = codegen_names.last_child(arena, id)
     name_node = arena.nodes[name.index]
+    pointer_start = len(context.pointer_names)
+    builder.append("    {\n")
     builder.append("    FILE *")
     codegen_names.append_source(builder, source, name_node.value_start, name_node.value_length)
     builder.append(" = ")
@@ -684,6 +686,9 @@ def emit_module_with(
     builder.append("    fclose(")
     codegen_names.append_source(builder, source, name_node.value_start, name_node.value_length)
     builder.append(");\n")
+    builder.append("    }\n")
+    while len(context.pointer_names) > pointer_start:
+        context.pointer_names.pop()
 
 def emit_module_for_each(
     arena: &const SyntaxArena,
