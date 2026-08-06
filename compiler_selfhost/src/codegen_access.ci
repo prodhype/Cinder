@@ -226,15 +226,26 @@ def emit_attribute_call(
         return
     if member_name == "clear":
         receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
-        if codegen_context.context_type_is_string(context.type_arena, receiver_type, context.type_source):
+        is_string = codegen_context.context_type_is_string(context.type_arena, receiver_type, context.type_source)
+        is_map = codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP)
+        is_set = codegen_context.context_expression_is_collection(arena, context, receiver, source, "Set", types.TypeKind.SET)
+        is_list = codegen_context.context_type_is_list(context.type_arena, receiver_type, context.type_source)
+        if is_string:
             builder.append("cinder_string_clear(")
-        else:
+        elif is_map:
+            codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+            builder.append("_clear(")
+        elif is_set:
+            codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Set", types.TypeKind.SET)
+            builder.append("_clear(")
+        elif is_list:
             builder.append("cinder_selfhost_list_clear(")
-        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
-            builder.append("&")
-        emit_nested(state, receiver)
-        builder.append(")")
-        return
+        if is_string or is_map or is_set or is_list:
+            if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+                builder.append("&")
+            emit_nested(state, receiver)
+            builder.append(")")
+            return
     if member_name == "append":
         arg = codegen_names.first_call_argument(arena, call_id)
         receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)

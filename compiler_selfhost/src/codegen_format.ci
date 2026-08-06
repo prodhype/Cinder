@@ -7,6 +7,7 @@ import parser
 import project
 import syntax
 import token
+import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
@@ -28,6 +29,46 @@ def emit_string_value_expression(
         builder.append(")")
         return
     emit_nested(state, id)
+
+
+def emit_specialized_collection_print_value(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+    first: bool,
+    state: &codegen_context.ModuleExpressionState,
+    emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
+) -> bool:
+    is_list = codegen_context.context_expression_is_collection(arena, context, id, source, "List", types.TypeKind.LIST)
+    is_map = codegen_context.context_expression_is_collection(arena, context, id, source, "Map", types.TypeKind.MAP)
+    is_set = codegen_context.context_expression_is_collection(arena, context, id, source, "Set", types.TypeKind.SET)
+    is_tuple = codegen_context.context_expression_is_collection(arena, context, id, source, "Tuple", types.TypeKind.TUPLE)
+    if not is_list and not is_map and not is_set and not is_tuple:
+        return false
+    if not first:
+        builder.append("printf(\" \"); ")
+    builder.append("({ __auto_type cinder_print_value = ")
+    emit_nested(state, id)
+    builder.append("; ")
+    if is_list:
+        codegen_context.emit_context_expression_specialization_name(arena, context, id, source, builder, prefix, project_name, imports, "List", types.TypeKind.LIST)
+    elif is_map:
+        codegen_context.emit_context_expression_specialization_name(arena, context, id, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+    elif is_set:
+        codegen_context.emit_context_expression_specialization_name(arena, context, id, source, builder, prefix, project_name, imports, "Set", types.TypeKind.SET)
+    else:
+        codegen_context.emit_context_expression_specialization_name(arena, context, id, source, builder, prefix, project_name, imports, "Tuple", types.TypeKind.TUPLE)
+    builder.append("_print(")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, id, source):
+        builder.append("&")
+    builder.append("cinder_print_value); }); ")
+    return true
+
 
 def emit_print_call(
     arena: &const SyntaxArena,
@@ -72,6 +113,8 @@ def emit_print_argument(
     emit_nested: def(&codegen_context.ModuleExpressionState, NodeId) -> void,
 ) -> void:
     type_id = codegen_context.context_expression_type(arena, context, id, source)
+    if emit_specialized_collection_print_value(arena, id, source, builder, prefix, project_name, imports, context, first, state, emit_nested):
+        return
     if codegen_context.context_type_is_list(context.type_arena, type_id, context.type_source):
         emit_print_list_value(arena, id, source, builder, prefix, project_name, imports, context, type_id, first, state, emit_nested)
         return
@@ -378,6 +421,8 @@ def emit_fstring_replacement(
         emit_print_fstring_segments(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
         return
     type_id = codegen_context.context_expression_type(arena, context, id, source)
+    if emit_specialized_collection_print_value(arena, id, source, builder, prefix, project_name, imports, context, true, state, emit_nested):
+        return
     if codegen_context.context_type_is_list(context.type_arena, type_id, context.type_source):
         emit_print_list_value(arena, id, source, builder, prefix, project_name, imports, context, type_id, true, state, emit_nested)
         return

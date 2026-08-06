@@ -413,6 +413,9 @@ def context_expression_is_collection(
     syntax_type = context_expression_type(arena, context, id, source)
     if context_type_is_runtime_generic(context.type_arena, syntax_type, context.type_source, generic_name):
         return true
+    semantic_type = context_semantic_type(context, syntax_type)
+    if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, semantic_kind):
+        return true
     semantic_type = context_semantic_type(context, id)
     return codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, semantic_kind)
 
@@ -432,6 +435,10 @@ def emit_context_expression_specialization_name(
     syntax_type = context_expression_type(arena, context, id, source)
     if context_type_is_runtime_generic(context.type_arena, syntax_type, context.type_source, generic_name):
         codegen_type_names.emit_module_c_type(context.type_arena, syntax_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        return true
+    semantic_type = context_semantic_type(context, syntax_type)
+    if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, semantic_kind):
+        codegen_type_names.emit_semantic_c_type(context.type_table, semantic_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
         return true
     semantic_type = context_semantic_type(context, id)
     if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, semantic_kind):

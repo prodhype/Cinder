@@ -219,6 +219,24 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
                     item_index += 1
             builder.append(" })")
             return
+        semantic_tuple_type = codegen_context.context_semantic_type(context, id)
+        if codegen_type_names.semantic_type_is_kind(type_table, semantic_tuple_type, types.TypeKind.TUPLE):
+            builder.append("((")
+            codegen_type_names.emit_semantic_c_type(type_table, semantic_tuple_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+            builder.append("){")
+            semantic_item_index: i32 = 0
+            for offset in range(0, node.child_count):
+                child_id = arena.children[node.first_child + offset]
+                if child_id.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[child_id.index].kind):
+                    if semantic_item_index > 0:
+                        builder.append(", ")
+                    builder.append(".item_")
+                    codegen_type_names.append_specialization_decimal(builder, cast[usize](semantic_item_index))
+                    builder.append(" = ")
+                    emit_module_expression_state(state, child_id)
+                    semantic_item_index += 1
+            builder.append(" })")
+            return
     if node.kind == SyntaxKind.EXPR_NAME:
         name = source[node.value_start:node.value_start + node.value_length]
         if codegen_context.context_name_is_global(context, &name) or (not codegen_context.context_has_name(context, source, node.value_start, node.value_length) and not codegen_context.context_name_is_extern(context, &name) and codegen_context.context_has_function_name(context.type_arena, context.root, context.type_source, &name)):

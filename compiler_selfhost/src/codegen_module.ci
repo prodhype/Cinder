@@ -70,6 +70,10 @@ def emit_module_header_with_names(
     codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, false)
     emit_module_nominal_declarations(arena, root, source, builder, &prefix, project_name, imports, context)
     codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, true)
+    emitted_print_prototypes: List[String] = []
+    codegen_specializations.emit_module_collection_print_helpers(arena, root, source, builder, emitted_print_prototypes, &prefix, project_name, imports, registry, false)
+    emitted_print_helpers: List[String] = []
+    codegen_specializations.emit_module_collection_print_helpers(arena, root, source, builder, emitted_print_helpers, &prefix, project_name, imports, registry, true)
     emit_module_declarations(arena, root, source, builder, &prefix, project_name, imports, context.specialization_names, true)
     builder.append("\n#endif\n")
     return builder.finish()
