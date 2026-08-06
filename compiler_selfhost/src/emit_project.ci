@@ -59,6 +59,7 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
             &graph.modules[index].dependencies,
             &graph.modules[index].imports,
             &specialization_names,
+            &checked.type_table,
         )
         source = codegen.emit_module_source_from_ir(
             ir,
@@ -105,6 +106,7 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
             &graph.modules[index].dependencies,
             &graph.modules[index].imports,
             &specialization_names,
+            &checked.type_table,
         )
         builder.append(strip_generated_includes(&header))
         builder.append("\n")

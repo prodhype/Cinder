@@ -35,6 +35,13 @@ def has_type_params(arena: &const syntax.SyntaxArena, declaration: NodeId) -> bo
 
 def collect_type_params(arena: &const syntax.SyntaxArena, declaration: NodeId) -> List[NodeId]:
     result: List[NodeId] = []
+    params = find_child_kind(arena, declaration, syntax.SyntaxKind.TYPE_PARAMS)
+    if params.index >= 0:
+        params_node = arena.nodes[params.index]
+        offset: i32 = 0
+        while offset < params_node.child_count:
+            result.append(arena.children[params_node.first_child + offset])
+            offset += 1
     return result
 
 
@@ -46,6 +53,139 @@ def specialization_suffix(table: &const types.TypeTable, args: &const List[TypeI
         append_type_key(builder, table, args[index], source)
         index += 1
     return builder.finish()
+
+
+def specialization_arguments(table: &const types.TypeTable, type_id: TypeId) -> List[TypeId]:
+    result: List[TypeId] = []
+    if type_id.index >= 0 and type_id.index < cast[i32](len(table.types)):
+        record = table.types[type_id.index]
+        offset: i32 = 0
+        while offset < record.flags:
+            result.append(table.type_args[cast[usize](record.extra + offset)])
+            offset += 1
+    return result
+
+
+def contains_type_parameter(
+    table: &const types.TypeTable,
+    type_id: TypeId,
+    arena: &const syntax.SyntaxArena,
+    declaration: NodeId,
+    source: &const String,
+) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if type_parameter_index(arena, declaration, source, record.name_start, record.name_length) >= 0:
+        return true
+    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.DYN:
+        return contains_type_parameter(table, record.inner, arena, declaration, source)
+    if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
+        return contains_type_parameter(table, record.inner, arena, declaration, source) or contains_type_parameter(table, record.second, arena, declaration, source)
+    if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or types.is_map_view_kind(record.kind):
+        return contains_type_parameter(table, record.inner, arena, declaration, source)
+    if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+        if contains_type_parameter(table, record.inner, arena, declaration, source):
+            return true
+        if record.kind == types.TypeKind.CLOSURE and contains_type_parameter(table, record.second, arena, declaration, source):
+            return true
+    if record.kind == types.TypeKind.TUPLE or record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE or (types.is_nominal_kind(record.kind) and record.flags > 0):
+        offset: i32 = 0
+        while offset < record.flags:
+            if contains_type_parameter(table, table.type_args[cast[usize](record.extra + offset)], arena, declaration, source):
+                return true
+            offset += 1
+    return false
+
+
+def substitute_type(
+    table: &types.TypeTable,
+    type_id: TypeId,
+    arena: &const syntax.SyntaxArena,
+    declaration: NodeId,
+    args: &const List[TypeId],
+    source: &const String,
+) -> TypeId:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return type_id
+    record = table.types[type_id.index]
+    parameter = type_parameter_index(arena, declaration, source, record.name_start, record.name_length)
+    if parameter >= 0 and parameter < cast[i32](len(args)):
+        return args[cast[usize](parameter)]
+    if record.kind == types.TypeKind.POINTER:
+        return table.pointer_to(substitute_type(table, record.inner, arena, declaration, args, source))
+    if record.kind == types.TypeKind.REFERENCE:
+        return table.reference_to(substitute_type(table, record.inner, arena, declaration, args, source))
+    if record.kind == types.TypeKind.CONST:
+        return table.const_of(substitute_type(table, record.inner, arena, declaration, args, source))
+    if record.kind == types.TypeKind.SLICE:
+        return table.slice_of(substitute_type(table, record.inner, arena, declaration, args, source))
+    if record.kind == types.TypeKind.ARRAY:
+        return table.array_of(substitute_type(table, record.inner, arena, declaration, args, source), record.extra)
+    if record.kind == types.TypeKind.DYN:
+        return table.dyn_of(substitute_type(table, record.inner, arena, declaration, args, source))
+    if record.kind == types.TypeKind.MAP:
+        return table.generic2(types.TypeKind.MAP, record.name_start, record.name_length, substitute_type(table, record.inner, arena, declaration, args, source), substitute_type(table, record.second, arena, declaration, args, source))
+    if record.kind == types.TypeKind.RESULT:
+        return table.generic2(types.TypeKind.RESULT, record.name_start, record.name_length, substitute_type(table, record.inner, arena, declaration, args, source), substitute_type(table, record.second, arena, declaration, args, source))
+    if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        return table.generic1(record.kind, record.name_start, record.name_length, substitute_type(table, record.inner, arena, declaration, args, source))
+    if types.is_map_view_kind(record.kind):
+        return table.map_view(record.kind, substitute_type(table, record.inner, arena, declaration, args, source))
+    if record.kind == types.TypeKind.TUPLE or record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+        substituted_args: List[TypeId] = []
+        offset: i32 = 0
+        while offset < record.flags:
+            substituted_args.append(substitute_type(table, table.type_args[cast[usize](record.extra + offset)], arena, declaration, args, source))
+            offset += 1
+        if record.kind == types.TypeKind.TUPLE:
+            return table.tuple_from_args(substituted_args)
+        return_type = substitute_type(table, record.inner, arena, declaration, args, source)
+        if record.kind == types.TypeKind.CLOSURE:
+            environment = substitute_type(table, record.second, arena, declaration, args, source)
+            return table.closure_from_args(environment, substituted_args, return_type)
+        return table.function_from_args(substituted_args, return_type)
+    if types.is_nominal_kind(record.kind) and record.flags > 0:
+        substituted_args: List[TypeId] = []
+        offset: i32 = 0
+        while offset < record.flags:
+            substituted_args.append(substitute_type(table, table.type_args[cast[usize](record.extra + offset)], arena, declaration, args, source))
+            offset += 1
+        return table.generic_from_args(record.kind, record.name_start, record.name_length, substituted_args)
+    return type_id
+
+
+def type_parameter_index(
+    arena: &const syntax.SyntaxArena,
+    declaration: NodeId,
+    source: &const String,
+    start: usize,
+    length: usize,
+) -> i32:
+    if length == 0:
+        return -1
+    params = find_child_kind(arena, declaration, syntax.SyntaxKind.TYPE_PARAMS)
+    if params.index < 0:
+        return -1
+    params_node = arena.nodes[params.index]
+    offset: i32 = 0
+    while offset < params_node.child_count:
+        param = arena.nodes[arena.children[params_node.first_child + offset].index]
+        if source_ranges_equal(source, start, length, param.value_start, param.value_length):
+            return offset
+        offset += 1
+    return -1
+
+
+def source_ranges_equal(source: &const String, left_start: usize, left_length: usize, right_start: usize, right_length: usize) -> bool:
+    if left_length != right_length:
+        return false
+    offset: usize = 0
+    while offset < left_length:
+        if source.byte_at(left_start + offset) != source.byte_at(right_start + offset):
+            return false
+        offset += 1
+    return true
 
 
 def append_type_key(builder: &StringBuilder, table: &const types.TypeTable, type_id: TypeId, source: &const String) -> void:
@@ -68,16 +208,72 @@ def append_type_key(builder: &StringBuilder, table: &const types.TypeTable, type
     elif record.kind == types.TypeKind.STRING:
         builder.append("String")
     elif record.kind == types.TypeKind.POINTER:
-        builder.append("ptr")
+        builder.append("ptr_")
         append_type_key(builder, table, record.inner, source)
     elif record.kind == types.TypeKind.REFERENCE:
-        builder.append("ref")
+        builder.append("ref_")
+        append_type_key(builder, table, record.inner, source)
+    elif record.kind == types.TypeKind.CONST:
+        builder.append("const_")
         append_type_key(builder, table, record.inner, source)
     elif record.kind == types.TypeKind.SLICE:
-        builder.append("slice")
+        builder.append("slice_")
         append_type_key(builder, table, record.inner, source)
+    elif record.kind == types.TypeKind.ARRAY:
+        builder.append("array_")
+        append_type_key(builder, table, record.inner, source)
+        builder.append("_")
+        append_decimal(builder, record.extra)
+    elif record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
+        if record.kind == types.TypeKind.MAP:
+            builder.append("Map_")
+        else:
+            builder.append("Result_")
+        append_type_key(builder, table, record.inner, source)
+        builder.append("_")
+        append_type_key(builder, table, record.second, source)
+    elif record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        if record.kind == types.TypeKind.OPTION:
+            builder.append("Option_")
+        elif record.kind == types.TypeKind.OWNED:
+            builder.append("Owned_")
+        elif record.kind == types.TypeKind.LIST:
+            builder.append("List_")
+        else:
+            builder.append("Set_")
+        append_type_key(builder, table, record.inner, source)
+    elif types.is_map_view_kind(record.kind):
+        if record.kind == types.TypeKind.MAP_KEYS:
+            builder.append("MapKeys_")
+        elif record.kind == types.TypeKind.MAP_VALUES:
+            builder.append("MapValues_")
+        else:
+            builder.append("MapItems_")
+        append_type_key(builder, table, record.inner, source)
+    elif record.kind == types.TypeKind.TUPLE or record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+        if record.kind == types.TypeKind.TUPLE:
+            builder.append("Tuple")
+        elif record.kind == types.TypeKind.FUNCTION:
+            builder.append("Function")
+        else:
+            builder.append("Closure")
+            builder.append("_env_")
+            append_type_key(builder, table, record.second, source)
+        offset: i32 = 0
+        while offset < record.flags:
+            builder.append("_")
+            append_type_key(builder, table, table.type_args[cast[usize](record.extra + offset)], source)
+            offset += 1
+        if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+            builder.append("_returns_")
+            append_type_key(builder, table, record.inner, source)
     elif record.name_length > 0:
         append_source_identifier(builder, source, record.name_start, record.name_length)
+        offset: i32 = 0
+        while offset < record.flags:
+            builder.append("_")
+            append_type_key(builder, table, table.type_args[cast[usize](record.extra + offset)], source)
+            offset += 1
     else:
         builder.append("T")
 
@@ -91,6 +287,41 @@ def append_source_identifier(builder: &StringBuilder, source: &const String, sta
         else:
             builder.append(source[start + offset:start + offset + 1])
         offset += 1
+
+
+def append_decimal(builder: &StringBuilder, value: i32) -> void:
+    if value <= 0:
+        builder.append("0")
+        return
+    digits: List[u8] = []
+    current = value
+    while current > 0:
+        digits.append(cast[u8](current % 10))
+        current = current / 10
+    index = len(digits)
+    while index > 0:
+        index -= 1
+        digit = digits[index]
+        if digit == 0:
+            builder.append("0")
+        elif digit == 1:
+            builder.append("1")
+        elif digit == 2:
+            builder.append("2")
+        elif digit == 3:
+            builder.append("3")
+        elif digit == 4:
+            builder.append("4")
+        elif digit == 5:
+            builder.append("5")
+        elif digit == 6:
+            builder.append("6")
+        elif digit == 7:
+            builder.append("7")
+        elif digit == 8:
+            builder.append("8")
+        else:
+            builder.append("9")
 
 
 def find_child_kind(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> NodeId:

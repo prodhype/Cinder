@@ -24,6 +24,12 @@ def load_smoke_runner() -> ModuleType:
 smoke = load_smoke_runner()
 
 
+def test_generics_expected_exit_is_success() -> None:
+    assert smoke.EXPECTED_EXIT["generics.ci"] == 42
+    assert smoke.classify(42, "40\n", "", False, 42) == "ok"
+    assert smoke.classify(1, "", "", False, 42) == "gen3_runtime_nonzero"
+
+
 def test_extract_first_c_error_skips_warnings_and_normalizes_path(tmp_path: Path) -> None:
     build_dir = tmp_path / "generics.ci-build"
     generated = build_dir / "cinder_gen" / "generics.cinder.h"

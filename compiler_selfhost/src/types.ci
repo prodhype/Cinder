@@ -107,6 +107,14 @@ struct TypeTable:
     def generic2(self: &TypeTable, kind: TypeKind, start: usize, length: usize, first: TypeId, second: TypeId) -> TypeId:
         return self.add_full(kind, start, length, first, second, 0, 2)
 
+    def generic_from_args(self: &TypeTable, kind: TypeKind, start: usize, length: usize, args: &const List[TypeId]) -> TypeId:
+        first = cast[i32](len(self.type_args))
+        index: usize = 0
+        while index < len(args):
+            self.type_args.append(args[index])
+            index += 1
+        return self.add(kind, start, length, missing_type(), first, cast[i32](len(args)))
+
     def map_view(self: &TypeTable, kind: TypeKind, map_type: TypeId) -> TypeId:
         return self.generic1(kind, 0, 0, map_type)
 
@@ -143,8 +151,15 @@ struct TypeTable:
         right_type = self.types[right.index]
         if left_type.kind != right_type.kind:
             return false
-        if left_type.kind == TypeKind.NAMED:
-            return left_type.name_start == right_type.name_start and left_type.name_length == right_type.name_length
+        if is_nominal_kind(left_type.kind):
+            if left_type.name_start != right_type.name_start or left_type.name_length != right_type.name_length or left_type.flags != right_type.flags:
+                return false
+            offset: i32 = 0
+            while offset < left_type.flags:
+                if not self.same(self.type_args[cast[usize](left_type.extra + offset)], self.type_args[cast[usize](right_type.extra + offset)]):
+                    return false
+                offset += 1
+            return true
         if left_type.kind == TypeKind.ARRAY:
             return left_type.extra == right_type.extra and self.same(left_type.inner, right_type.inner)
         if left_type.kind == TypeKind.POINTER or left_type.kind == TypeKind.REFERENCE or left_type.kind == TypeKind.SLICE or left_type.kind == TypeKind.CONST or left_type.kind == TypeKind.DYN:
@@ -247,7 +262,12 @@ struct TypeTable:
                 args.append(self.resolve_type_node(arena, child_at(arena, id, offset), source))
                 offset += 1
             return self.tuple_from_args(args)
-        return self.nominal(TypeKind.NAMED, base.value_start, base.value_length)
+        args: List[TypeId] = []
+        offset: i32 = 1
+        while offset < node.child_count:
+            args.append(self.resolve_type_node(arena, child_at(arena, id, offset), source))
+            offset += 1
+        return self.generic_from_args(TypeKind.NAMED, base.value_start, base.value_length, args)
 
     def resolve_callable_type_node(self: &TypeTable, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, is_closure: bool) -> TypeId:
         node = arena.nodes[id.index]
@@ -276,6 +296,10 @@ def missing_type() -> TypeId:
 
 def is_map_view_kind(kind: TypeKind) -> bool:
     return kind == TypeKind.MAP_KEYS or kind == TypeKind.MAP_VALUES or kind == TypeKind.MAP_ITEMS
+
+
+def is_nominal_kind(kind: TypeKind) -> bool:
+    return kind == TypeKind.NAMED or kind == TypeKind.ENUM or kind == TypeKind.UNION or kind == TypeKind.VARIANT or kind == TypeKind.CLASS or kind == TypeKind.STRUCT or kind == TypeKind.FILE
 
 
 def new_type_table() -> TypeTable:

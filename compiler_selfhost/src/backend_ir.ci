@@ -69,6 +69,9 @@ struct IRModule:
     nodes: List[IRNode]
     children: List[IRNodeId]
     specialization_types: List[TypeId]
+    specialization_args: List[TypeId]
+    call_specializations: List[semantic.SpecializationBinding]
+    user_specializations: List[semantic.UserSpecialization]
     root: IRNodeId
     summary: BackendSummary
 
@@ -118,11 +121,59 @@ def lower(arena: &const SyntaxArena, root: NodeId, model: &const semantic.Semant
     nodes: List[IRNode] = []
     children: List[IRNodeId] = []
     specialization_types: List[TypeId] = []
+    specialization_args: List[TypeId] = []
+    call_specializations: List[semantic.SpecializationBinding] = []
+    user_specializations: List[semantic.UserSpecialization] = []
     summary = summarize(arena, root)
-    module = IRModule(nodes=nodes, children=children, specialization_types=specialization_types, root=missing_ir_node(), summary=summary)
+    module = IRModule(
+        nodes=nodes,
+        children=children,
+        specialization_types=specialization_types,
+        specialization_args=specialization_args,
+        call_specializations=call_specializations,
+        user_specializations=user_specializations,
+        root=missing_ir_node(),
+        summary=summary,
+    )
     module.root = lower_node(module, arena, root, model)
+    copy_semantic_specializations(module, model)
     collect_module_specializations(module, table)
     return module
+
+
+def copy_semantic_specializations(module: &IRModule, model: &const semantic.SemanticModel) -> void:
+    specialization_args: &const List[TypeId] = &model.specialization_args
+    specializations: &const List[semantic.SpecializationBinding] = &model.specializations
+    user_specializations: &const List[semantic.UserSpecialization] = &model.user_specializations
+    index: usize = 0
+    while index < len(specialization_args):
+        module.specialization_args.append(specialization_args[index])
+        index += 1
+    index = 0
+    while index < len(specializations):
+        binding: &const semantic.SpecializationBinding = &specializations[index]
+        module.call_specializations.append(
+            semantic.SpecializationBinding(
+                node=binding.node,
+                callee=binding.callee,
+                first_arg=binding.first_arg,
+                arg_count=binding.arg_count,
+                suffix=binding.suffix[0:len(binding.suffix)],
+            )
+        )
+        index += 1
+    index = 0
+    while index < len(user_specializations):
+        specialization: &const semantic.UserSpecialization = &user_specializations[index]
+        module.user_specializations.append(
+            semantic.UserSpecialization(
+                declaration=specialization.declaration,
+                first_arg=specialization.first_arg,
+                arg_count=specialization.arg_count,
+                suffix=specialization.suffix[0:len(specialization.suffix)],
+            )
+        )
+        index += 1
 
 
 def collect_module_specializations(module: &IRModule, table: &const types.TypeTable) -> void:

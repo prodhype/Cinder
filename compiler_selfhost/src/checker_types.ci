@@ -17,6 +17,8 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     callee_node = arena.nodes[callee.index]
     if callee_node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
         validate_collection_method_call(checker, arena, id, callee, source, current_scope)
+        if checker.model.expr_type(id).index == types.type_error().index:
+            validate_user_method_call(checker, arena, id, callee, source, current_scope)
         return
     if callee_node.kind != syntax.SyntaxKind.EXPR_NAME:
         return
@@ -60,6 +62,8 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     checker.model.record_expr_type(id, symbol.type_id)
     if call.flags == 1:
         record_generic_call_specialization(checker, arena, id, source, found)
+    elif symbol.kind == symbols.SymbolKind.FUNCTION_TEMPLATE:
+        infer_generic_call_specialization(checker, arena, id, source, current_scope, found)
     actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
     expected = symbol.flags
     if actual < expected:
@@ -192,19 +196,193 @@ def record_generic_call_specialization(checker: &checker_core.Checker, arena: &c
         child_id = arena.children[call.first_child + offset]
         child = arena.nodes[child_id.index]
         if checker_core.is_type_kind(child.kind):
-            type_id = checker.type_table.resolve_type_node(arena, child_id, source)
+            type_id = checker_core.resolve_type_node(checker, arena, child_id, source)
             checker.model.record_type_node(child_id, type_id)
             args.append(type_id)
         offset += 1
-    suffix = generics.specialization_suffix(checker.type_table, args, source)
-    checker.model.record_specialization(id, callee, args, suffix)
+    declaration = checker.symbols.symbols[callee.index].node
+    if cast[i32](len(args)) != generics.type_param_count(arena, declaration):
+        checker_core.emit_error(checker, 354, call.start, call.length, call.line, call.column)
+        return
+    suffix = generics.specialization_suffix(checker.type_table, &args, source)
+    user_suffix = suffix[0:len(suffix)]
+    checker.model.record_specialization(id, callee, &args, suffix)
+    checker.model.record_user_specialization(declaration, &args, user_suffix)
+    specialized_return = generics.substitute_type(checker.type_table, checker.symbols.symbols[callee.index].type_id, arena, declaration, &args, source)
+    checker.model.record_call(id, callee, specialized_return, 1)
+    checker.model.record_expr_type(id, specialized_return)
+
+
+def record_user_type_specialization(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind != syntax.SyntaxKind.TYPE_GENERIC or node.child_count <= 1:
+        return
+    base_id = arena.children[node.first_child]
+    base = arena.nodes[base_id.index]
+    found = checker.symbols.find_in_scope(source, symbols.root_scope(), base.value_start, base.value_length)
+    if found.index < 0:
+        return
+    declaration = checker.symbols.symbols[found.index].node
+    if not generics.has_type_params(arena, declaration):
+        return
+    type_id = checker_core.resolve_type_node(checker, arena, id, source)
+    checker.model.record_type_node(id, type_id)
+    args: List[types.TypeId] = generics.specialization_arguments(checker.type_table, type_id)
+    arg_index: usize = 0
+    while arg_index < len(args):
+        arg = args[arg_index]
+        if generics.contains_type_parameter(checker.type_table, arg, arena, declaration, source):
+            return
+        arg_index += 1
+    suffix = generics.specialization_suffix(checker.type_table, &args, source)
+    checker.model.record_user_specialization(declaration, &args, suffix)
+
+
+def validate_user_method_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callee_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    receiver = checker_core.first_child(arena, callee_id)
+    member = checker_core.second_child(arena, callee_id)
+    if receiver.index < 0 or member.index < 0:
+        return
+    receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, receiver, source, current_scope))
+    if receiver_type.index < 0 or receiver_type.index >= cast[i32](len(checker.type_table.types)):
+        return
+    receiver_record = checker.type_table.types[receiver_type.index]
+    if not types.is_nominal_kind(receiver_record.kind) or receiver_record.name_length == 0:
+        return
+    owner = checker.symbols.find_in_scope(source, symbols.root_scope(), receiver_record.name_start, receiver_record.name_length)
+    if owner.index < 0:
+        return
+    member_scope = checker.symbols.symbols[owner.index].member_scope
+    member_node = arena.nodes[member.index]
+    method = checker.symbols.find_in_current_scope(source, member_scope, member_node.value_start, member_node.value_length)
+    if method.index < 0 or checker.symbols.symbols[method.index].kind != symbols.SymbolKind.METHOD:
+        return
+    declaration = checker.symbols.symbols[owner.index].node
+    args: List[types.TypeId] = generics.specialization_arguments(checker.type_table, receiver_type)
+    return_type = checker.symbols.symbols[method.index].type_id
+    if len(args) > 0 and generics.has_type_params(arena, declaration):
+        return_type = generics.substitute_type(checker.type_table, return_type, arena, declaration, &args, source)
+    checker.model.record_name_symbol(member, method)
+    checker.model.record_call(call_id, method, return_type, 0)
+    checker.model.record_expr_type(call_id, return_type)
+    expected = checker.symbols.symbols[method.index].arity - 1
+    if expected < 0:
+        expected = 0
+    validate_collection_method_argument_count(checker, arena, call_id, expected)
+
+
+def infer_generic_call_specialization(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+    callee: symbols.SymbolId,
+) -> void:
+    declaration = checker.symbols.symbols[callee.index].node
+    params: List[NodeId] = generics.collect_type_params(arena, declaration)
+    inferred: List[types.TypeId] = []
+    param_offset: usize = 0
+    while param_offset < len(params):
+        inferred.append(types.missing_type())
+        param_offset += 1
+    function = arena.nodes[declaration.index]
+    parameter_index: i32 = 0
+    for declaration_offset in range(0, function.child_count):
+        parameter_id = arena.children[function.first_child + declaration_offset]
+        parameter = arena.nodes[parameter_id.index]
+        if parameter.kind != syntax.SyntaxKind.PARAMETER:
+            continue
+        argument = call_argument_value(arena, call_id, parameter_index)
+        if argument.index >= 0:
+            actual = infer_expression_type(checker, arena, argument, source, current_scope)
+            pattern = checker_core.find_child_type(arena, parameter_id)
+            infer_type_arguments_from_pattern(checker, arena, declaration, pattern, actual, &inferred, source)
+        parameter_index += 1
+    inferred_index: usize = 0
+    while inferred_index < len(inferred):
+        inferred_type = inferred[inferred_index]
+        if inferred_type.index < 0 or inferred_type.index == types.type_error().index:
+            call_node = arena.nodes[call_id.index]
+            checker_core.emit_error(checker, 355, call_node.start, call_node.length, call_node.line, call_node.column)
+            return
+        inferred_index += 1
+    suffix = generics.specialization_suffix(checker.type_table, &inferred, source)
+    user_suffix = suffix[0:len(suffix)]
+    checker.model.record_specialization(call_id, callee, &inferred, suffix)
+    checker.model.record_user_specialization(declaration, &inferred, user_suffix)
+    specialized_return = generics.substitute_type(checker.type_table, checker.symbols.symbols[callee.index].type_id, arena, declaration, &inferred, source)
+    checker.model.record_call(call_id, callee, specialized_return, 1)
+    checker.model.record_expr_type(call_id, specialized_return)
+
+
+def infer_type_arguments_from_pattern(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    declaration: NodeId,
+    pattern: NodeId,
+    actual: types.TypeId,
+    inferred: &List[types.TypeId],
+    source: &const String,
+) -> void:
+    if pattern.index < 0 or actual.index < 0 or actual.index >= cast[i32](len(checker.type_table.types)):
+        return
+    pattern_node = arena.nodes[pattern.index]
+    if pattern_node.kind == syntax.SyntaxKind.TYPE_NAME:
+        parameter = generics.type_parameter_index(arena, declaration, source, pattern_node.value_start, pattern_node.value_length)
+        if parameter >= 0 and parameter < cast[i32](len(inferred)):
+            existing = inferred[cast[usize](parameter)]
+            if existing.index < 0:
+                inferred[cast[usize](parameter)] = actual
+            elif not checker.type_table.same(existing, actual):
+                pattern_span = arena.nodes[pattern.index]
+                checker_core.emit_error(checker, 107, pattern_span.start, pattern_span.length, pattern_span.line, pattern_span.column)
+        return
+    actual_record = checker.type_table.types[actual.index]
+    if pattern_node.kind == syntax.SyntaxKind.TYPE_POINTER or pattern_node.kind == syntax.SyntaxKind.TYPE_REFERENCE or pattern_node.kind == syntax.SyntaxKind.TYPE_CONST or pattern_node.kind == syntax.SyntaxKind.TYPE_SLICE or pattern_node.kind == syntax.SyntaxKind.TYPE_ARRAY or pattern_node.kind == syntax.SyntaxKind.TYPE_DYN:
+        infer_type_arguments_from_pattern(checker, arena, declaration, checker_core.first_child(arena, pattern), actual_record.inner, inferred, source)
+        return
+    if pattern_node.kind != syntax.SyntaxKind.TYPE_GENERIC:
+        return
+    offset: i32 = 1
+    while offset < pattern_node.child_count:
+        actual_argument = generic_actual_argument(checker.type_table, actual_record, offset - 1)
+        infer_type_arguments_from_pattern(checker, arena, declaration, arena.children[pattern_node.first_child + offset], actual_argument, inferred, source)
+        offset += 1
+
+
+def generic_actual_argument(table: &const types.TypeTable, record: types.TypeRecord, index: i32) -> types.TypeId:
+    if index < 0:
+        return types.missing_type()
+    if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
+        if index == 0:
+            return record.inner
+        if index == 1:
+            return record.second
+        return types.missing_type()
+    if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        if index == 0:
+            return record.inner
+        return types.missing_type()
+    if index < record.flags:
+        return table.type_args[cast[usize](record.extra + index)]
+    return types.missing_type()
 
 
 def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
     if id.index < 0:
         return types.type_error()
     existing = checker.model.expr_type(id)
-    if existing.index != types.type_error().index:
+    if existing.index != types.type_error().index and checker.specialization_declaration.index < 0:
         return existing
     node = arena.nodes[id.index]
     result = types.type_error()
@@ -231,7 +409,7 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         result = checker.model.expr_type(id)
     elif node.kind == syntax.SyntaxKind.EXPR_CAST:
         type_node = checker_core.find_child_type(arena, id)
-        result = checker.type_table.resolve_type_node(arena, type_node, source)
+        result = checker_core.resolve_type_node(checker, arena, type_node, source)
         checker.model.record_type_node(type_node, result)
     elif node.kind == syntax.SyntaxKind.EXPR_LIST:
         result = infer_list_literal_type(checker, arena, id, source, current_scope)
@@ -267,6 +445,10 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
                     result = types.type_error()
                 else:
                     result = left_type
+            elif checker.specialization_declaration.index >= 0 and not specialized_operand_types_compatible(checker, left_type, right_type):
+                right_node = arena.nodes[right.index]
+                checker_core.emit_error(checker, 107, right_node.start, right_node.length, right_node.line, right_node.column)
+                result = types.type_error()
             else:
                 result = left_type
     checker.model.record_expr_type(id, result)
@@ -434,6 +616,16 @@ def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, act
             return true
         return false
     return true
+
+
+def specialized_operand_types_compatible(checker: &checker_core.Checker, left: types.TypeId, right: types.TypeId) -> bool:
+    if checker.type_table.same(left, right):
+        return true
+    if left.index < 0 or right.index < 0:
+        return false
+    left_kind = checker.type_table.types[left.index].kind
+    right_kind = checker.type_table.types[right.index].kind
+    return is_numeric_kind(left_kind) and is_numeric_kind(right_kind)
 
 
 def is_numeric_kind(kind: types.TypeKind) -> bool:

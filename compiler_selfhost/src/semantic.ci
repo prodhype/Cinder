@@ -55,6 +55,13 @@ struct SpecializationBinding:
     suffix: String
 
 
+struct UserSpecialization:
+    declaration: NodeId
+    first_arg: i32
+    arg_count: i32
+    suffix: String
+
+
 struct SemanticModel:
     expr_types: List[NodeTypeBinding]
     type_nodes: List[NodeTypeBinding]
@@ -71,6 +78,7 @@ struct SemanticModel:
     call_resolutions: List[CallResolution]
     specialization_args: List[TypeId]
     specializations: List[SpecializationBinding]
+    user_specializations: List[UserSpecialization]
     cleanups: List[CleanupBinding]
     value_use_resolutions: List[ValueUseResolution]
 
@@ -116,6 +124,26 @@ struct SemanticModel:
             SpecializationBinding(
                 node=node,
                 callee=callee,
+                first_arg=first,
+                arg_count=cast[i32](len(args)),
+                suffix=suffix,
+            )
+        )
+
+    def record_user_specialization(self: &SemanticModel, declaration: NodeId, args: &const List[TypeId], suffix: String) -> void:
+        index: usize = 0
+        while index < len(self.user_specializations):
+            if self.user_specializations[index].declaration.index == declaration.index and self.user_specializations[index].suffix == suffix:
+                return
+            index += 1
+        first = cast[i32](len(self.specialization_args))
+        arg_index: usize = 0
+        while arg_index < len(args):
+            self.specialization_args.append(args[arg_index])
+            arg_index += 1
+        self.user_specializations.append(
+            UserSpecialization(
+                declaration=declaration,
                 first_arg=first,
                 arg_count=cast[i32](len(args)),
                 suffix=suffix,
@@ -174,6 +202,7 @@ def new_semantic_model() -> SemanticModel:
     call_resolutions: List[CallResolution] = []
     specialization_args: List[TypeId] = []
     specializations: List[SpecializationBinding] = []
+    user_specializations: List[UserSpecialization] = []
     cleanups: List[CleanupBinding] = []
     value_use_resolutions: List[ValueUseResolution] = []
     return SemanticModel(
@@ -192,6 +221,7 @@ def new_semantic_model() -> SemanticModel:
         call_resolutions=call_resolutions,
         specialization_args=specialization_args,
         specializations=specializations,
+        user_specializations=user_specializations,
         cleanups=cleanups,
         value_use_resolutions=value_use_resolutions,
     )

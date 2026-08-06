@@ -54,8 +54,9 @@ def emit_module_header_from_ir(
     dependencies: &const List[String],
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    type_table: &const types.TypeTable,
 ) -> String:
-    return codegen_module.emit_module_header_from_ir(module, arena, source, module_name, project_name, dependencies, imports, registry)
+    return codegen_module.emit_module_header_from_ir(module, arena, source, module_name, project_name, dependencies, imports, registry, type_table)
 
 
 def emit_module_source(

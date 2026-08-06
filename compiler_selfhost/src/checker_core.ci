@@ -2,6 +2,7 @@ import semantic
 import symbols
 import syntax
 import types
+import generics
 from syntax import NodeId
 
 
@@ -19,6 +20,8 @@ struct Checker:
     model: semantic.SemanticModel
     diagnostics: List[CheckerDiagnostic]
     imported_enum_names: List[String]
+    specialization_declaration: NodeId
+    specialization_args: List[types.TypeId]
 
     def emit_error(self: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
         if len(self.diagnostics) > 0:
@@ -31,7 +34,16 @@ struct Checker:
 def new_checker() -> Checker:
     diagnostics: List[CheckerDiagnostic] = []
     imported_enum_names: List[String] = []
-    return Checker(type_table=types.new_type_table(), symbols=symbols.new_symbol_table(), model=semantic.new_semantic_model(), diagnostics=diagnostics, imported_enum_names=imported_enum_names)
+    specialization_args: List[types.TypeId] = []
+    return Checker(
+        type_table=types.new_type_table(),
+        symbols=symbols.new_symbol_table(),
+        model=semantic.new_semantic_model(),
+        diagnostics=diagnostics,
+        imported_enum_names=imported_enum_names,
+        specialization_declaration=syntax.missing_node(),
+        specialization_args=specialization_args,
+    )
 
 
 def emit_error(checker: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
@@ -88,9 +100,118 @@ def resolve_declared_type_or_default(checker: &Checker, arena: &const syntax.Syn
     type_node = find_child_type(arena, id)
     if type_node.index < 0:
         return fallback
-    type_id = checker.type_table.resolve_type_node(arena, type_node, source)
+    type_id = resolve_type_node(checker, arena, type_node, source)
     checker.model.record_type_node(type_node, type_id)
     return type_id
+
+
+def resolve_type_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> types.TypeId:
+    resolved = resolve_type_node_unsubstituted(checker, arena, id, source)
+    if checker.specialization_declaration.index >= 0:
+        return generics.substitute_type(checker.type_table, resolved, arena, checker.specialization_declaration, &checker.specialization_args, source)
+    return resolved
+
+
+def resolve_type_node_unsubstituted(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> types.TypeId:
+    if id.index < 0:
+        return types.type_i32()
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.TYPE_NAME:
+        found = checker.symbols.find_in_scope(source, symbols.root_scope(), node.value_start, node.value_length)
+        if found.index >= 0:
+            symbol = checker.symbols.symbols[found.index]
+            if symbol.kind == symbols.SymbolKind.TYPE_PARAMETER or is_nominal_symbol_kind(symbol.kind):
+                if is_nominal_symbol_kind(symbol.kind) and generics.has_type_params(arena, symbol.node):
+                    emit_error(checker, 352, node.start, node.length, node.line, node.column)
+                return symbol.type_id
+        return checker.type_table.resolve_type_name(source, node.value_start, node.value_length)
+    if node.kind == syntax.SyntaxKind.TYPE_POINTER:
+        return checker.type_table.pointer_to(resolve_type_node(checker, arena, first_child(arena, id), source))
+    if node.kind == syntax.SyntaxKind.TYPE_REFERENCE:
+        return checker.type_table.reference_to(resolve_type_node(checker, arena, first_child(arena, id), source))
+    if node.kind == syntax.SyntaxKind.TYPE_CONST:
+        return checker.type_table.const_of(resolve_type_node(checker, arena, first_child(arena, id), source))
+    if node.kind == syntax.SyntaxKind.TYPE_SLICE:
+        return checker.type_table.slice_of(resolve_type_node(checker, arena, first_child(arena, id), source))
+    if node.kind == syntax.SyntaxKind.TYPE_DYN:
+        return checker.type_table.dyn_of(resolve_type_node(checker, arena, first_child(arena, id), source))
+    if node.kind == syntax.SyntaxKind.TYPE_ARRAY:
+        return checker.type_table.array_of(resolve_type_node(checker, arena, first_child(arena, id), source), types.array_length_from_node(arena, id, source))
+    if node.kind == syntax.SyntaxKind.TYPE_GENERIC:
+        return resolve_generic_type_node(checker, arena, id, source)
+    if node.kind == syntax.SyntaxKind.TYPE_FUNCTION or node.kind == syntax.SyntaxKind.TYPE_CLOSURE:
+        return resolve_callable_type_node(checker, arena, id, source, node.kind == syntax.SyntaxKind.TYPE_CLOSURE)
+    return types.type_error()
+
+
+def resolve_generic_type_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> types.TypeId:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        return types.type_error()
+    base_id = arena.children[node.first_child]
+    base = arena.nodes[base_id.index]
+    if is_runtime_generic_name(source, &base):
+        return checker.type_table.resolve_generic_type_node(arena, id, source)
+    args: List[types.TypeId] = []
+    offset: i32 = 1
+    while offset < node.child_count:
+        args.append(resolve_type_node(checker, arena, arena.children[node.first_child + offset], source))
+        offset += 1
+    kind = types.TypeKind.NAMED
+    found = checker.symbols.find_in_scope(source, symbols.root_scope(), base.value_start, base.value_length)
+    if found.index >= 0:
+        found_symbol = checker.symbols.symbols[found.index]
+        expected_args = generics.type_param_count(arena, found_symbol.node)
+        actual_args = node.child_count - 1
+        if expected_args > 0 and expected_args != actual_args:
+            emit_error(checker, 352, node.start, node.length, node.line, node.column)
+        symbol_type = found_symbol.type_id
+        if symbol_type.index >= 0 and symbol_type.index < cast[i32](len(checker.type_table.types)):
+            kind = checker.type_table.types[symbol_type.index].kind
+    return checker.type_table.generic_from_args(kind, base.value_start, base.value_length, args)
+
+
+def resolve_callable_type_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, is_closure: bool) -> types.TypeId:
+    node = arena.nodes[id.index]
+    args: List[types.TypeId] = []
+    offset: i32 = 0
+    environment = types.type_error()
+    if is_closure and node.child_count > 0:
+        environment = resolve_type_node(checker, arena, arena.children[node.first_child], source)
+        offset = 1
+    parameter_end = node.child_count
+    return_type = types.type_void()
+    if types.callable_type_has_return(source, &node) and parameter_end > offset:
+        parameter_end -= 1
+        return_type = resolve_type_node(checker, arena, arena.children[node.first_child + parameter_end], source)
+    while offset < parameter_end:
+        args.append(resolve_type_node(checker, arena, arena.children[node.first_child + offset], source))
+        offset += 1
+    if is_closure:
+        return checker.type_table.closure_from_args(environment, args, return_type)
+    return checker.type_table.function_from_args(args, return_type)
+
+
+def is_runtime_generic_name(source: &const String, node: &const syntax.SyntaxNode) -> bool:
+    return range_text_equals(source, node.value_start, node.value_length, "Option") or range_text_equals(source, node.value_start, node.value_length, "Owned") or range_text_equals(source, node.value_start, node.value_length, "List") or range_text_equals(source, node.value_start, node.value_length, "Set") or range_text_equals(source, node.value_start, node.value_length, "Map") or range_text_equals(source, node.value_start, node.value_length, "MapKeys") or range_text_equals(source, node.value_start, node.value_length, "MapValues") or range_text_equals(source, node.value_start, node.value_length, "MapItems") or range_text_equals(source, node.value_start, node.value_length, "Result") or range_text_equals(source, node.value_start, node.value_length, "Tuple")
+
+
+def is_nominal_symbol_kind(kind: symbols.SymbolKind) -> bool:
+    return kind == symbols.SymbolKind.STRUCT or kind == symbols.SymbolKind.CLASS or kind == symbols.SymbolKind.ENUM or kind == symbols.SymbolKind.UNION or kind == symbols.SymbolKind.VARIANT or kind == symbols.SymbolKind.EXTERN_TYPE
+
+
+def type_is_unbound_parameter(checker: &const Checker, type_id: types.TypeId, source: &const String) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(checker.type_table.types)):
+        return false
+    record = checker.type_table.types[type_id.index]
+    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.DYN:
+        return type_is_unbound_parameter(checker, record.inner, source)
+    if record.name_length == 0:
+        return false
+    for symbol in checker.symbols.symbols:
+        if symbol.kind == symbols.SymbolKind.TYPE_PARAMETER and symbols.range_equals(source, record.name_start, record.name_length, symbol.name_start, symbol.name_length):
+            return true
+    return false
 
 
 def find_child_type(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:

@@ -1,6 +1,8 @@
 import backend_ir
 import codegen_names
 import codegen_type_names
+import generics
+import semantic
 import project
 import syntax
 import token
@@ -30,6 +32,10 @@ struct ModuleCodegenContext:
     specialization_names: &const codegen_names.SpecializationNameRegistry
     semantic_nodes: &const List[backend_ir.IRNode]
     type_table: &const types.TypeTable
+    specialization_args: &const List[types.TypeId]
+    call_specializations: &const List[semantic.SpecializationBinding]
+    user_specializations: &const List[semantic.UserSpecialization]
+    active_user_specialization: i32
     local_types: List[ModuleNameTypeBinding]
     pointer_names: List[String]
     tuple_items: List[ModuleTupleItemBinding]
@@ -64,6 +70,9 @@ def make_module_codegen_context(
     registry: &const codegen_names.SpecializationNameRegistry,
     semantic_nodes: &const List[backend_ir.IRNode],
     type_table: &const types.TypeTable,
+    specialization_args: &const List[types.TypeId],
+    call_specializations: &const List[semantic.SpecializationBinding],
+    user_specializations: &const List[semantic.UserSpecialization],
 ) -> ModuleCodegenContext:
     local_types: List[ModuleNameTypeBinding] = []
     pointer_names: List[String] = []
@@ -82,6 +91,10 @@ def make_module_codegen_context(
         specialization_names=registry,
         semantic_nodes=semantic_nodes,
         type_table=type_table,
+        specialization_args=specialization_args,
+        call_specializations=call_specializations,
+        user_specializations=user_specializations,
+        active_user_specialization=-1,
         local_types=local_types,
         pointer_names=pointer_names,
         tuple_items=tuple_items,
@@ -479,6 +492,149 @@ def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.T
         if node.syntax.index == id.index:
             return node.type_id
     return types.missing_type()
+
+
+def emit_context_c_type(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &ModuleCodegenContext,
+) -> void:
+    user_specializations: &const List[semantic.UserSpecialization] = context.user_specializations
+    specialization_args: &const List[types.TypeId] = context.specialization_args
+    if id.index < 0 or context.active_user_specialization < 0 or context.active_user_specialization >= cast[i32](len(user_specializations)):
+        codegen_type_names.emit_module_c_type(arena, id, source, builder, prefix, project_name, imports, context.specialization_names)
+        return
+    node = arena.nodes[id.index]
+    active: &const semantic.UserSpecialization = &user_specializations[cast[usize](context.active_user_specialization)]
+    if node.kind == SyntaxKind.TYPE_NAME:
+        parameter = generics.type_parameter_index(context.type_arena, active.declaration, context.type_source, node.value_start, node.value_length)
+        if parameter >= 0 and parameter < active.arg_count:
+            argument = specialization_args[cast[usize](active.first_arg + parameter)]
+            codegen_type_names.emit_semantic_c_type(context.type_table, argument, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+            return
+    if node.kind == SyntaxKind.TYPE_REFERENCE:
+        child = codegen_names.first_child(arena, id)
+        if child.index >= 0 and arena.nodes[child.index].kind == SyntaxKind.TYPE_CONST:
+            builder.append("const ")
+            emit_context_c_type(arena, codegen_names.first_child(arena, child), source, builder, prefix, project_name, imports, context)
+            builder.append(" *")
+        else:
+            emit_context_c_type(arena, child, source, builder, prefix, project_name, imports, context)
+            builder.append(" *")
+        return
+    if node.kind == SyntaxKind.TYPE_POINTER:
+        emit_context_c_type(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+        builder.append(" *")
+        return
+    if node.kind == SyntaxKind.TYPE_CONST:
+        builder.append("const ")
+        emit_context_c_type(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
+        return
+    if node.kind == SyntaxKind.TYPE_GENERIC and active.declaration.index >= 0:
+        base = codegen_names.first_child(arena, id)
+        declaration = arena.nodes[active.declaration.index]
+        if base.index >= 0:
+            base_node = arena.nodes[base.index]
+            if codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, source[declaration.value_start:declaration.value_start + declaration.value_length]):
+                codegen_names.emit_prefixed_name(builder, prefix, source, declaration.value_start, declaration.value_length)
+                builder.append(active.suffix[0:len(active.suffix)])
+                return
+        if base.index >= 0:
+            base_node = arena.nodes[base.index]
+            if codegen_type_names.is_runtime_generic_name(source, &base_node, "List") or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set") or codegen_type_names.is_runtime_generic_name(source, &base_node, "Map") or codegen_type_names.is_runtime_generic_name(source, &base_node, "MapKeys") or codegen_type_names.is_runtime_generic_name(source, &base_node, "MapValues") or codegen_type_names.is_runtime_generic_name(source, &base_node, "MapItems") or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option") or codegen_type_names.is_runtime_generic_name(source, &base_node, "Result") or codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned") or codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple"):
+                builder.append("Cinder")
+                codegen_names.append_source(builder, source, base_node.value_start, base_node.value_length)
+            else:
+                codegen_type_names.emit_module_nominal_type(arena, base, source, builder, prefix, project_name, imports)
+            offset: i32 = 1
+            while offset < node.child_count:
+                builder.append("_")
+                emit_context_type_key(arena, arena.children[node.first_child + offset], source, builder, context)
+                offset += 1
+            return
+    codegen_type_names.emit_module_c_type(arena, id, source, builder, prefix, project_name, imports, context.specialization_names)
+
+
+def emit_context_type_key(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &ModuleCodegenContext,
+) -> void:
+    if id.index < 0:
+        builder.append("error")
+        return
+    node = arena.nodes[id.index]
+    user_specializations: &const List[semantic.UserSpecialization] = context.user_specializations
+    specialization_args: &const List[types.TypeId] = context.specialization_args
+    if node.kind == SyntaxKind.TYPE_NAME and context.active_user_specialization >= 0 and context.active_user_specialization < cast[i32](len(user_specializations)):
+        active: &const semantic.UserSpecialization = &user_specializations[cast[usize](context.active_user_specialization)]
+        parameter = generics.type_parameter_index(context.type_arena, active.declaration, context.type_source, node.value_start, node.value_length)
+        if parameter >= 0 and parameter < active.arg_count:
+            codegen_type_names.emit_semantic_readable_type_name(context.type_table, specialization_args[cast[usize](active.first_arg + parameter)], context.type_source, builder)
+            return
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = codegen_names.first_child(arena, id)
+        if base.index >= 0:
+            builder.append("Cinder")
+            base_node = arena.nodes[base.index]
+            codegen_names.append_source(builder, source, base_node.value_start, base_node.value_length)
+        offset: i32 = 1
+        while offset < node.child_count:
+            builder.append("_")
+            emit_context_type_key(arena, arena.children[node.first_child + offset], source, builder, context)
+            offset += 1
+        return
+    if node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_CONST or node.kind == SyntaxKind.TYPE_SLICE:
+        emit_context_type_key(arena, codegen_names.first_child(arena, id), source, builder, context)
+        if node.kind == SyntaxKind.TYPE_POINTER:
+            builder.append("_ptr")
+        elif node.kind == SyntaxKind.TYPE_REFERENCE:
+            builder.append("_ref")
+        elif node.kind == SyntaxKind.TYPE_CONST:
+            builder.append("_const")
+        else:
+            builder.append("_slice")
+        return
+    codegen_type_names.emit_readable_specialized_type_name(arena, id, source, builder)
+
+
+def append_call_specialization_suffix(context: &ModuleCodegenContext, node: NodeId, builder: &StringBuilder) -> bool:
+    call_specializations: &const List[semantic.SpecializationBinding] = context.call_specializations
+    index: usize = 0
+    while index < len(call_specializations):
+        if call_specializations[index].node.index == node.index:
+            builder.append(call_specializations[index].suffix[0:len(call_specializations[index].suffix)])
+            return true
+        index += 1
+    return false
+
+
+def user_specialization_count(context: &ModuleCodegenContext) -> usize:
+    values: &const List[semantic.UserSpecialization] = context.user_specializations
+    return len(values)
+
+
+def user_specialization_declaration_index(context: &ModuleCodegenContext, index: usize) -> i32:
+    values: &const List[semantic.UserSpecialization] = context.user_specializations
+    if index >= len(values):
+        return -1
+    return values[index].declaration.index
+
+
+def append_active_user_specialization_suffix(context: &ModuleCodegenContext, builder: &StringBuilder) -> bool:
+    values: &const List[semantic.UserSpecialization] = context.user_specializations
+    if context.active_user_specialization < 0 or context.active_user_specialization >= cast[i32](len(values)):
+        return false
+    suffix: &const String = &values[cast[usize](context.active_user_specialization)].suffix
+    builder.append(suffix[0:len(suffix)])
+    return true
 
 
 def context_expression_is_collection(

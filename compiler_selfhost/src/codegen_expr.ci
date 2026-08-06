@@ -99,14 +99,14 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
                 has_semantic_list = false
         builder.append("({ ")
         if has_specialized_list:
-            codegen_type_names.emit_module_c_type(context.type_arena, list_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+            codegen_context.emit_context_c_type(context.type_arena, list_type, context.type_source, builder, prefix, project_name, imports, context)
         elif has_semantic_list:
             codegen_type_names.emit_semantic_c_type(type_table, semantic_list_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
         else:
             builder.append("CinderList")
         builder.append(" cinder_list = (")
         if has_specialized_list:
-            codegen_type_names.emit_module_c_type(context.type_arena, list_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+            codegen_context.emit_context_c_type(context.type_arena, list_type, context.type_source, builder, prefix, project_name, imports, context)
         elif has_semantic_list:
             codegen_type_names.emit_semantic_c_type(type_table, semantic_list_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
         else:
@@ -132,7 +132,7 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         has_semantic_set = codegen_type_names.semantic_type_is_kind(type_table, semantic_set_type, types.TypeKind.SET)
         set_name_builder = StringBuilder()
         if has_specialized_set:
-            codegen_type_names.emit_module_c_type(context.type_arena, set_type, context.type_source, &set_name_builder, prefix, project_name, imports, context.specialization_names)
+            codegen_context.emit_context_c_type(context.type_arena, set_type, context.type_source, &set_name_builder, prefix, project_name, imports, context)
         elif has_semantic_set:
             codegen_type_names.emit_semantic_c_type(type_table, semantic_set_type, context.type_source, &set_name_builder, prefix, project_name, imports, context.specialization_names)
         else:
@@ -163,7 +163,7 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         has_semantic_map = codegen_type_names.semantic_type_is_kind(type_table, semantic_map_type, types.TypeKind.MAP)
         map_name_builder = StringBuilder()
         if has_specialized_map:
-            codegen_type_names.emit_module_c_type(context.type_arena, map_type, context.type_source, &map_name_builder, prefix, project_name, imports, context.specialization_names)
+            codegen_context.emit_context_c_type(context.type_arena, map_type, context.type_source, &map_name_builder, prefix, project_name, imports, context)
         elif has_semantic_map:
             codegen_type_names.emit_semantic_c_type(type_table, semantic_map_type, context.type_source, &map_name_builder, prefix, project_name, imports, context.specialization_names)
         else:
@@ -199,7 +199,7 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         tuple_type = context.expected_type
         if codegen_context.context_type_is_runtime_generic(context.type_arena, tuple_type, context.type_source, "Tuple"):
             builder.append("((")
-            codegen_type_names.emit_module_c_type(context.type_arena, tuple_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+            codegen_context.emit_context_c_type(context.type_arena, tuple_type, context.type_source, builder, prefix, project_name, imports, context)
             builder.append("){")
             item_index: i32 = 0
             for offset in range(0, node.child_count):
@@ -316,18 +316,18 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     if node.kind == SyntaxKind.EXPR_ALLOC:
         allocation_type = codegen_type_names.find_child_type(arena, id)
         builder.append("(")
-        codegen_type_names.emit_module_c_type(arena, allocation_type, source, builder, prefix, project_name, imports, context.specialization_names)
+        codegen_context.emit_context_c_type(arena, allocation_type, source, builder, prefix, project_name, imports, context)
         builder.append(" *)cinder_alloc(")
         value = codegen_names.last_child(arena, id)
         emit_module_expression_state(state, value)
         builder.append(", sizeof(")
-        codegen_type_names.emit_module_c_type(arena, allocation_type, source, builder, prefix, project_name, imports, context.specialization_names)
+        codegen_context.emit_context_c_type(arena, allocation_type, source, builder, prefix, project_name, imports, context)
         builder.append("))")
         return
     if node.kind == SyntaxKind.EXPR_CAST:
         cast_type = codegen_type_names.find_child_type(arena, id)
         builder.append("(")
-        codegen_type_names.emit_module_c_type(arena, cast_type, source, builder, prefix, project_name, imports, context.specialization_names)
+        codegen_context.emit_context_c_type(arena, cast_type, source, builder, prefix, project_name, imports, context)
         builder.append(")(")
         emit_module_expression_state(state, codegen_names.last_child(arena, id))
         builder.append(")")

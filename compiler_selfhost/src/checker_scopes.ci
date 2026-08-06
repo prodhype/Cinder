@@ -13,6 +13,159 @@ from syntax import NodeId
 
 def validate_names(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String) -> void:
     validate_names_in_scope(checker, arena, root, source, symbols.root_scope(), types.type_void())
+    validate_specializations(checker, arena, source)
+
+
+def validate_specializations(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, source: &const String) -> void:
+    user_specializations: &const List[semantic.UserSpecialization] = &checker.model.user_specializations
+    specialization_args: &const List[types.TypeId] = &checker.model.specialization_args
+    index: usize = 0
+    while index < len(user_specializations):
+        declaration = user_specializations[index].declaration
+        first_arg = user_specializations[index].first_arg
+        arg_count = user_specializations[index].arg_count
+        while len(checker.specialization_args) > 0:
+            checker.specialization_args.pop()
+        offset: i32 = 0
+        while offset < arg_count:
+            checker.specialization_args.append(specialization_args[cast[usize](first_arg + offset)])
+            offset += 1
+        checker.specialization_declaration = declaration
+        validate_specialized_declaration(checker, arena, declaration, source)
+        if declaration.index >= 0 and arena.nodes[declaration.index].kind == syntax.SyntaxKind.CLASS_DECL:
+            validate_specialized_class_implementations(checker, arena, declaration, source)
+        index += 1
+    checker.specialization_declaration = syntax.missing_node()
+    while len(checker.specialization_args) > 0:
+        checker.specialization_args.pop()
+
+
+def validate_specialized_declaration(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, declaration: NodeId, source: &const String) -> void:
+    if declaration.index < 0:
+        return
+    node = arena.nodes[declaration.index]
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
+        validate_names_in_scope(checker, arena, declaration, source, symbols.root_scope(), types.type_void())
+        return
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        if arena.nodes[child_id.index].kind == syntax.SyntaxKind.FUNCTION_DECL:
+            validate_names_in_scope(checker, arena, child_id, source, symbols.root_scope(), types.type_void())
+
+
+def validate_specialized_class_implementations(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, declaration: NodeId, source: &const String) -> void:
+    candidate_index: usize = 0
+    while candidate_index < len(arena.nodes):
+        candidate_id = NodeId(index=cast[i32](candidate_index))
+        candidate = arena.nodes[candidate_index]
+        if candidate.kind == syntax.SyntaxKind.CLASS_DECL and candidate_id.index != declaration.index and class_has_active_generic_base(checker, arena, candidate_id, declaration, source):
+            validate_class_methods_against_specialization(checker, arena, candidate_id, declaration, source)
+        candidate_index += 1
+
+
+def class_has_active_generic_base(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    candidate: NodeId,
+    declaration: NodeId,
+    source: &const String,
+) -> bool:
+    candidate_node = arena.nodes[candidate.index]
+    declaration_node = arena.nodes[declaration.index]
+    active_args: &const List[types.TypeId] = &checker.specialization_args
+    for offset in range(0, candidate_node.child_count):
+        base_id = arena.children[candidate_node.first_child + offset]
+        base = arena.nodes[base_id.index]
+        if base.kind != syntax.SyntaxKind.TYPE_GENERIC:
+            continue
+        base_name = checker_core.first_child(arena, base_id)
+        if base_name.index < 0:
+            continue
+        base_name_node = arena.nodes[base_name.index]
+        if not symbols.range_equals(source, base_name_node.value_start, base_name_node.value_length, declaration_node.value_start, declaration_node.value_length):
+            continue
+        base_type = checker_core.resolve_type_node(checker, arena, base_id, source)
+        if base_type.index < 0 or base_type.index >= cast[i32](len(checker.type_table.types)):
+            continue
+        record = checker.type_table.types[base_type.index]
+        if record.flags != cast[i32](len(active_args)):
+            continue
+        matches = true
+        argument_offset: i32 = 0
+        while argument_offset < record.flags:
+            if not checker.type_table.same(checker.type_table.type_args[cast[usize](record.extra + argument_offset)], active_args[cast[usize](argument_offset)]):
+                matches = false
+            argument_offset += 1
+        if matches:
+            return true
+    return false
+
+
+def validate_class_methods_against_specialization(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    implementation: NodeId,
+    declaration: NodeId,
+    source: &const String,
+) -> void:
+    declaration_node = arena.nodes[declaration.index]
+    for offset in range(0, declaration_node.child_count):
+        expected_id = arena.children[declaration_node.first_child + offset]
+        expected = arena.nodes[expected_id.index]
+        if expected.kind != syntax.SyntaxKind.FUNCTION_DECL:
+            continue
+        actual_id = find_method_declaration(arena, implementation, source, expected.value_start, expected.value_length)
+        if actual_id.index < 0 or not specialized_method_signatures_match(checker, arena, expected_id, actual_id, source):
+            implementation_node = arena.nodes[implementation.index]
+            checker_core.emit_error(checker, 179, implementation_node.start, implementation_node.length, implementation_node.line, implementation_node.column)
+            return
+
+
+def find_method_declaration(arena: &const syntax.SyntaxArena, declaration: NodeId, source: &const String, start: usize, length: usize) -> NodeId:
+    node = arena.nodes[declaration.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.FUNCTION_DECL and symbols.range_equals(source, child.value_start, child.value_length, start, length):
+            return child_id
+    return syntax.missing_node()
+
+
+def specialized_method_signatures_match(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expected_id: NodeId,
+    actual_id: NodeId,
+    source: &const String,
+) -> bool:
+    expected_count = checker_core.count_direct_children(arena, expected_id, syntax.SyntaxKind.PARAMETER)
+    actual_count = checker_core.count_direct_children(arena, actual_id, syntax.SyntaxKind.PARAMETER)
+    if expected_count != actual_count:
+        return false
+    parameter_index: i32 = 1
+    while parameter_index < expected_count:
+        expected_parameter = parameter_at(arena, expected_id, parameter_index)
+        actual_parameter = parameter_at(arena, actual_id, parameter_index)
+        expected_type = checker_core.resolve_declared_type_or_default(checker, arena, expected_parameter, source, types.type_i32())
+        actual_type = checker_core.resolve_declared_type_or_default(checker, arena, actual_parameter, source, types.type_i32())
+        if not checker.type_table.same(expected_type, actual_type):
+            return false
+        parameter_index += 1
+    expected_return = checker_core.resolve_declared_type_or_default(checker, arena, expected_id, source, types.type_i32())
+    actual_return = checker_core.resolve_declared_type_or_default(checker, arena, actual_id, source, types.type_i32())
+    return checker.type_table.same(expected_return, actual_return)
+
+
+def parameter_at(arena: &const syntax.SyntaxArena, declaration: NodeId, wanted: i32) -> NodeId:
+    node = arena.nodes[declaration.index]
+    seen: i32 = 0
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        if arena.nodes[child_id.index].kind == syntax.SyntaxKind.PARAMETER:
+            if seen == wanted:
+                return child_id
+            seen += 1
+    return syntax.missing_node()
 
 
 def validate_names_in_node(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
@@ -83,7 +236,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             return
         returned = checker_core.first_child(arena, id)
         returned_type = checker_types.infer_expression_type(checker, arena, returned, source, current_scope)
-        if expected_return.index != types.type_void().index and returned_type.index != types.type_error().index and not checker_types.types_compatible(checker, expected_return, returned_type):
+        if expected_return.index != types.type_void().index and returned_type.index != types.type_error().index and not checker_types.types_compatible(checker, expected_return, returned_type) and not (checker.specialization_declaration.index < 0 and checker_core.type_is_unbound_parameter(checker, expected_return, source)):
             returned_node = arena.nodes[returned.index]
             checker_core.emit_error(checker, 107, returned_node.start, returned_node.length, returned_node.line, returned_node.column)
             return
@@ -114,6 +267,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
                 return
     elif node.kind == syntax.SyntaxKind.TYPE_GENERIC:
         checker_types.validate_hashable_collection_type(checker, arena, id, source, current_scope)
+        checker_types.record_user_type_specialization(checker, arena, id, source)
     for offset in range(0, node.child_count):
         validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, current_scope, expected_return)
 
@@ -280,6 +434,9 @@ def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.Synta
         inferred = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
         if inferred.index < 0 or inferred.index >= cast[i32](len(checker.type_table.types)):
             return
+        declared = checker.symbols.find_in_current_scope(source, current_scope, arena.nodes[id.index].value_start, arena.nodes[id.index].value_length)
+        if declared.index >= 0:
+            checker.symbols.symbols[declared.index].type_id = inferred
         inferred_type = checker.type_table.types[inferred.index]
         initializer_node = arena.nodes[initializer.index]
         if inferred_type.kind == types.TypeKind.MAP and not checker_types.semantic_type_is_hashable(checker.type_table, inferred_type.inner, source):
@@ -287,9 +444,42 @@ def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.Synta
         elif inferred_type.kind == types.TypeKind.SET and not checker_types.semantic_type_is_hashable(checker.type_table, inferred_type.inner, source):
             checker_core.emit_error(checker, 300, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
         return
-    annotation_type = checker.type_table.resolve_type_node(arena, annotation, source)
+    annotation_type = checker_core.resolve_type_node(checker, arena, annotation, source)
     checker.model.record_type_node(annotation, annotation_type)
     initializer_type = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
+    if initializer_matches_nominal_annotation(checker, arena, initializer, annotation_type, source):
+        initializer_type = annotation_type
+        checker.model.record_expr_type(initializer, annotation_type)
     initializer_node = arena.nodes[initializer.index]
     if initializer_type.index >= 0 and initializer_type.index != types.type_error().index and not checker_types.types_compatible(checker, annotation_type, initializer_type):
         checker_core.emit_error(checker, 107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+
+
+def initializer_matches_nominal_annotation(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    initializer: NodeId,
+    annotation_type: types.TypeId,
+    source: &const String,
+) -> bool:
+    if initializer.index < 0 or annotation_type.index < 0 or annotation_type.index >= cast[i32](len(checker.type_table.types)):
+        return false
+    annotation = checker.type_table.types[annotation_type.index]
+    if not types.is_nominal_kind(annotation.kind) or annotation.name_length == 0:
+        return false
+    initializer_node = arena.nodes[initializer.index]
+    if initializer_node.kind != syntax.SyntaxKind.EXPR_CALL:
+        return false
+    callee = checker_core.first_child(arena, initializer)
+    if callee.index < 0:
+        return false
+    callee_node = arena.nodes[callee.index]
+    owner = callee
+    if callee_node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        owner = checker_core.first_child(arena, callee)
+    if owner.index < 0:
+        return false
+    owner_node = arena.nodes[owner.index]
+    if owner_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return false
+    return symbols.range_equals(source, annotation.name_start, annotation.name_length, owner_node.value_start, owner_node.value_length)
