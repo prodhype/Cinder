@@ -774,6 +774,98 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert subprocess.run([str(executable)], check=False).returncode == 0
 
 
+def test_gen1_builds_and_runs_print_example(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / (
+        "print.exe" if shutil.which("cl") and not shutil.which("cc") else "print"
+    )
+    build_dir = tmp_path / "print-build"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(ROOT / "examples" / "print.ci"),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(build_dir),
+    )
+
+    assert built.returncode == 0, built.stderr
+    generated = (build_dir / "cinder_gen" / "print.c").read_text(encoding="utf-8")
+    assert "CinderMap_String_i32_print" in generated
+    assert "CinderSet_i32_print" in generated
+    assert "CinderTuple_i32_String_print" in generated
+    assert "CinderMap_String_i32_clear(&scores)" in generated
+    assert "CinderSet_i32_clear(&primes)" in generated
+    assert "cinder_selfhost_list_clear(&scores)" not in generated
+    assert "cinder_selfhost_list_clear(&primes)" not in generated
+
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == (
+        "print is available without importing stdio\n"
+        "multiple values: Cinder 3 true\n"
+        "default formats: string=Cinder bool=true char=C int=3 float=3.14159\n"
+        "explicit scalar formats: string=Cinder bool=true char=C\n"
+        "integer formats: d=3 i=3 u=3 o=3 x=3 X=3\n"
+        "large integers: signed=-9223372036854775808 unsigned=18446744073709551615 hex=FFFFFFFFFFFFFFFF\n"
+        "base values: hex=DEADBEEF octal=755 binary 0b1010110011110000=44272\n"
+        "float formats: f=3.141590 F=3.141590 e=3.141590e+00 E=3.141590E+00 g=3.14159 G=3.14159\n"
+        "float precision: f=3.14 F=3.14 e=3.142e+00 E=3.142E+00 g=3.142 G=3.142\n"
+        "expressions: count + 1=4 nested=Cinder #3\n"
+        "escaped braces {like this} and a literal percent 100%\n"
+        "[1, 2, 3]\n"
+        "{'Ada': 1, 'Grace': 2}\n"
+        "{5, 3, 2}\n"
+        "(1, 'ready')\n"
+        "values=[1, 2, 3]\n"
+    )
+
+    fstring_source = tmp_path / "collection_fstrings.ci"
+    fstring_source.write_text(
+        "def main() -> i32:\n"
+        "    scores: Map[String, i32] = {\"Ada\": 1}\n"
+        "    defer scores.clear()\n"
+        "    primes: Set[i32] = {2}\n"
+        "    defer primes.clear()\n"
+        "    pair: Tuple[i32, String] = (1, \"ready\")\n"
+        "    singleton: Tuple[i32] = (1,)\n"
+        "    nested: Map[String, List[i32]] = {\"numbers\": [1, 2]}\n"
+        "    defer nested.clear()\n"
+        "    print(f\"scores={scores} primes={primes} pair={pair} singleton={singleton} nested={nested}\")\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    fstring_executable = tmp_path / (
+        "collection-fstrings.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "collection-fstrings"
+    )
+    fstring_build = run_gen1(
+        gen1_compiler,
+        "build",
+        str(fstring_source),
+        "-o",
+        str(fstring_executable),
+        "--build-dir",
+        str(tmp_path / "fstring-build"),
+    )
+    assert fstring_build.returncode == 0, fstring_build.stderr
+    fstring_ran = subprocess.run(
+        [str(fstring_executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert fstring_ran.returncode == 0, fstring_ran.stderr
+    assert fstring_ran.stdout == (
+        "scores={'Ada': 1} primes={2} pair=(1, 'ready') singleton=(1,) "
+        "nested={'numbers': [1, 2]}\n"
+    )
+
+
 def test_gen1_map_set_hash_and_equality_strategies(
     gen1_compiler: Path,
     tmp_path: Path,

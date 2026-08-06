@@ -14,6 +14,23 @@ enum ManagedHashKind:
     C_STRING
 
 
+enum PrintValueKind:
+    UNSUPPORTED
+    BOOL
+    CHAR
+    STRING
+    C_STRING
+    SIGNED_INTEGER
+    UNSIGNED_INTEGER
+    FLOAT
+    COLLECTION
+
+
+struct PrintTypeInfo:
+    kind: PrintValueKind
+    helper: String
+
+
 struct ManagedTypeInfo:
     c_type: String
     token: String
@@ -75,6 +92,14 @@ def emit_semantic_type_specializations(
     for type_id in specializations:
         if semantic_specialization_is_inferred_expression(semantic_nodes, arena, type_id):
             emit_semantic_type_specialization(table, type_id, source, builder, emitted, prefix, project_name, imports, registry)
+    emitted_print_prototypes: List[String] = []
+    for type_id in specializations:
+        if semantic_specialization_is_inferred_expression(semantic_nodes, arena, type_id):
+            emit_semantic_collection_print_helpers(table, type_id, source, builder, emitted_print_prototypes, registry, false)
+    emitted_print_helpers: List[String] = []
+    for type_id in specializations:
+        if semantic_specialization_is_inferred_expression(semantic_nodes, arena, type_id):
+            emit_semantic_collection_print_helpers(table, type_id, source, builder, emitted_print_helpers, registry, true)
 
 def semantic_specialization_is_inferred_expression(
     semantic_nodes: &const List[backend_ir.IRNode],
@@ -106,15 +131,25 @@ def emit_semantic_type_specialization(
         record.kind != types.TypeKind.LIST
         and record.kind != types.TypeKind.MAP
         and record.kind != types.TypeKind.SET
+        and record.kind != types.TypeKind.TUPLE
     ):
         return
-    if codegen_type_names.semantic_type_is_kind(table, record.inner, types.TypeKind.ERROR):
-        return
-    emit_semantic_type_specialization(table, record.inner, source, builder, emitted, prefix, project_name, imports, registry)
-    if record.kind == types.TypeKind.MAP:
-        if codegen_type_names.semantic_type_is_kind(table, record.second, types.TypeKind.ERROR):
+    if record.kind == types.TypeKind.TUPLE:
+        tuple_offset: i32 = 0
+        while tuple_offset < record.flags:
+            element_type = table.type_args[cast[usize](record.extra + tuple_offset)]
+            if codegen_type_names.semantic_type_is_kind(table, element_type, types.TypeKind.ERROR):
+                return
+            emit_semantic_type_specialization(table, element_type, source, builder, emitted, prefix, project_name, imports, registry)
+            tuple_offset += 1
+    else:
+        if codegen_type_names.semantic_type_is_kind(table, record.inner, types.TypeKind.ERROR):
             return
-        emit_semantic_type_specialization(table, record.second, source, builder, emitted, prefix, project_name, imports, registry)
+        emit_semantic_type_specialization(table, record.inner, source, builder, emitted, prefix, project_name, imports, registry)
+        if record.kind == types.TypeKind.MAP:
+            if codegen_type_names.semantic_type_is_kind(table, record.second, types.TypeKind.ERROR):
+                return
+            emit_semantic_type_specialization(table, record.second, source, builder, emitted, prefix, project_name, imports, registry)
     name_builder = StringBuilder()
     codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &name_builder, registry)
     name = name_builder.finish()
@@ -139,6 +174,8 @@ def emit_semantic_type_specialization(
         emit_semantic_list_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.MAP:
         emit_semantic_map_specialization(table, record.inner, record.second, source, builder, &name, prefix, project_name, imports, registry)
+    elif record.kind == types.TypeKind.TUPLE:
+        emit_semantic_tuple_specialization(table, type_id, source, builder, &name, prefix, project_name, imports, registry)
     else:
         emit_semantic_set_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
     builder.append("#endif\n")
@@ -712,6 +749,352 @@ def semantic_managed_type_info(
     )
 
 
+def unsupported_print_type_info() -> PrintTypeInfo:
+    return PrintTypeInfo(kind=PrintValueKind.UNSUPPORTED, helper=String())
+
+
+def module_type_is_unsigned_print_integer(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    return module_type_is_exact_name(arena, type_id, source, "u8") or module_type_is_exact_name(arena, type_id, source, "u16") or module_type_is_exact_name(arena, type_id, source, "u32") or module_type_is_exact_name(arena, type_id, source, "u64") or module_type_is_exact_name(arena, type_id, source, "usize") or module_type_is_exact_name(arena, type_id, source, "c_size_t")
+
+
+def module_type_is_signed_print_integer(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    return module_type_is_exact_name(arena, type_id, source, "i8") or module_type_is_exact_name(arena, type_id, source, "i16") or module_type_is_exact_name(arena, type_id, source, "i32") or module_type_is_exact_name(arena, type_id, source, "i64") or module_type_is_exact_name(arena, type_id, source, "isize") or module_type_is_exact_name(arena, type_id, source, "c_int") or module_type_is_exact_name(arena, type_id, source, "c_long")
+
+
+def module_print_type_info(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> PrintTypeInfo:
+    if type_id.index < 0:
+        return unsupported_print_type_info()
+    if module_type_is_c_string(arena, type_id, source):
+        return PrintTypeInfo(kind=PrintValueKind.C_STRING, helper=String())
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_CONST:
+        return module_print_type_info(arena, codegen_names.first_child(arena, type_id), source, prefix, project_name, imports, registry)
+    if module_type_is_exact_name(arena, type_id, source, "bool"):
+        return PrintTypeInfo(kind=PrintValueKind.BOOL, helper=String())
+    if module_type_is_exact_name(arena, type_id, source, "char"):
+        return PrintTypeInfo(kind=PrintValueKind.CHAR, helper=String())
+    if module_type_is_exact_name(arena, type_id, source, "String"):
+        return PrintTypeInfo(kind=PrintValueKind.STRING, helper=String())
+    if module_type_is_exact_name(arena, type_id, source, "f32") or module_type_is_exact_name(arena, type_id, source, "f64"):
+        return PrintTypeInfo(kind=PrintValueKind.FLOAT, helper=String())
+    if module_type_is_unsigned_print_integer(arena, type_id, source):
+        return PrintTypeInfo(kind=PrintValueKind.UNSIGNED_INTEGER, helper=String())
+    if module_type_is_signed_print_integer(arena, type_id, source):
+        return PrintTypeInfo(kind=PrintValueKind.SIGNED_INTEGER, helper=String())
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return unsupported_print_type_info()
+    base = codegen_names.first_child(arena, type_id)
+    if base.index < 0:
+        return unsupported_print_type_info()
+    base_node = arena.nodes[base.index]
+    is_list = codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+    is_map = codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+    is_set = codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+    is_tuple = codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
+    if not is_list and not is_map and not is_set and not is_tuple:
+        return unsupported_print_type_info()
+    if (is_list or is_set) and node.child_count <= 1:
+        return unsupported_print_type_info()
+    if is_map and node.child_count <= 2:
+        return unsupported_print_type_info()
+    offset: i32 = 1
+    while offset < node.child_count:
+        child_info = module_print_type_info(arena, arena.children[node.first_child + offset], source, prefix, project_name, imports, registry)
+        if child_info.kind == PrintValueKind.UNSUPPORTED:
+            return unsupported_print_type_info()
+        offset += 1
+    helper_builder = StringBuilder()
+    codegen_type_names.emit_specialized_type_name(arena, type_id, source, &helper_builder, prefix, project_name, imports, registry)
+    return PrintTypeInfo(kind=PrintValueKind.COLLECTION, helper=helper_builder.finish())
+
+
+def semantic_named_print_kind(source: &const String, record: &const types.TypeRecord) -> PrintValueKind:
+    if record.name_length == 0:
+        return PrintValueKind.UNSUPPORTED
+    name = source[record.name_start:record.name_start + record.name_length]
+    if name == "f32" or name == "f64":
+        return PrintValueKind.FLOAT
+    if name == "u8" or name == "u16" or name == "u32" or name == "u64" or name == "usize" or name == "c_size_t":
+        return PrintValueKind.UNSIGNED_INTEGER
+    if name == "i8" or name == "i16" or name == "i32" or name == "i64" or name == "isize" or name == "c_int" or name == "c_long":
+        return PrintValueKind.SIGNED_INTEGER
+    return PrintValueKind.UNSUPPORTED
+
+
+def semantic_print_type_info(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> PrintTypeInfo:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return unsupported_print_type_info()
+    if semantic_type_is_c_string(table, type_id):
+        return PrintTypeInfo(kind=PrintValueKind.C_STRING, helper=String())
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.CONST:
+        return semantic_print_type_info(table, record.inner, source, registry)
+    if record.kind == types.TypeKind.BOOL:
+        return PrintTypeInfo(kind=PrintValueKind.BOOL, helper=String())
+    if record.kind == types.TypeKind.CHAR:
+        return PrintTypeInfo(kind=PrintValueKind.CHAR, helper=String())
+    if record.kind == types.TypeKind.STRING:
+        return PrintTypeInfo(kind=PrintValueKind.STRING, helper=String())
+    if record.kind == types.TypeKind.F64:
+        return PrintTypeInfo(kind=PrintValueKind.FLOAT, helper=String())
+    if record.kind == types.TypeKind.I32 or record.kind == types.TypeKind.I64:
+        return PrintTypeInfo(kind=PrintValueKind.SIGNED_INTEGER, helper=String())
+    if record.kind == types.TypeKind.NAMED:
+        named_kind = semantic_named_print_kind(source, &record)
+        return PrintTypeInfo(kind=named_kind, helper=String())
+    is_collection = record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.TUPLE
+    if not is_collection:
+        return unsupported_print_type_info()
+    if record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        child_info = semantic_print_type_info(table, record.inner, source, registry)
+        if child_info.kind == PrintValueKind.UNSUPPORTED:
+            return unsupported_print_type_info()
+    elif record.kind == types.TypeKind.MAP:
+        key_info = semantic_print_type_info(table, record.inner, source, registry)
+        value_info = semantic_print_type_info(table, record.second, source, registry)
+        if key_info.kind == PrintValueKind.UNSUPPORTED or value_info.kind == PrintValueKind.UNSUPPORTED:
+            return unsupported_print_type_info()
+    else:
+        offset: i32 = 0
+        while offset < record.flags:
+            element_info = semantic_print_type_info(table, table.type_args[cast[usize](record.extra + offset)], source, registry)
+            if element_info.kind == PrintValueKind.UNSUPPORTED:
+                return unsupported_print_type_info()
+            offset += 1
+    helper_builder = StringBuilder()
+    codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &helper_builder, registry)
+    return PrintTypeInfo(kind=PrintValueKind.COLLECTION, helper=helper_builder.finish())
+
+
+def emit_print_helper_value(builder: &StringBuilder, info: &const PrintTypeInfo, expression: String) -> void:
+    if info.kind == PrintValueKind.BOOL:
+        builder.append("printf(\"%s\", (")
+        builder.append(expression[0:len(expression)])
+        builder.append(") ? \"true\" : \"false\");\n")
+    elif info.kind == PrintValueKind.CHAR:
+        builder.append("cinder_print_repr_char(")
+        builder.append(expression[0:len(expression)])
+        builder.append(");\n")
+    elif info.kind == PrintValueKind.STRING:
+        builder.append("cinder_print_repr_string(cinder_string_cstr(&(")
+        builder.append(expression[0:len(expression)])
+        builder.append(")));\n")
+    elif info.kind == PrintValueKind.C_STRING:
+        builder.append("cinder_print_repr_string(")
+        builder.append(expression[0:len(expression)])
+        builder.append(");\n")
+    elif info.kind == PrintValueKind.FLOAT:
+        builder.append("printf(\"%g\", (double)(")
+        builder.append(expression[0:len(expression)])
+        builder.append("));\n")
+    elif info.kind == PrintValueKind.UNSIGNED_INTEGER:
+        builder.append("printf(\"%llu\", (unsigned long long)(")
+        builder.append(expression[0:len(expression)])
+        builder.append("));\n")
+    elif info.kind == PrintValueKind.SIGNED_INTEGER:
+        builder.append("printf(\"%lld\", (long long)(")
+        builder.append(expression[0:len(expression)])
+        builder.append("));\n")
+    elif info.kind == PrintValueKind.COLLECTION:
+        builder.append(info.helper[0:len(info.helper)])
+        builder.append("_print(&(")
+        builder.append(expression[0:len(expression)])
+        builder.append("));\n")
+
+
+def emit_collection_print_prototype(builder: &StringBuilder, name: &const String) -> void:
+    builder.append("#ifndef CINDER_PRINT_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_PRINT_DECLARED_")
+    builder.append(name[0:len(name)])
+    builder.append("\nstatic inline CINDER_MAYBE_UNUSED void ")
+    builder.append(name[0:len(name)])
+    builder.append("_print(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *value);\n#endif\n")
+
+
+def emit_collection_print_definition_start(builder: &StringBuilder, name: &const String) -> void:
+    builder.append("#ifndef CINDER_PRINT_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_PRINT_")
+    builder.append(name[0:len(name)])
+    builder.append("\nstatic inline CINDER_MAYBE_UNUSED void ")
+    builder.append(name[0:len(name)])
+    builder.append("_print(const ")
+    builder.append(name[0:len(name)])
+    builder.append(" *value) {\n")
+
+
+def emit_collection_print_definition_end(builder: &StringBuilder) -> void:
+    builder.append("}\n#endif\n")
+
+
+def emit_list_print_helper(builder: &StringBuilder, name: &const String, element_info: &const PrintTypeInfo) -> void:
+    emit_collection_print_definition_start(builder, name)
+    builder.append("    printf(\"[\");\n    for (size_t index = 0; index < value->length; index += 1) {\n        if (index > 0) printf(\", \");\n        ")
+    emit_print_helper_value(builder, element_info, "value->data[index]")
+    builder.append("    }\n    printf(\"]\");\n")
+    emit_collection_print_definition_end(builder)
+
+
+def emit_map_print_helper(builder: &StringBuilder, name: &const String, key_info: &const PrintTypeInfo, value_info: &const PrintTypeInfo) -> void:
+    emit_collection_print_definition_start(builder, name)
+    builder.append("    printf(\"{\");\n    bool first = true;\n    for (size_t index = 0; index < value->entries_length; index += 1) {\n        const ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entry = &value->entries[index];\n        if (!entry->occupied) continue;\n        if (!first) printf(\", \");\n        first = false;\n        ")
+    emit_print_helper_value(builder, key_info, "entry->key")
+    builder.append("        printf(\": \");\n        ")
+    emit_print_helper_value(builder, value_info, "entry->value")
+    builder.append("    }\n    printf(\"}\");\n")
+    emit_collection_print_definition_end(builder)
+
+
+def emit_set_print_helper(builder: &StringBuilder, name: &const String, element_info: &const PrintTypeInfo) -> void:
+    emit_collection_print_definition_start(builder, name)
+    builder.append("    if (value->length == 0) { printf(\"set()\"); return; }\n    printf(\"{\");\n    bool first = true;\n    for (size_t index = 0; index < value->capacity; index += 1) {\n        const ")
+    builder.append(name[0:len(name)])
+    builder.append("_Entry *entry = &value->entries[index];\n        if (entry->state != 1) continue;\n        if (!first) printf(\", \");\n        first = false;\n        ")
+    emit_print_helper_value(builder, element_info, "entry->value")
+    builder.append("    }\n    printf(\"}\");\n")
+    emit_collection_print_definition_end(builder)
+
+
+def emit_tuple_print_helper(builder: &StringBuilder, name: &const String, element_infos: &const List[PrintTypeInfo]) -> void:
+    emit_collection_print_definition_start(builder, name)
+    builder.append("    printf(\"(\");\n")
+    index: usize = 0
+    while index < len(element_infos):
+        if index > 0:
+            builder.append("    printf(\", \");\n")
+        expression_builder = StringBuilder()
+        expression_builder.append("value->item_")
+        codegen_type_names.append_specialization_decimal(&expression_builder, index)
+        builder.append("    ")
+        emit_print_helper_value(builder, &element_infos[index], expression_builder.finish())
+        index += 1
+    if len(element_infos) == 1:
+        builder.append("    printf(\",\");\n")
+    builder.append("    printf(\")\");\n")
+    emit_collection_print_definition_end(builder)
+
+
+def emit_module_collection_print_helpers(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    definitions: bool,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_collection_print_helpers(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, definitions)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return
+    print_info = module_print_type_info(arena, id, source, prefix, project_name, imports, registry)
+    if print_info.kind != PrintValueKind.COLLECTION:
+        return
+    if codegen_type_names.string_list_contains(emitted, &print_info.helper):
+        return
+    emitted.append(print_info.helper[0:len(print_info.helper)])
+    if not definitions:
+        emit_collection_print_prototype(builder, &print_info.helper)
+        return
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0:
+        return
+    base_node = arena.nodes[base.index]
+    if codegen_type_names.is_runtime_generic_name(source, &base_node, "List"):
+        element_info = module_print_type_info(arena, arena.children[node.first_child + 1], source, prefix, project_name, imports, registry)
+        emit_list_print_helper(builder, &print_info.helper, &element_info)
+    elif codegen_type_names.is_runtime_generic_name(source, &base_node, "Map"):
+        key_info = module_print_type_info(arena, arena.children[node.first_child + 1], source, prefix, project_name, imports, registry)
+        value_info = module_print_type_info(arena, arena.children[node.first_child + 2], source, prefix, project_name, imports, registry)
+        emit_map_print_helper(builder, &print_info.helper, &key_info, &value_info)
+    elif codegen_type_names.is_runtime_generic_name(source, &base_node, "Set"):
+        element_info = module_print_type_info(arena, arena.children[node.first_child + 1], source, prefix, project_name, imports, registry)
+        emit_set_print_helper(builder, &print_info.helper, &element_info)
+    elif codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple"):
+        element_infos: List[PrintTypeInfo] = []
+        item_offset: i32 = 1
+        while item_offset < node.child_count:
+            element_infos.append(module_print_type_info(arena, arena.children[node.first_child + item_offset], source, prefix, project_name, imports, registry))
+            item_offset += 1
+        emit_tuple_print_helper(builder, &print_info.helper, &element_infos)
+
+
+def emit_semantic_collection_print_helpers(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    definitions: bool,
+) -> void:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        emit_semantic_collection_print_helpers(table, record.inner, source, builder, emitted, registry, definitions)
+    elif record.kind == types.TypeKind.MAP:
+        emit_semantic_collection_print_helpers(table, record.inner, source, builder, emitted, registry, definitions)
+        emit_semantic_collection_print_helpers(table, record.second, source, builder, emitted, registry, definitions)
+    elif record.kind == types.TypeKind.TUPLE:
+        child_offset: i32 = 0
+        while child_offset < record.flags:
+            emit_semantic_collection_print_helpers(table, table.type_args[cast[usize](record.extra + child_offset)], source, builder, emitted, registry, definitions)
+            child_offset += 1
+    else:
+        return
+    print_info = semantic_print_type_info(table, type_id, source, registry)
+    if print_info.kind != PrintValueKind.COLLECTION:
+        return
+    if codegen_type_names.string_list_contains(emitted, &print_info.helper):
+        return
+    emitted.append(print_info.helper[0:len(print_info.helper)])
+    if not definitions:
+        emit_collection_print_prototype(builder, &print_info.helper)
+        return
+    if record.kind == types.TypeKind.LIST:
+        element_info = semantic_print_type_info(table, record.inner, source, registry)
+        emit_list_print_helper(builder, &print_info.helper, &element_info)
+    elif record.kind == types.TypeKind.MAP:
+        key_info = semantic_print_type_info(table, record.inner, source, registry)
+        value_info = semantic_print_type_info(table, record.second, source, registry)
+        emit_map_print_helper(builder, &print_info.helper, &key_info, &value_info)
+    elif record.kind == types.TypeKind.SET:
+        element_info = semantic_print_type_info(table, record.inner, source, registry)
+        emit_set_print_helper(builder, &print_info.helper, &element_info)
+    else:
+        element_infos: List[PrintTypeInfo] = []
+        offset: i32 = 0
+        while offset < record.flags:
+            element_infos.append(semantic_print_type_info(table, table.type_args[cast[usize](record.extra + offset)], source, registry))
+            offset += 1
+        emit_tuple_print_helper(builder, &print_info.helper, &element_infos)
+
+
 def module_type_is_exact_name(arena: &const SyntaxArena, type_id: NodeId, source: &const String, expected: String) -> bool:
     if type_id.index < 0:
         return false
@@ -913,6 +1296,34 @@ def emit_equal_expression(builder: &StringBuilder, info: &const ManagedTypeInfo,
         builder.append("))")
 
 
+def emit_semantic_tuple_specialization(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    record = table.types[type_id.index]
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n")
+    if record.flags == 0:
+        builder.append("    unsigned char _cinder_empty;\n")
+    offset: i32 = 0
+    while offset < record.flags:
+        builder.append("    ")
+        codegen_type_names.emit_semantic_c_type(table, table.type_args[cast[usize](record.extra + offset)], source, builder, prefix, project_name, imports, registry)
+        builder.append(" item_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](offset))
+        builder.append(";\n")
+        offset += 1
+    builder.append("};\n")
+
+
 def emit_semantic_list_specialization(
     table: &const types.TypeTable,
     element_type: types.TypeId,
@@ -1077,6 +1488,18 @@ def emit_map_specialization_layout(builder: &StringBuilder, name: &const String)
     builder.append("_Entry *entries;\n    size_t entries_length;\n    size_t entries_capacity;\n    size_t *buckets;\n    size_t capacity;\n    size_t length;\n    size_t tombstones;\n    size_t active_iterators;\n};\n")
 
 
+def emit_collection_clear_helper(builder: &StringBuilder, name: &const String, collection_name: String) -> void:
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_clear(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self != NULL && self->active_iterators != 0) cinder_panic(\"cannot structurally mutate ")
+    builder.append(collection_name)
+    builder.append(" during iteration\");\n    ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(self);\n}\n")
+
+
 def emit_set_specialization_body(builder: &StringBuilder, name: &const String, element_info: &const ManagedTypeInfo) -> void:
     builder.append("struct ")
     builder.append(name[0:len(name)])
@@ -1089,6 +1512,7 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
         builder.append("_drop(")
         builder.append(name[0:len(name)])
         builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"set dropped during iteration\");\n    free(self->entries);\n    self->entries = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
+        emit_collection_clear_helper(builder, name, "Set")
         return
 
     builder.append("static inline uint64_t ")
@@ -1224,6 +1648,7 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
         emit_drop_statement(builder, element_info, "self->entries[index].value")
         builder.append("    }\n")
     builder.append("    free(self->entries);\n    self->entries = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
+    emit_collection_clear_helper(builder, name, "Set")
 
 
 def emit_map_specialization_body(
@@ -1251,6 +1676,7 @@ def emit_map_specialization_body(
         builder.append("_drop(")
         builder.append(name[0:len(name)])
         builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"map dropped during iteration\");\n    free(self->entries);\n    free(self->buckets);\n    self->entries = NULL;\n    self->entries_length = 0;\n    self->entries_capacity = 0;\n    self->buckets = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
+        emit_collection_clear_helper(builder, name, "Map")
         return
 
     builder.append("static inline uint64_t ")
@@ -1441,3 +1867,4 @@ def emit_map_specialization_body(
         emit_drop_statement(builder, value_info, "self->entries[index].value")
         builder.append("    }\n")
     builder.append("    free(self->entries);\n    free(self->buckets);\n    self->entries = NULL;\n    self->entries_length = 0;\n    self->entries_capacity = 0;\n    self->buckets = NULL;\n    self->capacity = 0;\n    self->length = 0;\n    self->tombstones = 0;\n}\n")
+    emit_collection_clear_helper(builder, name, "Map")

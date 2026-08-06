@@ -121,6 +121,8 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         result = infer_map_literal_type(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_SET:
         result = infer_set_literal_type(checker, arena, id, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_TUPLE:
+        result = infer_tuple_literal_type(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_UNARY:
         result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_BINARY:
@@ -161,6 +163,14 @@ def infer_map_literal_type(checker: &checker_core.Checker, arena: &const syntax.
         if entry.child_count > 1:
             value_type = infer_expression_type(checker, arena, arena.children[entry.first_child + 1], source, current_scope)
     return collections.map_type(checker.type_table, key_type, value_type)
+
+
+def infer_tuple_literal_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
+    node = arena.nodes[id.index]
+    args: List[types.TypeId] = []
+    for offset in range(0, node.child_count):
+        args.append(infer_expression_type(checker, arena, arena.children[node.first_child + offset], source, current_scope))
+    return checker.type_table.tuple_from_args(args)
 
 
 def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId) -> bool:
