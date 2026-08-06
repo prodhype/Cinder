@@ -187,6 +187,21 @@ def append_assignment_operator(builder: &StringBuilder, flag: i32) -> void:
     if flag == cast[i32](token.TokenKind.PERCENT_ASSIGN):
         builder.append("%=")
         return
+    if flag == cast[i32](token.TokenKind.AMPERSAND_ASSIGN):
+        builder.append("&=")
+        return
+    if flag == cast[i32](token.TokenKind.PIPE_ASSIGN):
+        builder.append("|=")
+        return
+    if flag == cast[i32](token.TokenKind.CARET_ASSIGN):
+        builder.append("^=")
+        return
+    if flag == cast[i32](token.TokenKind.SHIFT_LEFT_ASSIGN):
+        builder.append("<<=")
+        return
+    if flag == cast[i32](token.TokenKind.SHIFT_RIGHT_ASSIGN):
+        builder.append(">>=")
+        return
     builder.append("=")
 
 def find_module_variant_declaration(arena: &const SyntaxArena, id: NodeId, source: &const String, name: &const String) -> NodeId:

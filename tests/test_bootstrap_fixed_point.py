@@ -195,6 +195,42 @@ def test_gen1_build_emits_top_level_globals(
     assert executed.returncode == 42
 
 
+def test_gen1_emits_bitwise_and_shift_compound_assigns(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "compound_assign.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        "    value: u64 = 15\n"
+        "    mask: u64 = 2\n"
+        "    value &= ~mask\n"
+        "    value |= 2\n"
+        "    value ^= 4\n"
+        "    value <<= 1\n"
+        "    value >>= 2\n"
+        "    return cast[i32](value)\n",
+        encoding="utf-8",
+    )
+    # 15 & ~2 = 13; | 2 = 15; ^ 4 = 11; << 1 = 22; >> 2 = 5
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert " &= " in emitted.stdout
+    assert " |= " in emitted.stdout
+    assert " ^= " in emitted.stdout
+    assert " <<= " in emitted.stdout
+    assert " >>= " in emitted.stdout
+    # Regression: &= ~x must not lower to a plain assignment of ~x.
+    assert " = ~" not in emitted.stdout
+
+    output = tmp_path / "compound_assign"
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 5
+
+
 def test_gen1_emit_c_cleans_up_with_scope_before_return(
     gen1_compiler: Path,
     tmp_path: Path,
