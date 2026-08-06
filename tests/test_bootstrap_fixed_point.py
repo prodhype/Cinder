@@ -853,6 +853,58 @@ def test_gen1_emits_specialized_map_and_set_helpers(
     assert subprocess.run([str(executable)], check=False).returncode == 0
 
 
+def assert_compiler_builds_and_runs_closures_example(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / (
+        "closures.exe" if shutil.which("cl") and not shutil.which("cc") else "closures"
+    )
+    build_dir = tmp_path / "closures-build"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(ROOT / "examples" / "closures.ci"),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(build_dir),
+    )
+
+    assert built.returncode == 0, built.stderr
+    header = (build_dir / "cinder_gen" / "closures.cinder.h").read_text(
+        encoding="utf-8"
+    )
+    generated = (build_dir / "cinder_gen" / "closures.c").read_text(
+        encoding="utf-8"
+    )
+    assert " env;" in header
+    assert "(*call)(" in header
+    assert "void * callback" not in header
+    assert "__closure(" not in generated
+    assert ".call = cinder_closures_closures__add_with_env" in generated
+    assert "->call(&" in generated
+
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "add: 42\ncounter: 15\ncounter: 22\n"
+
+
+def test_gen1_builds_and_runs_closures_example(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_builds_and_runs_closures_example(gen1_compiler, tmp_path)
+
+
+def test_gen2_builds_and_runs_closures_example(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_builds_and_runs_closures_example(gen2, tmp_path)
+
+
 def test_gen1_builds_and_runs_print_example(
     gen1_compiler: Path,
     tmp_path: Path,

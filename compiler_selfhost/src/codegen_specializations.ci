@@ -59,6 +59,13 @@ def collect_module_specialization_names(
         codegen_names.record_enum_name(registry, enum_builder.finish())
     for offset in range(0, node.child_count):
         collect_module_specialization_names(registry, arena, arena.children[node.first_child + offset], source, prefix, project_name, imports)
+    if node.kind == SyntaxKind.TYPE_CLOSURE:
+        canonical_builder = StringBuilder()
+        codegen_type_names.emit_canonical_specialized_type_name(arena, id, source, &canonical_builder, prefix, project_name, imports)
+        readable_builder = StringBuilder()
+        codegen_type_names.emit_readable_specialized_type_name(arena, id, source, &readable_builder)
+        codegen_names.record_specialization_name(registry, canonical_builder.finish(), readable_builder.finish())
+        return
     if node.kind != SyntaxKind.TYPE_GENERIC:
         return
     base = codegen_names.first_child(arena, id)
@@ -90,7 +97,7 @@ def emit_semantic_type_specializations(
 ) -> void:
     emitted: List[String] = []
     for type_id in specializations:
-        if semantic_specialization_is_inferred_expression(semantic_nodes, arena, type_id):
+        if codegen_type_names.semantic_type_is_kind(table, type_id, types.TypeKind.CLOSURE) or semantic_specialization_is_inferred_expression(semantic_nodes, arena, type_id):
             emit_semantic_type_specialization(table, type_id, source, builder, emitted, prefix, project_name, imports, registry)
     emitted_print_prototypes: List[String] = []
     for type_id in specializations:
@@ -132,9 +139,17 @@ def emit_semantic_type_specialization(
         and record.kind != types.TypeKind.MAP
         and record.kind != types.TypeKind.SET
         and record.kind != types.TypeKind.TUPLE
+        and record.kind != types.TypeKind.CLOSURE
     ):
         return
-    if record.kind == types.TypeKind.TUPLE:
+    if record.kind == types.TypeKind.CLOSURE:
+        emit_semantic_type_specialization(table, record.second, source, builder, emitted, prefix, project_name, imports, registry)
+        closure_offset: i32 = 0
+        while closure_offset < record.flags:
+            emit_semantic_type_specialization(table, table.type_args[cast[usize](record.extra + closure_offset)], source, builder, emitted, prefix, project_name, imports, registry)
+            closure_offset += 1
+        emit_semantic_type_specialization(table, record.inner, source, builder, emitted, prefix, project_name, imports, registry)
+    elif record.kind == types.TypeKind.TUPLE:
         tuple_offset: i32 = 0
         while tuple_offset < record.flags:
             element_type = table.type_args[cast[usize](record.extra + tuple_offset)]
@@ -170,7 +185,9 @@ def emit_semantic_type_specialization(
     builder.append("\n#define CINDER_SPECIALIZED_")
     builder.append(name[0:len(name)])
     builder.append("\n")
-    if record.kind == types.TypeKind.LIST:
+    if record.kind == types.TypeKind.CLOSURE:
+        emit_semantic_closure_specialization(table, type_id, source, builder, &name, prefix, project_name, imports, registry)
+    elif record.kind == types.TypeKind.LIST:
         emit_semantic_list_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.MAP:
         emit_semantic_map_specialization(table, record.inner, record.second, source, builder, &name, prefix, project_name, imports, registry)
@@ -179,6 +196,41 @@ def emit_semantic_type_specialization(
     else:
         emit_semantic_set_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
     builder.append("#endif\n")
+
+
+def emit_semantic_closure_specialization(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    record = table.types[type_id.index]
+    environment_type = record.second
+    value_environment_type = environment_type
+    if codegen_type_names.semantic_type_is_kind(table, value_environment_type, types.TypeKind.CONST):
+        value_environment_type = table.types[value_environment_type.index].inner
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    codegen_type_names.emit_semantic_c_type(table, value_environment_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" env;\n    ")
+    codegen_type_names.emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
+    builder.append(" (*call)(")
+    codegen_type_names.emit_semantic_c_type(table, environment_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" *")
+    offset: i32 = 0
+    while offset < record.flags:
+        builder.append(", ")
+        parameter_type = table.type_args[cast[usize](record.extra + offset)]
+        codegen_type_names.emit_semantic_c_type(table, parameter_type, source, builder, prefix, project_name, imports, registry)
+        offset += 1
+    builder.append(");\n};\n")
+
 
 def emit_semantic_array_pointer_data_declarator(
     table: &const types.TypeTable,
@@ -218,11 +270,12 @@ def emit_module_type_specialization_forwards(
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
         emit_module_type_specialization_forwards(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry)
-    if node.kind != SyntaxKind.TYPE_GENERIC:
-        return
-    base = codegen_names.first_child(arena, id)
-    if base.index < 0 or not is_runtime_specialization_name(source, arena.nodes[base.index]):
-        return
+    if node.kind != SyntaxKind.TYPE_CLOSURE:
+        if node.kind != SyntaxKind.TYPE_GENERIC:
+            return
+        base = codegen_names.first_child(arena, id)
+        if base.index < 0 or not is_runtime_specialization_name(source, arena.nodes[base.index]):
+            return
     name_builder = StringBuilder()
     codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
     name = name_builder.finish()
@@ -256,25 +309,34 @@ def emit_module_type_specializations(
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
         emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, result_only)
-    if node.kind != SyntaxKind.TYPE_GENERIC:
-        return
-    base = codegen_names.first_child(arena, id)
-    if base.index < 0:
-        return
-    base_node = arena.nodes[base.index]
-    is_list = codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
-    is_set = codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
-    is_map = codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
-    is_owned = codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned")
-    is_option = codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
-    is_tuple = codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
-    is_result = codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
-    if not is_list and not is_set and not is_map and not is_option and not is_result and not is_owned and not is_tuple:
-        return
+    is_closure = node.kind == SyntaxKind.TYPE_CLOSURE
+    is_list = false
+    is_set = false
+    is_map = false
+    is_owned = false
+    is_option = false
+    is_tuple = false
+    is_result = false
+    if not is_closure:
+        if node.kind != SyntaxKind.TYPE_GENERIC:
+            return
+        base = codegen_names.first_child(arena, id)
+        if base.index < 0:
+            return
+        base_node = arena.nodes[base.index]
+        is_list = codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+        is_set = codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+        is_map = codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+        is_owned = codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned")
+        is_option = codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
+        is_tuple = codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
+        is_result = codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
+        if not is_list and not is_set and not is_map and not is_option and not is_result and not is_owned and not is_tuple:
+            return
     name_builder = StringBuilder()
     codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
     name = name_builder.finish()
-    is_late = is_result
+    is_late = is_result or is_closure
     if is_map or is_set:
         phase_builder = StringBuilder()
         phase_builder.append(name[0:len(name)])
@@ -318,7 +380,9 @@ def emit_module_type_specializations(
     builder.append("\n#define CINDER_SPECIALIZED_")
     builder.append(name[0:len(name)])
     builder.append("\n")
-    if is_result:
+    if is_closure:
+        emit_module_closure_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+    elif is_result:
         emit_module_result_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     elif is_list:
         emit_module_list_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
@@ -330,6 +394,53 @@ def emit_module_type_specializations(
         emit_module_owned_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     builder.append("#endif\n")
     emitted.append(name)
+
+
+def emit_module_closure_specialization(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    node = arena.nodes[id.index]
+    if node.child_count <= 0:
+        builder.append("struct ")
+        builder.append(name[0:len(name)])
+        builder.append(" { int32_t _cinder_invalid; };\n")
+        return
+    environment_type = arena.children[node.first_child]
+    value_environment_type = environment_type
+    if codegen_type_names.type_node_kind(arena, value_environment_type) == SyntaxKind.TYPE_CONST:
+        value_environment_type = codegen_names.first_child(arena, value_environment_type)
+    parameter_end = node.child_count
+    return_type = syntax.missing_node()
+    if codegen_type_names.callable_type_has_return(source, &node):
+        parameter_end -= 1
+        return_type = arena.children[node.first_child + parameter_end]
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" {\n    ")
+    codegen_type_names.emit_module_c_type(arena, value_environment_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" env;\n    ")
+    if return_type.index >= 0:
+        codegen_type_names.emit_module_c_type(arena, return_type, source, builder, prefix, project_name, imports, registry)
+    else:
+        builder.append("void")
+    builder.append(" (*call)(")
+    codegen_type_names.emit_module_c_type(arena, environment_type, source, builder, prefix, project_name, imports, registry)
+    builder.append(" *")
+    offset: i32 = 1
+    while offset < parameter_end:
+        builder.append(", ")
+        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
+        offset += 1
+    builder.append(");\n};\n")
+
 
 def emit_module_list_specialization(
     arena: &const SyntaxArena,

@@ -68,6 +68,10 @@ def type_needs_drop_for_table(table: &const types.TypeTable, type_id: TypeId) ->
 def type_needs_drop_record(table: &const types.TypeTable, record: types.TypeRecord) -> bool:
     if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.FILE:
         return true
+    if record.kind == types.TypeKind.CONST:
+        return type_needs_drop_for_table(table, record.inner)
+    if record.kind == types.TypeKind.CLOSURE:
+        return type_needs_drop_for_table(table, record.second)
     if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.RESULT or record.kind == types.TypeKind.TUPLE:
         return true
     if record.kind == types.TypeKind.STRUCT or record.kind == types.TypeKind.CLASS:

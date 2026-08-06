@@ -454,7 +454,11 @@ def emit_context_expression_specialization_name(
 def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> NodeId:
     if id.index < 0:
         return syntax.missing_node()
+    type_table: &const types.TypeTable = context.type_table
     node = arena.nodes[id.index]
+    semantic_type = context_semantic_type(context, id)
+    if codegen_type_names.semantic_type_is_kind(type_table, semantic_type, types.TypeKind.CLOSURE):
+        return id
     if node.kind == SyntaxKind.EXPR_LITERAL or node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET or node.kind == SyntaxKind.EXPR_TUPLE or node.kind == SyntaxKind.EXPR_ALLOC:
         return id
     if node.kind == SyntaxKind.EXPR_SLICE:

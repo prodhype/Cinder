@@ -17,6 +17,9 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     callee_node = arena.nodes[callee.index]
     if callee_node.kind != syntax.SyntaxKind.EXPR_NAME:
         return
+    if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "closure"):
+        validate_closure_constructor(checker, arena, id, source, current_scope)
+        return
     if is_builtin_name(source, callee_node.value_start, callee_node.value_length):
         checker.model.record_expr_type(id, types.type_i32())
         return
@@ -60,6 +63,118 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
     elif actual > expected:
         checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+
+
+def validate_closure_constructor(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+    call = arena.nodes[id.index]
+    actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    if actual != 2:
+        checker_core.emit_error(checker, 378, call.start, call.length, call.line, call.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    for offset in range(0, call.child_count):
+        child_id = arena.children[call.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.EXPR_ARGUMENT and child.flags == 1:
+            checker_core.emit_error(checker, 379, child.start, child.length, child.line, child.column)
+            checker.model.record_expr_type(id, types.type_error())
+            return
+    environment_expression = call_argument_value(arena, id, 0)
+    adapter_expression = call_argument_value(arena, id, 1)
+    environment_type = infer_expression_type(checker, arena, environment_expression, source, current_scope)
+    if environment_type.index < 0 or environment_type.index >= cast[i32](len(checker.type_table.types)):
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    environment_record = checker.type_table.types[environment_type.index]
+    if environment_record.kind != types.TypeKind.STRUCT:
+        environment_node = arena.nodes[environment_expression.index]
+        checker_core.emit_error(checker, 380, environment_node.start, environment_node.length, environment_node.line, environment_node.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    if adapter_expression.index < 0:
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    adapter_node = arena.nodes[adapter_expression.index]
+    if adapter_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        checker_core.emit_error(checker, 383, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    adapter_symbol_id = checker.symbols.find_in_scope(source, current_scope, adapter_node.value_start, adapter_node.value_length)
+    if adapter_symbol_id.index < 0:
+        checker_core.emit_error(checker, 48, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    adapter_symbol = checker.symbols.symbols[adapter_symbol_id.index]
+    if adapter_symbol.kind != symbols.SymbolKind.FUNCTION:
+        checker_core.emit_error(checker, 383, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    declaration = arena.nodes[adapter_symbol.node.index]
+    adapter_args: List[types.TypeId] = []
+    visible_args: List[types.TypeId] = []
+    closure_environment = types.type_error()
+    parameter_index: i32 = 0
+    for offset in range(0, declaration.child_count):
+        parameter_id = arena.children[declaration.first_child + offset]
+        parameter = arena.nodes[parameter_id.index]
+        if parameter.kind != syntax.SyntaxKind.PARAMETER:
+            continue
+        parameter_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter_id, source, types.type_i32())
+        adapter_args.append(parameter_type)
+        if parameter_index == 0:
+            if parameter_type.index < 0 or parameter_type.index >= cast[i32](len(checker.type_table.types)) or checker.type_table.types[parameter_type.index].kind != types.TypeKind.REFERENCE:
+                checker_core.emit_error(checker, 385, parameter.start, parameter.length, parameter.line, parameter.column)
+                checker.model.record_expr_type(id, types.type_error())
+                return
+            closure_environment = checker.type_table.types[parameter_type.index].inner
+        else:
+            visible_args.append(parameter_type)
+        parameter_index += 1
+    if parameter_index == 0:
+        checker_core.emit_error(checker, 384, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    expected_environment = strip_const_type(checker.type_table, closure_environment)
+    if not closure_environment_types_match(checker.type_table, expected_environment, environment_type, source):
+        environment_node = arena.nodes[environment_expression.index]
+        checker_core.emit_error(checker, 107, environment_node.start, environment_node.length, environment_node.line, environment_node.column)
+    adapter_type = checker.type_table.function_from_args(adapter_args, adapter_symbol.type_id)
+    checker.model.record_name_symbol(adapter_expression, adapter_symbol_id)
+    checker.model.record_expr_type(adapter_expression, adapter_type)
+    closure_type = checker.type_table.closure_from_args(closure_environment, visible_args, adapter_symbol.type_id)
+    checker.model.record_call(id, adapter_symbol_id, closure_type, 1)
+    checker.model.record_expr_type(id, closure_type)
+
+
+def call_argument_value(arena: &const syntax.SyntaxArena, id: NodeId, argument_index: i32) -> NodeId:
+    call = arena.nodes[id.index]
+    seen: i32 = 0
+    for offset in range(0, call.child_count):
+        child_id = arena.children[call.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.EXPR_ARGUMENT:
+            if seen == argument_index:
+                return checker_core.last_child(arena, child_id)
+            seen += 1
+    return syntax.missing_node()
+
+
+def strip_const_type(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
+    if type_id.index >= 0 and type_id.index < cast[i32](len(table.types)) and table.types[type_id.index].kind == types.TypeKind.CONST:
+        return table.types[type_id.index].inner
+    return type_id
+
+
+def closure_environment_types_match(table: &const types.TypeTable, expected: types.TypeId, actual: types.TypeId, source: &const String) -> bool:
+    if table.same(expected, actual):
+        return true
+    if expected.index < 0 or actual.index < 0 or expected.index >= cast[i32](len(table.types)) or actual.index >= cast[i32](len(table.types)):
+        return false
+    expected_record = table.types[expected.index]
+    actual_record = table.types[actual.index]
+    if expected_record.name_length == 0 or actual_record.name_length == 0:
+        return false
+    return symbols.range_equals(source, expected_record.name_start, expected_record.name_length, actual_record.name_start, actual_record.name_length)
 
 
 def is_nominal_constructor_symbol(kind: symbols.SymbolKind) -> bool:
