@@ -218,7 +218,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, type_id: NodeId, source: 
     if node.kind == SyntaxKind.EXPR_LITERAL:
         return node.flags == cast[i32](token.TokenKind.STRING)
     if node.kind == SyntaxKind.EXPR_CALL:
-        return context_type_is_string(arena, type_id, source)
+        return context_type_is_string(arena, type_id, source) or context_type_is_file_read_call(arena, type_id, source, "read_line") or context_type_is_file_read_call(arena, type_id, source, "read_all")
     if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
         return true
     if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
@@ -318,6 +318,21 @@ def context_type_is_runtime_generic(arena: &const SyntaxArena, type_id: NodeId, 
     base_node = arena.nodes[base.index]
     return codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, expected)
 
+def context_type_is_file_read_call(arena: &const SyntaxArena, type_id: NodeId, source: &const String, method: String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, type_id)
+    if callee.index < 0 or arena.nodes[callee.index].kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    member = codegen_names.second_child(arena, callee)
+    if member.index < 0:
+        return false
+    member_node = arena.nodes[member.index]
+    return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, method)
+
 def context_generic_argument(arena: &const SyntaxArena, type_id: NodeId, index: i32) -> NodeId:
     if type_id.index < 0:
         return syntax.missing_node()
@@ -332,6 +347,8 @@ def context_type_is_list(arena: &const SyntaxArena, type_id: NodeId, source: &co
     if type_id.index < 0:
         return false
     node = arena.nodes[type_id.index]
+    if context_type_is_file_read_call(arena, type_id, source, "read_all"):
+        return true
     if node.kind == SyntaxKind.EXPR_LIST:
         return true
     if node.kind == SyntaxKind.TYPE_ARRAY or node.kind == SyntaxKind.TYPE_SLICE:
@@ -488,6 +505,12 @@ def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenCo
                 return_type = find_function_return_type(context.type_arena, context.root, context.type_source, &name)
                 if return_type.index >= 0:
                     return return_type
+            if callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+                member = codegen_names.second_child(arena, callee)
+                if member.index >= 0:
+                    member_node = arena.nodes[member.index]
+                    if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "read_line") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "read_all"):
+                        return id
             if context_type_is_string(arena, id, source):
                 return id
     if node.kind == SyntaxKind.EXPR_UNARY:
@@ -511,6 +534,8 @@ def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenCo
                 receiver_type = context_expression_type(arena, context, receiver, source)
                 if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "Option"):
                     return context_generic_argument(context.type_arena, receiver_type, 0)
+                if context_type_is_file_read_call(context.type_arena, receiver_type, context.type_source, "read_line"):
+                    return id
         return context_field_type_for_receiver(arena, context, receiver, member, source)
     if node.kind == SyntaxKind.EXPR_INDEX:
         receiver_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
@@ -637,6 +662,16 @@ def emit_context_drop(
         builder.append(name[0:len(name)])
         builder.append(");\n")
         return
+    if node.kind == SyntaxKind.EXPR_CALL and context_type_is_file_read_call(arena, type_id, source, "read_line"):
+        builder.append("    CinderOption_String_drop(&")
+        builder.append(name[0:len(name)])
+        builder.append(");\n")
+        return
+    if node.kind == SyntaxKind.EXPR_CALL and context_type_is_file_read_call(arena, type_id, source, "read_all"):
+        builder.append("    CinderList_u8_drop(&")
+        builder.append(name[0:len(name)])
+        builder.append(");\n")
+        return
     if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
         semantic_type = context_semantic_type(context, type_id)
         if semantic_type.index >= 0:
@@ -711,6 +746,13 @@ def context_type_is_string(arena: &const SyntaxArena, type_id: NodeId, source: &
         return node.flags == cast[i32](token.TokenKind.STRING)
     if node.kind == SyntaxKind.EXPR_SLICE:
         return false
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, type_id)
+        member = codegen_names.second_child(arena, type_id)
+        if member.index >= 0:
+            member_node = arena.nodes[member.index]
+            if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "value") and context_type_is_file_read_call(arena, receiver, source, "read_line"):
+                return true
     if node.kind == SyntaxKind.EXPR_CALL:
         callee = codegen_names.first_child(arena, type_id)
         if callee.index >= 0:
@@ -752,10 +794,15 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenC
     if context_type_is_string(context.type_arena, expr_type, context.type_source):
         return true
     if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, id)
         member = codegen_names.second_child(arena, id)
         if member.index < 0:
             return false
         member_node = arena.nodes[member.index]
+        if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "value"):
+            receiver_type = context_expression_type(arena, context, receiver, source)
+            if context_type_is_file_read_call(context.type_arena, receiver_type, context.type_source, "read_line"):
+                return true
         if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "alias") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "module_name") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "member") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "name") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "source") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "output") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "stdout") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "stderr") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "path") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "root") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "entry") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "manifest") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "project_name") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "error") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "source_root"):
             return true
     if node.kind == SyntaxKind.EXPR_NAME and expr_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expr_type) == SyntaxKind.EXPR_SLICE:
@@ -795,6 +842,12 @@ def call_is_name(arena: &const SyntaxArena, callee: NodeId, source: &const Strin
             return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, name[0:len(name)])
     return false
 
+def context_expression_is_addressable_for_borrow(arena: &const SyntaxArena, id: NodeId) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    return node.kind == SyntaxKind.EXPR_NAME or node.kind == SyntaxKind.EXPR_ATTRIBUTE or node.kind == SyntaxKind.EXPR_INDEX
+
 def should_borrow_for_callee(
     arena: &const SyntaxArena,
     context: &ModuleCodegenContext,
@@ -818,6 +871,8 @@ def should_borrow_for_callee(
     arg_type = context_expression_type(arena, context, arg, source)
     if context_type_is_list(context.type_arena, arg_type, context.type_source):
         if call_is_name(arena, callee, source, "parse_options") or call_is_name(arena, callee, source, "emit_ok") or call_is_name(arena, callee, source, "resolve_paths"):
+            return false
+        if not context_expression_is_addressable_for_borrow(arena, arg):
             return false
         return true
     if arg_node.kind != SyntaxKind.EXPR_NAME:

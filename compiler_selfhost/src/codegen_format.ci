@@ -177,7 +177,9 @@ def emit_print_list_value(
         builder.append("&")
     emit_nested(state, id)
     builder.append("; ")
-    if codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "String"):
+    if codegen_context.context_type_is_file_read_call(context.type_arena, type_id, context.type_source, "read_all"):
+        builder.append("cinder_selfhost_print_u64_list(")
+    elif codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "String"):
         builder.append("cinder_selfhost_print_string_list(")
     elif codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "i64") or codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "isize") or codegen_type_names.context_type_name_equals(context.type_arena, element_type, context.type_source, "c_long"):
         builder.append("cinder_selfhost_print_i64_list(")
