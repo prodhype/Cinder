@@ -708,22 +708,22 @@ def register_context_semantic_name_type(context: &ModuleCodegenContext, source: 
     )
 
 
-def context_semantic_name_type(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> types.TypeId:
+def context_semantic_name_type(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> types.TypeId:
     index = len(context.semantic_name_types)
     while index > 0:
         index -= 1
         binding: &const ModuleSemanticNameTypeBinding = &context.semantic_name_types[index]
-        if context_name_ranges_equal(source, binding.name_start, binding.name_length, start, length):
+        if context_name_ranges_equal(context.type_source, binding.name_start, binding.name_length, source, start, length):
             return binding.type_id
     return types.missing_type()
 
 
-def context_name_ranges_equal(source: &const String, left_start: usize, left_length: usize, right_start: usize, right_length: usize) -> bool:
+def context_name_ranges_equal(left_source: &const String, left_start: usize, left_length: usize, right_source: &const String, right_start: usize, right_length: usize) -> bool:
     if left_length != right_length:
         return false
     offset: usize = 0
     while offset < left_length:
-        if source.byte_at(left_start + offset) != source.byte_at(right_start + offset):
+        if left_source.byte_at(left_start + offset) != right_source.byte_at(right_start + offset):
             return false
         offset += 1
     return true
@@ -1536,8 +1536,12 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenC
                 return true
     if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
         return true
-    if node.kind == SyntaxKind.EXPR_NAME and context_name_is_semantic_string(context, source, node.value_start, node.value_length):
-        return true
+    if node.kind == SyntaxKind.EXPR_NAME:
+        semantic_type = context_semantic_name_type(context, source, node.value_start, node.value_length)
+        if semantic_type.index >= 0:
+            return context_semantic_type_is_kind(context, semantic_type, types.TypeKind.STRING)
+        if context_name_is_semantic_string(context, source, node.value_start, node.value_length):
+            return true
     if node.kind == SyntaxKind.EXPR_SLICE:
         receiver = codegen_names.first_child(arena, id)
         receiver_type = context_expression_type(arena, context, receiver, source)

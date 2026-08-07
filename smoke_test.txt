@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-07 22:42:36 UTC
+# date:   2026-08-07 23:03:09 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -13,7 +13,7 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 34 ok, 2 fail
+Summary: 35 ok, 1 fail
 
 ## Status by example
 examples/aggregate_ownership.ci   OK    ok
@@ -27,7 +27,7 @@ examples/collections.ci           OK    ok
 examples/control_flow.ci          OK    ok
 examples/convert.ci               OK    ok
 examples/defer.ci                 OK    ok
-examples/dijkstra_showcase.ci     FAIL  gen3_toolchain_error
+examples/dijkstra_showcase.ci     OK    ok
 examples/expressive_match.ci      OK    ok
 examples/fizzbuzz.ci              OK    ok
 examples/function_pointers.ci     OK    ok
@@ -55,7 +55,6 @@ examples/module_project           OK    ok
 
 ## First non-warning C errors
 - examples/binary_sort.ci: no non-warning C error found (kind: gen3_runtime_nonzero)
-- examples/dijkstra_showcase.ci: cinder_gen/dijkstra_showcase.c:103 [c_error] generated C at function ConsoleReporter_emit - passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
 
 ## OK
 - examples/aggregate_ownership.ci
@@ -68,6 +67,7 @@ examples/module_project           OK    ok
 - examples/control_flow.ci
 - examples/convert.ci
 - examples/defer.ci
+- examples/dijkstra_showcase.ci
 - examples/expressive_match.ci
 - examples/fizzbuzz.ci
 - examples/function_pointers.ci
@@ -101,14 +101,3 @@ elapsed: 0.4s
 
 --- gen3 errors ---
 (no parsed C errors; kind: gen3_runtime_nonzero)
-
-### examples/dijkstra_showcase.ci
-gen3 exit=2
-kind: gen3_toolchain_error
-first C error: cinder_gen/dijkstra_showcase.c:103 [c_error]
-source feature: generated C at function ConsoleReporter_emit
-message: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
-elapsed: 0.1s
-
---- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.fgocsr77/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:103:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')

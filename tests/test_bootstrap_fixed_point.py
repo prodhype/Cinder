@@ -277,6 +277,84 @@ def assert_compiler_lowers_result_state_fields(
     assert ran.returncode == 0, ran.stderr
 
 
+def assert_compiler_uses_match_field_types_in_fstrings(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "match_field_fstrings.ci"
+    source.write_text(
+        "variant Event:\n"
+        "    Number(source: i32)\n"
+        "    Text(source: String)\n"
+        "\n"
+        "def report(event: Event) -> void:\n"
+        "    match event:\n"
+        "        case Event.Number(source):\n"
+        '            print(f"number={source}")\n'
+        "        case Event.Text(source):\n"
+        '            print(f"text={source}")\n'
+        "\n"
+        "def main() -> i32:\n"
+        "    report(Event.Number(7))\n"
+        '    report(Event.Text("ok"))\n'
+        '    match parse_i32("9"):\n'
+        "        case Ok(source):\n"
+        '            print(f"semantic={source}")\n'
+        "        case Err(_):\n"
+        "            return 1\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert generated.count('printf("%lld", (long long)(source));') == 2
+    assert generated.count("cinder_selfhost_print_string_fragment(source);") == 1
+
+    executable = tmp_path / (
+        "match-field-fstrings.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "match-field-fstrings"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "match-field-fstrings-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "number=7\ntext=ok\nsemantic=9\n"
+
+    dijkstra_executable = tmp_path / (
+        "dijkstra-showcase.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "dijkstra-showcase"
+    )
+    dijkstra_built = run_gen1(
+        compiler,
+        "build",
+        str(ROOT / "examples" / "dijkstra_showcase.ci"),
+        "-o",
+        str(dijkstra_executable),
+        "--build-dir",
+        str(tmp_path / "dijkstra-showcase-build"),
+    )
+    assert dijkstra_built.returncode == 0, dijkstra_built.stderr
+    dijkstra_ran = subprocess.run(
+        [str(dijkstra_executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert dijkstra_ran.returncode == 0, dijkstra_ran.stderr
+
+
 def assert_compiler_orders_nested_option_result_specializations(
     compiler: Path,
     tmp_path: Path,
@@ -1851,6 +1929,21 @@ def test_gen2_lowers_result_state_fields(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_lowers_result_state_fields(gen2, tmp_path)
+
+
+def test_gen1_uses_match_field_types_in_fstrings(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_uses_match_field_types_in_fstrings(gen1_compiler, tmp_path)
+
+
+def test_gen2_uses_match_field_types_in_fstrings(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_uses_match_field_types_in_fstrings(gen2, tmp_path)
 
 
 def test_gen1_orders_nested_option_result_specializations(
