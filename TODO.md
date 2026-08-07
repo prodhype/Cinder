@@ -18,7 +18,7 @@ Implement correct C lowering for `super().__init__`, abstract base calls, overri
 
 Implement gen3 support for `@reflect`, `type_info`, `type_name`, `fields`, `fields_of`, `field_count`, `method_count`, `has_field`, `has_method`, and `implements`. The current output treats these forms as ordinary functions or emits raw type names as C expressions. This affects `reflection.ci`, `classes.ci`, `class_project`, `dijkstra_showcase.ci`, and `anti_examples.ci`.
 
-5. Fix match binding lowering
+5. Fix match binding lowering (done)
 
 Fix gen3 match lowering for nested patterns, guarded cases, capture patterns, and OR patterns. The current output uses names such as `score`, `original`, `parsed`, `value`, and `error` without declaring them in the selected case scope. This affects `expressive_match.ci`, `convert.ci`, `module_project`, and `anti_examples.ci`.
 

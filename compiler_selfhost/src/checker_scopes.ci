@@ -187,7 +187,9 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         case_scope = checker.symbols.add_scope(current_scope)
         checker.model.record_scope(id, case_scope)
         if node.child_count > 0:
-            declare_pattern_bindings(checker, arena, arena.children[node.first_child], source, case_scope)
+            pattern = arena.children[node.first_child]
+            validate_or_pattern_bindings(checker, arena, pattern, source)
+            declare_pattern_bindings(checker, arena, pattern, source, case_scope)
         for offset in range(0, node.child_count):
             validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, case_scope, expected_return)
         return
@@ -302,6 +304,57 @@ def declare_pattern_bindings(checker: &checker_core.Checker, arena: &const synta
     if node.kind == syntax.SyntaxKind.PATTERN_CAPTURE or node.kind == syntax.SyntaxKind.PATTERN_OR:
         for offset in range(0, node.child_count):
             declare_pattern_bindings(checker, arena, arena.children[node.first_child + offset], source, current_scope)
+
+
+def validate_or_pattern_bindings(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.PATTERN_OR and node.child_count > 1:
+        expected: List[String] = []
+        collect_pattern_binding_names(arena, arena.children[node.first_child], source, expected)
+        for offset in range(1, node.child_count):
+            actual: List[String] = []
+            collect_pattern_binding_names(arena, arena.children[node.first_child + offset], source, actual)
+            if not pattern_binding_names_equal(&expected, &actual):
+                checker_core.emit_error(checker, 316, node.start, node.length, node.line, node.column)
+                return
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        if arena.nodes[child_id.index].kind != syntax.SyntaxKind.NAME:
+            validate_or_pattern_bindings(checker, arena, child_id, source)
+
+
+def collect_pattern_binding_names(arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, result: &List[String]) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.PATTERN_PATH:
+        if node.flags == 0 and node.child_count == 1:
+            name_id = arena.children[node.first_child]
+            name = arena.nodes[name_id.index]
+            if name.kind == syntax.SyntaxKind.NAME and is_pattern_binding_name(source, name.value_start, name.value_length):
+                text = source[name.value_start:name.value_start + name.value_length]
+                if not checker_core.string_list_contains(result, &text):
+                    result.append(text[0:len(text)])
+                return
+        for offset in range(0, node.child_count):
+            child_id = arena.children[node.first_child + offset]
+            if arena.nodes[child_id.index].kind != syntax.SyntaxKind.NAME:
+                collect_pattern_binding_names(arena, child_id, source, result)
+        return
+    if node.kind == syntax.SyntaxKind.PATTERN_CAPTURE or node.kind == syntax.SyntaxKind.PATTERN_OR:
+        for offset in range(0, node.child_count):
+            collect_pattern_binding_names(arena, arena.children[node.first_child + offset], source, result)
+
+
+def pattern_binding_names_equal(left: &const List[String], right: &const List[String]) -> bool:
+    if len(left) != len(right):
+        return false
+    for name in left:
+        if not checker_core.string_list_contains(right, &name):
+            return false
+    return true
 
 
 def is_pattern_binding_name(source: &const String, start: usize, length: usize) -> bool:
