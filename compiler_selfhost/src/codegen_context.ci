@@ -697,6 +697,19 @@ def context_field_type(context: &ModuleCodegenContext, owner: &const String, fie
             return context.field_types[index].type_id
     return syntax.missing_node()
 
+
+def context_field_type_at(context: &ModuleCodegenContext, owner: &const String, wanted: i32) -> NodeId:
+    if wanted < 0:
+        return syntax.missing_node()
+    seen: i32 = 0
+    for field in context.field_types:
+        if field.owner == owner[0:len(owner)]:
+            if seen == wanted:
+                return field.type_id
+            seen += 1
+    return syntax.missing_node()
+
+
 def context_field_type_for_receiver(
     arena: &const SyntaxArena,
     context: &ModuleCodegenContext,
@@ -1362,6 +1375,17 @@ def context_callee_parameter_type(
     if callee.index < 0:
         return syntax.missing_node()
     callee_node = arena.nodes[callee.index]
+    if callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, callee)
+        member = codegen_names.second_child(arena, callee)
+        if receiver.index < 0 or member.index < 0:
+            return syntax.missing_node()
+        class_index = context_expression_class(arena, context, receiver, source)
+        if class_index < 0:
+            return syntax.missing_node()
+        member_node = arena.nodes[member.index]
+        method_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+        return context_class_method_parameter_type(context, class_index, &method_name, argument_index)
     if callee_node.kind != SyntaxKind.EXPR_NAME:
         return syntax.missing_node()
     name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
@@ -1372,6 +1396,98 @@ def context_callee_parameter_type(
         &name,
         argument_index,
     )
+
+
+def context_class_method_parameter_type(
+    context: &ModuleCodegenContext,
+    class_index: i32,
+    method_name: &const String,
+    argument_index: usize,
+) -> NodeId:
+    model: &const classes.ProjectClassModel = context.class_model
+    if class_index < 0 or class_index >= cast[i32](len(model.classes)):
+        return syntax.missing_node()
+    class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+    if not codegen_reflection.text_equals(&class_info.module_name, &context.module_name):
+        return syntax.missing_node()
+    declaration = find_named_declaration(
+        context.type_arena,
+        context.root,
+        context.type_source,
+        SyntaxKind.CLASS_DECL,
+        &class_info.name,
+    )
+    method = find_named_child_declaration(
+        context.type_arena,
+        declaration,
+        context.type_source,
+        SyntaxKind.FUNCTION_DECL,
+        method_name,
+    )
+    return function_parameter_type_at(context.type_arena, method, cast[i32](argument_index) + 1)
+
+
+def context_class_constructor_parameter_type(
+    context: &ModuleCodegenContext,
+    class_index: i32,
+    argument_index: usize,
+) -> NodeId:
+    constructor_name = "__init__"
+    return context_class_method_parameter_type(context, class_index, &constructor_name, argument_index)
+
+
+def find_named_declaration(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    kind: SyntaxKind,
+    name: &const String,
+) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if node.kind == kind and codegen_names.range_text_equals(source, node.value_start, node.value_length, name[0:len(name)]):
+        return id
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            found = find_named_declaration(arena, arena.children[node.first_child + offset], source, kind, name)
+            if found.index >= 0:
+                return found
+    return syntax.missing_node()
+
+
+def find_named_child_declaration(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    kind: SyntaxKind,
+    name: &const String,
+) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == kind and codegen_names.range_text_equals(source, child.value_start, child.value_length, name[0:len(name)]):
+            return child_id
+    return syntax.missing_node()
+
+
+def function_parameter_type_at(arena: &const SyntaxArena, function: NodeId, wanted: i32) -> NodeId:
+    if function.index < 0 or wanted < 0:
+        return syntax.missing_node()
+    node = arena.nodes[function.index]
+    seen: i32 = 0
+    for offset in range(0, node.child_count):
+        parameter = arena.children[node.first_child + offset]
+        if arena.nodes[parameter.index].kind != SyntaxKind.PARAMETER:
+            continue
+        if seen == wanted:
+            return codegen_type_names.find_child_type(arena, parameter)
+        seen += 1
+    return syntax.missing_node()
+
 
 def find_function_parameter_type(
     arena: &const SyntaxArena,

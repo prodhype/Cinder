@@ -30,6 +30,14 @@ def test_generics_expected_exit_is_success() -> None:
     assert smoke.classify(1, "", "", False, 42) == "gen3_runtime_nonzero"
 
 
+def test_generic_list_assignment_is_an_expected_aggregate_error() -> None:
+    message = (
+        "assigning to 'CinderList_i32' (aka 'struct CinderList_i32') "
+        "from incompatible type 'CinderList' (aka 'struct CinderList')"
+    )
+    assert smoke.cause_label_for(message) == "aggregate_expected_type"
+
+
 def test_extract_first_c_error_skips_warnings_and_normalizes_path(tmp_path: Path) -> None:
     build_dir = tmp_path / "generics.ci-build"
     generated = build_dir / "cinder_gen" / "generics.cinder.h"

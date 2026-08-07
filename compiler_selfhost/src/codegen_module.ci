@@ -961,7 +961,7 @@ def emit_module_top_level(
         if initializer.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[initializer.index].kind):
             builder.append(" = ")
             if annotation.index >= 0 and codegen_specializations.context_type_is_array(arena, annotation):
-                codegen_expr.emit_module_array_initializer(arena, initializer, source, builder, prefix, project_name, imports, context)
+                codegen_expr.emit_module_array_initializer(arena, initializer, annotation, source, builder, prefix, project_name, imports, context)
             else:
                 previous_expected = context.expected_type
                 if annotation.index >= 0:

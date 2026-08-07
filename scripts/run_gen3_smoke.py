@@ -283,6 +283,8 @@ def cause_label_for(message: str) -> str:
         return "missing_member"
     if "initializer element is not a compile-time constant" in lowered:
         return "nonconstant_initializer"
+    if "cinderlist" in lowered and "incompatible type" in lowered and ("assigning to" in lowered or "initializing" in lowered):
+        return "aggregate_expected_type"
     if "array initializer" in lowered or "initializing" in lowered:
         return "aggregate_expected_type"
     if "expected expression" in lowered:

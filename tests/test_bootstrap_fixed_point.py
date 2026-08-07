@@ -2265,6 +2265,130 @@ def test_gen1_rejects_non_hashable_map_and_set_types(
     assert checked.stdout.startswith(f"E {code} ")
 
 
+def assert_compiler_propagates_expected_aggregate_types(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "expected_aggregates.ci"
+    source.write_text(
+        "struct Bundle:\n"
+        "    values: List[i32]\n"
+        "    fixed: i32[3]\n"
+        "\n"
+        "class Holder:\n"
+        "    values: List[i32]\n"
+        "\n"
+        "    def __init__(self, values: List[i32]):\n"
+        "        self.values = values\n"
+        "\n"
+        "    def replace(self, values: List[i32]) -> void:\n"
+        "        self.values = values\n"
+        "\n"
+        "def consume(values: List[i32]) -> i32:\n"
+        "    return cast[i32](len(values))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values = [1, 2]\n"
+        "    values = [3, 4]\n"
+        "    rows: List[i32][2] = [[5], [6, 7]]\n"
+        "    named = Bundle(values=[8, 9], fixed=[10, 11, 12])\n"
+        "    positional = Bundle([13], [14, 15, 16])\n"
+        "    holder = Holder([17])\n"
+        "    replacement = [18, 19]\n"
+        "    holder.replace(replacement)\n"
+        "    if len(values) != 2 or values[0] != 3:\n"
+        "        return 1\n"
+        "    if len(rows[0]) != 1 or len(rows[1]) != 2:\n"
+        "        return 2\n"
+        "    if named.fixed[2] != 12 or positional.fixed[0] != 14:\n"
+        "        return 3\n"
+        "    if len(named.values) != 2 or len(positional.values) != 1:\n"
+        "        return 4\n"
+        "    if len(holder.values) != 2:\n"
+        "        return 5\n"
+        "    if consume([20, 21]) != 2:\n"
+        "        return 6\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+
+    emitted = run_gen1(
+        compiler,
+        "emit-project",
+        str(source),
+        "-o",
+        str(generated),
+    )
+
+    assert emitted.returncode == 0, emitted.stderr
+    generated_source = next((generated / "cinder_gen").glob("*.c"))
+    source_text = generated_source.read_text(encoding="utf-8")
+    assert "struct CinderList_i32 {" in source_text
+    assert "int32_t *data;" in source_text
+    assert "CinderList_i32 cinder_list = (CinderList_i32){0};" in source_text
+    assert "values = ({ CinderList_i32 cinder_list" in source_text
+    assert "values = ({ CinderList cinder_list" not in source_text
+    assert "CinderList_i32 rows[2] = {({" in source_text
+    assert "CinderList_i32 rows[2] = {{5}, {6, 7}};" not in source_text
+    assert ".fixed = {10, 11, 12}" in source_text
+    assert "cinder_list; }), {14, 15, 16}" in source_text
+    assert "Holder_replace(&holder, replacement)" in source_text
+    assert "Holder_replace(&holder, &replacement)" not in source_text
+    executable = tmp_path / "expected-aggregates"
+    compiled = compile_generated_project(generated, executable)
+    assert compiled.returncode == 0, compiled.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+def test_gen1_propagates_expected_aggregate_types(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_propagates_expected_aggregate_types(gen1_compiler, tmp_path)
+
+
+def test_gen2_propagates_expected_aggregate_types(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_propagates_expected_aggregate_types(gen2, tmp_path)
+
+
+def test_gen1_propagates_aggregate_types_in_affected_examples(
+    gen1_compiler: Path,
+) -> None:
+    aggregate = run_gen1(
+        gen1_compiler,
+        "emit-c",
+        str(ROOT / "examples" / "aggregate_ownership.ci"),
+    )
+    assert aggregate.returncode == 0, aggregate.stderr
+    assert "CinderList_i32 rows[2] = {({" in aggregate.stdout
+    assert "CinderList_i32 rows[2] = {{1}, {2, 3}};" not in aggregate.stdout
+    assert "Portfolio_replace_holdings(&portfolio, replacement)" in aggregate.stdout
+    assert "Portfolio_replace_holdings(&portfolio, &replacement)" not in aggregate.stdout
+
+    dijkstra = run_gen1(
+        gen1_compiler,
+        "emit-c",
+        str(ROOT / "examples" / "dijkstra_showcase.ci"),
+    )
+    assert dijkstra.returncode == 0, dijkstra.stderr
+    assert ".weights = {0, 7, 9, 0, 0, 14" in dijkstra.stdout
+    assert ".weights = ({ CinderList cinder_list" not in dijkstra.stdout
+
+    anti_examples = run_gen1(
+        gen1_compiler,
+        "emit-c",
+        str(ROOT / "examples" / "anti_examples.ci"),
+    )
+    assert anti_examples.returncode == 0, anti_examples.stderr
+    assert "values = ({ CinderList_i32 cinder_list" in anti_examples.stdout
+    assert "values = ({ CinderList cinder_list" not in anti_examples.stdout
+
+
 def test_gen1_emits_inferred_list_specialization(
     gen1_compiler: Path,
     tmp_path: Path,
