@@ -29,6 +29,7 @@ STDIN = {
 }
 EXPECTED_EXIT = {
     "generics.ci": 42,
+    "owned.ci": 42,
 }
 
 _CLANG_GCC_DIAGNOSTIC = re.compile(

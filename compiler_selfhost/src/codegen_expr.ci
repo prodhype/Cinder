@@ -314,12 +314,28 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
             emit_module_expression_state(state, codegen_names.first_child(arena, id))
             return
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
+            operand = codegen_names.first_child(arena, id)
+            if operand.index >= 0:
+                operand_node = arena.nodes[operand.index]
+                if operand_node.kind == SyntaxKind.EXPR_UNARY and operand_node.flags == cast[i32](token.TokenKind.STAR):
+                    owner = codegen_names.first_child(arena, operand)
+                    if codegen_context.context_expression_is_owned(arena, context, owner, source):
+                        builder.append("(")
+                        emit_module_expression_state(state, owner)
+                        builder.append(").ptr")
+                        return
             builder.append("&")
-            emit_module_expression_state(state, codegen_names.first_child(arena, id))
+            emit_module_expression_state(state, operand)
             return
         if node.flags == cast[i32](token.TokenKind.STAR):
+            operand = codegen_names.first_child(arena, id)
+            if codegen_context.context_expression_is_owned(arena, context, operand, source):
+                builder.append("(*(")
+                emit_module_expression_state(state, operand)
+                builder.append(").ptr)")
+                return
             builder.append("*")
-            emit_module_expression_state(state, codegen_names.first_child(arena, id))
+            emit_module_expression_state(state, operand)
             return
         codegen_names.append_source(builder, source, node.value_start, node.value_length)
         emit_module_expression_state(state, codegen_names.first_child(arena, id))

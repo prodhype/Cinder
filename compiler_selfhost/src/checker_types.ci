@@ -25,6 +25,9 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "closure"):
         validate_closure_constructor(checker, arena, id, source, current_scope)
         return
+    if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "Owned"):
+        validate_owned_constructor(checker, arena, id, callee, source, current_scope)
+        return
     if is_reflection_builtin_name(source, callee_node.value_start, callee_node.value_length):
         if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_name"):
             checker.model.record_expr_type(id, types.type_string())
@@ -79,6 +82,34 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
     elif actual > expected:
         checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+
+
+def validate_owned_constructor(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    callee: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    call = arena.nodes[id.index]
+    actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    if actual < 1:
+        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
+    if actual > 1:
+        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+    argument = call_argument_value(arena, id, 0)
+    payload_type = infer_expression_type(checker, arena, argument, source, current_scope)
+    callee_node = arena.nodes[callee.index]
+    result = checker.type_table.generic1(
+        types.TypeKind.OWNED,
+        callee_node.value_start,
+        callee_node.value_length,
+        payload_type,
+    )
+    checker.model.record_expr_type(id, result)
 
 
 def validate_closure_constructor(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
@@ -434,7 +465,12 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
     elif node.kind == syntax.SyntaxKind.EXPR_SLICE or node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
         result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_UNARY:
-        result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+        operand_type = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+        result = operand_type
+        if node.flags == cast[i32](token.TokenKind.STAR) and operand_type.index >= 0 and operand_type.index < cast[i32](len(checker.type_table.types)):
+            operand_record = checker.type_table.types[operand_type.index]
+            if operand_record.kind == types.TypeKind.POINTER or operand_record.kind == types.TypeKind.REFERENCE or operand_record.kind == types.TypeKind.OWNED:
+                result = operand_record.inner
     elif node.kind == syntax.SyntaxKind.EXPR_BINARY:
         operator = node.flags
         if operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):

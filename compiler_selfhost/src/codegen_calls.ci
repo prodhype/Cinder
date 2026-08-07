@@ -48,6 +48,9 @@ def emit_module_call(
             if name == "Some":
                 if emit_option_some(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested):
                     return
+            if name == "Owned":
+                if emit_owned_constructor(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested):
+                    return
             if name == "String":
                 emit_string_constructor(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
                 return
@@ -425,6 +428,42 @@ def append_closure_temporary_name(builder: &StringBuilder, index: i32) -> void:
     codegen_type_names.append_specialization_decimal(builder, cast[usize](index))
 
 
+def emit_owned_constructor(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> bool:
+    name_builder = StringBuilder()
+    if not codegen_context.emit_context_expression_specialization_name(arena, context, id, source, &name_builder, prefix, project_name, imports, "Owned", types.TypeKind.OWNED):
+        owned_type = context.expected_type
+        if not codegen_context.context_type_is_runtime_generic(context.type_arena, owned_type, context.type_source, "Owned"):
+            return false
+        codegen_context.emit_context_c_type(context.type_arena, owned_type, context.type_source, &name_builder, prefix, project_name, imports, context)
+    name = name_builder.finish()
+    builder.append(name[0:len(name)])
+    builder.append("_new(")
+    argument = codegen_names.first_call_argument(arena, id)
+    if argument.index >= 0:
+        previous_expected = context.expected_type
+        payload_type = codegen_context.context_expression_owned_payload_type(arena, context, id, source)
+        if payload_type.index < 0 and codegen_context.context_type_is_runtime_generic(context.type_arena, previous_expected, context.type_source, "Owned"):
+            payload_type = codegen_context.context_generic_argument(context.type_arena, previous_expected, 0)
+        if payload_type.index >= 0:
+            context.expected_type = payload_type
+        emit_nested(state, argument)
+        context.expected_type = previous_expected
+        codegen_context.mark_context_expression_moved(arena, context, argument, source)
+    builder.append(")")
+    return true
+
+
 def emit_option_none(
     builder: &StringBuilder,
     prefix: &const String,
@@ -481,6 +520,7 @@ def emit_option_some(
             context.expected_type = payload_type
         emit_nested(state, argument)
         context.expected_type = previous_expected
+        codegen_context.mark_context_expression_moved(arena, context, argument, source)
     builder.append(" })")
     return true
 
@@ -527,6 +567,7 @@ def emit_result_constructor(
         context.expected_type = payload_type
         emit_nested(state, argument)
         context.expected_type = previous_expected
+        codegen_context.mark_context_expression_moved(arena, context, argument, source)
     builder.append(" })")
     return true
 

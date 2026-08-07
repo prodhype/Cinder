@@ -30,6 +30,11 @@ def test_generics_expected_exit_is_success() -> None:
     assert smoke.classify(1, "", "", False, 42) == "gen3_runtime_nonzero"
 
 
+def test_owned_expected_exit_is_success() -> None:
+    assert smoke.EXPECTED_EXIT["owned.ci"] == 42
+    assert smoke.classify(42, "drop 1\n", "", False, 42) == "ok"
+
+
 def test_generic_list_assignment_is_an_expected_aggregate_error() -> None:
     message = (
         "assigning to 'CinderList_i32' (aka 'struct CinderList_i32') "
