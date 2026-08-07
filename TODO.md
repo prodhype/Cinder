@@ -10,7 +10,7 @@ Gen3 must keep the return type when code uses `?` on an imported function such a
 
 Gen3 must emit a `Result` type before an `Option` stores it by value. `Option[Result[i32, ParseError]]` now puts an incomplete `Result` field in the C struct. This fixes `expressive_match.ci`.
 
-3. Lower Result state fields
+3. Lower Result state fields (done)
 
 Gen3 must lower `.is_ok` and `.is_err` for `Result[T, E]`. Emit a tag check, like the existing `Option.is_some` code. This fixes `anti_examples.ci`.
 
