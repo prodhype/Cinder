@@ -1028,6 +1028,17 @@ def match_resolve_nominal_case(
         owner_name = codegen_type_names.context_type_owner_name(context.type_arena, value_info.syntax_type, context.type_source)
         if len(owner_name) > 0:
             nominal_index = codegen_reflection.find_nominal_for_name(context.reflection_model, imports, &context.module_name, &owner_name)
+    if owner_name == "ConvertError":
+        return MatchNominalCase(
+            nominal_index=-1,
+            case_index=-1,
+            declaration=syntax.missing_node(),
+            case_declaration=syntax.missing_node(),
+            c_name="CinderParseError",
+            case_name=case_name[0:len(case_name)],
+            is_enum=true,
+            valid=true,
+        )
     if nominal_index >= 0 and nominal_index < codegen_reflection.nominal_count(context.reflection_model):
         nominal_kind = codegen_reflection.nominal_kind_at(context.reflection_model, nominal_index)
         is_enum = nominal_kind == codegen_reflection.ReflectionNominalKind.ENUM

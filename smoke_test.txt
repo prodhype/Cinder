@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-07 01:53:47 UTC
+# date:   2026-08-07 02:34:19 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -25,7 +25,7 @@ examples/classes.ci               OK    ok
 examples/closures.ci              OK    ok
 examples/collections.ci           OK    ok
 examples/control_flow.ci          OK    ok
-examples/convert.ci               FAIL  gen3_runtime_nonzero
+examples/convert.ci               FAIL  gen3_toolchain_error
 examples/defer.ci                 OK    ok
 examples/dijkstra_showcase.ci     FAIL  gen3_toolchain_error
 examples/expressive_match.ci      FAIL  gen3_toolchain_error
@@ -56,12 +56,12 @@ examples/module_project           FAIL  gen3_toolchain_error
 ## First non-warning C errors
 - examples/aggregate_ownership.ci: cinder_gen/aggregate_ownership.c:463 [aggregate_expected_type] expected aggregate types at function show_wrappers - incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
 - examples/anti_examples.ci: cinder_gen/anti_examples.c:140 [c_error] generated C at function list_example - assigning to 'CinderList_i32' (aka 'struct CinderList_i32') from incompatible type 'CinderList' (aka 'struct CinderList')
-- examples/convert.ci: no non-warning C error found (kind: gen3_runtime_nonzero)
+- examples/convert.ci: cinder_gen/convert.cinder.h:125 [unknown_type] generated C at struct CinderResult_i32_ConvertError - unknown type name 'cinder_convert_convert__ConvertError'
 - examples/dijkstra_showcase.ci: cinder_gen/dijkstra_showcase.c:98 [c_error] generated C at function ConsoleReporter_emit - passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
 - examples/expressive_match.ci: cinder_gen/expressive_match.cinder.h:129 [incomplete_type] type definition ordering at struct CinderOption_CinderResult_i32_ParseError - field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
 - examples/owned.ci: cinder_gen/owned.c:22 [aggregate_expected_type] expected aggregate types at function main - incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
 - examples/strings.ci: cinder_gen/strings.c:488 [nonconstant_initializer] generated C at function CinderTuple_i32_String_print - initializer element is not a compile-time constant
-- examples/module_project: cinder_gen/support/parser.c:5 [invalid_expression] generated C at function parse - unexpected type name 'cinder_module_demo_model__ParseError': expected expression
+- examples/module_project: cinder_gen/main.c:9 [c_error] generated C at function increment - member reference base type 'int' is not a structure or union
 
 ## OK
 - examples/algorithm_benchmarks.ci
@@ -100,12 +100,12 @@ kind: gen3_toolchain_error
 first C error: cinder_gen/aggregate_ownership.c:463 [aggregate_expected_type]
 source feature: expected aggregate types at function show_wrappers
 message: incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
-elapsed: 0.5s
+elapsed: 0.4s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:463:32: error: incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:463:37: error: incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:495:92: error: passing 'CinderList_Resource *' (aka 'struct CinderList_Resource *') to parameter of incompatible type 'CinderList_Resource' (aka 'struct CinderList_Resource'); remove &
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:463:32: error: incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:463:37: error: incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/aggregate_ownership.ci-build/cinder_gen/aggregate_ownership.c:495:92: error: passing 'CinderList_Resource *' (aka 'struct CinderList_Resource *') to parameter of incompatible type 'CinderList_Resource' (aka 'struct CinderList_Resource'); remove &
 
 ### examples/anti_examples.ci
 gen3 exit=2
@@ -113,21 +113,42 @@ kind: gen3_toolchain_error
 first C error: cinder_gen/anti_examples.c:140 [c_error]
 source feature: generated C at function list_example
 message: assigning to 'CinderList_i32' (aka 'struct CinderList_i32') from incompatible type 'CinderList' (aka 'struct CinderList')
-elapsed: 0.1s
+elapsed: 0.2s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/anti_examples.ci-build/cinder_gen/anti_examples.c:140:12: error: assigning to 'CinderList_i32' (aka 'struct CinderList_i32') from incompatible type 'CinderList' (aka 'struct CinderList')
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/anti_examples.ci-build/cinder_gen/anti_examples.c:173:24: error: call to undeclared function 'cinder_anti_examples_anti_examples__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/anti_examples.ci-build/cinder_gen/anti_examples.c:175:64: error: passing 'int' to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/anti_examples.ci-build/cinder_gen/anti_examples.c:467:66: error: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/anti_examples.ci-build/cinder_gen/anti_examples.c:140:12: error: assigning to 'CinderList_i32' (aka 'struct CinderList_i32') from incompatible type 'CinderList' (aka 'struct CinderList')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/anti_examples.ci-build/cinder_gen/anti_examples.c:173:24: error: call to undeclared function 'cinder_anti_examples_anti_examples__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/anti_examples.ci-build/cinder_gen/anti_examples.c:175:64: error: passing 'int' to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/anti_examples.ci-build/cinder_gen/anti_examples.c:467:66: error: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
 
 ### examples/convert.ci
-gen3 exit=-11
-kind: gen3_runtime_nonzero
-elapsed: 0.0s
+gen3 exit=2
+kind: gen3_toolchain_error
+first C error: cinder_gen/convert.cinder.h:125 [unknown_type]
+source feature: generated C at struct CinderResult_i32_ConvertError
+message: unknown type name 'cinder_convert_convert__ConvertError'
+elapsed: 0.2s
 
 --- gen3 errors ---
-(no parsed C errors; kind: gen3_runtime_nonzero)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.cinder.h:125:9: error: unknown type name 'cinder_convert_convert__ConvertError'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:4:12: error: returning 'CinderResult_i32_n_CinderParseError' (aka 'struct CinderResult_i32_n_CinderParseError') from a function with incompatible result type 'CinderResult_i32_ConvertError' (aka 'struct CinderResult_i32_ConvertError')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:20:24: error: call to undeclared function 'cinder_convert_convert__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:35:38: error: call to undeclared function 'cinder_convert_convert__parse_bool'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:38:28: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:38:36: error: use of undeclared identifier 'CinderResult_bool_n_CinderParseError_Tag_Ok'; did you mean 'CinderResult_i32_n_CinderParseError_Tag_Ok'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:39:42: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:41:29: error: call to undeclared function 'cinder_convert_convert__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:47:28: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:47:36: error: use of undeclared identifier 'CinderResult_bool_n_CinderParseError_Tag_Err'; did you mean 'CinderResult_i32_n_CinderParseError_Tag_Err'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:48:43: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:56:38: error: call to undeclared function 'cinder_convert_convert__parse_f64'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:59:28: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:59:36: error: use of undeclared identifier 'CinderResult_f64_n_CinderParseError_Tag_Ok'; did you mean 'CinderResult_i32_n_CinderParseError_Tag_Ok'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:60:43: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:62:30: error: call to undeclared function 'cinder_convert_convert__to_string'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:68:28: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:68:36: error: use of undeclared identifier 'CinderResult_f64_n_CinderParseError_Tag_Err'; did you mean 'CinderResult_i32_n_CinderParseError_Tag_Err'?
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/convert.ci-build/cinder_gen/convert.c:69:43: error: member reference base type 'int' is not a structure or union
 
 ### examples/dijkstra_showcase.ci
 gen3 exit=2
@@ -138,8 +159,8 @@ message: passing 'int32_t' (aka 'int') to parameter of incompatible type 'Cinder
 elapsed: 0.2s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:98:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:212:88: error: initializing 'int32_t' (aka 'int') with an expression of incompatible type 'CinderList' (aka 'struct CinderList')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:98:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:212:88: error: initializing 'int32_t' (aka 'int') with an expression of incompatible type 'CinderList' (aka 'struct CinderList')
 
 ### examples/expressive_match.ci
 gen3 exit=2
@@ -150,8 +171,7 @@ message: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct Ci
 elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:129:37: error: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/expressive_match.ci-build/cinder_gen/expressive_match.c:71:62: error: passing 'int' to parameter of incompatible type 'cinder_expressive_match_expressive_match__Shape' (aka 'struct cinder_expressive_match_expressive_match__Shape')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:129:37: error: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
 
 ### examples/owned.ci
 gen3 exit=2
@@ -162,18 +182,18 @@ message: incompatible integer to pointer conversion initializing 'int32_t *' (ak
 elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:22:48: error: incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:23:5: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:23:16: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:24:56: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:25:60: error: initializing 'cinder_owned_owned__Resource *' (aka 'struct cinder_owned_owned__Resource *') with an expression of incompatible type 'cinder_owned_owned__Resource' (aka 'struct cinder_owned_owned__Resource')
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:26:66: error: no member named 'label' in 'struct CinderOwned_Resource'
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:27:48: error: initializing 'cinder_owned_owned__Node *' (aka 'struct cinder_owned_owned__Node *') with an expression of incompatible type 'cinder_owned_owned__Node' (aka 'struct cinder_owned_owned__Node'); take the address with &
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:28:48: error: initializing 'cinder_owned_owned__Node *' (aka 'struct cinder_owned_owned__Node *') with an expression of incompatible type 'cinder_owned_owned__Node' (aka 'struct cinder_owned_owned__Node'); take the address with &
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:29:31: error: indirection requires pointer operand ('CinderOwned_Node' (aka 'struct CinderOwned_Node') invalid)
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:30:62: error: no member named 'value' in 'struct CinderOwned_Node'
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:32:63: error: no member named 'value' in 'struct CinderOwned_Node'
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/owned.ci-build/cinder_gen/owned.c:33:12: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:22:48: error: incompatible integer to pointer conversion initializing 'int32_t *' (aka 'int *') with an expression of type 'int' [-Wint-conversion]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:23:5: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:23:16: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:24:56: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:25:60: error: initializing 'cinder_owned_owned__Resource *' (aka 'struct cinder_owned_owned__Resource *') with an expression of incompatible type 'cinder_owned_owned__Resource' (aka 'struct cinder_owned_owned__Resource')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:26:66: error: no member named 'label' in 'struct CinderOwned_Resource'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:27:48: error: initializing 'cinder_owned_owned__Node *' (aka 'struct cinder_owned_owned__Node *') with an expression of incompatible type 'cinder_owned_owned__Node' (aka 'struct cinder_owned_owned__Node'); take the address with &
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:28:48: error: initializing 'cinder_owned_owned__Node *' (aka 'struct cinder_owned_owned__Node *') with an expression of incompatible type 'cinder_owned_owned__Node' (aka 'struct cinder_owned_owned__Node'); take the address with &
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:29:31: error: indirection requires pointer operand ('CinderOwned_Node' (aka 'struct CinderOwned_Node') invalid)
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:30:62: error: no member named 'value' in 'struct CinderOwned_Node'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:32:63: error: no member named 'value' in 'struct CinderOwned_Node'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/owned.ci-build/cinder_gen/owned.c:33:12: error: indirection requires pointer operand ('CinderOwned_i32' (aka 'struct CinderOwned_i32') invalid)
 
 ### examples/strings.ci
 gen3 exit=2
@@ -184,36 +204,32 @@ message: initializer element is not a compile-time constant
 elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:488:55: error: initializer element is not a compile-time constant
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:508:27: error: call to undeclared function 'clone'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:509:5: error: call to undeclared function 'reserve'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:515:64: error: invalid operands to binary expression ('CinderString' (aka 'struct CinderString') and 'CinderString')
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:565:5: error: call to undeclared function 'clear'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/strings.ci-build/cinder_gen/strings.c:570:18: error: initializing 'const char *' with an expression of incompatible type 'CinderString' (aka 'struct CinderString')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:488:55: error: initializer element is not a compile-time constant
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:508:27: error: call to undeclared function 'clone'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:509:5: error: call to undeclared function 'reserve'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:510:5: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:515:64: error: invalid operands to binary expression ('CinderString' (aka 'struct CinderString') and 'CinderString')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:565:5: error: call to undeclared function 'clear'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/strings.ci-build/cinder_gen/strings.c:570:18: error: initializing 'const char *' with an expression of incompatible type 'CinderString' (aka 'struct CinderString')
 
 ### examples/module_project
 gen3 exit=2
 kind: gen3_toolchain_error
-first C error: cinder_gen/support/parser.c:5 [invalid_expression]
-source feature: generated C at function parse
-message: unexpected type name 'cinder_module_demo_model__ParseError': expected expression
+first C error: cinder_gen/main.c:9 [c_error]
+source feature: generated C at function increment
+message: member reference base type 'int' is not a structure or union
 elapsed: 0.2s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/module_project-build/cinder_gen/support/parser.c:5:104: error: unexpected type name 'cinder_module_demo_model__ParseError': expected expression
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/module_project-build/cinder_gen/support/parser.c:8:104: error: unexpected type name 'cinder_module_demo_model__ParseError': expected expression
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/module_project-build/cinder_gen/support/parser.c:10:102: error: call to undeclared function 'Integer'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/module_project-build/cinder_gen/support/parser.c:10:111: error: unexpected type name 'cinder_module_demo_model__Token': expected expression
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/module_project-build/cinder_gen/main.c:9:28: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/module_project-build/cinder_gen/main.c:10:44: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.czmqyefu/module_project-build/cinder_gen/main.c:16:28: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/module_project-build/cinder_gen/main.c:9:28: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/module_project-build/cinder_gen/main.c:10:44: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.8hrz7q57/module_project-build/cinder_gen/main.c:16:28: error: member reference base type 'int' is not a structure or union

@@ -1150,6 +1150,62 @@ def emit_module_slice(
             builder.append(".length")
     builder.append(")")
 
+def emit_nominal_member_expression(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    owner = codegen_names.first_child(arena, id)
+    member = codegen_names.second_child(arena, id)
+    if owner.index < 0 or member.index < 0:
+        return false
+    member_node = arena.nodes[member.index]
+    if member_node.kind != SyntaxKind.NAME:
+        return false
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    nominal_index = codegen_reflection.find_expression_nominal(context.reflection_model, imports, &context.module_name, arena, owner, source)
+    if nominal_index < 0:
+        owner_node = arena.nodes[owner.index]
+        if owner_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, owner_node.value_start, owner_node.value_length, "ConvertError"):
+            builder.append("CinderParseError_")
+            builder.append(member_name[0:len(member_name)])
+            return true
+        return false
+    nominal_kind = codegen_reflection.nominal_kind_at(context.reflection_model, nominal_index)
+    nominal_c_name = codegen_reflection.nominal_c_name_at(context.reflection_model, nominal_index)
+    if nominal_kind == codegen_reflection.ReflectionNominalKind.ENUM:
+        builder.append(nominal_c_name[0:len(nominal_c_name)])
+        builder.append("_")
+        builder.append(member_name[0:len(member_name)])
+        return true
+    if nominal_kind != codegen_reflection.ReflectionNominalKind.VARIANT:
+        return false
+    case_index = codegen_reflection.find_variant_case(context.reflection_model, nominal_index, &member_name)
+    if case_index < 0 or codegen_reflection.variant_case_field_count_at(context.reflection_model, case_index) != 0:
+        return false
+    expected_type = context.expected_type
+    if expected_type.index >= 0 and arena.nodes[expected_type.index].kind == SyntaxKind.TYPE_GENERIC:
+        expected_owner = codegen_type_names.context_type_owner_name(context.type_arena, expected_type, context.type_source)
+        nominal_name = codegen_reflection.nominal_name_at(context.reflection_model, nominal_index)
+        if codegen_reflection.text_equals(&expected_owner, &nominal_name):
+            name_builder = StringBuilder()
+            codegen_context.emit_context_c_type(arena, expected_type, source, &name_builder, prefix, project_name, imports, context)
+            nominal_c_name = name_builder.finish()
+    builder.append("((")
+    builder.append(nominal_c_name[0:len(nominal_c_name)])
+    builder.append("){ .tag = ")
+    builder.append(nominal_c_name[0:len(nominal_c_name)])
+    builder.append("_")
+    builder.append(member_name[0:len(member_name)])
+    builder.append(" })")
+    return true
+
+
 def emit_module_attribute(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -1191,6 +1247,8 @@ def emit_module_attribute(
                         builder.append("_Tag_None")
                     builder.append(")")
                 return
+    if emit_nominal_member_expression(arena, id, source, builder, prefix, project_name, imports, context):
+        return
     if receiver.index >= 0 and member.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         member_node = arena.nodes[member.index]
