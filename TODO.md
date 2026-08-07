@@ -22,7 +22,7 @@ Implement gen3 support for `@reflect`, `type_info`, `type_name`, `fields`, `fiel
 
 Fix gen3 match lowering for nested patterns, guarded cases, capture patterns, and OR patterns. The current output uses names such as `score`, `original`, `parsed`, `value`, and `error` without declaring them in the selected case scope. This affects `expressive_match.ci`, `convert.ci`, `module_project`, and `anti_examples.ci`.
 
-6. Lower enum and variant constructors correctly
+6. Lower enum and variant constructors correctly (done)
 
 Fix local and imported enum or variant constructors in expressions and result payloads. The current output emits forms such as `model.ParseError.negative`, `model.Token.Integer(value)`, and zero-payload variants as invalid C expressions. This affects `module_project`, `expressive_match.ci`, `convert.ci`, and `anti_examples.ci`.
 

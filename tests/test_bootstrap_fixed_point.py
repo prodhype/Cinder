@@ -786,6 +786,176 @@ def test_gen1_lowers_imported_variant_match_payloads(
     assert executed.returncode == 0
 
 
+def test_gen1_lowers_local_enum_and_variant_constructor_expressions(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "local_constructors.ci"
+    source.write_text(
+        "enum ParseError:\n"
+        "    negative\n"
+        "\n"
+        "variant Token:\n"
+        "    Integer(value: i32)\n"
+        "    End\n"
+        "\n"
+        "def parse(value: i32) -> Result[Token, ParseError]:\n"
+        "    if value < 0:\n"
+        "        return Err(ParseError.negative)\n"
+        "    if value == 0:\n"
+        "        return Ok(Token.End)\n"
+        "    return Ok(Token.Integer(value))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    parse(-1)\n"
+        "    parse(0)\n"
+        "    parse(42)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert "__ParseError_negative" in generated
+    assert "){ .tag = " in generated
+    assert "__Token_Integer, .data.Integer = { .value = value }" in generated
+    assert "__Token_End })" in generated
+
+    output = tmp_path / "local-constructors"
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(output)], check=False).returncode == 0
+
+
+def test_gen1_lowers_imported_enum_and_variant_constructor_expressions(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    manifest = tmp_path / "cinder.toml"
+    manifest.write_text(
+        "[project]\n"
+        'name = "constructor_imports"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "model.ci").write_text(
+        "enum ParseError:\n"
+        "    negative\n"
+        "\n"
+        "variant Token:\n"
+        "    Integer(value: i32)\n"
+        "    End\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import model as m\n"
+        "from model import ParseError as Failure, Token as Lexeme\n"
+        "\n"
+        "def qualified(value: i32) -> Result[m.Token, m.ParseError]:\n"
+        "    if value < 0:\n"
+        "        return Err(m.ParseError.negative)\n"
+        "    if value == 0:\n"
+        "        return Ok(m.Token.End)\n"
+        "    return Ok(m.Token.Integer(value))\n"
+        "\n"
+        "def imported(value: i32) -> Result[Lexeme, Failure]:\n"
+        "    if value < 0:\n"
+        "        return Err(Failure.negative)\n"
+        "    if value == 0:\n"
+        "        return Ok(Lexeme.End)\n"
+        "    return Ok(Lexeme.Integer(value))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    qualified(42)\n"
+        "    imported(0)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    generated = tmp_path / "generated"
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(manifest),
+        "-o",
+        str(generated),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    main_c = (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    assert "cinder_constructor_imports_model__ParseError_negative" in main_c
+    assert "cinder_constructor_imports_model__Token_Integer" in main_c
+    assert "cinder_constructor_imports_model__Token_End" in main_c
+    assert "m.ParseError" not in main_c
+    assert "m.Token" not in main_c
+
+    output = tmp_path / "imported-constructors"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(manifest),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(output)], check=False).returncode == 0
+
+
+def test_gen1_lowers_constructors_in_affected_examples(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    expressive = run_gen1(
+        gen1_compiler,
+        "emit-c",
+        str(ROOT / "examples" / "expressive_match.ci"),
+    )
+    assert expressive.returncode == 0, expressive.stderr
+    assert "__Shape_Origin })" in expressive.stdout
+
+    converted = run_gen1(
+        gen1_compiler,
+        "emit-c",
+        str(ROOT / "examples" / "convert.ci"),
+    )
+    assert converted.returncode == 0, converted.stderr
+    assert "cinder_match_value == CinderParseError_empty" in converted.stdout
+    assert "cinder_match_value == CinderParseError_invalid" in converted.stdout
+    assert "cinder_match_value == CinderParseError_overflow" in converted.stdout
+
+    anti_examples = run_gen1(
+        gen1_compiler,
+        "emit-c",
+        str(ROOT / "examples" / "anti_examples.ci"),
+    )
+    assert anti_examples.returncode == 0, anti_examples.stderr
+    assert "__ParseError_negative" in anti_examples.stdout
+    assert "__Token_Integer, .data.Integer = { .value = 11 }" in anti_examples.stdout
+
+    generated = tmp_path / "module-project"
+    module_project = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(ROOT / "examples" / "module_project" / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+    assert module_project.returncode == 0, module_project.stderr
+    parser_c = (
+        generated / "cinder_gen" / "support" / "parser.c"
+    ).read_text(encoding="utf-8")
+    assert "cinder_module_demo_model__ParseError_negative" in parser_c
+    assert "cinder_module_demo_model__ParseError_too_large" in parser_c
+    assert "cinder_module_demo_model__Token_Integer" in parser_c
+    assert "model.ParseError" not in parser_c
+    assert "model.Token" not in parser_c
+
+
 def test_gen1_emit_c_cleans_up_with_scope_before_return(
     gen1_compiler: Path,
     tmp_path: Path,

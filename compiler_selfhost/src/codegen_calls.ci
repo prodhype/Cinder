@@ -547,40 +547,46 @@ def emit_variant_constructor(
     member = codegen_names.second_child(arena, callee)
     if owner.index < 0 or member.index < 0:
         return false
-    owner_node = arena.nodes[owner.index]
     member_node = arena.nodes[member.index]
-    if owner_node.kind != SyntaxKind.EXPR_NAME or member_node.kind != SyntaxKind.NAME:
+    if member_node.kind != SyntaxKind.NAME:
         return false
-    owner_name = source[owner_node.value_start:owner_node.value_start + owner_node.value_length]
     case_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
-    variant_id = codegen_names.find_module_variant_declaration(context.type_arena, context.root, context.type_source, &owner_name)
-    case_id = codegen_names.find_variant_case_declaration(context.type_arena, variant_id, context.type_source, &case_name)
-    if case_id.index < 0:
+    nominal_index = codegen_reflection.find_expression_nominal(context.reflection_model, imports, &context.module_name, arena, owner, source)
+    if nominal_index < 0 or codegen_reflection.nominal_kind_at(context.reflection_model, nominal_index) != codegen_reflection.ReflectionNominalKind.VARIANT:
+        return false
+    case_index = codegen_reflection.find_variant_case(context.reflection_model, nominal_index, &case_name)
+    if case_index < 0:
         return false
     variant_builder = StringBuilder()
     expected_type = context.expected_type
     if expected_type.index >= 0 and arena.nodes[expected_type.index].kind == SyntaxKind.TYPE_GENERIC:
-        expected_base = codegen_names.first_child(arena, expected_type)
-        if expected_base.index >= 0 and codegen_names.range_text_equals(source, arena.nodes[expected_base.index].value_start, arena.nodes[expected_base.index].value_length, owner_name[0:len(owner_name)]):
+        expected_owner = codegen_type_names.context_type_owner_name(context.type_arena, expected_type, context.type_source)
+        nominal_name = codegen_reflection.nominal_name_at(context.reflection_model, nominal_index)
+        if codegen_reflection.text_equals(&expected_owner, &nominal_name):
             codegen_context.emit_context_c_type(arena, expected_type, source, &variant_builder, prefix, project_name, imports, context)
     variant_name = variant_builder.finish()
     if len(variant_name) == 0:
-        variant_name = prefix[0:len(prefix)] + owner_name[0:len(owner_name)]
+        variant_name = codegen_reflection.nominal_c_name_at(context.reflection_model, nominal_index)
+    local_case = syntax.missing_node()
+    nominal_module = codegen_reflection.nominal_module_name_at(context.reflection_model, nominal_index)
+    if codegen_reflection.text_equals(&nominal_module, &context.module_name):
+        nominal_name = codegen_reflection.nominal_name_at(context.reflection_model, nominal_index)
+        local_variant = codegen_names.find_module_variant_declaration(context.type_arena, context.root, context.type_source, &nominal_name)
+        local_case = codegen_names.find_variant_case_declaration(context.type_arena, local_variant, context.type_source, &case_name)
     builder.append("((")
     builder.append(variant_name[0:len(variant_name)])
     builder.append("){ .tag = ")
     builder.append(variant_name[0:len(variant_name)])
     builder.append("_")
     builder.append(case_name[0:len(case_name)])
-    case_node = codegen_names.arena_node_at(context.type_arena, case_id)
-    argument_index: i32 = 0
     emitted_payload = false
-    for field_offset in range(0, case_node.child_count):
-        field_id = codegen_names.arena_child_at(context.type_arena, case_node.first_child + field_offset)
-        field = codegen_names.arena_node_at(context.type_arena, field_id)
-        if field.kind != SyntaxKind.FIELD_DECL:
+    field_count = codegen_reflection.variant_case_field_count_at(context.reflection_model, case_index)
+    for field_offset in range(0, field_count):
+        metadata_field = codegen_reflection.variant_field_at(context.reflection_model, case_index, field_offset)
+        if metadata_field < 0:
             continue
-        argument = codegen_names.call_argument_at(arena, id, argument_index)
+        field_name = codegen_reflection.variant_field_name_at(context.reflection_model, metadata_field)
+        argument = codegen_names.call_argument_at(arena, id, field_offset)
         if argument.index >= 0:
             if not emitted_payload:
                 builder.append(", .data.")
@@ -589,18 +595,35 @@ def emit_variant_constructor(
             else:
                 builder.append(", ")
             builder.append(".")
-            codegen_names.append_source(builder, context.type_source, field.value_start, field.value_length)
+            builder.append(field_name[0:len(field_name)])
             builder.append(" = ")
             previous_expected = context.expected_type
-            context.expected_type = codegen_type_names.find_child_type(context.type_arena, field_id)
+            local_field = local_variant_field_at(arena, local_case, field_offset)
+            if local_field.index >= 0:
+                context.expected_type = codegen_type_names.find_child_type(context.type_arena, local_field)
             emit_nested(state, argument)
             context.expected_type = previous_expected
             emitted_payload = true
-        argument_index += 1
     if emitted_payload:
         builder.append(" }")
     builder.append(" })")
     return true
+
+
+def local_variant_field_at(arena: &const SyntaxArena, case_id: NodeId, wanted: i32) -> NodeId:
+    if case_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[case_id.index]
+    seen: i32 = 0
+    for offset in range(0, node.child_count):
+        field_id = arena.children[node.first_child + offset]
+        if arena.nodes[field_id.index].kind != SyntaxKind.FIELD_DECL:
+            continue
+        if seen == wanted:
+            return field_id
+        seen += 1
+    return syntax.missing_node()
+
 
 def emit_nominal_constructor(
     arena: &const SyntaxArena,

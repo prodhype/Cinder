@@ -353,6 +353,17 @@ def find_nominal(model: &const ProjectReflectionModel, module_name: &const Strin
     return -1
 
 
+def text_equals(left: &const String, right: &const String) -> bool:
+    if len(left) != len(right):
+        return false
+    offset: usize = 0
+    while offset < len(left):
+        if left.byte_at(offset) != right.byte_at(offset):
+            return false
+        offset += 1
+    return true
+
+
 def find_nominal_for_name(
     model: &const ProjectReflectionModel,
     imports: &const List[project.ImportBinding],
@@ -361,6 +372,41 @@ def find_nominal_for_name(
 ) -> i32:
     module_name = classes.module_for_name(imports, current_module, name)
     return find_nominal(model, &module_name, name)
+
+
+def find_expression_nominal(
+    model: &const ProjectReflectionModel,
+    imports: &const List[project.ImportBinding],
+    current_module: &const String,
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        imported = codegen_names.find_import_member(imports, &name)
+        if len(imported.module_name) > 0 and len(imported.member) > 0:
+            return find_nominal(model, &imported.module_name, &imported.member)
+        return find_nominal(model, current_module, &name)
+    if node.kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return -1
+    receiver = codegen_names.first_child(arena, id)
+    member = codegen_names.second_child(arena, id)
+    if receiver.index < 0 or member.index < 0:
+        return -1
+    receiver_node = arena.nodes[receiver.index]
+    member_node = arena.nodes[member.index]
+    if receiver_node.kind != SyntaxKind.EXPR_NAME or member_node.kind != SyntaxKind.NAME:
+        return -1
+    alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    imported = codegen_names.find_import_alias(imports, &alias)
+    if len(imported.module_name) == 0:
+        return -1
+    name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    return find_nominal(model, &imported.module_name, &name)
 
 
 def nominal_count(model: &const ProjectReflectionModel) -> i32:
@@ -380,6 +426,20 @@ def nominal_c_name_at(model: &const ProjectReflectionModel, nominal_index: i32) 
     return name[0:len(name)]
 
 
+def nominal_module_name_at(model: &const ProjectReflectionModel, nominal_index: i32) -> String:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return ""
+    name: &const String = &model.nominals[cast[usize](nominal_index)].module_name
+    return name[0:len(name)]
+
+
+def nominal_name_at(model: &const ProjectReflectionModel, nominal_index: i32) -> String:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return ""
+    name: &const String = &model.nominals[cast[usize](nominal_index)].name
+    return name[0:len(name)]
+
+
 def find_variant_case(model: &const ProjectReflectionModel, nominal_index: i32, name: &const String) -> i32:
     index: usize = 0
     while index < len(model.variant_cases):
@@ -388,6 +448,12 @@ def find_variant_case(model: &const ProjectReflectionModel, nominal_index: i32, 
             return cast[i32](index)
         index += 1
     return -1
+
+
+def variant_case_field_count_at(model: &const ProjectReflectionModel, case_index: i32) -> i32:
+    if case_index < 0 or case_index >= cast[i32](len(model.variant_cases)):
+        return 0
+    return model.variant_cases[cast[usize](case_index)].field_count
 
 
 def variant_field_at(model: &const ProjectReflectionModel, case_index: i32, wanted: i32) -> i32:
