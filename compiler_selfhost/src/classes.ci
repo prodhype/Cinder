@@ -77,6 +77,8 @@ struct ClassInfo:
 struct ClassFunctionInfo:
     module_name: String
     name: String
+    return_c_type: String
+    returns_result: bool
     first_parameter: i32
     parameter_count: i32
 
@@ -476,10 +478,38 @@ def collect_top_level_function(
         )
         parameter_count += 1
     name = source[node.value_start:node.value_start + node.value_length]
+    return_type = codegen_type_names.find_child_type(arena, id)
+    return_builder = StringBuilder()
+    if return_type.index < 0:
+        return_builder.append("void")
+    else:
+        codegen_type_names.emit_module_c_type(
+            arena,
+            return_type,
+            source,
+            &return_builder,
+            prefix,
+            project_name,
+            imports,
+            registry,
+        )
+    return_c_type = return_builder.finish()
+    returns_result = false
+    return_base = type_name_node(arena, return_type)
+    if return_base.index >= 0:
+        return_base_node = arena.nodes[return_base.index]
+        returns_result = codegen_names.range_text_equals(
+            source,
+            return_base_node.value_start,
+            return_base_node.value_length,
+            "Result",
+        )
     model.functions.append(
         ClassFunctionInfo(
             module_name=module_name[0:len(module_name)],
             name=name,
+            return_c_type=return_c_type,
+            returns_result=returns_result,
             first_parameter=first_parameter,
             parameter_count=parameter_count,
         )

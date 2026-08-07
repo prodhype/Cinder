@@ -173,6 +173,53 @@ def write_class_foundation_project(tmp_path: Path) -> Path:
     return tmp_path / "cinder.toml"
 
 
+def assert_compiler_lowers_imported_result_propagation(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    manifest = ROOT / "examples" / "module_project" / "cinder.toml"
+    generated = tmp_path / "imported-result-generated"
+    emitted = run_gen1(
+        compiler,
+        "emit-project",
+        str(manifest),
+        "-o",
+        str(generated),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+
+    main_c = (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    imported_call = "cinder_module_demo_support_parser__parse(value)"
+    assert "CinderResult_" in main_c
+    assert f" cinder_result = {imported_call};" in main_c
+    assert "if (cinder_result.tag == CinderResult_" in main_c
+    assert ".data.err = cinder_result.data.err" in main_c
+    assert "cinder_result.data.ok; })" in main_c
+    assert "__auto_type token = 0;" not in main_c
+
+    executable = tmp_path / (
+        "module-project.exe" if shutil.which("cl") and not shutil.which("cc") else "module-project"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(manifest),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "imported-result-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run(
+        [str(executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "value=42\n"
+
+
 def assert_compiler_emits_class_foundation(
     compiler: Path,
     tmp_path: Path,
@@ -1628,6 +1675,21 @@ def test_gen1_emit_project_build_and_run(
 
     ran = run_gen1(gen1_compiler, "run", str(manifest))
     assert ran.returncode == 42
+
+
+def test_gen1_lowers_imported_result_propagation(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_lowers_imported_result_propagation(gen1_compiler, tmp_path)
+
+
+def test_gen2_lowers_imported_result_propagation(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_lowers_imported_result_propagation(gen2, tmp_path)
 
 
 def test_gen1_emits_complete_class_with_owner_typed_self(
