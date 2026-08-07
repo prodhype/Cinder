@@ -346,6 +346,39 @@ def emit_module_drop_helper_prototypes(
     builder.append(" *self);\n")
 
 
+def specialization_type_is_late(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.TYPE_CLOSURE:
+        return true
+    if node.kind == SyntaxKind.TYPE_CONST or node.kind == SyntaxKind.TYPE_ARRAY:
+        return specialization_type_is_late(arena, codegen_names.first_child(arena, id), source)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return false
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
+    if codegen_type_names.is_runtime_generic_name(source, &base_node, "Result"):
+        return true
+    if codegen_type_names.is_runtime_generic_name(source, &base_node, "Option"):
+        if node.child_count <= 1:
+            return false
+        return specialization_type_is_late(arena, arena.children[node.first_child + 1], source)
+    if codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple"):
+        offset: i32 = 1
+        while offset < node.child_count:
+            if specialization_type_is_late(arena, arena.children[node.first_child + offset], source):
+                return true
+            offset += 1
+    return false
+
+
 def emit_module_type_specializations(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -356,13 +389,13 @@ def emit_module_type_specializations(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
-    result_only: bool,
+    late_phase: bool,
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
-        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, result_only)
+        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, late_phase)
     is_closure = node.kind == SyntaxKind.TYPE_CLOSURE
     is_list = false
     is_set = false
@@ -392,18 +425,18 @@ def emit_module_type_specializations(
     name_builder = StringBuilder()
     codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
     name = name_builder.finish()
-    is_late = is_result or is_closure
+    is_late = specialization_type_is_late(arena, id, source)
     if is_map or is_set:
         phase_builder = StringBuilder()
         phase_builder.append(name[0:len(name)])
-        if result_only:
+        if late_phase:
             phase_builder.append("_helpers")
         else:
             phase_builder.append("_layout")
         phase_name = phase_builder.finish()
         if codegen_type_names.string_list_contains(emitted, &phase_name):
             return
-        if result_only:
+        if late_phase:
             builder.append("#ifndef CINDER_COLLECTION_HELPERS_")
             builder.append(name[0:len(name)])
             builder.append("\n#define CINDER_COLLECTION_HELPERS_")
@@ -427,7 +460,7 @@ def emit_module_type_specializations(
             builder.append("#endif\n")
         emitted.append(phase_name)
         return
-    if result_only != is_late:
+    if late_phase != is_late:
         return
     if codegen_type_names.string_list_contains(emitted, &name):
         return
