@@ -1,4 +1,5 @@
 import codegen_access
+import classes
 import codegen_context
 import codegen_format
 import codegen_context as codegen_model
@@ -114,6 +115,12 @@ def emit_module_call(
             if emitted_argument:
                 builder.append(", ")
             arg = codegen_names.last_child(arena, child_id)
+            dyn_interface = codegen_context.context_callee_dyn_parameter(arena, context, callee, source, argument_index)
+            if dyn_interface >= 0:
+                codegen_access.emit_dyn_conversion(arena, arg, dyn_interface, source, builder, context, state, emit_nested)
+                emitted_argument = true
+                argument_index += 1
+                continue
             expected_type = codegen_context.context_callee_parameter_type(arena, context, callee, source, argument_index)
             arg_type = codegen_context.context_expression_type(arena, context, arg, source)
             if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_SLICE and codegen_specializations.context_type_is_array(context.type_arena, arg_type):
@@ -419,6 +426,13 @@ def emit_nominal_constructor(
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
     imported = codegen_names.find_import_member(imports, name)
+    class_module = context.module_name[0:len(context.module_name)]
+    if len(imported.module_name) > 0 and len(imported.member) > 0:
+        class_module = imported.module_name[0:len(imported.module_name)]
+    class_index = classes.find_class(context.class_model, &class_module, name)
+    if class_index >= 0:
+        emit_class_constructor_call(arena, id, source, builder, context, class_index, state, emit_nested)
+        return
     specialized_builder = StringBuilder()
     expected_type = context.expected_type
     if expected_type.index >= 0 and arena.nodes[expected_type.index].kind == SyntaxKind.TYPE_GENERIC:
@@ -462,6 +476,36 @@ def emit_nominal_constructor(
             codegen_context.mark_context_expression_moved(arena, context, value, source)
             emitted = true
     builder.append("}")
+
+
+def emit_class_constructor_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    class_index: i32,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+    builder.append(class_info.c_name[0:len(class_info.c_name)])
+    builder.append("__new(")
+    node = arena.nodes[id.index]
+    emitted = false
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        if emitted:
+            builder.append(", ")
+        argument = codegen_names.last_child(arena, child_id)
+        emit_nested(state, argument)
+        codegen_context.mark_context_expression_moved(arena, context, argument, source)
+        emitted = true
+    builder.append(")")
 
 def emit_string_constructor(
     arena: &const SyntaxArena,

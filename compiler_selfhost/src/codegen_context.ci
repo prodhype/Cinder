@@ -1,4 +1,5 @@
 import backend_ir
+import classes
 import codegen_names
 import codegen_type_names
 import generics
@@ -27,8 +28,11 @@ struct ModuleTupleItemBinding:
 
 struct ModuleCodegenContext:
     root: NodeId
+    module_name: String
     type_arena: &const SyntaxArena
     type_source: &const String
+    imports: &const List[project.ImportBinding]
+    class_model: &const classes.ProjectClassModel
     specialization_names: &const codegen_names.SpecializationNameRegistry
     semantic_nodes: &const List[backend_ir.IRNode]
     type_table: &const types.TypeTable
@@ -43,6 +47,8 @@ struct ModuleCodegenContext:
     iterator_guard_names: List[String]
     field_types: List[ModuleFieldTypeBinding]
     current_owner: String
+    current_class: i32
+    current_self_is_dyn: bool
     local_start: usize
     pointer_start: usize
     deferred_expressions: List[NodeId]
@@ -67,7 +73,10 @@ def make_module_codegen_context(
     arena: &const SyntaxArena,
     root: NodeId,
     source: &const String,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    class_model: &const classes.ProjectClassModel,
     semantic_nodes: &const List[backend_ir.IRNode],
     type_table: &const types.TypeTable,
     specialization_args: &const List[types.TypeId],
@@ -86,8 +95,11 @@ def make_module_codegen_context(
     extern_names: List[String] = []
     context = ModuleCodegenContext(
         root=root,
+        module_name=module_name[0:len(module_name)],
         type_arena=arena,
         type_source=source,
+        imports=imports,
+        class_model=class_model,
         specialization_names=registry,
         semantic_nodes=semantic_nodes,
         type_table=type_table,
@@ -102,6 +114,8 @@ def make_module_codegen_context(
         iterator_guard_names=iterator_guard_names,
         field_types=field_types,
         current_owner="",
+        current_class=-1,
+        current_self_is_dyn=false,
         local_start=0,
         pointer_start=0,
         deferred_expressions=deferred_expressions,
@@ -116,6 +130,151 @@ def make_module_codegen_context(
     collect_module_global_names(arena, root, source, context)
     collect_module_extern_names(arena, root, source, context)
     return context
+
+
+def context_class_for_name(context: &ModuleCodegenContext, name: &const String) -> i32:
+    module_name = classes.module_for_name(context.imports, &context.module_name, name)
+    return classes.find_class(context.class_model, &module_name, name)
+
+
+def context_class_for_type(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    type_id: NodeId,
+    source: &const String,
+) -> i32:
+    model: &const classes.ProjectClassModel = context.class_model
+    if type_id.index < 0:
+        return -1
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, type_id)
+        if callee.index < 0:
+            return -1
+        callee_node = arena.nodes[callee.index]
+        if callee_node.kind == SyntaxKind.EXPR_NAME:
+            name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+            return context_class_for_name(context, &name)
+        if callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+            receiver = codegen_names.first_child(arena, callee)
+            member = codegen_names.second_child(arena, callee)
+            if receiver.index >= 0 and member.index >= 0:
+                receiver_node = arena.nodes[receiver.index]
+                member_node = arena.nodes[member.index]
+                if receiver_node.kind == SyntaxKind.EXPR_NAME:
+                    alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+                    imported = codegen_names.find_import_alias(context.imports, &alias)
+                    if len(imported.module_name) > 0:
+                        name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+                        return classes.find_class(context.class_model, &imported.module_name, &name)
+        return -1
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        named_type = context_name_type(context, &name)
+        if named_type.index >= 0 and named_type.index != type_id.index:
+            return context_class_for_type(context.type_arena, context, named_type, context.type_source)
+        return context_class_for_name(context, &name)
+    current = type_id
+    while current.index >= 0:
+        kind = arena.nodes[current.index].kind
+        if kind == SyntaxKind.TYPE_NAME:
+            type_node = arena.nodes[current.index]
+            name = source[type_node.value_start:type_node.value_start + type_node.value_length]
+            return context_class_for_name(context, &name)
+        if kind != SyntaxKind.TYPE_GENERIC and kind != SyntaxKind.TYPE_CONST and kind != SyntaxKind.TYPE_REFERENCE and kind != SyntaxKind.TYPE_POINTER and kind != SyntaxKind.TYPE_DYN:
+            break
+        current = codegen_names.first_child(arena, current)
+    return -1
+
+
+def context_expression_class(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        if name == "self" and context.current_class >= 0:
+            return context.current_class
+    expression_type = context_expression_type(arena, context, id, source)
+    result = context_class_for_type(context.type_arena, context, expression_type, context.type_source)
+    if result >= 0:
+        return result
+    return context_class_for_type(arena, context, id, source)
+
+
+def context_expression_dyn_interface(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> i32:
+    if context.current_self_is_dyn and id.index >= 0:
+        node = arena.nodes[id.index]
+        if node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, node.value_start, node.value_length, "self"):
+            return context.current_class
+    type_id = context_expression_type(arena, context, id, source)
+    if type_id.index < 0:
+        return -1
+    type_arena: &const SyntaxArena = context.type_arena
+    current = type_id
+    while current.index >= 0 and type_arena.nodes[current.index].kind == SyntaxKind.TYPE_CONST:
+        current = codegen_names.first_child(type_arena, current)
+    if current.index < 0 or type_arena.nodes[current.index].kind != SyntaxKind.TYPE_DYN:
+        return -1
+    return context_class_for_type(type_arena, context, current, context.type_source)
+
+
+def context_callee_dyn_parameter(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    callee: NodeId,
+    source: &const String,
+    parameter_index: usize,
+) -> i32:
+    model: &const classes.ProjectClassModel = context.class_model
+    if callee.index < 0:
+        return -1
+    module_name = context.module_name[0:len(context.module_name)]
+    function_name = ""
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind == SyntaxKind.EXPR_NAME:
+        function_name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+        imported = codegen_names.find_import_member(context.imports, &function_name)
+        if len(imported.module_name) > 0 and len(imported.member) > 0:
+            module_name = imported.module_name[0:len(imported.module_name)]
+            function_name = imported.member[0:len(imported.member)]
+    elif callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, callee)
+        member = codegen_names.second_child(arena, callee)
+        if receiver.index < 0 or member.index < 0:
+            return -1
+        receiver_node = arena.nodes[receiver.index]
+        member_node = arena.nodes[member.index]
+        if receiver_node.kind != SyntaxKind.EXPR_NAME:
+            return -1
+        alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+        imported = codegen_names.find_import_alias(context.imports, &alias)
+        if len(imported.module_name) == 0:
+            return -1
+        module_name = imported.module_name[0:len(imported.module_name)]
+        function_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    else:
+        return -1
+    function_index = classes.find_function(model, &module_name, &function_name)
+    if function_index < 0:
+        return -1
+    function: &const classes.ClassFunctionInfo = &model.functions[cast[usize](function_index)]
+    if parameter_index >= cast[usize](function.parameter_count):
+        return -1
+    parameter: &const classes.ClassParameterInfo = &model.parameters[cast[usize](function.first_parameter) + parameter_index]
+    if parameter.type_info.kind != classes.ClassValueKind.DYN:
+        return -1
+    return parameter.type_info.class_index
 
 def collect_module_extern_names(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
     if id.index < 0:

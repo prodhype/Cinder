@@ -1,9 +1,9 @@
 # Cinder
 
 ```
-Progress:       66.6%
-[####################----------]
-start                          done
+Progress:                    69.44%
+[##################################----------------]
+start                                              done
 ```
 
 Cinder is a systems language with static types.

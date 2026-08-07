@@ -1,5 +1,6 @@
 import codegen_context
 import codegen_context as codegen_model
+import classes
 import codegen_names
 import codegen_specializations
 import codegen_type_names
@@ -8,6 +9,40 @@ import syntax
 import token
 import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+def emit_dyn_conversion(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    interface_index: i32,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    existing_interface = codegen_context.context_expression_dyn_interface(arena, context, id, source)
+    if existing_interface >= 0:
+        emit_nested(state, id)
+        return
+    concrete_index = codegen_context.context_expression_class(arena, context, id, source)
+    if concrete_index < 0 or interface_index < 0:
+        emit_nested(state, id)
+        return
+    concrete: &const classes.ClassInfo = &model.classes[cast[usize](concrete_index)]
+    interface: &const classes.ClassInfo = &model.classes[cast[usize](interface_index)]
+    builder.append("((CinderDyn_")
+    builder.append(interface.c_name[0:len(interface.c_name)])
+    builder.append("){ .object = (void *)(")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, id, source):
+        builder.append("&")
+    emit_nested(state, id)
+    builder.append("), .vtable = &")
+    builder.append(concrete.c_name[0:len(concrete.c_name)])
+    builder.append("__as__")
+    builder.append(interface.c_name[0:len(interface.c_name)])
+    builder.append("__vtable })")
 
 
 def emit_array_as_list(
@@ -44,6 +79,11 @@ def emit_imported_nominal_constructor(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    class_index = classes.find_class(model, module_name, name)
+    if class_index >= 0:
+        emit_imported_class_constructor_call(arena, id, source, builder, context, class_index, state, emit_nested)
+        return
     builder.append("(")
     builder.append(codegen_names.c_prefix(project_name, module_name))
     builder.append(name[0:len(name)])
@@ -68,6 +108,36 @@ def emit_imported_nominal_constructor(
             emitted = true
     builder.append("}")
 
+
+def emit_imported_class_constructor_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    class_index: i32,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+    builder.append(class_info.c_name[0:len(class_info.c_name)])
+    builder.append("__new(")
+    node = arena.nodes[id.index]
+    emitted = false
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        if emitted:
+            builder.append(", ")
+        argument = codegen_names.last_child(arena, child_id)
+        emit_nested(state, argument)
+        codegen_context.mark_context_expression_moved(arena, context, argument, source)
+        emitted = true
+    builder.append(")")
+
 def emit_access_call(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -80,6 +150,7 @@ def emit_access_call(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
     path = codegen_names.first_call_argument(arena, id)
     mode = codegen_names.second_call_argument(arena, id)
     builder.append("access(cinder_string_cstr(")
@@ -134,6 +205,7 @@ def emit_attribute_call(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
     receiver = codegen_names.first_child(arena, callee_id)
     member = codegen_names.second_child(arena, callee_id)
     if member.index < 0:
@@ -141,6 +213,8 @@ def emit_attribute_call(
         return
     member_node = arena.nodes[member.index]
     member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    if emit_super_call(arena, call_id, receiver, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested):
+        return
     if receiver.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         if receiver_node.kind == SyntaxKind.EXPR_NAME:
@@ -179,6 +253,10 @@ def emit_attribute_call(
                     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
                 builder.append(")")
                 return
+    dyn_interface = codegen_context.context_expression_dyn_interface(arena, context, receiver, source)
+    if dyn_interface >= 0:
+        emit_dynamic_method_call(arena, call_id, receiver, &member_name, dyn_interface, source, builder, context, state, emit_nested)
+        return
     if member_name == "dump" and receiver.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         if receiver_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, receiver_node.value_start, receiver_node.value_length, "scan"):
@@ -371,6 +449,20 @@ def emit_attribute_call(
     if member_name == "write" and receiver_is_file(arena, receiver, source, context):
         emit_file_write_call(arena, receiver, codegen_names.first_call_argument(arena, call_id), source, builder, prefix, project_name, imports, context, state, emit_nested)
         return
+    receiver_class = codegen_context.context_expression_class(arena, context, receiver, source)
+    if receiver_class >= 0:
+        method_index = classes.find_effective_method(model, receiver_class, &member_name)
+        if method_index >= 0:
+            method: &const classes.ClassMethodInfo = &model.methods[cast[usize](method_index)]
+            builder.append(method.c_name[0:len(method.c_name)])
+            builder.append("(")
+            if method.self_is_dyn:
+                emit_dyn_conversion(arena, receiver, method.owner, source, builder, context, state, emit_nested)
+            else:
+                emit_static_class_receiver(arena, receiver, receiver_class, method.owner, source, builder, context, state, emit_nested)
+            emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
+            builder.append(")")
+            return
     receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
     type_arena: &const SyntaxArena = context.type_arena
     if receiver_type.index >= 0 and type_arena.nodes[receiver_type.index].kind == SyntaxKind.TYPE_GENERIC:
@@ -381,6 +473,123 @@ def emit_attribute_call(
     emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
     builder.append(")")
+
+
+def emit_dynamic_method_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    receiver: NodeId,
+    member_name: &const String,
+    interface_index: i32,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    interface: &const classes.ClassInfo = &model.classes[cast[usize](interface_index)]
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("({ CinderDyn_")
+    builder.append(interface.c_name[0:len(interface.c_name)])
+    builder.append(" cinder_dyn_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = ")
+    emit_nested(state, receiver)
+    builder.append("; cinder_dyn_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(".vtable->")
+    builder.append(member_name[0:len(member_name)])
+    builder.append("(cinder_dyn_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(".object, cinder_dyn_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(".vtable")
+    emit_remaining_call_arguments(arena, call_id, source, builder, state.prefix, state.project_name, state.imports, true, context, state, emit_nested)
+    builder.append("); })")
+
+
+def emit_static_class_receiver(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    source_class: i32,
+    target_class: i32,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    if source_class != target_class:
+        target: &const classes.ClassInfo = &model.classes[cast[usize](target_class)]
+        builder.append("((")
+        builder.append(target.c_name[0:len(target.c_name)])
+        builder.append(" *)")
+    emit_receiver_argument(arena, receiver, source, builder, state.prefix, state.project_name, state.imports, context, state, emit_nested)
+    if source_class != target_class:
+        builder.append(")")
+
+
+def emit_super_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    receiver: NodeId,
+    member_name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> bool:
+    model: &const classes.ProjectClassModel = context.class_model
+    if not expression_is_super(arena, receiver, source) or context.current_class < 0:
+        return false
+    owner: &const classes.ClassInfo = &model.classes[cast[usize](context.current_class)]
+    if owner.primary_base < 0:
+        return false
+    base: &const classes.ClassInfo = &model.classes[cast[usize](owner.primary_base)]
+    if member_name == "__init__":
+        if base.constructor < 0:
+            builder.append("(*(( ")
+            builder.append(base.c_name[0:len(base.c_name)])
+            builder.append(" *)&self->_base) = ")
+            builder.append(base.c_name[0:len(base.c_name)])
+            builder.append("__new())")
+            return true
+        constructor: &const classes.ClassMethodInfo = &model.methods[cast[usize](base.constructor)]
+        builder.append(constructor.c_name[0:len(constructor.c_name)])
+    else:
+        method_index = classes.find_effective_method(model, owner.primary_base, member_name)
+        if method_index < 0:
+            return false
+        method: &const classes.ClassMethodInfo = &model.methods[cast[usize](method_index)]
+        builder.append(method.c_name[0:len(method.c_name)])
+    builder.append("(( ")
+    builder.append(base.c_name[0:len(base.c_name)])
+    builder.append(" *)&self->_base")
+    emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
+    builder.append(")")
+    return true
+
+
+def expression_is_super(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return codegen_names.range_text_equals(source, node.value_start, node.value_length, "super")
+    if node.kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0:
+        return false
+    callee_node = arena.nodes[callee.index]
+    return callee_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "super")
 
 
 def receiver_is_file(
@@ -775,6 +984,18 @@ def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source:
         return "cinder_cinder_selfhost_types__TypeId"
     if member_name == "types":
         return "cinder_cinder_selfhost_types__TypeRecord"
+    if owner == "ProjectClassModel" and member_name == "classes":
+        return "cinder_cinder_selfhost_classes__ClassInfo"
+    if owner == "ProjectClassModel" and member_name == "bases":
+        return "cinder_cinder_selfhost_classes__ClassBaseInfo"
+    if owner == "ProjectClassModel" and member_name == "fields":
+        return "cinder_cinder_selfhost_classes__ClassFieldInfo"
+    if owner == "ProjectClassModel" and member_name == "methods":
+        return "cinder_cinder_selfhost_classes__ClassMethodInfo"
+    if owner == "ProjectClassModel" and member_name == "parameters":
+        return "cinder_cinder_selfhost_classes__ClassParameterInfo"
+    if owner == "ProjectClassModel" and member_name == "functions":
+        return "cinder_cinder_selfhost_classes__ClassFunctionInfo"
     if member_name == "type_args":
         return "cinder_cinder_selfhost_types__TypeId"
     if member_name == "canonical_bytes" or member_name == "readable_bytes":
@@ -932,6 +1153,7 @@ def emit_module_attribute(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
     receiver = codegen_names.first_child(arena, id)
     member = codegen_names.second_child(arena, id)
     if receiver.index >= 0 and member.index >= 0:
@@ -985,7 +1207,19 @@ def emit_module_attribute(
                 codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
                 return
             if codegen_names.range_text_equals(source, receiver_node.value_start, receiver_node.value_length, "self"):
-                builder.append("self->")
+                field_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+                field_owner = classes.find_field_owner(model, context.current_class, &field_name)
+                if context.current_self_is_dyn:
+                    owner_index = context.current_class
+                    if field_owner >= 0:
+                        owner_index = field_owner
+                    owner: &const classes.ClassInfo = &model.classes[cast[usize](owner_index)]
+                    builder.append("((")
+                    builder.append(owner.c_name[0:len(owner.c_name)])
+                    builder.append(" *)self.object)->")
+                else:
+                    builder.append("self->")
+                    append_inherited_field_path(builder, context.current_class, field_owner, model)
                 codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
                 return
             receiver_type = codegen_context.context_name_type(context, &receiver_name)
@@ -1006,6 +1240,29 @@ def emit_module_attribute(
             builder.append("_")
             codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
             return
+        dyn_interface = codegen_context.context_expression_dyn_interface(arena, context, receiver, source)
+        if dyn_interface >= 0:
+            interface: &const classes.ClassInfo = &model.classes[cast[usize](dyn_interface)]
+            builder.append("((")
+            builder.append(interface.c_name[0:len(interface.c_name)])
+            builder.append(" *)(")
+            emit_nested(state, receiver)
+            builder.append(".object))->")
+            codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+            return
+        receiver_class = codegen_context.context_expression_class(arena, context, receiver, source)
+        if receiver_class >= 0:
+            field_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            field_owner = classes.find_field_owner(model, receiver_class, &field_name)
+            if field_owner >= 0 and field_owner != receiver_class:
+                emit_nested(state, receiver)
+                if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+                    builder.append("->")
+                else:
+                    builder.append(".")
+                append_inherited_field_path(builder, receiver_class, field_owner, model)
+                codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
+                return
         emit_nested(state, receiver)
         if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
             builder.append("->")
@@ -1014,6 +1271,18 @@ def emit_module_attribute(
         codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
         return
     codegen_names.append_source(builder, source, codegen_names.node_start(arena, id), codegen_names.node_length(arena, id))
+
+
+def append_inherited_field_path(
+    builder: &StringBuilder,
+    source_class: i32,
+    field_owner: i32,
+    model: &const classes.ProjectClassModel,
+) -> void:
+    current = source_class
+    while current >= 0 and field_owner >= 0 and current != field_owner:
+        builder.append("_base.")
+        current = model.classes[cast[usize](current)].primary_base
 
 
 def emit_option_expression_name(
@@ -1088,6 +1357,12 @@ def emit_remaining_call_arguments(
                 builder.append(", ")
             arg = codegen_names.last_child(arena, child_id)
             callee = codegen_names.first_child(arena, id)
+            dyn_interface = codegen_context.context_callee_dyn_parameter(arena, context, callee, source, argument_index)
+            if dyn_interface >= 0:
+                emit_dyn_conversion(arena, arg, dyn_interface, source, builder, context, state, emit_nested)
+                emitted_argument = true
+                argument_index += 1
+                continue
             expected_type = codegen_context.context_callee_parameter_type(arena, context, callee, source, argument_index)
             arg_type = codegen_context.context_expression_type(arena, context, arg, source)
             if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_SLICE and codegen_specializations.context_type_is_array(context.type_arena, arg_type):
