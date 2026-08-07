@@ -1,8 +1,6 @@
 name: Build Gen3 ARMv7
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:

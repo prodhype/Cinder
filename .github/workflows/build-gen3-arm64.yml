@@ -1,8 +1,6 @@
 name: Build Gen3 ARM64
 
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:
