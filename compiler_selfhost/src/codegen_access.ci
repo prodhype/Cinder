@@ -1265,6 +1265,20 @@ def emit_module_attribute(
     if receiver.index >= 0 and member.index >= 0:
         member_node = arena.nodes[member.index]
         member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+        if member_name == "is_ok" or member_name == "is_err":
+            result_builder = StringBuilder()
+            if emit_result_expression_name(arena, receiver, source, &result_builder, prefix, project_name, imports, context):
+                result_name = result_builder.finish()
+                builder.append("((")
+                emit_nested(state, receiver)
+                builder.append(").tag == ")
+                builder.append(result_name[0:len(result_name)])
+                if member_name == "is_ok":
+                    builder.append("_Tag_Ok")
+                else:
+                    builder.append("_Tag_Err")
+                builder.append(")")
+                return
         if member_name == "is_some" or member_name == "is_none" or member_name == "value":
             option_builder = StringBuilder()
             if emit_option_expression_name(arena, receiver, source, &option_builder, prefix, project_name, imports, context):
@@ -1476,6 +1490,31 @@ def append_inherited_field_path(
     while current >= 0 and field_owner >= 0 and current != field_owner:
         builder.append("_base.")
         current = model.classes[cast[usize](current)].primary_base
+
+
+def emit_result_expression_name(
+    arena: &const SyntaxArena,
+    expression: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    expression_type = codegen_context.context_expression_type(arena, context, expression, source)
+    if codegen_context.context_type_is_runtime_generic(context.type_arena, expression_type, context.type_source, "Result"):
+        codegen_context.emit_context_c_type(context.type_arena, expression_type, context.type_source, builder, prefix, project_name, imports, context)
+        return true
+    call_name = codegen_context.context_call_result_c_type(arena, context, expression, source)
+    if len(call_name) > 0:
+        builder.append(call_name[0:len(call_name)])
+        return true
+    semantic_type = codegen_context.context_semantic_type(context, expression)
+    if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.RESULT):
+        codegen_type_names.emit_semantic_c_type(context.type_table, semantic_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        return true
+    return false
 
 
 def emit_option_expression_name(

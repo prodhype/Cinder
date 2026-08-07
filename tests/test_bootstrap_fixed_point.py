@@ -220,6 +220,63 @@ def assert_compiler_lowers_imported_result_propagation(
     assert ran.stdout == "value=42\n"
 
 
+def assert_compiler_lowers_result_state_fields(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "result_state_fields.ci"
+    source.write_text(
+        "enum Failure:\n"
+        "    rejected\n"
+        "\n"
+        "def success() -> Result[i32, Failure]:\n"
+        "    return Ok(42)\n"
+        "\n"
+        "def failure() -> Result[i32, Failure]:\n"
+        "    return Err(Failure.rejected)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    ok = success()\n"
+        "    err = failure()\n"
+        "    if not success().is_ok or success().is_err:\n"
+        "        return 1\n"
+        "    if failure().is_ok or not failure().is_err:\n"
+        "        return 2\n"
+        "    if not ok.is_ok or ok.is_err:\n"
+        "        return 3\n"
+        "    if err.is_ok or not err.is_err:\n"
+        "        return 4\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert "CinderResult_i32_Failure_Tag_Ok" in generated
+    assert "CinderResult_i32_Failure_Tag_Err" in generated
+    assert ".is_ok" not in generated
+    assert ".is_err" not in generated
+
+    executable = tmp_path / (
+        "result-state-fields.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "result-state-fields"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "result-state-fields-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+
+
 def assert_compiler_orders_nested_option_result_specializations(
     compiler: Path,
     tmp_path: Path,
@@ -1779,6 +1836,21 @@ def test_gen2_lowers_imported_result_propagation(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_lowers_imported_result_propagation(gen2, tmp_path)
+
+
+def test_gen1_lowers_result_state_fields(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_lowers_result_state_fields(gen1_compiler, tmp_path)
+
+
+def test_gen2_lowers_result_state_fields(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_lowers_result_state_fields(gen2, tmp_path)
 
 
 def test_gen1_orders_nested_option_result_specializations(

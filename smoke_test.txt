@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-07 22:29:56 UTC
+# date:   2026-08-07 22:42:36 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -13,12 +13,12 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 33 ok, 3 fail
+Summary: 34 ok, 2 fail
 
 ## Status by example
 examples/aggregate_ownership.ci   OK    ok
 examples/algorithm_benchmarks.ci  OK    ok
-examples/anti_examples.ci         FAIL  gen3_toolchain_error
+examples/anti_examples.ci         OK    ok
 examples/ast_arena.ci             OK    ok
 examples/binary_sort.ci           FAIL  gen3_runtime_nonzero
 examples/classes.ci               OK    ok
@@ -54,13 +54,13 @@ examples/class_project            OK    ok
 examples/module_project           OK    ok
 
 ## First non-warning C errors
-- examples/anti_examples.ci: cinder_gen/anti_examples.c:497 [missing_member] generated C at function main - no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
 - examples/binary_sort.ci: no non-warning C error found (kind: gen3_runtime_nonzero)
 - examples/dijkstra_showcase.ci: cinder_gen/dijkstra_showcase.c:103 [c_error] generated C at function ConsoleReporter_emit - passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
 
 ## OK
 - examples/aggregate_ownership.ci
 - examples/algorithm_benchmarks.ci
+- examples/anti_examples.ci
 - examples/ast_arena.ci
 - examples/classes.ci
 - examples/closures.ci
@@ -94,17 +94,6 @@ examples/module_project           OK    ok
 - examples/module_project
 
 ## Failures
-### examples/anti_examples.ci
-gen3 exit=2
-kind: gen3_toolchain_error
-first C error: cinder_gen/anti_examples.c:497 [missing_member]
-source feature: generated C at function main
-message: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
-elapsed: 0.1s
-
---- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.1zv1m59s/anti_examples.ci-build/cinder_gen/anti_examples.c:497:66: error: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
-
 ### examples/binary_sort.ci
 gen3 exit=133
 kind: gen3_runtime_nonzero
@@ -122,4 +111,4 @@ message: passing 'int32_t' (aka 'int') to parameter of incompatible type 'Cinder
 elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.1zv1m59s/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:103:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.fgocsr77/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:103:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
