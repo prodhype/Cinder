@@ -220,6 +220,95 @@ def assert_compiler_lowers_imported_result_propagation(
     assert ran.stdout == "value=42\n"
 
 
+def assert_compiler_orders_nested_option_result_specializations(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    expressive = ROOT / "examples" / "expressive_match.ci"
+    emitted = run_gen1(compiler, "emit-c", str(expressive))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    result = generated.index("struct CinderResult_i32_ParseError {")
+    option = generated.index("struct CinderOption_CinderResult_i32_ParseError {")
+    assert result < option
+
+    executable = tmp_path / (
+        "expressive-match.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "expressive-match"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(expressive),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "expressive-match-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+
+    ordering_source = tmp_path / "nested_specialization_order.ci"
+    ordering_source.write_text(
+        "enum Error:\n"
+        "    invalid\n"
+        "\n"
+        "struct Holder:\n"
+        "    value: Option[i32]\n"
+        "\n"
+        "def preserve(\n"
+        "    nested: Option[Tuple[Result[i32, Error]]],\n"
+        "    holder: Holder,\n"
+        ") -> i32:\n"
+        "    return 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    ordering_emitted = run_gen1(compiler, "emit-c", str(ordering_source))
+    assert ordering_emitted.returncode == 0, ordering_emitted.stderr
+    ordering_c = ordering_emitted.stdout
+    ordinary_option = ordering_c.index("struct CinderOption_i32 {")
+    nominal_prefix = (
+        "cinder_nested_specialization_order_nested_specialization_order__"
+    )
+    holder = ordering_c.index(f"struct {nominal_prefix}Holder {{")
+    error = ordering_c.index(f"typedef enum {nominal_prefix}Error {{")
+    nested_result = ordering_c.index("struct CinderResult_i32_Error {")
+    nested_tuple = ordering_c.index("struct CinderTuple_CinderResult_i32_Error {")
+    nested_option = ordering_c.index(
+        "struct CinderOption_CinderTuple_CinderResult_i32_Error {"
+    )
+    assert ordinary_option < holder
+    assert error < nested_result < nested_tuple < nested_option
+
+    ordering_executable = tmp_path / (
+        "nested-specialization-order.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "nested-specialization-order"
+    )
+    ordering_built = run_gen1(
+        compiler,
+        "build",
+        str(ordering_source),
+        "-o",
+        str(ordering_executable),
+        "--build-dir",
+        str(tmp_path / "nested-specialization-order-build"),
+    )
+    assert ordering_built.returncode == 0, ordering_built.stderr
+    ordering_ran = subprocess.run(
+        [str(ordering_executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert ordering_ran.returncode == 0, ordering_ran.stderr
+
+
 def assert_compiler_emits_class_foundation(
     compiler: Path,
     tmp_path: Path,
@@ -1690,6 +1779,21 @@ def test_gen2_lowers_imported_result_propagation(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_lowers_imported_result_propagation(gen2, tmp_path)
+
+
+def test_gen1_orders_nested_option_result_specializations(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_orders_nested_option_result_specializations(gen1_compiler, tmp_path)
+
+
+def test_gen2_orders_nested_option_result_specializations(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_orders_nested_option_result_specializations(gen2, tmp_path)
 
 
 def test_gen1_emits_complete_class_with_owner_typed_self(

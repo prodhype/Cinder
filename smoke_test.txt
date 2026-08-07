@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-07 22:15:08 UTC
+# date:   2026-08-07 22:29:56 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -13,7 +13,7 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 32 ok, 4 fail
+Summary: 33 ok, 3 fail
 
 ## Status by example
 examples/aggregate_ownership.ci   OK    ok
@@ -28,7 +28,7 @@ examples/control_flow.ci          OK    ok
 examples/convert.ci               OK    ok
 examples/defer.ci                 OK    ok
 examples/dijkstra_showcase.ci     FAIL  gen3_toolchain_error
-examples/expressive_match.ci      FAIL  gen3_toolchain_error
+examples/expressive_match.ci      OK    ok
 examples/fizzbuzz.ci              OK    ok
 examples/function_pointers.ci     OK    ok
 examples/generics.ci              OK    ok
@@ -57,7 +57,6 @@ examples/module_project           OK    ok
 - examples/anti_examples.ci: cinder_gen/anti_examples.c:497 [missing_member] generated C at function main - no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
 - examples/binary_sort.ci: no non-warning C error found (kind: gen3_runtime_nonzero)
 - examples/dijkstra_showcase.ci: cinder_gen/dijkstra_showcase.c:103 [c_error] generated C at function ConsoleReporter_emit - passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
-- examples/expressive_match.ci: cinder_gen/expressive_match.cinder.h:159 [incomplete_type] type definition ordering at struct CinderOption_CinderResult_i32_ParseError - field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
 
 ## OK
 - examples/aggregate_ownership.ci
@@ -69,6 +68,7 @@ examples/module_project           OK    ok
 - examples/control_flow.ci
 - examples/convert.ci
 - examples/defer.ci
+- examples/expressive_match.ci
 - examples/fizzbuzz.ci
 - examples/function_pointers.ci
 - examples/generics.ci
@@ -100,10 +100,10 @@ kind: gen3_toolchain_error
 first C error: cinder_gen/anti_examples.c:497 [missing_member]
 source feature: generated C at function main
 message: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
-elapsed: 0.2s
+elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.tgwuinye/anti_examples.ci-build/cinder_gen/anti_examples.c:497:66: error: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.1zv1m59s/anti_examples.ci-build/cinder_gen/anti_examples.c:497:66: error: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
 
 ### examples/binary_sort.ci
 gen3 exit=133
@@ -122,15 +122,4 @@ message: passing 'int32_t' (aka 'int') to parameter of incompatible type 'Cinder
 elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.tgwuinye/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:103:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
-
-### examples/expressive_match.ci
-gen3 exit=2
-kind: gen3_toolchain_error
-first C error: cinder_gen/expressive_match.cinder.h:159 [incomplete_type]
-source feature: type definition ordering at struct CinderOption_CinderResult_i32_ParseError
-message: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
-elapsed: 0.1s
-
---- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.tgwuinye/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:159:37: error: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.1zv1m59s/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:103:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')

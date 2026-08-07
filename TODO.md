@@ -1,12 +1,12 @@
 # Gen3 TODOs
 
-Fresh gen3 run: 31 examples passed and 5 examples failed. The run covers `examples/*.ci`, `class_project`, and `module_project`. It excludes `large_project`.
+Fresh gen3 run: 33 examples passed and 3 examples failed. The run covers `examples/*.ci`, `class_project`, and `module_project`. It excludes `large_project`.
 
-1. Keep imported Result call types
+1. Keep imported Result call types (done)
 
 Gen3 must keep the return type when code uses `?` on an imported function such as `parser.parse(value)?`. It must emit the imported call and get the `Ok` value. This fixes `module_project`, where generated C now writes `token = 0` and then reads an `int` as a `Token`.
 
-2. Emit nested Option and Result types in order
+2. Emit nested Option and Result types in order (done)
 
 Gen3 must emit a `Result` type before an `Option` stores it by value. `Option[Result[i32, ParseError]]` now puts an incomplete `Result` field in the C struct. This fixes `expressive_match.ci`.
 
