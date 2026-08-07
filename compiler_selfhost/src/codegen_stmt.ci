@@ -1054,6 +1054,8 @@ def match_resolve_nominal_case(
     case_name = source[case_node.value_start:case_node.value_start + case_node.value_length]
     owner_name = ""
     nominal_index: i32 = -1
+    type_arena: &const SyntaxArena = context.type_arena
+    type_source: &const String = context.type_source
     if name_count >= 2:
         owner_id = arena.children[node.first_child + name_count - 2]
         owner = arena.nodes[owner_id.index]
@@ -1086,17 +1088,24 @@ def match_resolve_nominal_case(
         nominal_kind = codegen_reflection.nominal_kind_at(context.reflection_model, nominal_index)
         is_enum = nominal_kind == codegen_reflection.ReflectionNominalKind.ENUM
         metadata_case: i32 = -1
+        declaration = syntax.missing_node()
+        case_declaration = syntax.missing_node()
         if nominal_kind == codegen_reflection.ReflectionNominalKind.VARIANT:
             metadata_case = codegen_reflection.find_variant_case(context.reflection_model, nominal_index, &case_name)
             if metadata_case < 0:
                 return missing_match_nominal_case()
         elif not is_enum:
             return missing_match_nominal_case()
+        nominal_module = codegen_reflection.nominal_module_name_at(context.reflection_model, nominal_index)
+        if nominal_module == context.module_name:
+            declaration = match_find_local_nominal(type_arena, context.root, type_source, &owner_name)
+            if declaration.index >= 0 and nominal_kind == codegen_reflection.ReflectionNominalKind.VARIANT:
+                case_declaration = codegen_names.find_variant_case_declaration(type_arena, declaration, type_source, &case_name)
         return MatchNominalCase(
             nominal_index=nominal_index,
             case_index=metadata_case,
-            declaration=syntax.missing_node(),
-            case_declaration=syntax.missing_node(),
+            declaration=declaration,
+            case_declaration=case_declaration,
             c_name=match_reflection_nominal_c_name(value_info, nominal_index, context),
             case_name=case_name[0:len(case_name)],
             is_enum=is_enum,
@@ -1104,14 +1113,14 @@ def match_resolve_nominal_case(
         )
     if len(owner_name) == 0:
         return missing_match_nominal_case()
-    declaration = match_find_local_nominal(context.type_arena, context.root, context.type_source, &owner_name)
+    declaration = match_find_local_nominal(type_arena, context.root, type_source, &owner_name)
     if declaration.index < 0:
         return missing_match_nominal_case()
     declaration_node = codegen_names.arena_node_at(context.type_arena, declaration)
     is_enum = declaration_node.kind == SyntaxKind.ENUM_DECL
     case_declaration = syntax.missing_node()
     if declaration_node.kind == SyntaxKind.VARIANT_DECL:
-        case_declaration = codegen_names.find_variant_case_declaration(context.type_arena, declaration, context.type_source, &case_name)
+        case_declaration = codegen_names.find_variant_case_declaration(type_arena, declaration, type_source, &case_name)
         if case_declaration.index < 0:
             return missing_match_nominal_case()
     elif not is_enum:
@@ -1188,12 +1197,13 @@ def match_nominal_field_access(
     context: &codegen_model.ModuleCodegenContext,
 ) -> String:
     field_name = ""
+    type_arena: &const SyntaxArena = context.type_arena
     if nominal_case.case_index >= 0:
         metadata_field = codegen_reflection.variant_field_at(context.reflection_model, nominal_case.case_index, field_index)
         if metadata_field >= 0:
             field_name = codegen_reflection.variant_field_name_at(context.reflection_model, metadata_field)
     if len(field_name) == 0:
-        field_id = match_local_variant_field(context.type_arena, nominal_case.case_declaration, field_index)
+        field_id = match_local_variant_field(type_arena, nominal_case.case_declaration, field_index)
         if field_id.index >= 0:
             field = codegen_names.arena_node_at(context.type_arena, field_id)
             type_source: &const String = context.type_source
@@ -1216,6 +1226,17 @@ def match_nominal_field_info(
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
 ) -> MatchValueInfo:
+    type_arena: &const SyntaxArena = context.type_arena
+    field_id = match_local_variant_field(type_arena, nominal_case.case_declaration, field_index)
+    if field_id.index >= 0:
+        field_type = codegen_type_names.find_child_type(context.type_arena, field_id)
+        c_type = match_value_c_type(field_type, types.missing_type(), prefix, project_name, imports, context)
+        return MatchValueInfo(
+            syntax_type=field_type,
+            semantic_type=types.missing_type(),
+            c_type=c_type,
+            valid=true,
+        )
     if nominal_case.case_index >= 0:
         metadata_field = codegen_reflection.variant_field_at(context.reflection_model, nominal_case.case_index, field_index)
         if metadata_field >= 0:
@@ -1225,17 +1246,7 @@ def match_nominal_field_info(
                 c_type=codegen_reflection.variant_field_c_type_at(context.reflection_model, metadata_field),
                 valid=true,
             )
-    field_id = match_local_variant_field(context.type_arena, nominal_case.case_declaration, field_index)
-    if field_id.index < 0:
-        return missing_match_value_info()
-    field_type = codegen_type_names.find_child_type(context.type_arena, field_id)
-    c_type = match_value_c_type(field_type, types.missing_type(), prefix, project_name, imports, context)
-    return MatchValueInfo(
-        syntax_type=field_type,
-        semantic_type=types.missing_type(),
-        c_type=c_type,
-        valid=true,
-    )
+    return missing_match_value_info()
 
 
 def match_local_variant_field(arena: &const SyntaxArena, case_id: NodeId, wanted: i32) -> NodeId:
