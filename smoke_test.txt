@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-07 23:03:09 UTC
+# date:   2026-08-07 23:23:28 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -13,14 +13,14 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 35 ok, 1 fail
+Summary: 36 ok, 0 fail
 
 ## Status by example
 examples/aggregate_ownership.ci   OK    ok
 examples/algorithm_benchmarks.ci  OK    ok
 examples/anti_examples.ci         OK    ok
 examples/ast_arena.ci             OK    ok
-examples/binary_sort.ci           FAIL  gen3_runtime_nonzero
+examples/binary_sort.ci           OK    ok
 examples/classes.ci               OK    ok
 examples/closures.ci              OK    ok
 examples/collections.ci           OK    ok
@@ -54,13 +54,14 @@ examples/class_project            OK    ok
 examples/module_project           OK    ok
 
 ## First non-warning C errors
-- examples/binary_sort.ci: no non-warning C error found (kind: gen3_runtime_nonzero)
+(none)
 
 ## OK
 - examples/aggregate_ownership.ci
 - examples/algorithm_benchmarks.ci
 - examples/anti_examples.ci
 - examples/ast_arena.ci
+- examples/binary_sort.ci
 - examples/classes.ci
 - examples/closures.ci
 - examples/collections.ci
@@ -94,10 +95,4 @@ examples/module_project           OK    ok
 - examples/module_project
 
 ## Failures
-### examples/binary_sort.ci
-gen3 exit=133
-kind: gen3_runtime_nonzero
-elapsed: 0.4s
-
---- gen3 errors ---
-(no parsed C errors; kind: gen3_runtime_nonzero)
+(none)

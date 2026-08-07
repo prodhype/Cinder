@@ -355,6 +355,48 @@ def assert_compiler_uses_match_field_types_in_fstrings(
     assert dijkstra_ran.returncode == 0, dijkstra_ran.stderr
 
 
+def assert_compiler_borrows_list_for_binary_sort(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = ROOT / "examples" / "binary_sort.ci"
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    signature = "void cinder_binary_sort_binary_sort__binary_sort(CinderList values) {"
+    assert signature in generated
+    binary_sort_body = generated.split(signature, 1)[1].split("\n}\n", 1)[0]
+    assert "free(values.data)" not in binary_sort_body
+    assert "cinder_slice_list = &values" in generated
+    assert (
+        "(CinderList){ .data = (void *)cinder_slice_list->data, "
+        ".length = cinder_slice_list->length, .capacity = 0 }"
+    ) in generated
+
+    executable = tmp_path / (
+        "binary-sort.exe" if shutil.which("cl") and not shutil.which("cc") else "binary-sort"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "binary-sort-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run(
+        [str(executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "[3, 5, 10, 13, 14, 29, 37, 42]\n"
+    assert ran.stderr == ""
+
+
 def assert_compiler_orders_nested_option_result_specializations(
     compiler: Path,
     tmp_path: Path,
@@ -1944,6 +1986,21 @@ def test_gen2_uses_match_field_types_in_fstrings(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_uses_match_field_types_in_fstrings(gen2, tmp_path)
+
+
+def test_gen1_borrows_list_for_binary_sort(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_borrows_list_for_binary_sort(gen1_compiler, tmp_path)
+
+
+def test_gen2_borrows_list_for_binary_sort(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_borrows_list_for_binary_sort(gen2, tmp_path)
 
 
 def test_gen1_orders_nested_option_result_specializations(
