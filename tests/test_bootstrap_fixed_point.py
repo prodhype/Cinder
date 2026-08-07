@@ -976,6 +976,87 @@ def test_gen1_emit_c_cleans_up_with_scope_before_return(
     assert materialized_return < cleanup < returned
 
 
+def test_gen1_lowers_owned_moves_and_recursive_drop_glue(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "owned_lowering.ci"
+    source.write_text(
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.label)\n'
+        "\n"
+        "struct Node:\n"
+        "    value: i32\n"
+        "    next: Option[Owned[Node]]\n"
+        "\n"
+        "def bump(node: &Node) -> void:\n"
+        "    node.value = node.value + 1\n"
+        "\n"
+        "def early(flag: bool) -> i32:\n"
+        "    value: Owned[Resource] = Owned(Resource(4))\n"
+        "    if flag:\n"
+        "        return 7\n"
+        "    return 0\n"
+        "\n"
+        "def consume(value: Owned[Resource]) -> i32:\n"
+        "    return (*value).label\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    number: Owned[i32] = Owned(40)\n"
+        "    *number = *number + 2\n"
+        "    resource: Owned[Resource] = Owned(Resource(1))\n"
+        "    replacement: Owned[Resource] = Owned(Resource(2))\n"
+        "    resource = replacement\n"
+        "    leaf: Owned[Node] = Owned(Node(value=10, next=None))\n"
+        "    root: Owned[Node] = Owned(Node(value=20, next=Some(leaf)))\n"
+        "    bump(&*root)\n"
+        "    moved = root\n"
+        "    result: Result[Owned[Resource], i32] = Ok(Owned(Resource(3)))\n"
+        "    print(early(true))\n"
+        "    passed: Owned[Resource] = Owned(Resource(5))\n"
+        "    print(consume(passed))\n"
+        "    if (*moved).value != 21:\n"
+        "        return 1\n"
+        "    return *number\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert "CinderOwned_i32_new(40)" in generated
+    assert "(*(number).ptr)" in generated
+    assert "(root).ptr" in generated
+    assert "CinderOption_CinderOwned_Node_drop" in generated
+    assert "CinderResult_CinderOwned_Resource_i32_drop" in generated
+    assert "Resource__drop(&((*owned->ptr)))" in generated
+    assert "CinderOwned_Node_drop(&moved);" in generated
+    assert "CinderOwned_Node_drop(&leaf);" not in generated
+    assert "CinderOwned_Node_drop(&root);" not in generated
+    assert "cinder_move_" in generated
+
+    output = tmp_path / "owned-lowering"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "owned-lowering-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 42, ran.stderr
+    assert ran.stdout == "drop 1\ndrop 4\n7\ndrop 5\n5\ndrop 3\ndrop 2\n"
+
+
 def test_gen1_lowers_file_reads_and_scopes_repeated_with_bindings(
     gen1_compiler: Path,
     tmp_path: Path,

@@ -252,13 +252,48 @@ def emit_module_statement(
                     inferred_type = codegen_context.context_expression_type(arena, context, value, source)
                     codegen_context.register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, inferred_type)
                 return
+        value = codegen_names.second_child(arena, id)
+        target_type = codegen_context.context_expression_type(arena, context, target, source)
+        if (
+            node.flags == cast[i32](token.TokenKind.ASSIGN)
+            and target.index >= 0
+            and (arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME or arena.nodes[target.index].kind == SyntaxKind.EXPR_ATTRIBUTE)
+            and codegen_context.context_type_needs_drop(arena, context, target_type, source)
+        ):
+            temporary_index = context.temporary_index
+            context.temporary_index += 1
+            builder.append("{\n        __auto_type cinder_move_")
+            codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+            builder.append(" = ")
+            previous_expected = context.expected_type
+            context.expected_type = target_type
+            codegen_expr.emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
+            context.expected_type = previous_expected
+            builder.append(";\n        __auto_type cinder_target_")
+            codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+            builder.append(" = &(")
+            emit_module_assignment_target(arena, target, source, builder, prefix, project_name, imports, context)
+            builder.append(");\n")
+            codegen_context.mark_context_expression_moved(arena, context, value, source)
+            if not codegen_context.context_expression_is_moved(context, target, arena, source):
+                drop_expression_builder = StringBuilder()
+                drop_expression_builder.append("(*cinder_target_")
+                codegen_type_names.append_specialization_decimal(&drop_expression_builder, cast[usize](temporary_index))
+                drop_expression_builder.append(")")
+                drop_expression = drop_expression_builder.finish()
+                codegen_context.emit_context_drop(arena, context, target_type, source, builder, &drop_expression, prefix, project_name, imports)
+            builder.append("        *cinder_target_")
+            codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+            builder.append(" = cinder_move_")
+            codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+            builder.append(";\n    }\n")
+            codegen_context.mark_context_expression_live(context, target, arena, source)
+            return
         emit_module_assignment_target(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context)
         builder.append(" ")
         codegen_names.append_assignment_operator(builder, node.flags)
         builder.append(" ")
-        value = codegen_names.second_child(arena, id)
         previous_expected = context.expected_type
-        target_type = codegen_context.context_expression_type(arena, context, target, source)
         if target_type.index >= 0:
             context.expected_type = target_type
         codegen_expr.emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)

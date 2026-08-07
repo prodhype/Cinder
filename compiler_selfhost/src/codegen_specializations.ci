@@ -35,8 +35,10 @@ struct ManagedTypeInfo:
     c_type: String
     token: String
     helper: String
+    drop_helper: String
     is_string: bool
     is_c_string: bool
+    can_clone: bool
     is_complete: bool
     hash_kind: ManagedHashKind
 
@@ -116,7 +118,7 @@ def semantic_specialization_is_inferred_expression(
     for node in semantic_nodes:
         if node.type_id.index == type_id.index and node.syntax.index >= 0:
             kind = arena.nodes[node.syntax.index].kind
-            if kind == SyntaxKind.EXPR_LIST or kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_SET or kind == SyntaxKind.EXPR_TUPLE or kind == SyntaxKind.NAME:
+            if kind == SyntaxKind.EXPR_LIST or kind == SyntaxKind.EXPR_MAP or kind == SyntaxKind.EXPR_SET or kind == SyntaxKind.EXPR_TUPLE or kind == SyntaxKind.EXPR_CALL or kind == SyntaxKind.NAME:
                 return true
     return false
 
@@ -141,6 +143,7 @@ def emit_semantic_type_specialization(
         and not types.is_map_view_kind(record.kind)
         and record.kind != types.TypeKind.TUPLE
         and record.kind != types.TypeKind.CLOSURE
+        and record.kind != types.TypeKind.OWNED
     ):
         return
     if record.kind == types.TypeKind.CLOSURE:
@@ -190,6 +193,8 @@ def emit_semantic_type_specialization(
         emit_semantic_closure_specialization(table, type_id, source, builder, &name, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.LIST:
         emit_semantic_list_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
+    elif record.kind == types.TypeKind.OWNED:
+        emit_semantic_owned_specialization(table, record.inner, source, builder, &name, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.MAP:
         emit_semantic_map_specialization(table, record.inner, record.second, source, builder, &name, prefix, project_name, imports, registry)
     elif types.is_map_view_kind(record.kind):
@@ -294,6 +299,52 @@ def emit_module_type_specialization_forwards(
     builder.append(name[0:len(name)])
     builder.append(";\n#endif\n")
     emitted.append(name)
+
+
+def emit_module_drop_helper_prototypes(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_drop_helper_prototypes(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry)
+    if node.kind != SyntaxKind.TYPE_GENERIC:
+        return
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0:
+        return
+    base_node = arena.nodes[base.index]
+    if not (
+        codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned")
+        or codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
+    ):
+        return
+    name_builder = StringBuilder()
+    codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
+    name = name_builder.finish()
+    if codegen_type_names.string_list_contains(emitted, &name):
+        return
+    emitted.append(name[0:len(name)])
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self);\n")
+
 
 def emit_module_type_specializations(
     arena: &const SyntaxArena,
@@ -565,8 +616,10 @@ def emit_module_option_specialization(
         c_type=String(),
         token=String(),
         helper=String(),
+        drop_helper=String(),
         is_string=false,
         is_c_string=false,
+        can_clone=false,
         is_complete=false,
         hash_kind=ManagedHashKind.UNSUPPORTED,
     )
@@ -620,6 +673,23 @@ def emit_module_tuple_specialization(
         builder.append(";\n")
         offset += 1
     builder.append("};\n")
+    if node.child_count > 1:
+        builder.append("static inline void ")
+        builder.append(name[0:len(name)])
+        builder.append("_drop(")
+        builder.append(name[0:len(name)])
+        builder.append(" *self) {\n    if (self == NULL) return;\n")
+        item_index = node.child_count - 1
+        while item_index > 0:
+            item_type = arena.children[node.first_child + item_index]
+            item_info = module_managed_type_info(arena, item_type, source, prefix, project_name, imports, registry)
+            expression_builder = StringBuilder()
+            expression_builder.append("self->item_")
+            codegen_type_names.append_specialization_decimal(&expression_builder, cast[usize](item_index - 1))
+            builder.append("    ")
+            emit_drop_statement(builder, &item_info, expression_builder.finish())
+            item_index -= 1
+        builder.append("}\n")
 
 def emit_module_owned_specialization(
     arena: &const SyntaxArena,
@@ -641,6 +711,78 @@ def emit_module_owned_specialization(
     else:
         builder.append("void")
     builder.append(" *ptr;\n};\n")
+
+
+def emit_module_owned_helpers(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_owned_helpers(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry)
+    if node.kind != SyntaxKind.TYPE_GENERIC or node.child_count <= 1:
+        return
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0 or not codegen_type_names.is_runtime_generic_name(source, &arena.nodes[base.index], "Owned"):
+        return
+    name_builder = StringBuilder()
+    codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
+    name = name_builder.finish()
+    if codegen_type_names.string_list_contains(emitted, &name):
+        return
+    emitted.append(name[0:len(name)])
+    payload = arena.children[node.first_child + 1]
+    payload_info = module_managed_type_info(arena, payload, source, prefix, project_name, imports, registry)
+    if len(payload_info.drop_helper) == 0 and payload_info.hash_kind != ManagedHashKind.SCALAR and codegen_type_names.type_node_kind(arena, payload) == SyntaxKind.TYPE_NAME and not codegen_type_names.is_specialization_builtin_name(source, &arena.nodes[payload.index]):
+        payload_drop_builder = StringBuilder()
+        payload_drop_builder.append(payload_info.c_type[0:len(payload_info.c_type)])
+        payload_drop_builder.append("__drop")
+        payload_info.drop_helper = payload_drop_builder.finish()
+    emit_owned_helper(builder, &name, &payload_info)
+
+
+def emit_module_late_list_helpers(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_late_list_helpers(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry)
+    if node.kind != SyntaxKind.TYPE_GENERIC or node.child_count <= 1:
+        return
+    base = codegen_names.first_child(arena, id)
+    if base.index < 0 or not codegen_type_names.is_runtime_generic_name(source, &arena.nodes[base.index], "List"):
+        return
+    element = arena.children[node.first_child + 1]
+    element_info = module_managed_type_info(arena, element, source, prefix, project_name, imports, registry)
+    if element_info.is_complete:
+        return
+    name_builder = StringBuilder()
+    codegen_type_names.emit_specialized_type_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
+    name = name_builder.finish()
+    if codegen_type_names.string_list_contains(emitted, &name):
+        return
+    emitted.append(name[0:len(name)])
+    emit_list_helper_suite(builder, &name, &element_info)
+
 
 def specialization_type_has_simple_declarator(arena: &const SyntaxArena, id: NodeId) -> bool:
     if id.index < 0:
@@ -669,6 +811,8 @@ def emit_module_result_specialization(
         return
     ok_type = arena.children[node.first_child + 1]
     error_type = arena.children[node.first_child + 2]
+    ok_info = module_managed_type_info(arena, ok_type, source, prefix, project_name, imports, registry)
+    error_info = module_managed_type_info(arena, error_type, source, prefix, project_name, imports, registry)
     builder.append("typedef enum ")
     builder.append(name[0:len(name)])
     builder.append("_Tag {\n")
@@ -695,6 +839,7 @@ def emit_module_result_specialization(
         codegen_type_names.emit_module_c_type(arena, error_type, source, builder, prefix, project_name, imports, registry)
         builder.append(" err;\n")
     builder.append("    } data;\n};\n")
+    emit_result_drop_helper(builder, name, &ok_info, &error_info)
 
 def context_type_is_array(arena: &const SyntaxArena, type_id: NodeId) -> bool:
     if type_id.index < 0:
@@ -785,6 +930,7 @@ def module_managed_type_info(
     token_builder = StringBuilder()
     codegen_type_names.emit_readable_specialized_type_name(arena, type_id, source, &token_builder)
     helper_builder = StringBuilder()
+    drop_helper_builder = StringBuilder()
     is_string = module_type_is_exact_name(arena, type_id, source, "String")
     is_c_string = module_type_is_c_string(arena, type_id, source)
     is_enum = codegen_names.is_registered_enum_name(registry, &c_type)
@@ -806,6 +952,7 @@ def module_managed_type_info(
             or is_c_string
             or is_enum
         )
+    can_clone = module_type_has_value_helper(arena, type_id, source, prefix, project_name, imports, registry) or is_c_string or is_enum
     if type_id.index >= 0 and codegen_type_names.type_node_kind(arena, type_id) == SyntaxKind.TYPE_GENERIC:
         base = codegen_names.first_child(arena, type_id)
         base_node = arena.nodes[base.index]
@@ -814,14 +961,27 @@ def module_managed_type_info(
             or codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
             or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
             or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
-        ):
+        ) and can_clone:
             codegen_type_names.emit_specialized_type_name(arena, type_id, source, &helper_builder, prefix, project_name, imports, registry)
+        if (
+            codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
+        ):
+            codegen_type_names.emit_specialized_type_name(arena, type_id, source, &drop_helper_builder, prefix, project_name, imports, registry)
+            drop_helper_builder.append("_drop")
     return ManagedTypeInfo(
         c_type=c_type,
         token=token_builder.finish(),
         helper=helper_builder.finish(),
+        drop_helper=drop_helper_builder.finish(),
         is_string=is_string,
         is_c_string=is_c_string,
+        can_clone=can_clone,
         is_complete=is_complete,
         hash_kind=hash_kind,
     )
@@ -841,6 +1001,7 @@ def semantic_managed_type_info(
     token_builder = StringBuilder()
     codegen_type_names.emit_semantic_readable_type_name(table, type_id, source, &token_builder)
     helper_builder = StringBuilder()
+    drop_helper_builder = StringBuilder()
     kind = types.TypeKind.ERROR
     if type_id.index >= 0 and type_id.index < cast[i32](len(table.types)):
         kind = table.types[type_id.index].kind
@@ -854,14 +1015,20 @@ def semantic_managed_type_info(
         hash_kind = ManagedHashKind.C_STRING
     elif semantic_type_is_hash_scalar(table, type_id, source) or codegen_names.is_registered_enum_name(registry, &c_type):
         hash_kind = ManagedHashKind.SCALAR
-    if kind == types.TypeKind.LIST or kind == types.TypeKind.MAP or kind == types.TypeKind.SET or kind == types.TypeKind.OPTION:
+    can_clone = semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR
+    if (kind == types.TypeKind.LIST or kind == types.TypeKind.MAP or kind == types.TypeKind.SET or kind == types.TypeKind.OPTION) and can_clone:
         codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &helper_builder, registry)
+    if kind == types.TypeKind.LIST or kind == types.TypeKind.MAP or kind == types.TypeKind.SET or kind == types.TypeKind.OPTION or kind == types.TypeKind.RESULT or kind == types.TypeKind.OWNED or kind == types.TypeKind.TUPLE:
+        codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &drop_helper_builder, registry)
+        drop_helper_builder.append("_drop")
     return ManagedTypeInfo(
         c_type=c_type,
         token=token_builder.finish(),
         helper=helper_builder.finish(),
+        drop_helper=drop_helper_builder.finish(),
         is_string=is_string,
         is_c_string=is_c_string,
+        can_clone=can_clone,
         is_complete=semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR,
         hash_kind=hash_kind,
     )
@@ -1371,9 +1538,9 @@ def emit_drop_statement(builder: &StringBuilder, info: &const ManagedTypeInfo, e
         builder.append("free((void *)(")
         builder.append(expression[0:len(expression)])
         builder.append("));\n")
-    elif len(info.helper) > 0:
-        builder.append(info.helper[0:len(info.helper)])
-        builder.append("_drop(&(")
+    elif len(info.drop_helper) > 0:
+        builder.append(info.drop_helper[0:len(info.drop_helper)])
+        builder.append("(&(")
         builder.append(expression[0:len(expression)])
         builder.append("));\n")
 
@@ -1440,6 +1607,33 @@ def emit_semantic_tuple_specialization(
         builder.append(";\n")
         offset += 1
     builder.append("};\n")
+
+
+def emit_semantic_owned_specialization(
+    table: &const types.TypeTable,
+    payload_type: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    payload_info = semantic_managed_type_info(table, payload_type, source, prefix, project_name, imports, registry)
+    if payload_type.index >= 0 and payload_type.index < cast[i32](len(table.types)):
+        payload_kind = table.types[payload_type.index].kind
+        if payload_kind == types.TypeKind.STRUCT or payload_kind == types.TypeKind.CLASS:
+            payload_drop_builder = StringBuilder()
+            payload_drop_builder.append(payload_info.c_type[0:len(payload_info.c_type)])
+            payload_drop_builder.append("__drop")
+            payload_info.drop_helper = payload_drop_builder.finish()
+    builder.append("struct ")
+    builder.append(name[0:len(name)])
+    builder.append(" { ")
+    builder.append(payload_info.c_type[0:len(payload_info.c_type)])
+    builder.append(" *ptr; };\n")
+    emit_owned_helper(builder, name, &payload_info)
 
 
 def emit_semantic_list_specialization(
@@ -1590,46 +1784,106 @@ def emit_semantic_map_specialization(
     emit_map_specialization_body(builder, name, &key_info, &value_info)
 
 
-def emit_list_helper_suite(builder: &StringBuilder, name: &const String, element_info: &const ManagedTypeInfo) -> void:
+def emit_owned_helper(builder: &StringBuilder, name: &const String, payload_info: &const ManagedTypeInfo) -> void:
+    builder.append("#ifndef CINDER_OWNED_HELPERS_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_OWNED_HELPERS_")
+    builder.append(name[0:len(name)])
+    builder.append("\n")
     builder.append("static inline ")
     builder.append(name[0:len(name)])
     builder.append(" ")
     builder.append(name[0:len(name)])
-    builder.append("_clone(const ")
+    builder.append("_new(")
+    builder.append(payload_info.c_type[0:len(payload_info.c_type)])
+    builder.append(" value) {\n    ")
+    builder.append(payload_info.c_type[0:len(payload_info.c_type)])
+    builder.append(" *ptr = (")
+    builder.append(payload_info.c_type[0:len(payload_info.c_type)])
+    builder.append(" *)cinder_alloc(1, sizeof(")
+    builder.append(payload_info.c_type[0:len(payload_info.c_type)])
+    builder.append("));\n    *ptr = value;\n    return (")
     builder.append(name[0:len(name)])
-    builder.append(" *self) {\n    ")
+    builder.append("){ .ptr = ptr };\n}\n")
+    builder.append("static inline void ")
     builder.append(name[0:len(name)])
-    builder.append(" result = {0};\n    if (self == NULL) return result;\n    for (size_t index = 0; index < self->length; index += 1) {\n        ")
-    builder.append(element_info.c_type[0:len(element_info.c_type)])
-    builder.append(" value = ")
-    emit_clone_expression(builder, element_info, "self->data[index]")
-    builder.append(";\n        cinder_selfhost_list_append_value(&result, value);\n    }\n    return result;\n}\n")
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *owned) {\n    if (owned == NULL || owned->ptr == NULL) return;\n    ")
+    emit_drop_statement(builder, payload_info, "(*owned->ptr)")
+    builder.append("    free(owned->ptr);\n    owned->ptr = NULL;\n}\n")
+    builder.append("#endif\n")
+
+
+def emit_result_drop_helper(
+    builder: &StringBuilder,
+    name: &const String,
+    ok_info: &const ManagedTypeInfo,
+    error_info: &const ManagedTypeInfo,
+) -> void:
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->tag == ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Ok) {\n        ")
+    emit_drop_statement(builder, ok_info, "self->data.ok")
+    builder.append("    } else if (self->tag == ")
+    builder.append(name[0:len(name)])
+    builder.append("_Tag_Err) {\n        ")
+    emit_drop_statement(builder, error_info, "self->data.err")
+    builder.append("    }\n}\n")
+
+
+def emit_list_helper_suite(builder: &StringBuilder, name: &const String, element_info: &const ManagedTypeInfo) -> void:
+    builder.append("#ifndef CINDER_LIST_HELPERS_")
+    builder.append(name[0:len(name)])
+    builder.append("\n#define CINDER_LIST_HELPERS_")
+    builder.append(name[0:len(name)])
+    builder.append("\n")
+    if element_info.can_clone:
+        builder.append("static inline ")
+        builder.append(name[0:len(name)])
+        builder.append(" ")
+        builder.append(name[0:len(name)])
+        builder.append("_clone(const ")
+        builder.append(name[0:len(name)])
+        builder.append(" *self) {\n    ")
+        builder.append(name[0:len(name)])
+        builder.append(" result = {0};\n    if (self == NULL) return result;\n    for (size_t index = 0; index < self->length; index += 1) {\n        ")
+        builder.append(element_info.c_type[0:len(element_info.c_type)])
+        builder.append(" value = ")
+        emit_clone_expression(builder, element_info, "self->data[index]")
+        builder.append(";\n        cinder_selfhost_list_append_value(&result, value);\n    }\n    return result;\n}\n")
     builder.append("static inline void ")
     builder.append(name[0:len(name)])
     builder.append("_drop(")
     builder.append(name[0:len(name)])
     builder.append(" *self) {\n    if (self == NULL) return;\n")
-    if element_info.is_string or len(element_info.helper) > 0:
+    if element_info.is_string or len(element_info.drop_helper) > 0:
         builder.append("    for (size_t index = 0; index < self->length; index += 1) {\n        ")
         emit_drop_statement(builder, element_info, "self->data[index]")
         builder.append("    }\n")
     builder.append("    free(self->data);\n    self->data = NULL;\n    self->length = 0;\n    self->capacity = 0;\n}\n")
+    builder.append("#endif\n")
 
 
 def emit_option_drop_helper(builder: &StringBuilder, name: &const String, value_info: &const ManagedTypeInfo) -> void:
-    builder.append("static inline ")
-    builder.append(name[0:len(name)])
-    builder.append(" ")
-    builder.append(name[0:len(name)])
-    builder.append("_clone(const ")
-    builder.append(name[0:len(name)])
-    builder.append(" *self) {\n    ")
-    builder.append(name[0:len(name)])
-    builder.append(" result = {0};\n    if (self == NULL) return result;\n    result.tag = self->tag;\n    if (self->tag == ")
-    builder.append(name[0:len(name)])
-    builder.append("_Tag_Some) result.data.value = ")
-    emit_clone_expression(builder, value_info, "self->data.value")
-    builder.append(";\n    return result;\n}\n")
+    if value_info.can_clone:
+        builder.append("static inline ")
+        builder.append(name[0:len(name)])
+        builder.append(" ")
+        builder.append(name[0:len(name)])
+        builder.append("_clone(const ")
+        builder.append(name[0:len(name)])
+        builder.append(" *self) {\n    ")
+        builder.append(name[0:len(name)])
+        builder.append(" result = {0};\n    if (self == NULL) return result;\n    result.tag = self->tag;\n    if (self->tag == ")
+        builder.append(name[0:len(name)])
+        builder.append("_Tag_Some) result.data.value = ")
+        emit_clone_expression(builder, value_info, "self->data.value")
+        builder.append(";\n    return result;\n}\n")
     builder.append("static inline void ")
     builder.append(name[0:len(name)])
     builder.append("_drop(")
@@ -1857,7 +2111,7 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append("_drop(")
     builder.append(name[0:len(name)])
     builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"set dropped during iteration\");\n")
-    if element_info.is_string or element_info.is_c_string or len(element_info.helper) > 0:
+    if element_info.is_string or element_info.is_c_string or len(element_info.drop_helper) > 0:
         builder.append("    for (size_t index = 0; index < self->capacity; index += 1) {\n        if (self->entries[index].state != 1) continue;\n        ")
         emit_drop_statement(builder, element_info, "self->entries[index].value")
         builder.append("    }\n")
@@ -2210,7 +2464,7 @@ def emit_map_specialization_body(
     builder.append("_drop(")
     builder.append(name[0:len(name)])
     builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"map dropped during iteration\");\n")
-    if key_info.is_string or key_info.is_c_string or len(key_info.helper) > 0 or value_info.is_string or value_info.is_c_string or len(value_info.helper) > 0:
+    if key_info.is_string or key_info.is_c_string or len(key_info.drop_helper) > 0 or value_info.is_string or value_info.is_c_string or len(value_info.drop_helper) > 0:
         builder.append("    for (size_t index = 0; index < self->entries_length; index += 1) {\n        if (!self->entries[index].occupied) continue;\n        ")
         emit_drop_statement(builder, key_info, "self->entries[index].key")
         builder.append("        ")

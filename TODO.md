@@ -30,7 +30,7 @@ Fix local and imported enum or variant constructors in expressions and result pa
 
 Fix expected-type propagation for list literals, fixed-array initializers, struct fields, assignments, and function arguments. The current output emits generic `CinderList` values where `CinderList_i32`, `i32[36]`, or `List[i32][2]` is required. This affects `aggregate_ownership.ci`, `dijkstra_showcase.ci`, and `anti_examples.ci`.
 
-8. Implement Owned lowering
+8. Implement Owned lowering (done)
 
 Implement `Owned[T]` construction, dereference, field access through dereference, moves, and drop glue in gen3. The current output emits a missing nominal `Owned` constructor and then treats `CinderOwned_T` as if it were a pointer. This blocks `owned.ci` and can also affect examples that use owning wrappers inside `Option` or `Result`.
 

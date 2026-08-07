@@ -157,8 +157,16 @@ def emit_module_header_with_semantics_and_models(
     emitted_forwards: List[String] = []
     emit_module_nominal_forward_declarations(arena, root, source, builder, &prefix, context)
     codegen_specializations.emit_module_type_specialization_forwards(arena, root, source, builder, emitted_forwards, &prefix, project_name, imports, registry)
+    emit_module_nominal_drop_prototypes(arena, root, source, builder, &prefix, context)
+    emitted_drop_prototypes: List[String] = []
+    codegen_specializations.emit_module_drop_helper_prototypes(arena, root, source, builder, emitted_drop_prototypes, &prefix, project_name, imports, registry)
     codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, false)
     emit_module_nominal_declarations(arena, root, source, builder, &prefix, project_name, imports, context)
+    emit_module_nominal_drop_definitions(arena, root, source, builder, &prefix, project_name, imports, context)
+    emitted_late_list_helpers: List[String] = []
+    codegen_specializations.emit_module_late_list_helpers(arena, root, source, builder, emitted_late_list_helpers, &prefix, project_name, imports, registry)
+    emitted_owned_helpers: List[String] = []
+    codegen_specializations.emit_module_owned_helpers(arena, root, source, builder, emitted_owned_helpers, &prefix, project_name, imports, registry)
     emit_reflection_declarations(builder, module_name, context)
     codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, true)
     emitted_print_prototypes: List[String] = []
@@ -739,6 +747,53 @@ def emit_module_nominal_forward(
         emit_active_declaration_name(builder, prefix, source, &node, context)
         builder.append(";\n")
 
+
+def emit_module_nominal_drop_prototypes(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    context: &codegen_context.ModuleCodegenContext,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            emit_module_nominal_drop_prototypes(arena, arena.children[node.first_child + offset], source, builder, prefix, context)
+        return
+    if generics.has_type_params(arena, id):
+        previous = context.active_user_specialization
+        index: usize = 0
+        while index < codegen_context.user_specialization_count(context):
+            if codegen_context.user_specialization_declaration_index(context, index) == id.index:
+                context.active_user_specialization = cast[i32](index)
+                emit_module_nominal_drop_prototype(arena, id, source, builder, prefix, context)
+            index += 1
+        context.active_user_specialization = previous
+        return
+    emit_module_nominal_drop_prototype(arena, id, source, builder, prefix, context)
+
+
+def emit_module_nominal_drop_prototype(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    context: &codegen_context.ModuleCodegenContext,
+) -> void:
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.STRUCT_DECL and node.kind != SyntaxKind.CLASS_DECL:
+        return
+    builder.append("static inline void ")
+    emit_active_declaration_name(builder, prefix, source, &node, context)
+    builder.append("__drop(")
+    emit_active_declaration_name(builder, prefix, source, &node, context)
+    builder.append(" *self);\n")
+
+
 def emit_module_nominal_declarations(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -791,6 +846,89 @@ def emit_module_nominal_declaration(
         return
     if node.kind == SyntaxKind.VARIANT_DECL:
         emit_module_variant(arena, id, source, builder, prefix, project_name, imports, context)
+
+
+def emit_module_nominal_drop_definitions(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            emit_module_nominal_drop_definitions(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
+        return
+    if generics.has_type_params(arena, id):
+        previous = context.active_user_specialization
+        index: usize = 0
+        while index < codegen_context.user_specialization_count(context):
+            if codegen_context.user_specialization_declaration_index(context, index) == id.index:
+                context.active_user_specialization = cast[i32](index)
+                emit_module_nominal_drop_definition(arena, id, source, builder, prefix, project_name, imports, context)
+            index += 1
+        context.active_user_specialization = previous
+        return
+    emit_module_nominal_drop_definition(arena, id, source, builder, prefix, project_name, imports, context)
+
+
+def emit_module_nominal_drop_definition(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_context.ModuleCodegenContext,
+) -> void:
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.STRUCT_DECL and node.kind != SyntaxKind.CLASS_DECL:
+        return
+    model: &const classes.ProjectClassModel = context.class_model
+    builder.append("static inline void ")
+    emit_active_declaration_name(builder, prefix, source, &node, context)
+    builder.append("__drop(")
+    emit_active_declaration_name(builder, prefix, source, &node, context)
+    builder.append(" *self) {\n    if (self == NULL) return;\n")
+    class_index = -1
+    if node.kind == SyntaxKind.CLASS_DECL:
+        owner_name = source[node.value_start:node.value_start + node.value_length]
+        class_index = classes.find_class(model, &context.module_name, &owner_name)
+        destructor_name = "__del__"
+        destructor = classes.find_own_method(model, class_index, &destructor_name)
+        if destructor >= 0:
+            method: &const classes.ClassMethodInfo = &model.methods[cast[usize](destructor)]
+            builder.append("    ")
+            builder.append(method.c_name[0:len(method.c_name)])
+            builder.append("(self);\n")
+    field_offset = node.child_count
+    while field_offset > 0:
+        field_offset -= 1
+        field_id = arena.children[node.first_child + field_offset]
+        field = arena.nodes[field_id.index]
+        if field.kind == SyntaxKind.FIELD_DECL:
+            expression_builder = StringBuilder()
+            expression_builder.append("self->")
+            codegen_names.append_source(&expression_builder, source, field.value_start, field.value_length)
+            field_type = codegen_type_names.find_child_type(arena, field_id)
+            expression = expression_builder.finish()
+            codegen_context.emit_context_drop(arena, context, field_type, source, builder, &expression, prefix, project_name, imports)
+    if class_index >= 0:
+        class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+        if class_info.primary_base >= 0:
+            base: &const classes.ClassInfo = &model.classes[cast[usize](class_info.primary_base)]
+            builder.append("    ")
+            builder.append(base.c_name[0:len(base.c_name)])
+            builder.append("__drop(&self->_base);\n")
+    builder.append("}\n")
+
 
 def emit_module_declarations(
     arena: &const SyntaxArena,
@@ -1008,6 +1146,11 @@ def emit_module_function(
         context.pointer_start = len(context.pointer_names)
         codegen_context.register_module_parameters(arena, id, source, context)
         codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+        codegen_context.emit_context_owned_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
+        while len(context.local_types) > context.local_start:
+            context.local_types.pop()
+        while len(context.pointer_names) > context.pointer_start:
+            context.pointer_names.pop()
     builder.append("}\n\n")
 
 def emit_module_function_name(arena: &const SyntaxArena, id: NodeId, source: &const String, builder: &StringBuilder, prefix: &const String, is_entry: bool, context: &codegen_context.ModuleCodegenContext) -> void:
@@ -1422,6 +1565,11 @@ def emit_module_methods(
                     context.pointer_start = len(context.pointer_names)
                     codegen_context.register_module_parameters(arena, child_id, source, context)
                     codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+                    codegen_context.emit_context_owned_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
+                    while len(context.local_types) > context.local_start:
+                        context.local_types.pop()
+                    while len(context.pointer_names) > context.pointer_start:
+                        context.pointer_names.pop()
                 builder.append("}\n\n")
     if node.kind == SyntaxKind.CLASS_DECL:
         if declarations_only:
