@@ -207,6 +207,151 @@ def assert_compiler_emits_class_foundation(
     assert subprocess.run([str(executable)], check=False).returncode == 0
 
 
+def assert_compiler_lowers_class_dyn_dispatch(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "class_dyn.ci"
+    source.write_text(
+        "abstract class Base:\n"
+        "    value: i32\n"
+        "\n"
+        "    def __init__(self, value: i32):\n"
+        "        self.value = value\n"
+        "\n"
+        "    @abstractmethod\n"
+        "    def evaluate(self) -> i32:\n"
+        "        pass\n"
+        "\n"
+        "    def doubled(self) -> i32:\n"
+        "        return self.evaluate() * 2\n"
+        "\n"
+        "class Child(Base):\n"
+        "    extra: i32\n"
+        "\n"
+        "    def __init__(self, value: i32, extra: i32):\n"
+        "        super().__init__(value)\n"
+        "        self.extra = extra\n"
+        "\n"
+        "    @override\n"
+        "    def evaluate(self) -> i32:\n"
+        "        return self.value + self.extra\n"
+        "\n"
+        "def measure(value: &dyn Base) -> i32:\n"
+        "    return value.doubled()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    child = Child(20, 1)\n"
+        "    if child.evaluate() != 21:\n"
+        "        return 1\n"
+        "    if measure(child) != 42:\n"
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    build_dir = tmp_path / "class-dyn-build"
+    executable = tmp_path / (
+        "class-dyn.exe" if shutil.which("cl") and not shutil.which("cc") else "class-dyn"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(build_dir),
+    )
+    assert built.returncode == 0, built.stderr
+    generated = (build_dir / "cinder_gen" / "class_dyn.c").read_text(encoding="utf-8")
+    header = (build_dir / "cinder_gen" / "class_dyn.cinder.h").read_text(encoding="utf-8")
+    assert "Base _base;" in header
+    assert "typedef struct CinderDyn_" in header
+    assert ".vtable->evaluate(" in generated
+    assert "__as__" in generated
+    assert "__vtable" in generated
+    assert "super(" not in generated
+    result = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def assert_compiler_lowers_cross_module_dyn(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    manifest = tmp_path / "cinder.toml"
+    manifest.write_text(
+        "[project]\n"
+        'name = "class_dyn_project"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "shapes.ci").write_text(
+        "abstract class Shape:\n"
+        "    @abstractmethod\n"
+        "    def area(self) -> i32:\n"
+        "        pass\n"
+        "\n"
+        "    def scaled(self, factor: i32) -> i32:\n"
+        "        return self.area() * factor\n"
+        "\n"
+        "def measure(shape: &dyn Shape) -> i32:\n"
+        "    return shape.scaled(2)\n",
+        encoding="utf-8",
+    )
+    (source_root / "models.ci").write_text(
+        "from shapes import Shape\n"
+        "\n"
+        "class Circle(Shape):\n"
+        "    radius: i32\n"
+        "\n"
+        "    def __init__(self, radius: i32):\n"
+        "        self.radius = radius\n"
+        "\n"
+        "    @override\n"
+        "    def area(self) -> i32:\n"
+        "        return self.radius\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import shapes\n"
+        "from models import Circle\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    circle = Circle(21)\n"
+        "    return shapes.measure(circle) - 42\n",
+        encoding="utf-8",
+    )
+    build_dir = tmp_path / "cross-module-class-dyn-build"
+    executable = tmp_path / (
+        "cross-module-class-dyn.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "cross-module-class-dyn"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(manifest),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(build_dir),
+    )
+    assert built.returncode == 0, built.stderr
+    models_header = (build_dir / "cinder_gen" / "models.cinder.h").read_text(
+        encoding="utf-8"
+    )
+    main_source = (build_dir / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    assert "extern const CinderVTable_" in models_header
+    assert ".object = (void *)(&circle)" in main_source
+    assert "__as__" in main_source
+    result = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
 def collect_normalized_tree(root: Path) -> dict[str, str]:
     generated_root = root / "cinder_gen"
     assert generated_root.is_dir()
@@ -837,6 +982,36 @@ def test_gen2_emits_complete_class_with_owner_typed_self(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_emits_class_foundation(gen2, tmp_path)
+
+
+def test_gen1_lowers_class_dyn_dispatch(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_lowers_class_dyn_dispatch(gen1_compiler, tmp_path)
+
+
+def test_gen2_lowers_class_dyn_dispatch(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_lowers_class_dyn_dispatch(gen2, tmp_path)
+
+
+def test_gen1_lowers_cross_module_dyn(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_lowers_cross_module_dyn(gen1_compiler, tmp_path)
+
+
+def test_gen2_lowers_cross_module_dyn(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_lowers_cross_module_dyn(gen2, tmp_path)
 
 
 def assert_compiler_monomorphizes_user_generics(

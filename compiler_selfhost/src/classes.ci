@@ -1,3 +1,9 @@
+import codegen_names
+import codegen_type_names
+import lexer
+import parser
+import project
+import reflection
 import syntax
 from syntax import NodeId
 
@@ -8,6 +14,80 @@ struct ClassSummary:
     method_count: i32
     base_count: i32
     is_abstract: bool
+
+
+enum ClassValueKind:
+    OTHER
+    NOMINAL
+    REFERENCE
+    DYN
+
+
+struct ClassTypeInfo:
+    c_type: String
+    kind: ClassValueKind
+    class_index: i32
+
+
+struct ClassParameterInfo:
+    name: String
+    type_info: ClassTypeInfo
+
+
+struct ClassMethodInfo:
+    owner: i32
+    name: String
+    c_name: String
+    return_c_type: String
+    first_parameter: i32
+    parameter_count: i32
+    is_abstract: bool
+    is_override: bool
+    self_is_dyn: bool
+
+
+struct ClassFieldInfo:
+    owner: i32
+    name: String
+
+
+struct ClassBaseInfo:
+    owner: i32
+    target: i32
+    c_name: String
+
+
+struct ClassInfo:
+    module_name: String
+    name: String
+    c_name: String
+    is_abstract: bool
+    is_interface_only: bool
+    is_reflected: bool
+    first_base: i32
+    base_count: i32
+    primary_base: i32
+    first_field: i32
+    field_count: i32
+    first_method: i32
+    method_count: i32
+    constructor: i32
+
+
+struct ClassFunctionInfo:
+    module_name: String
+    name: String
+    first_parameter: i32
+    parameter_count: i32
+
+
+struct ProjectClassModel:
+    classes: List[ClassInfo]
+    bases: List[ClassBaseInfo]
+    fields: List[ClassFieldInfo]
+    methods: List[ClassMethodInfo]
+    parameters: List[ClassParameterInfo]
+    functions: List[ClassFunctionInfo]
 
 
 def summarize_class(arena: &const syntax.SyntaxArena, declaration: NodeId) -> ClassSummary:
@@ -32,6 +112,565 @@ def summarize_class(arena: &const syntax.SyntaxArena, declaration: NodeId) -> Cl
         base_count=base_count,
         is_abstract=node.flags == 1,
     )
+
+
+def new_project_class_model() -> ProjectClassModel:
+    class_values: List[ClassInfo] = []
+    bases: List[ClassBaseInfo] = []
+    fields: List[ClassFieldInfo] = []
+    methods: List[ClassMethodInfo] = []
+    parameters: List[ClassParameterInfo] = []
+    functions: List[ClassFunctionInfo] = []
+    return ProjectClassModel(
+        classes=class_values,
+        bases=bases,
+        fields=fields,
+        methods=methods,
+        parameters=parameters,
+        functions=functions,
+    )
+
+
+def collect_project_class_model(
+    graph: &const project.ProjectGraph,
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> ProjectClassModel:
+    model = new_project_class_model()
+    index: usize = 0
+    while index < len(graph.modules):
+        module: &const project.ParsedModule = &graph.modules[index]
+        scan = lexer.new_lexer(module.source[0:len(module.source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
+        collect_module_class_shells(parsed.arena, root, &module.source, &module.name, &prefix, model)
+        index += 1
+    index = 0
+    while index < len(graph.modules):
+        module: &const project.ParsedModule = &graph.modules[index]
+        scan = lexer.new_lexer(module.source[0:len(module.source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
+        collect_module_class_details(
+            parsed.arena,
+            root,
+            &module.source,
+            &module.name,
+            &prefix,
+            &graph.project_name,
+            &module.imports,
+            registry,
+            model,
+        )
+        index += 1
+    finalize_primary_bases(model)
+    return model
+
+
+def collect_single_module_class_model(
+    arena: &const syntax.SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> ProjectClassModel:
+    model = new_project_class_model()
+    prefix = codegen_names.c_prefix(project_name, module_name)
+    collect_module_class_shells(arena, root, source, module_name, &prefix, model)
+    collect_module_class_details(
+        arena,
+        root,
+        source,
+        module_name,
+        &prefix,
+        project_name,
+        imports,
+        registry,
+        model,
+    )
+    finalize_primary_bases(model)
+    return model
+
+
+def collect_module_class_shells(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+    prefix: &const String,
+    model: &ProjectClassModel,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            collect_module_class_shells(
+                arena,
+                arena.children[node.first_child + offset],
+                source,
+                module_name,
+                prefix,
+                model,
+            )
+        return
+    if node.kind != syntax.SyntaxKind.CLASS_DECL:
+        return
+    name = source[node.value_start:node.value_start + node.value_length]
+    has_layout = false
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.FIELD_DECL:
+            has_layout = true
+        elif child.kind == syntax.SyntaxKind.FUNCTION_DECL:
+            method_name = source[child.value_start:child.value_start + child.value_length]
+            if method_name == "__init__" or method_name == "__del__":
+                has_layout = true
+    model.classes.append(
+        ClassInfo(
+            module_name=module_name[0:len(module_name)],
+            name=name[0:len(name)],
+            c_name=join_class_name(prefix, "", &name),
+            is_abstract=node.flags == 1,
+            is_interface_only=node.flags == 1 and not has_layout,
+            is_reflected=reflection.has_decorator(arena, id, source, "reflect"),
+            first_base=0,
+            base_count=0,
+            primary_base=-1,
+            first_field=0,
+            field_count=0,
+            first_method=0,
+            method_count=0,
+            constructor=-1,
+        )
+    )
+
+
+def collect_module_class_details(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    model: &ProjectClassModel,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            collect_module_class_details(
+                arena,
+                arena.children[node.first_child + offset],
+                source,
+                module_name,
+                prefix,
+                project_name,
+                imports,
+                registry,
+                model,
+            )
+        return
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
+        collect_top_level_function(
+            arena,
+            id,
+            source,
+            module_name,
+            prefix,
+            project_name,
+            imports,
+            registry,
+            model,
+        )
+        return
+    if node.kind != syntax.SyntaxKind.CLASS_DECL:
+        return
+    owner_name = source[node.value_start:node.value_start + node.value_length]
+    owner_index = find_class(model, module_name, &owner_name)
+    if owner_index < 0:
+        return
+    model.classes[cast[usize](owner_index)].first_base = cast[i32](len(model.bases))
+    model.classes[cast[usize](owner_index)].first_field = cast[i32](len(model.fields))
+    model.classes[cast[usize](owner_index)].first_method = cast[i32](len(model.methods))
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if is_type_node(child.kind):
+            base_name_id = type_name_node(arena, child_id)
+            if base_name_id.index >= 0:
+                base_name_node = arena.nodes[base_name_id.index]
+                base_name = source[base_name_node.value_start:base_name_node.value_start + base_name_node.value_length]
+                base_module = module_for_name(imports, module_name, &base_name)
+                target = find_class(model, &base_module, &base_name)
+                base_type_builder = StringBuilder()
+                codegen_type_names.emit_module_c_type(
+                    arena,
+                    child_id,
+                    source,
+                    &base_type_builder,
+                    prefix,
+                    project_name,
+                    imports,
+                    registry,
+                )
+                base_c_name = base_type_builder.finish()
+                model.bases.append(
+                    ClassBaseInfo(
+                        owner=owner_index,
+                        target=target,
+                        c_name=base_c_name,
+                    )
+                )
+                model.classes[cast[usize](owner_index)].base_count += 1
+        elif child.kind == syntax.SyntaxKind.FIELD_DECL:
+            field_name = source[child.value_start:child.value_start + child.value_length]
+            model.fields.append(ClassFieldInfo(owner=owner_index, name=field_name))
+            model.classes[cast[usize](owner_index)].field_count += 1
+        elif child.kind == syntax.SyntaxKind.FUNCTION_DECL:
+            method_index = collect_class_method(
+                arena,
+                child_id,
+                source,
+                owner_index,
+                prefix,
+                project_name,
+                imports,
+                registry,
+                model,
+            )
+            if method_index >= 0:
+                method_name = source[child.value_start:child.value_start + child.value_length]
+                if method_name == "__init__":
+                    model.classes[cast[usize](owner_index)].constructor = method_index
+                model.classes[cast[usize](owner_index)].method_count += 1
+
+
+def collect_class_method(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    owner: i32,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    model: &ProjectClassModel,
+) -> i32:
+    node = arena.nodes[id.index]
+    owner_info: &const ClassInfo = &model.classes[cast[usize](owner)]
+    name = source[node.value_start:node.value_start + node.value_length]
+    first_parameter = cast[i32](len(model.parameters))
+    seen_parameter: i32 = 0
+    self_is_dyn = false
+    for offset in range(0, node.child_count):
+        parameter_id = arena.children[node.first_child + offset]
+        parameter = arena.nodes[parameter_id.index]
+        if parameter.kind != syntax.SyntaxKind.PARAMETER:
+            continue
+        parameter_type = codegen_type_names.find_child_type(arena, parameter_id)
+        if seen_parameter == 0:
+            self_is_dyn = (
+                parameter_type.index < 0
+                and owner_info.is_abstract
+                and not text_equals(&name, "__init__")
+                and not text_equals(&name, "__del__")
+            )
+        else:
+            parameter_name = source[parameter.value_start:parameter.value_start + parameter.value_length]
+            model.parameters.append(
+                ClassParameterInfo(
+                    name=parameter_name,
+                    type_info=class_type_info(
+                        arena,
+                        parameter_type,
+                        source,
+                        &owner_info.module_name,
+                        prefix,
+                        project_name,
+                        imports,
+                        registry,
+                        model,
+                    ),
+                )
+            )
+        seen_parameter += 1
+    return_type = codegen_type_names.find_child_type(arena, id)
+    return_builder = StringBuilder()
+    if return_type.index < 0:
+        return_builder.append("void")
+    else:
+        codegen_type_names.emit_module_c_type(
+            arena,
+            return_type,
+            source,
+            &return_builder,
+            prefix,
+            project_name,
+            imports,
+            registry,
+        )
+    return_c_type = return_builder.finish()
+    method_index = cast[i32](len(model.methods))
+    model.methods.append(
+        ClassMethodInfo(
+            owner=owner,
+            name=name[0:len(name)],
+            c_name=join_class_name(&owner_info.c_name, "_", &name),
+            return_c_type=return_c_type,
+            first_parameter=first_parameter,
+            parameter_count=seen_parameter - 1,
+            is_abstract=reflection.has_decorator(arena, id, source, "abstractmethod"),
+            is_override=reflection.has_decorator(arena, id, source, "override"),
+            self_is_dyn=self_is_dyn,
+        )
+    )
+    return method_index
+
+
+def collect_top_level_function(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    model: &ProjectClassModel,
+) -> void:
+    node = arena.nodes[id.index]
+    first_parameter = cast[i32](len(model.parameters))
+    parameter_count: i32 = 0
+    for offset in range(0, node.child_count):
+        parameter_id = arena.children[node.first_child + offset]
+        parameter = arena.nodes[parameter_id.index]
+        if parameter.kind != syntax.SyntaxKind.PARAMETER:
+            continue
+        parameter_name = source[parameter.value_start:parameter.value_start + parameter.value_length]
+        parameter_type = codegen_type_names.find_child_type(arena, parameter_id)
+        model.parameters.append(
+            ClassParameterInfo(
+                name=parameter_name,
+                type_info=class_type_info(
+                    arena,
+                    parameter_type,
+                    source,
+                    module_name,
+                    prefix,
+                    project_name,
+                    imports,
+                    registry,
+                    model,
+                ),
+            )
+        )
+        parameter_count += 1
+    name = source[node.value_start:node.value_start + node.value_length]
+    model.functions.append(
+        ClassFunctionInfo(
+            module_name=module_name[0:len(module_name)],
+            name=name,
+            first_parameter=first_parameter,
+            parameter_count=parameter_count,
+        )
+    )
+
+
+def class_type_info(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    model: &const ProjectClassModel,
+) -> ClassTypeInfo:
+    builder = StringBuilder()
+    codegen_type_names.emit_module_c_type(
+        arena,
+        id,
+        source,
+        &builder,
+        prefix,
+        project_name,
+        imports,
+        registry,
+    )
+    c_type = builder.finish()
+    current = id
+    kind = ClassValueKind.OTHER
+    if current.index >= 0 and arena.nodes[current.index].kind == syntax.SyntaxKind.TYPE_REFERENCE:
+        kind = ClassValueKind.REFERENCE
+        current = codegen_names.first_child(arena, current)
+    if current.index >= 0 and arena.nodes[current.index].kind == syntax.SyntaxKind.TYPE_CONST:
+        current = codegen_names.first_child(arena, current)
+    if current.index >= 0 and arena.nodes[current.index].kind == syntax.SyntaxKind.TYPE_DYN:
+        kind = ClassValueKind.DYN
+        current = codegen_names.first_child(arena, current)
+    base = type_name_node(arena, current)
+    class_index: i32 = -1
+    if base.index >= 0:
+        base_node = arena.nodes[base.index]
+        name = source[base_node.value_start:base_node.value_start + base_node.value_length]
+        target_module = module_for_name(imports, module_name, &name)
+        class_index = find_class(model, &target_module, &name)
+        if class_index >= 0 and kind == ClassValueKind.OTHER:
+            kind = ClassValueKind.NOMINAL
+    return ClassTypeInfo(c_type=c_type, kind=kind, class_index=class_index)
+
+
+def finalize_primary_bases(model: &ProjectClassModel) -> void:
+    class_index: usize = 0
+    while class_index < len(model.classes):
+        info: &ClassInfo = &model.classes[class_index]
+        base_offset: i32 = 0
+        while base_offset < info.base_count:
+            base: &const ClassBaseInfo = &model.bases[cast[usize](info.first_base + base_offset)]
+            if base.target >= 0 and not model.classes[cast[usize](base.target)].is_interface_only:
+                model.classes[class_index].primary_base = base.target
+                break
+            base_offset += 1
+        class_index += 1
+
+
+def find_class(model: &const ProjectClassModel, module_name: &const String, name: &const String) -> i32:
+    index: usize = 0
+    while index < len(model.classes):
+        class_info: &const ClassInfo = &model.classes[index]
+        if class_info.module_name == module_name[0:len(module_name)] and class_info.name == name[0:len(name)]:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def find_function(model: &const ProjectClassModel, module_name: &const String, name: &const String) -> i32:
+    index: usize = 0
+    while index < len(model.functions):
+        function: &const ClassFunctionInfo = &model.functions[index]
+        if function.module_name == module_name[0:len(module_name)] and function.name == name[0:len(name)]:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def find_own_method(model: &const ProjectClassModel, owner: i32, name: &const String) -> i32:
+    if owner < 0 or owner >= cast[i32](len(model.classes)):
+        return -1
+    class_info: &const ClassInfo = &model.classes[cast[usize](owner)]
+    offset: i32 = 0
+    while offset < class_info.method_count:
+        method_index = class_info.first_method + offset
+        method: &const ClassMethodInfo = &model.methods[cast[usize](method_index)]
+        if method.name == name[0:len(name)]:
+            return method_index
+        offset += 1
+    return -1
+
+
+def find_effective_method(model: &const ProjectClassModel, owner: i32, name: &const String) -> i32:
+    found = find_own_method(model, owner, name)
+    if found >= 0:
+        return found
+    if owner < 0 or owner >= cast[i32](len(model.classes)):
+        return -1
+    class_info: &const ClassInfo = &model.classes[cast[usize](owner)]
+    if class_info.primary_base >= 0:
+        found = find_effective_method(model, class_info.primary_base, name)
+        if found >= 0:
+            return found
+    offset: i32 = 0
+    while offset < class_info.base_count:
+        base: &const ClassBaseInfo = &model.bases[cast[usize](class_info.first_base + offset)]
+        if base.target >= 0 and base.target != class_info.primary_base:
+            found = find_effective_method(model, base.target, name)
+            if found >= 0:
+                return found
+        offset += 1
+    return -1
+
+
+def find_field_owner(model: &const ProjectClassModel, owner: i32, name: &const String) -> i32:
+    if owner < 0 or owner >= cast[i32](len(model.classes)):
+        return -1
+    class_info: &const ClassInfo = &model.classes[cast[usize](owner)]
+    offset: i32 = 0
+    while offset < class_info.field_count:
+        field: &const ClassFieldInfo = &model.fields[cast[usize](class_info.first_field + offset)]
+        if field.name == name[0:len(name)]:
+            return owner
+        offset += 1
+    if class_info.primary_base >= 0:
+        return find_field_owner(model, class_info.primary_base, name)
+    return -1
+
+
+def class_implements(model: &const ProjectClassModel, owner: i32, interface: i32) -> bool:
+    if owner == interface:
+        return true
+    if owner < 0 or owner >= cast[i32](len(model.classes)):
+        return false
+    class_info: &const ClassInfo = &model.classes[cast[usize](owner)]
+    offset: i32 = 0
+    while offset < class_info.base_count:
+        base: &const ClassBaseInfo = &model.bases[cast[usize](class_info.first_base + offset)]
+        if base.target == interface or class_implements(model, base.target, interface):
+            return true
+        offset += 1
+    return false
+
+
+def module_for_name(
+    imports: &const List[project.ImportBinding],
+    current_module: &const String,
+    name: &const String,
+) -> String:
+    imported = codegen_names.find_import_member(imports, name)
+    if len(imported.module_name) > 0 and len(imported.member) > 0:
+        return imported.module_name[0:len(imported.module_name)]
+    return current_module[0:len(current_module)]
+
+
+def join_class_name(left: &const String, separator: String, right: &const String) -> String:
+    builder = StringBuilder()
+    builder.append(left[0:len(left)])
+    builder.append(separator[0:len(separator)])
+    builder.append(right[0:len(right)])
+    return builder.finish()
+
+
+def text_equals(value: &const String, expected: String) -> bool:
+    if len(value) != len(expected):
+        return false
+    offset: usize = 0
+    while offset < len(value):
+        if value.byte_at(offset) != expected.byte_at(offset):
+            return false
+        offset += 1
+    return true
+
+
+def type_name_node(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
+    current = id
+    while current.index >= 0:
+        kind = arena.nodes[current.index].kind
+        if kind == syntax.SyntaxKind.TYPE_NAME:
+            return current
+        if kind != syntax.SyntaxKind.TYPE_GENERIC and kind != syntax.SyntaxKind.TYPE_CONST and kind != syntax.SyntaxKind.TYPE_POINTER and kind != syntax.SyntaxKind.TYPE_REFERENCE and kind != syntax.SyntaxKind.TYPE_DYN:
+            return syntax.missing_node()
+        current = codegen_names.first_child(arena, current)
+    return syntax.missing_node()
 
 
 def is_type_node(kind: syntax.SyntaxKind) -> bool:

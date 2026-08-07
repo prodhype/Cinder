@@ -1,4 +1,5 @@
 import backend_ir
+import classes
 import codegen_legacy
 import codegen_module
 import codegen_names
@@ -59,6 +60,21 @@ def emit_module_header_from_ir(
     return codegen_module.emit_module_header_from_ir(module, arena, source, module_name, project_name, dependencies, imports, registry, type_table)
 
 
+def emit_module_header_from_ir_with_classes(
+    module: &const backend_ir.IRModule,
+    arena: &const SyntaxArena,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    dependencies: &const List[String],
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+) -> String:
+    return codegen_module.emit_module_header_from_ir_with_classes(module, arena, source, module_name, project_name, dependencies, imports, registry, type_table, class_model)
+
+
 def emit_module_source(
     arena: &const SyntaxArena,
     root: NodeId,
@@ -83,6 +99,21 @@ def emit_module_source_from_ir(
     type_table: &const types.TypeTable,
 ) -> String:
     return codegen_module.emit_module_source_from_ir(module, arena, source, module_name, project_name, imports, is_entry, registry, type_table)
+
+
+def emit_module_source_from_ir_with_classes(
+    module: &const backend_ir.IRModule,
+    arena: &const SyntaxArena,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    is_entry: bool,
+    registry: &const codegen_names.SpecializationNameRegistry,
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+) -> String:
+    return codegen_module.emit_module_source_from_ir_with_classes(module, arena, source, module_name, project_name, imports, is_entry, registry, type_table, class_model)
 
 
 def generated_header_name(module_name: &const String) -> String:

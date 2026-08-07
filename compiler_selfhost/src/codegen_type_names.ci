@@ -63,7 +63,11 @@ def emit_module_c_type(
     if node.kind == SyntaxKind.TYPE_CLOSURE:
         emit_specialized_type_name(arena, id, source, builder, prefix, project_name, imports, registry)
         return
-    if node.kind == SyntaxKind.TYPE_DYN or node.kind == SyntaxKind.TYPE_FUNCTION:
+    if node.kind == SyntaxKind.TYPE_DYN:
+        builder.append("CinderDyn_")
+        emit_module_c_type(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, registry)
+        return
+    if node.kind == SyntaxKind.TYPE_FUNCTION:
         builder.append("void *")
         return
     if node.kind == SyntaxKind.TYPE_ARRAY:
@@ -572,6 +576,9 @@ def emit_semantic_c_type(
         builder.append(" *")
     elif record.kind == types.TypeKind.CONST:
         builder.append("const ")
+        emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
+    elif record.kind == types.TypeKind.DYN:
+        builder.append("CinderDyn_")
         emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
     elif record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.ARRAY:
         builder.append("CinderList")

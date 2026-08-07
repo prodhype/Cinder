@@ -1,4 +1,5 @@
 import backend_ir
+import classes
 import codegen_context
 import codegen_expr
 import codegen_names
@@ -7,6 +8,7 @@ import codegen_stmt
 import codegen_type_names
 import generics
 import project
+import reflection
 import semantic
 import syntax
 import types
@@ -60,6 +62,49 @@ def emit_module_header_with_semantics(
     user_specializations: &const List[semantic.UserSpecialization],
     type_table: &const types.TypeTable,
 ) -> String:
+    class_model = classes.collect_single_module_class_model(
+        arena,
+        root,
+        source,
+        module_name,
+        project_name,
+        imports,
+        registry,
+    )
+    return emit_module_header_with_semantics_and_classes(
+        arena,
+        root,
+        source,
+        module_name,
+        project_name,
+        dependencies,
+        imports,
+        registry,
+        semantic_nodes,
+        specialization_args,
+        call_specializations,
+        user_specializations,
+        type_table,
+        class_model,
+    )
+
+
+def emit_module_header_with_semantics_and_classes(
+    arena: &const SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    dependencies: &const List[String],
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    semantic_nodes: &const List[backend_ir.IRNode],
+    specialization_args: &const List[types.TypeId],
+    call_specializations: &const List[semantic.SpecializationBinding],
+    user_specializations: &const List[semantic.UserSpecialization],
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+) -> String:
     header_name = codegen_names.generated_header_name(module_name)
     guard = codegen_names.header_guard(&header_name)
     builder = StringBuilder()
@@ -85,7 +130,7 @@ def emit_module_header_with_semantics(
             builder.append("\"\n")
     builder.append("\n")
     prefix = codegen_names.c_prefix(project_name, module_name)
-    context = codegen_context.make_module_codegen_context(arena, root, source, registry, semantic_nodes, type_table, specialization_args, call_specializations, user_specializations)
+    context = codegen_context.make_module_codegen_context(arena, root, source, module_name, imports, registry, class_model, semantic_nodes, type_table, specialization_args, call_specializations, user_specializations)
     emitted_specializations: List[String] = []
     emitted_forwards: List[String] = []
     emit_module_nominal_forward_declarations(arena, root, source, builder, &prefix, context)
@@ -213,6 +258,39 @@ def emit_module_header_from_ir(
     root = module.nodes[module.root.index].syntax
     return emit_module_header_with_semantics(arena, root, source, module_name, project_name, dependencies, imports, registry, module.nodes, module.specialization_args, module.call_specializations, module.user_specializations, type_table)
 
+
+def emit_module_header_from_ir_with_classes(
+    module: &const backend_ir.IRModule,
+    arena: &const SyntaxArena,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    dependencies: &const List[String],
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+) -> String:
+    root = syntax.missing_node()
+    if module.root.index >= 0:
+        root = module.nodes[module.root.index].syntax
+    return emit_module_header_with_semantics_and_classes(
+        arena,
+        root,
+        source,
+        module_name,
+        project_name,
+        dependencies,
+        imports,
+        registry,
+        module.nodes,
+        module.specialization_args,
+        module.call_specializations,
+        module.user_specializations,
+        type_table,
+        class_model,
+    )
+
 def emit_module_source(
     arena: &const SyntaxArena,
     root: NodeId,
@@ -261,6 +339,51 @@ def emit_module_source_with_semantics(
     user_specializations: &const List[semantic.UserSpecialization],
     type_table: &const types.TypeTable,
 ) -> String:
+    class_model = classes.collect_single_module_class_model(
+        arena,
+        root,
+        source,
+        module_name,
+        project_name,
+        imports,
+        registry,
+    )
+    return emit_module_source_with_semantics_and_classes(
+        arena,
+        root,
+        source,
+        module_name,
+        project_name,
+        imports,
+        is_entry,
+        registry,
+        semantic_nodes,
+        specialization_types,
+        specialization_args,
+        call_specializations,
+        user_specializations,
+        type_table,
+        class_model,
+    )
+
+
+def emit_module_source_with_semantics_and_classes(
+    arena: &const SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    is_entry: bool,
+    registry: &const codegen_names.SpecializationNameRegistry,
+    semantic_nodes: &const List[backend_ir.IRNode],
+    specialization_types: &const List[types.TypeId],
+    specialization_args: &const List[types.TypeId],
+    call_specializations: &const List[semantic.SpecializationBinding],
+    user_specializations: &const List[semantic.UserSpecialization],
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+) -> String:
     header_name = codegen_names.generated_header_name(module_name)
     builder = StringBuilder()
     builder.append("#include \"")
@@ -268,7 +391,7 @@ def emit_module_source_with_semantics(
     builder.append("\"\n\n")
     prefix = codegen_names.c_prefix(project_name, module_name)
     codegen_specializations.emit_semantic_type_specializations(type_table, specialization_types, semantic_nodes, arena, source, builder, &prefix, project_name, imports, registry)
-    context = codegen_context.make_module_codegen_context(arena, root, source, registry, semantic_nodes, type_table, specialization_args, call_specializations, user_specializations)
+    context = codegen_context.make_module_codegen_context(arena, root, source, module_name, imports, registry, class_model, semantic_nodes, type_table, specialization_args, call_specializations, user_specializations)
     emit_module_top_level(arena, root, source, builder, &prefix, project_name, imports, is_entry, context)
     return builder.finish()
 
@@ -287,6 +410,40 @@ def emit_module_source_from_ir(
         return emit_module_source_with_semantics(arena, syntax.missing_node(), source, module_name, project_name, imports, is_entry, registry, module.nodes, module.specialization_types, module.specialization_args, module.call_specializations, module.user_specializations, type_table)
     root = module.nodes[module.root.index].syntax
     return emit_module_source_with_semantics(arena, root, source, module_name, project_name, imports, is_entry, registry, module.nodes, module.specialization_types, module.specialization_args, module.call_specializations, module.user_specializations, type_table)
+
+
+def emit_module_source_from_ir_with_classes(
+    module: &const backend_ir.IRModule,
+    arena: &const SyntaxArena,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    is_entry: bool,
+    registry: &const codegen_names.SpecializationNameRegistry,
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+) -> String:
+    root = syntax.missing_node()
+    if module.root.index >= 0:
+        root = module.nodes[module.root.index].syntax
+    return emit_module_source_with_semantics_and_classes(
+        arena,
+        root,
+        source,
+        module_name,
+        project_name,
+        imports,
+        is_entry,
+        registry,
+        module.nodes,
+        module.specialization_types,
+        module.specialization_args,
+        module.call_specializations,
+        module.user_specializations,
+        type_table,
+        class_model,
+    )
 
 def emit_module_nominal_forward_declarations(
     arena: &const SyntaxArena,
@@ -638,6 +795,9 @@ def emit_module_return_type(
         builder.append("int")
         return
     return_type = codegen_type_names.find_child_type(arena, id)
+    if return_type.index < 0:
+        builder.append("void")
+        return
     codegen_context.emit_context_c_type(arena, return_type, source, builder, prefix, project_name, imports, context)
 
 def emit_module_method_parameters(
@@ -654,6 +814,8 @@ def emit_module_method_parameters(
     owner = arena.nodes[owner_id.index]
     node = arena.nodes[function_id.index]
     emitted_parameter = false
+    method_name = source[node.value_start:node.value_start + node.value_length]
+    lifecycle_method = classes.text_equals(&method_name, "__init__") or classes.text_equals(&method_name, "__del__")
     for offset in range(0, node.child_count):
         child_id = arena.children[node.first_child + offset]
         child = arena.nodes[child_id.index]
@@ -662,8 +824,13 @@ def emit_module_method_parameters(
                 builder.append(", ")
             parameter_type = codegen_type_names.find_child_type(arena, child_id)
             if not emitted_parameter and parameter_type.index < 0 and codegen_names.range_text_equals(source, child.value_start, child.value_length, "self"):
-                emit_active_declaration_name(builder, prefix, source, &owner, context)
-                builder.append(" *")
+                if owner.flags == 1 and not lifecycle_method:
+                    builder.append("CinderDyn_")
+                    emit_active_declaration_name(builder, prefix, source, &owner, context)
+                    builder.append(" ")
+                else:
+                    emit_active_declaration_name(builder, prefix, source, &owner, context)
+                    builder.append(" *")
                 codegen_names.append_source(builder, source, child.value_start, child.value_length)
             else:
                 emit_module_parameter(arena, child_id, source, builder, prefix, project_name, imports, context)
@@ -733,14 +900,27 @@ def emit_module_struct(
     imports: &const List[project.ImportBinding],
     context: &codegen_context.ModuleCodegenContext,
 ) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
     node = arena.nodes[id.index]
     builder.append("struct ")
     emit_active_declaration_name(builder, prefix, source, &node, context)
     builder.append(" {\n")
+    owner_name = source[node.value_start:node.value_start + node.value_length]
+    class_index = classes.find_class(context.class_model, &context.module_name, &owner_name)
+    has_layout = false
+    if node.kind == SyntaxKind.CLASS_DECL and class_index >= 0:
+        class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+        if class_info.primary_base >= 0:
+            base_info: &const classes.ClassInfo = &model.classes[cast[usize](class_info.primary_base)]
+            builder.append("    ")
+            builder.append(base_info.c_name[0:len(base_info.c_name)])
+            builder.append(" _base;\n")
+            has_layout = true
     for offset in range(0, node.child_count):
         child_id = arena.children[node.first_child + offset]
         child = arena.nodes[child_id.index]
         if child.kind == SyntaxKind.FIELD_DECL:
+            has_layout = true
             builder.append("    ")
             field_type = codegen_type_names.find_child_type(arena, child_id)
             if codegen_specializations.context_type_is_array(arena, field_type):
@@ -750,6 +930,8 @@ def emit_module_struct(
                 builder.append(" ")
                 codegen_names.append_source(builder, source, child.value_start, child.value_length)
             builder.append(";\n")
+    if not has_layout:
+        builder.append("    unsigned char _cinder_empty;\n")
     builder.append("};\n\n")
     if node.kind == SyntaxKind.CLASS_DECL and node.flags == 1:
         emit_module_abstract_class_abi(arena, id, source, builder, prefix, project_name, imports, context)
@@ -785,16 +967,23 @@ def emit_module_abstract_class_abi(
     builder.append("struct CinderVTable_")
     builder.append(owner_name[0:len(owner_name)])
     builder.append(" {\n")
+    builder.append("    const CinderTypeInfo *type_info;\n")
     for offset in range(0, owner.child_count):
         method_id = arena.children[owner.first_child + offset]
         method = arena.nodes[method_id.index]
         if method.kind != SyntaxKind.FUNCTION_DECL:
+            continue
+        method_name = source[method.value_start:method.value_start + method.value_length]
+        if method_name == "__init__" or method_name == "__del__":
             continue
         builder.append("    ")
         emit_module_return_type(arena, method_id, source, builder, prefix, project_name, imports, false, context)
         builder.append(" (*")
         codegen_names.append_source(builder, source, method.value_start, method.value_length)
         builder.append(")(void *object")
+        builder.append(", const CinderVTable_")
+        builder.append(owner_name[0:len(owner_name)])
+        builder.append(" *vtable")
         parameter_index: i32 = 0
         for parameter_offset in range(0, method.child_count):
             parameter_id = arena.children[method.first_child + parameter_offset]
@@ -941,6 +1130,8 @@ def emit_module_methods(
         child_id = arena.children[node.first_child + offset]
         child = arena.nodes[child_id.index]
         if child.kind == SyntaxKind.FUNCTION_DECL:
+            if reflection.has_decorator(arena, child_id, source, "abstractmethod"):
+                continue
             emit_module_return_type(arena, child_id, source, builder, prefix, project_name, imports, false, context)
             builder.append(" ")
             emit_active_declaration_name(builder, prefix, source, &node, context)
@@ -950,7 +1141,7 @@ def emit_module_methods(
             emit_module_method_parameters(arena, id, child_id, source, builder, prefix, project_name, imports, context)
             if declarations_only:
                 builder.append(");\n")
-                if context.active_user_specialization < 0:
+                if node.kind == SyntaxKind.STRUCT_DECL and context.active_user_specialization < 0:
                     builder.append("#define ")
                     codegen_names.append_source(builder, source, child.value_start, child.value_length)
                     builder.append(" ")
@@ -963,8 +1154,250 @@ def emit_module_methods(
                 body = codegen_names.find_child_kind(arena, child_id, SyntaxKind.BLOCK)
                 if body.index >= 0:
                     context.current_owner = source[owner_start:owner_start + owner_length]
+                    context.current_class = classes.find_class(context.class_model, &context.module_name, &context.current_owner)
+                    context.current_self_is_dyn = (
+                        node.flags == 1
+                        and not codegen_names.range_text_equals(source, child.value_start, child.value_length, "__init__")
+                        and not codegen_names.range_text_equals(source, child.value_start, child.value_length, "__del__")
+                        and first_method_parameter_is_unannotated(arena, child_id, source)
+                    )
+                    context.current_return_type = codegen_type_names.find_child_type(arena, child_id)
                     context.local_start = len(context.local_types)
                     context.pointer_start = len(context.pointer_names)
                     codegen_context.register_module_parameters(arena, child_id, source, context)
                     codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
                 builder.append("}\n\n")
+    if node.kind == SyntaxKind.CLASS_DECL:
+        if declarations_only:
+            emit_module_class_support_declarations(arena, id, source, builder, context)
+        else:
+            emit_module_class_support_definitions(arena, id, source, builder, context)
+
+
+def first_method_parameter_is_unannotated(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> bool:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.PARAMETER:
+            return (
+                codegen_type_names.find_child_type(arena, child_id).index < 0
+                and codegen_names.range_text_equals(source, child.value_start, child.value_length, "self")
+            )
+    return false
+
+
+def emit_module_class_support_declarations(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_context.ModuleCodegenContext,
+) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    node = arena.nodes[id.index]
+    name = source[node.value_start:node.value_start + node.value_length]
+    class_index = classes.find_class(context.class_model, &context.module_name, &name)
+    if class_index < 0:
+        return
+    class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+    if class_info.is_abstract and generics.has_type_params(arena, id):
+        return
+    emit_class_new_signature(builder, class_info, model)
+    builder.append(";\n")
+    offset: i32 = 0
+    while offset < class_info.base_count:
+        base: &const classes.ClassBaseInfo = &model.bases[cast[usize](class_info.first_base + offset)]
+        if base.target >= 0 and model.classes[cast[usize](base.target)].is_abstract:
+            builder.append("extern const CinderVTable_")
+            builder.append(base.c_name[0:len(base.c_name)])
+            builder.append(" ")
+            append_vtable_instance_name(builder, class_info, &base.c_name)
+            builder.append(";\n")
+        offset += 1
+    builder.append("\n")
+
+
+def emit_module_class_support_definitions(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_context.ModuleCodegenContext,
+) -> void:
+    model: &const classes.ProjectClassModel = context.class_model
+    node = arena.nodes[id.index]
+    name = source[node.value_start:node.value_start + node.value_length]
+    class_index = classes.find_class(context.class_model, &context.module_name, &name)
+    if class_index < 0:
+        return
+    class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+    if class_info.is_abstract and generics.has_type_params(arena, id):
+        return
+    emit_class_new_signature(builder, class_info, model)
+    builder.append(" {\n    ")
+    builder.append(class_info.c_name[0:len(class_info.c_name)])
+    builder.append(" cinder_instance = {0};\n")
+    if class_info.constructor >= 0:
+        constructor: &const classes.ClassMethodInfo = &model.methods[cast[usize](class_info.constructor)]
+        builder.append("    ")
+        builder.append(constructor.c_name[0:len(constructor.c_name)])
+        builder.append("(&cinder_instance")
+        parameter_offset: i32 = 0
+        while parameter_offset < constructor.parameter_count:
+            parameter: &const classes.ClassParameterInfo = &model.parameters[cast[usize](constructor.first_parameter + parameter_offset)]
+            builder.append(", ")
+            builder.append(parameter.name[0:len(parameter.name)])
+            parameter_offset += 1
+        builder.append(");\n")
+    elif class_info.primary_base >= 0:
+        base: &const classes.ClassInfo = &model.classes[cast[usize](class_info.primary_base)]
+        builder.append("    cinder_instance._base = ")
+        builder.append(base.c_name[0:len(base.c_name)])
+        builder.append("__new();\n")
+    builder.append("    return cinder_instance;\n}\n\n")
+    offset: i32 = 0
+    while offset < class_info.base_count:
+        base: &const classes.ClassBaseInfo = &model.bases[cast[usize](class_info.first_base + offset)]
+        if base.target >= 0 and model.classes[cast[usize](base.target)].is_abstract:
+            emit_interface_implementation(builder, class_index, base.target, &base.c_name, model)
+        offset += 1
+
+
+def emit_class_new_signature(
+    builder: &StringBuilder,
+    class_info: &const classes.ClassInfo,
+    model: &const classes.ProjectClassModel,
+) -> void:
+    builder.append(class_info.c_name[0:len(class_info.c_name)])
+    builder.append(" ")
+    builder.append(class_info.c_name[0:len(class_info.c_name)])
+    builder.append("__new(")
+    if class_info.constructor < 0:
+        builder.append("void")
+    else:
+        constructor: &const classes.ClassMethodInfo = &model.methods[cast[usize](class_info.constructor)]
+        if constructor.parameter_count == 0:
+            builder.append("void")
+        parameter_offset: i32 = 0
+        while parameter_offset < constructor.parameter_count:
+            if parameter_offset > 0:
+                builder.append(", ")
+            parameter: &const classes.ClassParameterInfo = &model.parameters[cast[usize](constructor.first_parameter + parameter_offset)]
+            builder.append(parameter.type_info.c_type[0:len(parameter.type_info.c_type)])
+            builder.append(" ")
+            builder.append(parameter.name[0:len(parameter.name)])
+            parameter_offset += 1
+    builder.append(")")
+
+
+def append_vtable_instance_name(
+    builder: &StringBuilder,
+    class_info: &const classes.ClassInfo,
+    interface_c_name: &const String,
+) -> void:
+    builder.append(class_info.c_name[0:len(class_info.c_name)])
+    builder.append("__as__")
+    builder.append(interface_c_name[0:len(interface_c_name)])
+    builder.append("__vtable")
+
+
+def emit_interface_implementation(
+    builder: &StringBuilder,
+    class_index: i32,
+    interface_index: i32,
+    interface_c_name: &const String,
+    model: &const classes.ProjectClassModel,
+) -> void:
+    class_info: &const classes.ClassInfo = &model.classes[cast[usize](class_index)]
+    interface: &const classes.ClassInfo = &model.classes[cast[usize](interface_index)]
+    method_offset: i32 = 0
+    while method_offset < interface.method_count:
+        interface_method_index = interface.first_method + method_offset
+        interface_method: &const classes.ClassMethodInfo = &model.methods[cast[usize](interface_method_index)]
+        if not classes.text_equals(&interface_method.name, "__init__") and not classes.text_equals(&interface_method.name, "__del__"):
+            implementation_index = classes.find_effective_method(model, class_index, &interface_method.name)
+            if implementation_index >= 0:
+                implementation: &const classes.ClassMethodInfo = &model.methods[cast[usize](implementation_index)]
+                builder.append("static ")
+                builder.append(implementation.return_c_type[0:len(implementation.return_c_type)])
+                builder.append(" ")
+                append_vtable_thunk_name(builder, class_info, interface_c_name, &interface_method.name)
+                builder.append("(void *object, const CinderVTable_")
+                builder.append(interface_c_name[0:len(interface_c_name)])
+                builder.append(" *vtable")
+                parameter_offset: i32 = 0
+                while parameter_offset < implementation.parameter_count:
+                    parameter: &const classes.ClassParameterInfo = &model.parameters[cast[usize](implementation.first_parameter + parameter_offset)]
+                    builder.append(", ")
+                    builder.append(parameter.type_info.c_type[0:len(parameter.type_info.c_type)])
+                    builder.append(" ")
+                    builder.append(parameter.name[0:len(parameter.name)])
+                    parameter_offset += 1
+                builder.append(") {\n    ")
+                if not implementation.self_is_dyn:
+                    builder.append("(void)vtable;\n    ")
+                if not classes.text_equals(&implementation.return_c_type, "void"):
+                    builder.append("return ")
+                builder.append(implementation.c_name[0:len(implementation.c_name)])
+                builder.append("(")
+                if implementation.self_is_dyn:
+                    builder.append("(CinderDyn_")
+                    builder.append(interface_c_name[0:len(interface_c_name)])
+                    builder.append("){ .object = object, .vtable = vtable }")
+                else:
+                    append_class_pointer_from_object(builder, class_index, implementation.owner, model)
+                parameter_offset = 0
+                while parameter_offset < implementation.parameter_count:
+                    parameter = &model.parameters[cast[usize](implementation.first_parameter + parameter_offset)]
+                    builder.append(", ")
+                    builder.append(parameter.name[0:len(parameter.name)])
+                    parameter_offset += 1
+                builder.append(");\n}\n\n")
+        method_offset += 1
+    builder.append("const CinderVTable_")
+    builder.append(interface_c_name[0:len(interface_c_name)])
+    builder.append(" ")
+    append_vtable_instance_name(builder, class_info, interface_c_name)
+    builder.append(" = {\n    .type_info = NULL")
+    method_offset = 0
+    while method_offset < interface.method_count:
+        interface_method = &model.methods[cast[usize](interface.first_method + method_offset)]
+        if not classes.text_equals(&interface_method.name, "__init__") and not classes.text_equals(&interface_method.name, "__del__"):
+            builder.append(",\n    .")
+            builder.append(interface_method.name[0:len(interface_method.name)])
+            builder.append(" = ")
+            append_vtable_thunk_name(builder, class_info, interface_c_name, &interface_method.name)
+        method_offset += 1
+    builder.append("\n};\n\n")
+
+
+def append_vtable_thunk_name(
+    builder: &StringBuilder,
+    class_info: &const classes.ClassInfo,
+    interface_c_name: &const String,
+    method_name: &const String,
+) -> void:
+    builder.append(class_info.c_name[0:len(class_info.c_name)])
+    builder.append("__as__")
+    builder.append(interface_c_name[0:len(interface_c_name)])
+    builder.append("__")
+    builder.append(method_name[0:len(method_name)])
+    builder.append("__thunk")
+
+
+def append_class_pointer_from_object(
+    builder: &StringBuilder,
+    source_class: i32,
+    target_class: i32,
+    model: &const classes.ProjectClassModel,
+) -> void:
+    ignored_source = source_class
+    target: &const classes.ClassInfo = &model.classes[cast[usize](target_class)]
+    builder.append("((")
+    builder.append(target.c_name[0:len(target.c_name)])
+    builder.append(" *)object)")
