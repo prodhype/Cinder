@@ -2,6 +2,7 @@ import codegen_context
 import codegen_context as codegen_model
 import classes
 import codegen_names
+import codegen_reflection
 import codegen_specializations
 import codegen_type_names
 import project
@@ -996,6 +997,14 @@ def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source:
         return "cinder_cinder_selfhost_classes__ClassParameterInfo"
     if owner == "ProjectClassModel" and member_name == "functions":
         return "cinder_cinder_selfhost_classes__ClassFunctionInfo"
+    if owner == "ProjectReflectionModel" and member_name == "nominals":
+        return "cinder_cinder_selfhost_codegen_reflection__ReflectionNominalInfo"
+    if owner == "ProjectReflectionModel" and member_name == "fields":
+        return "cinder_cinder_selfhost_codegen_reflection__ReflectionFieldInfo"
+    if owner == "ProjectReflectionModel" and member_name == "methods":
+        return "cinder_cinder_selfhost_codegen_reflection__ReflectionMethodInfo"
+    if owner == "ModuleCodegenContext" and member_name == "reflection_bindings":
+        return "cinder_cinder_selfhost_codegen_context__ModuleReflectionBinding"
     if member_name == "type_args":
         return "cinder_cinder_selfhost_types__TypeId"
     if member_name == "canonical_bytes" or member_name == "readable_bytes":
@@ -1156,6 +1165,8 @@ def emit_module_attribute(
     model: &const classes.ProjectClassModel = context.class_model
     receiver = codegen_names.first_child(arena, id)
     member = codegen_names.second_child(arena, id)
+    if emit_comptime_reflection_attribute(arena, receiver, member, source, builder, context):
+        return
     if receiver.index >= 0 and member.index >= 0:
         member_node = arena.nodes[member.index]
         member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
@@ -1271,6 +1282,91 @@ def emit_module_attribute(
         codegen_names.append_source(builder, source, member_node.value_start, member_node.value_length)
         return
     codegen_names.append_source(builder, source, codegen_names.node_start(arena, id), codegen_names.node_length(arena, id))
+
+
+def emit_comptime_reflection_attribute(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    member: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    if receiver.index < 0 or member.index < 0:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    member_node = arena.nodes[member.index]
+    if receiver_node.kind != SyntaxKind.EXPR_NAME or member_node.kind != SyntaxKind.NAME:
+        return false
+    if not codegen_context.context_reflection_binding_is(context, source, receiver_node.value_start, receiver_node.value_length, codegen_context.ReflectionBindingKind.COMPTIME_FIELD):
+        return false
+    field_index = codegen_context.context_reflection_binding_field(context, source, receiver_node.value_start, receiver_node.value_length)
+    nominal_index = codegen_context.context_reflection_binding_nominal(context, source, receiver_node.value_start, receiver_node.value_length)
+    model: &const codegen_reflection.ProjectReflectionModel = context.reflection_model
+    if field_index < 0 or field_index >= cast[i32](len(model.fields)):
+        builder.append("0")
+        return true
+    field: &const codegen_reflection.ReflectionFieldInfo = &model.fields[cast[usize](field_index)]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    if member_name == "name" or member_name == "type_name":
+        builder.append("cinder_string_from_cstr(\"")
+        if member_name == "name":
+            builder.append(field.name[0:len(field.name)])
+        else:
+            builder.append(field.type_name[0:len(field.type_name)])
+        builder.append("\")")
+        return true
+    if member_name == "offset":
+        append_comptime_field_offset(builder, model, context.class_model, nominal_index, field.owner, &field.name)
+        return true
+    if member_name == "size":
+        builder.append("sizeof(")
+        builder.append(field.c_type[0:len(field.c_type)])
+        builder.append(")")
+        return true
+    if member_name == "alignment":
+        builder.append("CINDER_ALIGNOF(")
+        builder.append(field.c_type[0:len(field.c_type)])
+        builder.append(")")
+        return true
+    if member_name == "is_private":
+        if field.is_private:
+            builder.append("true")
+        else:
+            builder.append("false")
+        return true
+    builder.append("0")
+    return true
+
+
+def append_comptime_field_offset(
+    builder: &StringBuilder,
+    model: &const codegen_reflection.ProjectReflectionModel,
+    class_model: &const classes.ProjectClassModel,
+    root: i32,
+    owner: i32,
+    field_name: &const String,
+) -> void:
+    if root < 0 or root >= cast[i32](len(model.nominals)):
+        builder.append("0")
+        return
+    nominal: &const codegen_reflection.ReflectionNominalInfo = &model.nominals[cast[usize](root)]
+    if root == owner:
+        builder.append("offsetof(")
+        builder.append(nominal.c_name[0:len(nominal.c_name)])
+        builder.append(", ")
+        builder.append(field_name[0:len(field_name)])
+        builder.append(")")
+        return
+    base = codegen_reflection.nominal_primary_base(model, class_model, root)
+    if base < 0:
+        builder.append("0")
+        return
+    builder.append("(offsetof(")
+    builder.append(nominal.c_name[0:len(nominal.c_name)])
+    builder.append(", _base) + ")
+    append_comptime_field_offset(builder, model, class_model, base, owner, field_name)
+    builder.append(")")
 
 
 def append_inherited_field_path(

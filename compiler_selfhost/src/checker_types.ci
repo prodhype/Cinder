@@ -25,6 +25,15 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "closure"):
         validate_closure_constructor(checker, arena, id, source, current_scope)
         return
+    if is_reflection_builtin_name(source, callee_node.value_start, callee_node.value_length):
+        if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_name"):
+            checker.model.record_expr_type(id, types.type_string())
+            return
+        if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "has_field") or checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "has_method") or checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "implements"):
+            checker.model.record_expr_type(id, types.type_bool())
+            return
+        checker.model.record_expr_type(id, types.type_i32())
+        return
     if is_builtin_name(source, callee_node.value_start, callee_node.value_length):
         checker.model.record_expr_type(id, types.type_i32())
         return

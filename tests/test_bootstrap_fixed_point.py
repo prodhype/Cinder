@@ -352,6 +352,100 @@ def assert_compiler_lowers_cross_module_dyn(
     assert result.returncode == 0, result.stderr
 
 
+def assert_compiler_lowers_reflection_builtins(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "reflection_builtins.ci"
+    source.write_text(
+        "@reflect\n"
+        "struct Record:\n"
+        "    value: i32\n"
+        "    private active: bool\n"
+        "\n"
+        "    def read(self: &const Record) -> i32:\n"
+        "        return self.value\n"
+        "\n"
+        "@reflect\n"
+        "abstract class Named:\n"
+        "    @abstractmethod\n"
+        "    def code(self) -> i32:\n"
+        "        pass\n"
+        "\n"
+        "@reflect\n"
+        "class Item(Named):\n"
+        "    @override\n"
+        "    def code(self) -> i32:\n"
+        "        return 7\n"
+        "\n"
+        "static_assert(field_count(Record) == 2)\n"
+        "static_assert(method_count(Record) == 1)\n"
+        "static_assert(has_field(Record, \"active\"))\n"
+        "static_assert(has_method(Record, \"read\"))\n"
+        "static_assert(implements(Item, Named))\n"
+        "\n"
+        "def compile_time_field_count() -> i32:\n"
+        "    count: i32 = 0\n"
+        "    for field in comptime fields_of(Record):\n"
+        "        if field.size > 0 and len(field.name) > 0:\n"
+        "            count += 1\n"
+        "    return count\n"
+        "\n"
+        "def dynamic_name(value: &dyn Named) -> String:\n"
+        "    return type_name(value)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    record = Record(value=42, active=true)\n"
+        "    info = type_info(record)\n"
+        "    if info.field_count != 2 or info.method_count != 1:\n"
+        "        return 1\n"
+        "    runtime_fields: i32 = 0\n"
+        "    for field in fields(record):\n"
+        "        runtime_fields += 1\n"
+        "    if runtime_fields != 2 or compile_time_field_count() != 2:\n"
+        "        return 2\n"
+        "    item = Item()\n"
+        "    if len(type_name(item)) != 4 or len(dynamic_name(item)) != 4:\n"
+        "        return 3\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    build_dir = tmp_path / "reflection-builtins-build"
+    executable = tmp_path / (
+        "reflection-builtins.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "reflection-builtins"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(build_dir),
+    )
+    assert built.returncode == 0, built.stderr
+    header = (build_dir / "cinder_gen" / "reflection_builtins.cinder.h").read_text(
+        encoding="utf-8"
+    )
+    generated = (build_dir / "cinder_gen" / "reflection_builtins.c").read_text(
+        encoding="utf-8"
+    )
+    assert "CinderFieldInfo" in generated
+    assert "CinderMethodInfo" in generated
+    assert "CinderTypeInfo" in generated
+    assert ".type_info = &" in generated
+    assert "CINDER_STATIC_ASSERT((2 == 2)" in header
+    assert "comptime fields iteration 0" in generated
+    assert "comptime fields iteration 1" in generated
+    assert "__fields_of(" not in generated
+    assert "__type_info(" not in generated
+    assert "__type_name(" not in generated
+    result = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
 def collect_normalized_tree(root: Path) -> dict[str, str]:
     generated_root = root / "cinder_gen"
     assert generated_root.is_dir()
@@ -997,6 +1091,21 @@ def test_gen2_lowers_class_dyn_dispatch(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_lowers_class_dyn_dispatch(gen2, tmp_path)
+
+
+def test_gen1_lowers_reflection_builtins(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_lowers_reflection_builtins(gen1_compiler, tmp_path)
+
+
+def test_gen2_lowers_reflection_builtins(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_lowers_reflection_builtins(gen2, tmp_path)
 
 
 def test_gen1_lowers_cross_module_dyn(

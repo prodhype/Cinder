@@ -4,6 +4,7 @@ import codegen_context
 import codegen_format
 import codegen_context as codegen_model
 import codegen_names
+import codegen_reflection
 import codegen_specializations
 import codegen_type_names
 import project
@@ -36,6 +37,8 @@ def emit_module_call(
             return
         if callee_node.kind == SyntaxKind.EXPR_NAME:
             name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+            if emit_reflection_call(arena, id, &name, source, builder, context, state, emit_nested):
+                return
             if name == "closure":
                 emit_closure_constructor(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
                 return
@@ -153,6 +156,193 @@ def emit_module_call(
             argument_index += 1
     builder.append(")")
     return
+
+
+def emit_reflection_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> bool:
+    is_query = name == "field_count" or name == "method_count" or name == "has_field" or name == "has_method" or name == "implements"
+    is_runtime = name == "type_info" or name == "type_name" or name == "fields"
+    if not is_query and not is_runtime and not (name == "fields_of"):
+        return false
+    model: &const codegen_reflection.ProjectReflectionModel = context.reflection_model
+    class_model: &const classes.ProjectClassModel = context.class_model
+    if name == "fields_of":
+        builder.append("0")
+        return true
+    if is_query:
+        left = codegen_names.first_call_argument(arena, id)
+        nominal_index = reflection_nominal_for_type_expression(arena, left, source, context)
+        if name == "implements":
+            right = codegen_names.second_call_argument(arena, id)
+            right_index = reflection_nominal_for_type_expression(arena, right, source, context)
+            value = false
+            if nominal_index >= 0 and right_index >= 0:
+                source_nominal: &const codegen_reflection.ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+                target_nominal: &const codegen_reflection.ReflectionNominalInfo = &model.nominals[cast[usize](right_index)]
+                if source_nominal.class_index >= 0 and target_nominal.class_index >= 0:
+                    value = classes.class_implements(class_model, source_nominal.class_index, target_nominal.class_index)
+            if value:
+                builder.append("true")
+            else:
+                builder.append("false")
+            return true
+        if name == "field_count":
+            codegen_type_names.append_specialization_decimal(builder, cast[usize](codegen_reflection.effective_field_count(model, class_model, nominal_index)))
+            return true
+        if name == "method_count":
+            codegen_type_names.append_specialization_decimal(builder, cast[usize](codegen_reflection.effective_method_count(model, class_model, nominal_index)))
+            return true
+        member_argument = codegen_names.second_call_argument(arena, id)
+        member_name = reflection_string_literal(arena, member_argument, source)
+        value = false
+        if name == "has_field":
+            value = codegen_reflection.has_effective_field(model, class_model, nominal_index, &member_name)
+        else:
+            value = codegen_reflection.has_effective_method(model, class_model, nominal_index, &member_name)
+        if value:
+            builder.append("true")
+        else:
+            builder.append("false")
+        return true
+    argument = codegen_names.first_call_argument(arena, id)
+    dyn_interface = codegen_context.context_expression_dyn_interface(arena, context, argument, source)
+    if dyn_interface >= 0:
+        emit_dynamic_reflection_call(arena, argument, name, source, builder, context, dyn_interface, state, emit_nested)
+        return true
+    nominal_index = reflection_nominal_for_value_expression(arena, argument, source, context)
+    if nominal_index < 0:
+        if name == "type_name":
+            builder.append("cinder_string_from_cstr(\"value\")")
+            return true
+        if name == "fields":
+            builder.append("((CinderList){ .data = NULL, .length = 0, .capacity = 0 })")
+            return true
+        builder.append("NULL")
+        return true
+    nominal: &const codegen_reflection.ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+    builder.append("({ (void)(")
+    emit_nested(state, argument)
+    builder.append("); ")
+    if name == "type_name":
+        builder.append("cinder_string_from_cstr(\"")
+        builder.append(nominal.name[0:len(nominal.name)])
+        builder.append("\"); })")
+        return true
+    if name == "type_info":
+        builder.append("&")
+        codegen_reflection.append_type_info_name(builder, nominal)
+        builder.append("; })")
+        return true
+    builder.append("(CinderList){ .data = (void *)")
+    codegen_reflection.append_type_info_name(builder, nominal)
+    builder.append(".fields, .length = ")
+    codegen_reflection.append_type_info_name(builder, nominal)
+    builder.append(".field_count, .capacity = 0 }")
+    builder.append("; })")
+    return true
+
+
+def emit_dynamic_reflection_call(
+    arena: &const SyntaxArena,
+    argument: NodeId,
+    name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    interface_index: i32,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    class_model: &const classes.ProjectClassModel = context.class_model
+    interface: &const classes.ClassInfo = &class_model.classes[cast[usize](interface_index)]
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("({ CinderDyn_")
+    builder.append(interface.c_name[0:len(interface.c_name)])
+    builder.append(" cinder_reflect_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = ")
+    emit_nested(state, argument)
+    builder.append("; const CinderTypeInfo *cinder_reflect_info = cinder_reflect_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(".vtable->type_info; ")
+    if name == "type_name":
+        builder.append("cinder_string_from_cstr(cinder_reflect_info->name)")
+        builder.append("; })")
+        return
+    if name == "type_info":
+        builder.append("cinder_reflect_info")
+        builder.append("; })")
+        return
+    builder.append("(CinderList){ .data = (void *)cinder_reflect_info->fields, .length = cinder_reflect_info->field_count, .capacity = 0 }")
+    builder.append("; })")
+
+
+def reflection_nominal_for_type_expression(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    context: &codegen_model.ModuleCodegenContext,
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        return codegen_reflection.find_nominal_for_name(context.reflection_model, context.imports, &context.module_name, &name)
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, id)
+        member = codegen_names.second_child(arena, id)
+        if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_NAME:
+            receiver_node = arena.nodes[receiver.index]
+            member_node = arena.nodes[member.index]
+            alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            imported = codegen_names.find_import_alias(context.imports, &alias)
+            if len(imported.module_name) > 0:
+                name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+                return codegen_reflection.find_nominal(context.reflection_model, &imported.module_name, &name)
+    return -1
+
+
+def reflection_nominal_for_value_expression(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    context: &codegen_model.ModuleCodegenContext,
+) -> i32:
+    class_model: &const classes.ProjectClassModel = context.class_model
+    class_index = codegen_context.context_expression_class(arena, context, id, source)
+    if class_index >= 0:
+        class_info: &const classes.ClassInfo = &class_model.classes[cast[usize](class_index)]
+        return codegen_reflection.find_nominal(context.reflection_model, &class_info.module_name, &class_info.name)
+    type_id = codegen_context.context_expression_type(arena, context, id, source)
+    owner = codegen_type_names.context_type_owner_name(context.type_arena, type_id, context.type_source)
+    if len(owner) > 0:
+        return codegen_reflection.find_nominal_for_name(context.reflection_model, context.imports, &context.module_name, &owner)
+    if id.index >= 0 and arena.nodes[id.index].kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, id)
+        if callee.index >= 0 and arena.nodes[callee.index].kind == SyntaxKind.EXPR_NAME:
+            callee_node = arena.nodes[callee.index]
+            name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+            return codegen_reflection.find_nominal_for_name(context.reflection_model, context.imports, &context.module_name, &name)
+    return -1
+
+
+def reflection_string_literal(arena: &const SyntaxArena, id: NodeId, source: &const String) -> String:
+    if id.index < 0:
+        return ""
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_LITERAL or node.value_length <= 2:
+        return ""
+    return source[node.value_start + 1:node.value_start + node.value_length - 1]
 
 
 def emit_closure_constructor(

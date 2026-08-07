@@ -1,0 +1,435 @@
+import classes
+import codegen_names
+import codegen_type_names
+import lexer
+import parser
+import project
+import reflection
+import syntax
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+enum ReflectionNominalKind:
+    STRUCT
+    CLASS
+    ENUM
+    UNION
+    VARIANT
+
+
+struct ReflectionFieldInfo:
+    owner: i32
+    name: String
+    type_name: String
+    c_type: String
+    is_private: bool
+
+
+struct ReflectionMethodInfo:
+    owner: i32
+    name: String
+    signature: String
+    return_type_name: String
+    parameter_count: i32
+    is_abstract: bool
+    is_override: bool
+
+
+struct ReflectionNominalInfo:
+    module_name: String
+    name: String
+    c_name: String
+    kind: ReflectionNominalKind
+    is_reflected: bool
+    class_index: i32
+    first_field: i32
+    field_count: i32
+    first_method: i32
+    method_count: i32
+
+
+struct ProjectReflectionModel:
+    nominals: List[ReflectionNominalInfo]
+    fields: List[ReflectionFieldInfo]
+    methods: List[ReflectionMethodInfo]
+
+
+def new_project_reflection_model() -> ProjectReflectionModel:
+    nominals: List[ReflectionNominalInfo] = []
+    fields: List[ReflectionFieldInfo] = []
+    methods: List[ReflectionMethodInfo] = []
+    return ProjectReflectionModel(nominals=nominals, fields=fields, methods=methods)
+
+
+def collect_project_reflection_model(
+    graph: &const project.ProjectGraph,
+    registry: &const codegen_names.SpecializationNameRegistry,
+    class_model: &const classes.ProjectClassModel,
+) -> ProjectReflectionModel:
+    model = new_project_reflection_model()
+    index: usize = 0
+    while index < len(graph.modules):
+        module: &const project.ParsedModule = &graph.modules[index]
+        scan = lexer.new_lexer(module.source[0:len(module.source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
+        collect_module_nominal_shells(parsed.arena, root, &module.source, &module.name, &prefix, class_model, model)
+        index += 1
+    index = 0
+    while index < len(graph.modules):
+        module: &const project.ParsedModule = &graph.modules[index]
+        scan = lexer.new_lexer(module.source[0:len(module.source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
+        collect_module_nominal_details(
+            parsed.arena,
+            root,
+            &module.source,
+            &module.name,
+            &prefix,
+            &graph.project_name,
+            &module.imports,
+            registry,
+            model,
+        )
+        index += 1
+    return model
+
+
+def collect_single_module_reflection_model(
+    arena: &const SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    class_model: &const classes.ProjectClassModel,
+) -> ProjectReflectionModel:
+    model = new_project_reflection_model()
+    prefix = codegen_names.c_prefix(project_name, module_name)
+    collect_module_nominal_shells(arena, root, source, module_name, &prefix, class_model, model)
+    collect_module_nominal_details(arena, root, source, module_name, &prefix, project_name, imports, registry, model)
+    return model
+
+
+def collect_module_nominal_shells(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+    prefix: &const String,
+    class_model: &const classes.ProjectClassModel,
+    model: &ProjectReflectionModel,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            collect_module_nominal_shells(arena, arena.children[node.first_child + offset], source, module_name, prefix, class_model, model)
+        return
+    kind = reflection_kind_for_syntax(node.kind)
+    if kind == ReflectionNominalKind.STRUCT and node.kind != SyntaxKind.STRUCT_DECL:
+        return
+    name = source[node.value_start:node.value_start + node.value_length]
+    class_index: i32 = -1
+    c_name = prefix[0:len(prefix)] + name[0:len(name)]
+    if node.kind == SyntaxKind.CLASS_DECL:
+        class_index = classes.find_class(class_model, module_name, &name)
+        if class_index >= 0:
+            c_name = class_model.classes[cast[usize](class_index)].c_name[0:len(class_model.classes[cast[usize](class_index)].c_name)]
+    model.nominals.append(
+        ReflectionNominalInfo(
+            module_name=module_name[0:len(module_name)],
+            name=name[0:len(name)],
+            c_name=c_name,
+            kind=kind,
+            is_reflected=reflection.has_decorator(arena, id, source, "reflect"),
+            class_index=class_index,
+            first_field=0,
+            field_count=0,
+            first_method=0,
+            method_count=0,
+        )
+    )
+
+
+def collect_module_nominal_details(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    model: &ProjectReflectionModel,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            collect_module_nominal_details(arena, arena.children[node.first_child + offset], source, module_name, prefix, project_name, imports, registry, model)
+        return
+    if not is_reflection_nominal_syntax(node.kind):
+        return
+    name = source[node.value_start:node.value_start + node.value_length]
+    nominal_index = find_nominal(model, module_name, &name)
+    if nominal_index < 0:
+        return
+    model.nominals[cast[usize](nominal_index)].first_field = cast[i32](len(model.fields))
+    model.nominals[cast[usize](nominal_index)].first_method = cast[i32](len(model.methods))
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == SyntaxKind.FIELD_DECL and node.kind != SyntaxKind.VARIANT_DECL:
+            field_type = codegen_type_names.find_child_type(arena, child_id)
+            c_type_builder = StringBuilder()
+            emit_reflection_c_type_expression(arena, field_type, source, &c_type_builder, prefix, project_name, imports, registry)
+            c_type = c_type_builder.finish()
+            type_name = source[arena.nodes[field_type.index].start:arena.nodes[field_type.index].start + arena.nodes[field_type.index].length]
+            model.fields.append(
+                ReflectionFieldInfo(
+                    owner=nominal_index,
+                    name=source[child.value_start:child.value_start + child.value_length],
+                    type_name=type_name,
+                    c_type=c_type,
+                    is_private=child.flags == 1,
+                )
+            )
+            model.nominals[cast[usize](nominal_index)].field_count += 1
+        elif child.kind == SyntaxKind.FUNCTION_DECL and (node.kind == SyntaxKind.STRUCT_DECL or node.kind == SyntaxKind.CLASS_DECL):
+            method_name = source[child.value_start:child.value_start + child.value_length]
+            if node.kind == SyntaxKind.CLASS_DECL and (method_name == "__init__" or method_name == "__del__"):
+                continue
+            return_type = codegen_type_names.find_child_type(arena, child_id)
+            return_type_name = "void"
+            if return_type.index >= 0:
+                return_type_name = source[arena.nodes[return_type.index].start:arena.nodes[return_type.index].start + arena.nodes[return_type.index].length]
+            parameter_count: i32 = 0
+            signature_builder = StringBuilder()
+            signature_builder.append(method_name[0:len(method_name)])
+            signature_builder.append("(")
+            seen_parameter: i32 = 0
+            for parameter_offset in range(0, child.child_count):
+                parameter_id = arena.children[child.first_child + parameter_offset]
+                parameter = arena.nodes[parameter_id.index]
+                if parameter.kind != SyntaxKind.PARAMETER:
+                    continue
+                if seen_parameter > 0:
+                    parameter_type = codegen_type_names.find_child_type(arena, parameter_id)
+                    if parameter_count > 0:
+                        signature_builder.append(", ")
+                    if parameter_type.index >= 0:
+                        signature_builder.append(source[arena.nodes[parameter_type.index].start:arena.nodes[parameter_type.index].start + arena.nodes[parameter_type.index].length])
+                    else:
+                        signature_builder.append("i32")
+                    parameter_count += 1
+                seen_parameter += 1
+            signature_builder.append(") -> ")
+            signature_builder.append(return_type_name[0:len(return_type_name)])
+            signature = signature_builder.finish()
+            model.methods.append(
+                ReflectionMethodInfo(
+                    owner=nominal_index,
+                    name=method_name,
+                    signature=signature,
+                    return_type_name=return_type_name,
+                    parameter_count=parameter_count,
+                    is_abstract=reflection.has_decorator(arena, child_id, source, "abstractmethod"),
+                    is_override=reflection.has_decorator(arena, child_id, source, "override"),
+                )
+            )
+            model.nominals[cast[usize](nominal_index)].method_count += 1
+
+
+def emit_reflection_c_type_expression(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    if id.index >= 0 and arena.nodes[id.index].kind == SyntaxKind.TYPE_ARRAY:
+        emit_reflection_c_type_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, registry)
+        builder.append("[")
+        length = codegen_names.second_child(arena, id)
+        if length.index >= 0:
+            length_node = arena.nodes[length.index]
+            codegen_names.append_source(builder, source, length_node.value_start, length_node.value_length)
+        builder.append("]")
+        return
+    codegen_type_names.emit_module_c_type(arena, id, source, builder, prefix, project_name, imports, registry)
+
+
+def is_reflection_nominal_syntax(kind: SyntaxKind) -> bool:
+    return kind == SyntaxKind.STRUCT_DECL or kind == SyntaxKind.CLASS_DECL or kind == SyntaxKind.ENUM_DECL or kind == SyntaxKind.UNION_DECL or kind == SyntaxKind.VARIANT_DECL
+
+
+def reflection_kind_for_syntax(kind: SyntaxKind) -> ReflectionNominalKind:
+    if kind == SyntaxKind.CLASS_DECL:
+        return ReflectionNominalKind.CLASS
+    if kind == SyntaxKind.ENUM_DECL:
+        return ReflectionNominalKind.ENUM
+    if kind == SyntaxKind.UNION_DECL:
+        return ReflectionNominalKind.UNION
+    if kind == SyntaxKind.VARIANT_DECL:
+        return ReflectionNominalKind.VARIANT
+    return ReflectionNominalKind.STRUCT
+
+
+def find_nominal(model: &const ProjectReflectionModel, module_name: &const String, name: &const String) -> i32:
+    index: usize = 0
+    while index < len(model.nominals):
+        nominal: &const ReflectionNominalInfo = &model.nominals[index]
+        if nominal.module_name == module_name[0:len(module_name)] and nominal.name == name[0:len(name)]:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def find_nominal_for_name(
+    model: &const ProjectReflectionModel,
+    imports: &const List[project.ImportBinding],
+    current_module: &const String,
+    name: &const String,
+) -> i32:
+    module_name = classes.module_for_name(imports, current_module, name)
+    return find_nominal(model, &module_name, name)
+
+
+def nominal_primary_base(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32) -> i32:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return -1
+    nominal: &const ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+    if nominal.class_index < 0:
+        return -1
+    class_info: &const classes.ClassInfo = &class_model.classes[cast[usize](nominal.class_index)]
+    if class_info.primary_base < 0:
+        return -1
+    base: &const classes.ClassInfo = &class_model.classes[cast[usize](class_info.primary_base)]
+    return find_nominal(model, &base.module_name, &base.name)
+
+
+def effective_field_count(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32) -> i32:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return 0
+    nominal: &const ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+    base = nominal_primary_base(model, class_model, nominal_index)
+    return nominal.field_count + effective_field_count(model, class_model, base)
+
+
+def effective_field_at(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32, wanted: i32) -> i32:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)) or wanted < 0:
+        return -1
+    base = nominal_primary_base(model, class_model, nominal_index)
+    base_count = effective_field_count(model, class_model, base)
+    if wanted < base_count:
+        return effective_field_at(model, class_model, base, wanted)
+    nominal: &const ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+    own_offset = wanted - base_count
+    if own_offset < 0 or own_offset >= nominal.field_count:
+        return -1
+    return nominal.first_field + own_offset
+
+
+def has_effective_field(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32, name: &const String) -> bool:
+    count = effective_field_count(model, class_model, nominal_index)
+    offset: i32 = 0
+    while offset < count:
+        field_index = effective_field_at(model, class_model, nominal_index, offset)
+        if field_index >= 0 and model.fields[cast[usize](field_index)].name == name[0:len(name)]:
+            return true
+        offset += 1
+    return false
+
+
+def effective_method_count(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32) -> i32:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return 0
+    nominal: &const ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+    if nominal.class_index < 0:
+        return nominal.method_count
+    count: i32 = nominal.method_count
+    class_info: &const classes.ClassInfo = &class_model.classes[cast[usize](nominal.class_index)]
+    for base_offset in range(0, class_info.base_count):
+        base_info: &const classes.ClassBaseInfo = &class_model.bases[cast[usize](class_info.first_base + base_offset)]
+        if base_info.target < 0:
+            continue
+        base_class: &const classes.ClassInfo = &class_model.classes[cast[usize](base_info.target)]
+        base_nominal = find_nominal(model, &base_class.module_name, &base_class.name)
+        base_count = effective_method_count(model, class_model, base_nominal)
+        for method_offset in range(0, base_count):
+            method_index = effective_method_at(model, class_model, base_nominal, method_offset)
+            if method_index >= 0 and not own_method_named(model, nominal_index, &model.methods[cast[usize](method_index)].name):
+                count += 1
+    return count
+
+
+def effective_method_at(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32, wanted: i32) -> i32:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)) or wanted < 0:
+        return -1
+    nominal: &const ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+    if wanted < nominal.method_count:
+        return nominal.first_method + wanted
+    remaining = wanted - nominal.method_count
+    if nominal.class_index < 0:
+        return -1
+    class_info: &const classes.ClassInfo = &class_model.classes[cast[usize](nominal.class_index)]
+    for base_offset in range(0, class_info.base_count):
+        base_info: &const classes.ClassBaseInfo = &class_model.bases[cast[usize](class_info.first_base + base_offset)]
+        if base_info.target < 0:
+            continue
+        base_class: &const classes.ClassInfo = &class_model.classes[cast[usize](base_info.target)]
+        base_nominal = find_nominal(model, &base_class.module_name, &base_class.name)
+        base_count = effective_method_count(model, class_model, base_nominal)
+        for method_offset in range(0, base_count):
+            method_index = effective_method_at(model, class_model, base_nominal, method_offset)
+            if method_index >= 0 and not own_method_named(model, nominal_index, &model.methods[cast[usize](method_index)].name):
+                if remaining == 0:
+                    return method_index
+                remaining -= 1
+    return -1
+
+
+def own_method_named(model: &const ProjectReflectionModel, nominal_index: i32, name: &const String) -> bool:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return false
+    nominal: &const ReflectionNominalInfo = &model.nominals[cast[usize](nominal_index)]
+    for offset in range(0, nominal.method_count):
+        if model.methods[cast[usize](nominal.first_method + offset)].name == name[0:len(name)]:
+            return true
+    return false
+
+
+def has_effective_method(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32, name: &const String) -> bool:
+    count = effective_method_count(model, class_model, nominal_index)
+    for offset in range(0, count):
+        method_index = effective_method_at(model, class_model, nominal_index, offset)
+        if method_index >= 0 and model.methods[cast[usize](method_index)].name == name[0:len(name)]:
+            return true
+    return false
+
+
+def append_type_info_name(builder: &StringBuilder, nominal: &const ReflectionNominalInfo) -> void:
+    builder.append(nominal.c_name[0:len(nominal.c_name)])
+    builder.append("__type_info")
+
+
+def append_field_info_name(builder: &StringBuilder, nominal: &const ReflectionNominalInfo) -> void:
+    builder.append(nominal.c_name[0:len(nominal.c_name)])
+    builder.append("__field_info")
+
+
+def append_method_info_name(builder: &StringBuilder, nominal: &const ReflectionNominalInfo) -> void:
+    builder.append(nominal.c_name[0:len(nominal.c_name)])
+    builder.append("__method_info")
