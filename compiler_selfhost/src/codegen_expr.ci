@@ -582,12 +582,20 @@ def emit_module_propagate(
     value = codegen_names.first_child(arena, id)
     source_type = codegen_context.context_expression_type(arena, context, value, source)
     enclosing_type = context.current_return_type
-    if not codegen_context.context_type_is_runtime_generic(context.type_arena, source_type, context.type_source, "Result") or not codegen_context.context_type_is_runtime_generic(context.type_arena, enclosing_type, context.type_source, "Result"):
+    if not codegen_context.context_type_is_runtime_generic(context.type_arena, enclosing_type, context.type_source, "Result"):
         builder.append("0")
         return
-    source_name_builder = StringBuilder()
-    codegen_type_names.emit_specialized_type_name(context.type_arena, source_type, context.type_source, &source_name_builder, prefix, project_name, imports, context.specialization_names)
-    source_name = source_name_builder.finish()
+    source_is_local_result = codegen_context.context_type_is_runtime_generic(context.type_arena, source_type, context.type_source, "Result")
+    source_name = ""
+    if source_is_local_result:
+        source_name_builder = StringBuilder()
+        codegen_type_names.emit_specialized_type_name(context.type_arena, source_type, context.type_source, &source_name_builder, prefix, project_name, imports, context.specialization_names)
+        source_name = source_name_builder.finish()
+    else:
+        source_name = codegen_context.context_call_result_c_type(arena, context, value, source)
+    if len(source_name) == 0:
+        builder.append("0")
+        return
     enclosing_name_builder = StringBuilder()
     codegen_type_names.emit_specialized_type_name(context.type_arena, enclosing_type, context.type_source, &enclosing_name_builder, prefix, project_name, imports, context.specialization_names)
     enclosing_name = enclosing_name_builder.finish()
@@ -595,7 +603,8 @@ def emit_module_propagate(
     builder.append(source_name[0:len(source_name)])
     builder.append(" cinder_result = ")
     previous_expected = context.expected_type
-    context.expected_type = source_type
+    if source_is_local_result:
+        context.expected_type = source_type
     emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
     context.expected_type = previous_expected
     builder.append("; if (cinder_result.tag == ")

@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-07 04:23:53 UTC
+# date:   2026-08-07 22:15:08 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 36 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -13,7 +13,7 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 31 ok, 5 fail
+Summary: 32 ok, 4 fail
 
 ## Status by example
 examples/aggregate_ownership.ci   OK    ok
@@ -51,14 +51,13 @@ examples/types_and_results.ci     OK    ok
 examples/vectors.ci               OK    ok
 examples/write_jpg.ci             OK    ok
 examples/class_project            OK    ok
-examples/module_project           FAIL  gen3_toolchain_error
+examples/module_project           OK    ok
 
 ## First non-warning C errors
 - examples/anti_examples.ci: cinder_gen/anti_examples.c:497 [missing_member] generated C at function main - no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
 - examples/binary_sort.ci: no non-warning C error found (kind: gen3_runtime_nonzero)
 - examples/dijkstra_showcase.ci: cinder_gen/dijkstra_showcase.c:103 [c_error] generated C at function ConsoleReporter_emit - passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
 - examples/expressive_match.ci: cinder_gen/expressive_match.cinder.h:159 [incomplete_type] type definition ordering at struct CinderOption_CinderResult_i32_ParseError - field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
-- examples/module_project: cinder_gen/main.c:9 [c_error] generated C at function increment - member reference base type 'int' is not a structure or union
 
 ## OK
 - examples/aggregate_ownership.ci
@@ -92,6 +91,7 @@ examples/module_project           FAIL  gen3_toolchain_error
 - examples/vectors.ci
 - examples/write_jpg.ci
 - examples/class_project
+- examples/module_project
 
 ## Failures
 ### examples/anti_examples.ci
@@ -100,10 +100,10 @@ kind: gen3_toolchain_error
 first C error: cinder_gen/anti_examples.c:497 [missing_member]
 source feature: generated C at function main
 message: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
-elapsed: 0.1s
+elapsed: 0.2s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.e0m9nona/anti_examples.ci-build/cinder_gen/anti_examples.c:497:66: error: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.tgwuinye/anti_examples.ci-build/cinder_gen/anti_examples.c:497:66: error: no member named 'is_ok' in 'struct CinderResult_i32_ParseError'
 
 ### examples/binary_sort.ci
 gen3 exit=133
@@ -122,7 +122,7 @@ message: passing 'int32_t' (aka 'int') to parameter of incompatible type 'Cinder
 elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.e0m9nona/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:103:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.tgwuinye/dijkstra_showcase.ci-build/cinder_gen/dijkstra_showcase.c:103:117: error: passing 'int32_t' (aka 'int') to parameter of incompatible type 'CinderString' (aka 'struct CinderString')
 
 ### examples/expressive_match.ci
 gen3 exit=2
@@ -133,17 +133,4 @@ message: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct Ci
 elapsed: 0.1s
 
 --- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.e0m9nona/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:159:37: error: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')
-
-### examples/module_project
-gen3 exit=2
-kind: gen3_toolchain_error
-first C error: cinder_gen/main.c:9 [c_error]
-source feature: generated C at function increment
-message: member reference base type 'int' is not a structure or union
-elapsed: 0.2s
-
---- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.e0m9nona/module_project-build/cinder_gen/main.c:9:28: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.e0m9nona/module_project-build/cinder_gen/main.c:10:44: error: member reference base type 'int' is not a structure or union
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.e0m9nona/module_project-build/cinder_gen/main.c:16:28: error: member reference base type 'int' is not a structure or union
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.tgwuinye/expressive_match.ci-build/cinder_gen/expressive_match.cinder.h:159:37: error: field has incomplete type 'CinderResult_i32_ParseError' (aka 'struct CinderResult_i32_ParseError')

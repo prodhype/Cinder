@@ -257,14 +257,12 @@ def context_expression_dyn_interface(
     return context_class_for_type(type_arena, context, current, context.type_source)
 
 
-def context_callee_dyn_parameter(
+def context_callee_function(
     arena: &const SyntaxArena,
     context: &ModuleCodegenContext,
     callee: NodeId,
     source: &const String,
-    parameter_index: usize,
 ) -> i32:
-    model: &const classes.ProjectClassModel = context.class_model
     if callee.index < 0:
         return -1
     module_name = context.module_name[0:len(context.module_name)]
@@ -293,7 +291,41 @@ def context_callee_dyn_parameter(
         function_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
     else:
         return -1
-    function_index = classes.find_function(model, &module_name, &function_name)
+    return classes.find_function(context.class_model, &module_name, &function_name)
+
+
+def context_call_result_c_type(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> String:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_CALL:
+        return ""
+    function_index = context_callee_function(
+        arena,
+        context,
+        codegen_names.first_child(arena, id),
+        source,
+    )
+    if function_index < 0:
+        return ""
+    model: &const classes.ProjectClassModel = context.class_model
+    function: &const classes.ClassFunctionInfo = &model.functions[cast[usize](function_index)]
+    if not function.returns_result:
+        return ""
+    return function.return_c_type[0:len(function.return_c_type)]
+
+
+def context_callee_dyn_parameter(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    callee: NodeId,
+    source: &const String,
+    parameter_index: usize,
+) -> i32:
+    model: &const classes.ProjectClassModel = context.class_model
+    function_index = context_callee_function(arena, context, callee, source)
     if function_index < 0:
         return -1
     function: &const classes.ClassFunctionInfo = &model.functions[cast[usize](function_index)]
