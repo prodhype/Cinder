@@ -1529,7 +1529,11 @@ def emit_remaining_call_arguments(
                 borrow_argument = codegen_context.should_borrow_for_callee(arena, context, callee, arg, source, argument_index)
             if borrow_argument and not codegen_context.call_is_name(arena, callee, source, "dump_summary"):
                 builder.append("&")
+            previous_expected = context.expected_type
+            if expected_type.index >= 0:
+                context.expected_type = expected_type
             emit_nested(state, arg)
+            context.expected_type = previous_expected
             if not borrow_argument:
                 codegen_context.mark_context_expression_moved(arena, context, arg, source)
             emitted_argument = true

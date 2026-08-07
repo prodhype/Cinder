@@ -184,7 +184,7 @@ def emit_module_statement(
         if expr.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[expr.index].kind):
             builder.append(" = ")
             if annotation.index >= 0 and codegen_specializations.context_type_is_array(arena, annotation):
-                codegen_expr.emit_module_array_initializer(arena, expr, source, builder, prefix, project_name, imports, context)
+                codegen_expr.emit_module_array_initializer(arena, expr, annotation, source, builder, prefix, project_name, imports, context)
             else:
                 previous_expected = context.expected_type
                 if annotation.index >= 0:
@@ -459,7 +459,7 @@ def emit_module_for_clause(
         if expr.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[expr.index].kind):
             builder.append(" = ")
             if annotation.index >= 0 and codegen_specializations.context_type_is_array(arena, annotation):
-                codegen_expr.emit_module_array_initializer(arena, expr, source, builder, prefix, project_name, imports, context)
+                codegen_expr.emit_module_array_initializer(arena, expr, annotation, source, builder, prefix, project_name, imports, context)
             else:
                 codegen_expr.emit_module_expression(arena, expr, source, builder, prefix, project_name, imports, context)
         if annotation.index >= 0:

@@ -26,7 +26,7 @@ Fix gen3 match lowering for nested patterns, guarded cases, capture patterns, an
 
 Fix local and imported enum or variant constructors in expressions and result payloads. The current output emits forms such as `model.ParseError.negative`, `model.Token.Integer(value)`, and zero-payload variants as invalid C expressions. This affects `module_project`, `expressive_match.ci`, `convert.ci`, and `anti_examples.ci`.
 
-7. Propagate expected aggregate types
+7. Propagate expected aggregate types (done)
 
 Fix expected-type propagation for list literals, fixed-array initializers, struct fields, assignments, and function arguments. The current output emits generic `CinderList` values where `CinderList_i32`, `i32[36]`, or `List[i32][2]` is required. This affects `aggregate_ownership.ci`, `dijkstra_showcase.ci`, and `anti_examples.ci`.
 

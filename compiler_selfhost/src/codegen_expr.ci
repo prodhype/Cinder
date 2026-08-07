@@ -16,6 +16,7 @@ from syntax import NodeId, SyntaxArena, SyntaxKind
 def emit_module_array_initializer(
     arena: &const SyntaxArena,
     id: NodeId,
+    expected_type: NodeId,
     source: &const String,
     builder: &StringBuilder,
     prefix: &const String,
@@ -23,10 +24,15 @@ def emit_module_array_initializer(
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
 ) -> void:
-    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_LIST:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_LIST or not codegen_specializations.context_type_is_array(context.type_arena, expected_type):
+        previous_expected = context.expected_type
+        if expected_type.index >= 0:
+            context.expected_type = expected_type
         emit_module_expression(arena, id, source, builder, prefix, project_name, imports, context)
+        context.expected_type = previous_expected
         return
     node = arena.nodes[id.index]
+    element_type = codegen_context.context_list_element_type(context.type_arena, expected_type, context.type_source)
     builder.append("{")
     emitted = false
     for offset in range(0, node.child_count):
@@ -34,7 +40,7 @@ def emit_module_array_initializer(
         if child_id.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[child_id.index].kind):
             if emitted:
                 builder.append(", ")
-            emit_module_array_initializer(arena, child_id, source, builder, prefix, project_name, imports, context)
+            emit_module_array_initializer(arena, child_id, element_type, source, builder, prefix, project_name, imports, context)
             emitted = true
     builder.append("}")
 
@@ -90,8 +96,13 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         return
     if node.kind == SyntaxKind.EXPR_LIST:
         list_type = context.expected_type
+        if codegen_specializations.context_type_is_array(context.type_arena, list_type):
+            emit_module_array_initializer(arena, id, list_type, source, builder, prefix, project_name, imports, context)
+            return
         has_specialized_list = codegen_context.context_type_is_runtime_generic(context.type_arena, list_type, context.type_source, "List")
-        semantic_list_type = codegen_context.context_semantic_type(context, id)
+        semantic_list_type = codegen_context.context_semantic_type(context, list_type)
+        if not codegen_type_names.semantic_type_is_kind(type_table, semantic_list_type, types.TypeKind.LIST):
+            semantic_list_type = codegen_context.context_semantic_type(context, id)
         has_semantic_list = codegen_type_names.semantic_type_is_kind(type_table, semantic_list_type, types.TypeKind.LIST)
         if has_semantic_list:
             semantic_list_record = type_table.types[semantic_list_type.index]
@@ -112,7 +123,7 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         else:
             builder.append("CinderList")
         builder.append("){0};")
-        element_type = codegen_context.context_generic_argument(context.type_arena, list_type, 0)
+        element_type = codegen_context.context_list_element_type(context.type_arena, list_type, context.type_source)
         for offset in range(0, node.child_count):
             child_id = arena.children[node.first_child + offset]
             if child_id.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[child_id.index].kind):

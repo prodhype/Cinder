@@ -665,6 +665,7 @@ def emit_nominal_constructor(
     builder.append("){")
     node = arena.nodes[id.index]
     emitted = false
+    positional_index: i32 = 0
     for offset in range(1, node.child_count):
         child_id = arena.children[node.first_child + offset]
         child = arena.nodes[child_id.index]
@@ -680,6 +681,9 @@ def emit_nominal_constructor(
                 builder.append(" = ")
                 field_name = source[named_node.value_start:named_node.value_start + named_node.value_length]
                 field_type = codegen_context.context_field_type(context, name, &field_name)
+            else:
+                field_type = codegen_context.context_field_type_at(context, name, positional_index)
+                positional_index += 1
             value = codegen_names.last_child(arena, child_id)
             previous_expected = context.expected_type
             if field_type.index >= 0:
@@ -707,6 +711,7 @@ def emit_class_constructor_call(
     builder.append("__new(")
     node = arena.nodes[id.index]
     emitted = false
+    argument_index: usize = 0
     for offset in range(1, node.child_count):
         child_id = arena.children[node.first_child + offset]
         child = arena.nodes[child_id.index]
@@ -715,9 +720,15 @@ def emit_class_constructor_call(
         if emitted:
             builder.append(", ")
         argument = codegen_names.last_child(arena, child_id)
+        previous_expected = context.expected_type
+        expected_type = codegen_context.context_class_constructor_parameter_type(context, class_index, argument_index)
+        if expected_type.index >= 0:
+            context.expected_type = expected_type
         emit_nested(state, argument)
+        context.expected_type = previous_expected
         codegen_context.mark_context_expression_moved(arena, context, argument, source)
         emitted = true
+        argument_index += 1
     builder.append(")")
 
 def emit_string_constructor(
