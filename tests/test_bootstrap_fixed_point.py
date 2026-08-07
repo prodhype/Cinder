@@ -516,10 +516,8 @@ def test_gen1_dispatches_append_by_receiver_type(
 
     emitted = run_gen1(gen1_compiler, "emit-c", str(source))
     assert emitted.returncode == 0, emitted.stderr
-    assert (
-        'cinder_selfhost_string_builder_append_cstr(&text_parts, "alpha")'
-        in emitted.stdout
-    )
+    assert "cinder_string_builder_append(&text_parts," in emitted.stdout
+    assert '.data = (char *)"alpha"' in emitted.stdout
     assert "cinder_selfhost_list_append_value(&builder, (42))" in emitted.stdout
     assert "cinder_selfhost_list_append_value(&text_parts" not in emitted.stdout
     assert "cinder_selfhost_string_builder_append_value(&builder" not in emitted.stdout
@@ -529,6 +527,90 @@ def test_gen1_dispatches_append_by_receiver_type(
     assert built.returncode == 0, built.stderr
     executed = subprocess.run([str(output)], check=False)
     assert executed.returncode == 0
+
+
+def assert_compiler_lowers_complete_string_operations(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "complete_strings.ci"
+    source.write_text(
+        'extern import "string.h"\n'
+        "\n"
+        'extern "C":\n'
+        "    def strlen(text: const char*) -> c_size_t\n"
+        "\n"
+        'const GREETING: String = "héllo"\n'
+        "\n"
+        "def main() -> i32:\n"
+        "    working = GREETING.clone()\n"
+        "    working.reserve(32)\n"
+        '    working.append("!")\n'
+        "    working.append_char('?')\n"
+        '    if working != "héllo!?":\n'
+        "        return 1\n"
+        "    copied = working.clone()\n"
+        "    working.clear()\n"
+        "    if len(working) != 0 or len(copied) != 8:\n"
+        "        return 2\n"
+        "    builder = StringBuilder()\n"
+        "    builder.reserve(16)\n"
+        '    builder.append("build")\n'
+        "    builder.append_char('-')\n"
+        '    builder.append("up")\n'
+        "    built = builder.finish()\n"
+        '    if built != "build-up":\n'
+        "        return 3\n"
+        '    if not ("alpha" < "beta" and "alpha" <= "alpha" and "beta" > "alpha" and "beta" >= "beta"):\n'
+        "        return 4\n"
+        '    raw: const char* = "raw"\n'
+        "    if strlen(raw) != 3 or strlen(built) != 8:\n"
+        "        return 5\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert "const CinderString" in generated
+    assert '.data = (char *)"héllo"' in generated
+    assert '.length = sizeof("héllo") - 1' in generated
+    assert "cinder_string_clone(" in generated
+    assert "cinder_string_reserve(" in generated
+    assert "cinder_string_append(" in generated
+    assert "cinder_string_append_char(" in generated
+    assert "cinder_string_clear(" in generated
+    assert "cinder_string_builder_reserve(" in generated
+    assert "cinder_string_builder_append(" in generated
+    assert "cinder_string_builder_append_char(" in generated
+    assert "cinder_string_builder_finish(" in generated
+    assert "cinder_selfhost_string_compare(" in generated
+    assert "strlen(cinder_string_cstr(&built))" in generated
+    assert "cinder_selfhost_list_append_value(&working" not in generated
+    assert "\n    clone(" not in generated
+    assert "\n    reserve(" not in generated
+
+    output = tmp_path / "complete-strings"
+    built = run_gen1(compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
+def test_gen1_lowers_complete_string_operations(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_lowers_complete_string_operations(gen1_compiler, tmp_path)
+
+
+def test_gen2_lowers_complete_string_operations(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_lowers_complete_string_operations(gen2, tmp_path)
 
 
 def test_gen1_emits_bitwise_and_shift_compound_assigns(
@@ -633,6 +715,89 @@ def test_gen1_matches_parse_i32_result_tags_and_captures(
     assert built.returncode == 0, built.stderr
     executed = subprocess.run([str(output)], check=False)
     assert executed.returncode == 0
+
+
+def assert_compiler_lowers_string_conversions(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "string_conversions.ci"
+    source.write_text(
+        "def require_i32(text: String) -> Result[i32, ConvertError]:\n"
+        "    return parse_i32(text)\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    parse_i64("-2")\n'
+        '    parse_u32("3")\n'
+        '    parse_u64("4")\n'
+        '    parse_isize("-5")\n'
+        '    parse_usize("6")\n'
+        '    parse_f32("1.25")\n'
+        '    parse_f64("2.5")\n'
+        '    match parse_bool("true"):\n'
+        "        case Ok(value):\n"
+        "            if to_string(value) != \"true\":\n"
+        "                return 1\n"
+        "        case Err(error):\n"
+        "            return 2\n"
+        '    match require_i32("42"):\n'
+        "        case Ok(value):\n"
+        '            if to_string(value) != "42":\n'
+        "                return 3\n"
+        "        case Err(error):\n"
+        "            return 4\n"
+        "    if to_string('Z') != \"Z\":\n"
+        "        return 5\n"
+        "    if to_string(cast[u32](7)) != \"7\":\n"
+        "        return 6\n"
+        "    if to_string(cast[f64](3.5)) != \"3.5\":\n"
+        "        return 7\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    for name in (
+        "bool",
+        "i32",
+        "i64",
+        "u32",
+        "u64",
+        "isize",
+        "usize",
+        "f32",
+        "f64",
+    ):
+        assert f"cinder_selfhost_parse_{name}(" in generated
+        assert f"__parse_{name}" not in generated
+    for name in ("bool", "i32", "char", "u32", "f64"):
+        assert f"cinder_{name}_to_string(" in generated
+    assert "CinderResult_i32_n_CinderParseError" in generated
+    assert "cinder_string_conversions_string_conversions__ConvertError" not in generated
+    assert "__to_string" not in generated
+
+    output = tmp_path / "string-conversions"
+    built = run_gen1(compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
+def test_gen1_lowers_string_conversions(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_lowers_string_conversions(gen1_compiler, tmp_path)
+
+
+def test_gen2_lowers_string_conversions(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_lowers_string_conversions(gen2, tmp_path)
 
 
 def test_gen1_lowers_nested_guarded_capture_and_or_match_patterns(
@@ -2815,20 +2980,11 @@ def test_gen1_builds_compiler_sources_into_gen2(
     specializations = (
         build_dir / "cinder_gen" / "codegen_specializations.c"
     ).read_text(encoding="utf-8")
-    assert "cinder_selfhost_string_builder_append_value(&phase_builder," in specializations
-    assert (
-        'cinder_selfhost_string_builder_append_cstr(&phase_builder, "_helpers")'
-        in specializations
-    )
-    assert (
-        'cinder_selfhost_string_builder_append_cstr(&phase_builder, "_layout")'
-        in specializations
-    )
-    assert (
-        'cinder_selfhost_string_builder_append_cstr(&option_builder, "CinderOption_")'
-        in specializations
-    )
-    assert "cinder_selfhost_string_builder_append_value(&option_builder," in specializations
+    assert "cinder_string_builder_append(&phase_builder," in specializations
+    assert '.data = (char *)"_helpers"' in specializations
+    assert '.data = (char *)"_layout"' in specializations
+    assert '.data = (char *)"CinderOption_"' in specializations
+    assert "cinder_string_builder_append(&option_builder," in specializations
     assert "cinder_selfhost_list_append_value(&phase_builder" not in specializations
     assert "cinder_selfhost_list_append_value(&option_builder" not in specializations
 

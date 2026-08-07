@@ -34,6 +34,6 @@ Fix expected-type propagation for list literals, fixed-array initializers, struc
 
 Implement `Owned[T]` construction, dereference, field access through dereference, moves, and drop glue in gen3. The current output emits a missing nominal `Owned` constructor and then treats `CinderOwned_T` as if it were a pointer. This blocks `owned.ci` and can also affect examples that use owning wrappers inside `Option` or `Result`.
 
-9. Complete String operations
+9. Complete String operations (done)
 
 Implement gen3 lowering for static `String` constants and `String` or `StringBuilder` methods such as `clone`, `reserve`, `append`, `append_char`, `clear`, and `finish`. The current output initializes a `const CinderString` with a runtime function call and emits method names such as `clone` and `reserve` as undeclared C functions. This affects `strings.ci`, `convert.ci`, and `anti_examples.ci`.

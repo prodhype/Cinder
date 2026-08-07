@@ -17,6 +17,13 @@ struct ModuleNameTypeBinding:
     type_id: NodeId
     moved: bool
 
+
+struct ModuleSemanticNameTypeBinding:
+    name_start: usize
+    name_length: usize
+    type_id: types.TypeId
+
+
 struct ModuleFieldTypeBinding:
     owner: String
     field: String
@@ -54,6 +61,7 @@ struct ModuleCodegenContext:
     user_specializations: &const List[semantic.UserSpecialization]
     active_user_specialization: i32
     local_types: List[ModuleNameTypeBinding]
+    semantic_name_types: List[ModuleSemanticNameTypeBinding]
     pointer_names: List[String]
     tuple_items: List[ModuleTupleItemBinding]
     reflection_bindings: List[ModuleReflectionBinding]
@@ -99,6 +107,7 @@ def make_module_codegen_context(
     user_specializations: &const List[semantic.UserSpecialization],
 ) -> ModuleCodegenContext:
     local_types: List[ModuleNameTypeBinding] = []
+    semantic_name_types: List[ModuleSemanticNameTypeBinding] = []
     pointer_names: List[String] = []
     tuple_items: List[ModuleTupleItemBinding] = []
     reflection_bindings: List[ModuleReflectionBinding] = []
@@ -125,6 +134,7 @@ def make_module_codegen_context(
         user_specializations=user_specializations,
         active_user_specialization=-1,
         local_types=local_types,
+        semantic_name_types=semantic_name_types,
         pointer_names=pointer_names,
         tuple_items=tuple_items,
         reflection_bindings=reflection_bindings,
@@ -419,7 +429,7 @@ def semantic_type_contains_owned(table: &const types.TypeTable, type_id: types.T
     if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
         return false
     record = table.types[type_id.index]
-    if record.kind == types.TypeKind.OWNED:
+    if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.STRING_BUILDER or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET:
         return true
     if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.OPTION:
         return semantic_type_contains_owned(table, record.inner)
@@ -468,7 +478,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
     semantic_type = context_semantic_type(context, type_id)
     if semantic_type.index >= 0 and not codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.ERROR):
         semantic_record = context.type_table.types[semantic_type.index]
-        if semantic_record.kind == types.TypeKind.STRING or semantic_record.kind == types.TypeKind.LIST or semantic_record.kind == types.TypeKind.MAP or semantic_record.kind == types.TypeKind.SET or semantic_record.kind == types.TypeKind.OPTION or semantic_record.kind == types.TypeKind.OWNED:
+        if semantic_record.kind == types.TypeKind.STRING or semantic_record.kind == types.TypeKind.STRING_BUILDER or semantic_record.kind == types.TypeKind.LIST or semantic_record.kind == types.TypeKind.MAP or semantic_record.kind == types.TypeKind.SET or semantic_record.kind == types.TypeKind.OPTION or semantic_record.kind == types.TypeKind.OWNED:
             return true
         if semantic_record.kind == types.TypeKind.RESULT or semantic_record.kind == types.TypeKind.TUPLE:
             return semantic_type_contains_owned(context.type_table, semantic_type)
@@ -479,7 +489,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
     if node.kind == SyntaxKind.EXPR_LITERAL:
         return node.flags == cast[i32](token.TokenKind.STRING)
     if node.kind == SyntaxKind.EXPR_CALL:
-        return context_type_is_string(arena, type_id, source) or context_type_is_file_read_call(arena, type_id, source, "read_line") or context_type_is_file_read_call(arena, type_id, source, "read_all")
+        return context_type_is_string(arena, type_id, source) or context_type_is_string_builder(arena, type_id, source) or context_type_is_file_read_call(arena, type_id, source, "read_line") or context_type_is_file_read_call(arena, type_id, source, "read_all")
     if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
         return true
     if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
@@ -652,6 +662,39 @@ def context_reflection_binding_nominal(context: &const ModuleCodegenContext, sou
 
 def register_context_semantic_string_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
     context.semantic_string_names.append(source[start:start + length])
+
+
+def register_context_semantic_name_type(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize, type_id: types.TypeId) -> void:
+    if length == 0 or type_id.index < 0:
+        return
+    context.semantic_name_types.append(
+        ModuleSemanticNameTypeBinding(
+            name_start=start,
+            name_length=length,
+            type_id=type_id,
+        )
+    )
+
+
+def context_semantic_name_type(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> types.TypeId:
+    index = len(context.semantic_name_types)
+    while index > 0:
+        index -= 1
+        binding: &const ModuleSemanticNameTypeBinding = &context.semantic_name_types[index]
+        if context_name_ranges_equal(source, binding.name_start, binding.name_length, start, length):
+            return binding.type_id
+    return types.missing_type()
+
+
+def context_name_ranges_equal(source: &const String, left_start: usize, left_length: usize, right_start: usize, right_length: usize) -> bool:
+    if left_length != right_length:
+        return false
+    offset: usize = 0
+    while offset < left_length:
+        if source.byte_at(left_start + offset) != source.byte_at(right_start + offset):
+            return false
+        offset += 1
+    return true
 
 
 def context_name_is_semantic_string(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> bool:
@@ -858,6 +901,16 @@ def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.T
         if node.syntax.index == id.index:
             return node.type_id
     return types.missing_type()
+
+
+def context_semantic_type_is_kind(context: &ModuleCodegenContext, type_id: types.TypeId, kind: types.TypeKind) -> bool:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(context.type_table.types)):
+        record = context.type_table.types[current.index]
+        if record.kind != types.TypeKind.CONST and record.kind != types.TypeKind.REFERENCE and record.kind != types.TypeKind.POINTER:
+            return record.kind == kind
+        current = record.inner
+    return false
 
 
 def emit_context_c_type(
@@ -1116,6 +1169,9 @@ def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenCo
                     return codegen_names.first_child(context.type_arena, operand_type)
         return operand_type
     if node.kind == SyntaxKind.EXPR_BINARY:
+        operator = node.flags
+        if operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):
+            return syntax.missing_node()
         left_type = context_expression_type(arena, context, codegen_names.first_child(arena, id), source)
         if left_type.index >= 0:
             return left_type
@@ -1294,6 +1350,11 @@ def emit_context_drop(
         builder.append(name[0:len(name)])
         builder.append(");\n")
         return
+    if node.kind == SyntaxKind.EXPR_CALL and context_type_is_string_builder(arena, type_id, source):
+        builder.append("    cinder_string_builder_drop(&")
+        builder.append(name[0:len(name)])
+        builder.append(");\n")
+        return
     if node.kind == SyntaxKind.EXPR_CALL and context_type_is_file_read_call(arena, type_id, source, "read_line"):
         builder.append("    CinderOption_String_drop(&")
         builder.append(name[0:len(name)])
@@ -1375,6 +1436,7 @@ def semantic_collection_inner_needs_drop(table: &const types.TypeTable, type_id:
     kind = table.types[type_id.index].kind
     return (
         kind == types.TypeKind.STRING
+        or kind == types.TypeKind.STRING_BUILDER
         or kind == types.TypeKind.LIST
         or kind == types.TypeKind.MAP
         or kind == types.TypeKind.SET
@@ -1411,10 +1473,24 @@ def context_type_is_string(arena: &const SyntaxArena, type_id: NodeId, source: &
                 member = codegen_names.second_child(arena, callee)
                 if member.index >= 0:
                     member_node = arena.nodes[member.index]
-                    return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "read_text") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "finish") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "trim") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "strip_quotes") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "basename") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "parent_dir") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "join_path") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "stem") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "replace_char") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "with_suffix")
+                    return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "clone") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "read_text") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "finish") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "trim") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "strip_quotes") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "basename") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "parent_dir") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "join_path") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "stem") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "replace_char") or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "with_suffix")
     if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
         return context_type_is_string(arena, codegen_names.first_child(arena, type_id), source)
     return node.kind == SyntaxKind.TYPE_NAME and codegen_names.range_text_equals(source, node.value_start, node.value_length, "String")
+
+def context_type_is_string_builder(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, type_id)
+        if callee.index >= 0 and arena.nodes[callee.index].kind == SyntaxKind.EXPR_NAME:
+            callee_node = arena.nodes[callee.index]
+            return codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "StringBuilder")
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
+        return context_type_is_string_builder(arena, codegen_names.first_child(arena, type_id), source)
+    return node.kind == SyntaxKind.TYPE_NAME and codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder")
+
 
 def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
     if id.index < 0:

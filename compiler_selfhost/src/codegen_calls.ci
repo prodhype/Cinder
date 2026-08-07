@@ -68,10 +68,11 @@ def emit_module_call(
                 emit_nested(state, codegen_names.first_call_argument(arena, id))
                 builder.append(")")
                 return
-            if name == "parse_i32":
-                builder.append("cinder_selfhost_parse_i32(")
-                emit_nested(state, codegen_names.first_call_argument(arena, id))
-                builder.append(")")
+            if is_parse_builtin_name(&name):
+                emit_parse_call(arena, id, &name, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                return
+            if name == "to_string":
+                emit_to_string_call(arena, id, source, builder, context, state, emit_nested)
                 return
             if name == "sort":
                 emit_sort_call(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
@@ -129,6 +130,11 @@ def emit_module_call(
                 continue
             expected_type = codegen_context.context_callee_parameter_type(arena, context, callee, source, argument_index)
             arg_type = codegen_context.context_expression_type(arena, context, arg, source)
+            if codegen_specializations.module_type_is_c_string(context.type_arena, expected_type, context.type_source):
+                codegen_access.emit_c_string_argument(arena, arg, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                emitted_argument = true
+                argument_index += 1
+                continue
             if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_SLICE and codegen_specializations.context_type_is_array(context.type_arena, arg_type):
                 codegen_access.emit_array_as_list(arena, arg, arg_type, source, builder, prefix, project_name, imports, context, state, emit_nested)
                 emitted_argument = true
@@ -772,6 +778,148 @@ def emit_class_constructor_call(
         argument_index += 1
     builder.append(")")
 
+def is_parse_builtin_name(name: &const String) -> bool:
+    return name == "parse_i32" or name == "parse_i64" or name == "parse_u32" or name == "parse_u64" or name == "parse_isize" or name == "parse_usize" or name == "parse_f32" or name == "parse_f64" or name == "parse_bool"
+
+
+def emit_parse_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    builder.append("cinder_selfhost_")
+    builder.append(name[0:len(name)])
+    builder.append("(")
+    codegen_format.emit_string_value_expression(arena, codegen_names.first_call_argument(arena, id), source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(")")
+
+
+def emit_to_string_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    argument = codegen_names.first_call_argument(arena, id)
+    runtime = to_string_runtime_name(arena, argument, source, context)
+    builder.append(runtime[0:len(runtime)])
+    builder.append("(")
+    emit_nested(state, argument)
+    builder.append(")")
+
+
+def to_string_runtime_name(
+    arena: &const SyntaxArena,
+    argument: NodeId,
+    source: &const String,
+    context: &codegen_model.ModuleCodegenContext,
+) -> String:
+    table: &const types.TypeTable = context.type_table
+    syntax_type = codegen_context.context_expression_type(arena, context, argument, source)
+    syntax_runtime = syntax_to_string_runtime(context, syntax_type)
+    if len(syntax_runtime) > 0:
+        return syntax_runtime
+    type_id = codegen_context.context_semantic_type(context, argument)
+    if argument.index >= 0 and arena.nodes[argument.index].kind == SyntaxKind.EXPR_NAME:
+        argument_node = arena.nodes[argument.index]
+        bound_type = codegen_context.context_semantic_name_type(context, source, argument_node.value_start, argument_node.value_length)
+        if bound_type.index >= 0:
+            type_id = bound_type
+    while type_id.index >= 0 and type_id.index < cast[i32](len(table.types)):
+        kind = table.types[type_id.index].kind
+        if kind != types.TypeKind.CONST and kind != types.TypeKind.REFERENCE and kind != types.TypeKind.POINTER:
+            break
+        type_id = table.types[type_id.index].inner
+    if type_id.index >= 0 and type_id.index < cast[i32](len(table.types)):
+        record = table.types[type_id.index]
+        if record.kind == types.TypeKind.BOOL:
+            return "cinder_bool_to_string"
+        if record.kind == types.TypeKind.CHAR:
+            return "cinder_char_to_string"
+        if record.kind == types.TypeKind.I32:
+            return "cinder_i32_to_string"
+        if record.kind == types.TypeKind.I64:
+            return "cinder_i64_to_string"
+        if record.kind == types.TypeKind.F64:
+            return "cinder_f64_to_string"
+        if record.name_length > 0:
+            return ranged_to_string_runtime(context.type_source, record.name_start, record.name_length)
+    return "cinder_i32_to_string"
+
+
+def syntax_to_string_runtime(context: &codegen_model.ModuleCodegenContext, syntax_type: NodeId) -> String:
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "bool"):
+        return "cinder_bool_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "char"):
+        return "cinder_char_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "i8"):
+        return "cinder_i8_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "i16"):
+        return "cinder_i16_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "i32"):
+        return "cinder_i32_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "i64"):
+        return "cinder_i64_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "u8"):
+        return "cinder_u8_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "u16"):
+        return "cinder_u16_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "u32"):
+        return "cinder_u32_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "u64"):
+        return "cinder_u64_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "isize"):
+        return "cinder_isize_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "usize"):
+        return "cinder_usize_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "f32"):
+        return "cinder_f32_to_string"
+    if codegen_type_names.context_type_name_equals(context.type_arena, syntax_type, context.type_source, "f64"):
+        return "cinder_f64_to_string"
+    return ""
+
+
+def ranged_to_string_runtime(source: &const String, start: usize, length: usize) -> String:
+    if codegen_names.range_text_equals(source, start, length, "bool"):
+        return "cinder_bool_to_string"
+    if codegen_names.range_text_equals(source, start, length, "char"):
+        return "cinder_char_to_string"
+    if codegen_names.range_text_equals(source, start, length, "i8"):
+        return "cinder_i8_to_string"
+    if codegen_names.range_text_equals(source, start, length, "i16"):
+        return "cinder_i16_to_string"
+    if codegen_names.range_text_equals(source, start, length, "i64"):
+        return "cinder_i64_to_string"
+    if codegen_names.range_text_equals(source, start, length, "u8"):
+        return "cinder_u8_to_string"
+    if codegen_names.range_text_equals(source, start, length, "u16"):
+        return "cinder_u16_to_string"
+    if codegen_names.range_text_equals(source, start, length, "u32"):
+        return "cinder_u32_to_string"
+    if codegen_names.range_text_equals(source, start, length, "u64"):
+        return "cinder_u64_to_string"
+    if codegen_names.range_text_equals(source, start, length, "isize"):
+        return "cinder_isize_to_string"
+    if codegen_names.range_text_equals(source, start, length, "usize"):
+        return "cinder_usize_to_string"
+    if codegen_names.range_text_equals(source, start, length, "f32"):
+        return "cinder_f32_to_string"
+    if codegen_names.range_text_equals(source, start, length, "f64"):
+        return "cinder_f64_to_string"
+    return "cinder_i32_to_string"
+
+
 def emit_string_constructor(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -785,6 +933,14 @@ def emit_string_constructor(
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
     arg = codegen_names.first_call_argument(arena, id)
+    if arg.index < 0:
+        builder.append("((CinderString){0})")
+        return
+    if codegen_context.expression_may_be_string(arena, context, arg, source):
+        builder.append("cinder_string_clone(")
+        codegen_access.emit_receiver_argument(arena, arg, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        builder.append(")")
+        return
     builder.append("cinder_string_from_cstr(")
     codegen_access.emit_c_string_argument(arena, arg, source, builder, prefix, project_name, imports, context, state, emit_nested)
     builder.append(")")

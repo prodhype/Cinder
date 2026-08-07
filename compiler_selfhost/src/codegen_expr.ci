@@ -81,9 +81,14 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.EXPR_LITERAL:
         if node.flags == cast[i32](token.TokenKind.STRING):
-            builder.append("cinder_string_from_cstr(")
-            codegen_names.append_source(builder, source, node.value_start, node.value_length)
-            builder.append(")")
+            if codegen_specializations.module_type_is_c_string(context.type_arena, context.expected_type, context.type_source):
+                codegen_names.append_source(builder, source, node.value_start, node.value_length)
+            else:
+                builder.append("((CinderString){ .data = (char *)")
+                codegen_names.append_source(builder, source, node.value_start, node.value_length)
+                builder.append(", .length = sizeof(")
+                codegen_names.append_source(builder, source, node.value_start, node.value_length)
+                builder.append(") - 1, .capacity = 0 })")
         elif node.flags == cast[i32](token.TokenKind.NONE):
             if not codegen_calls.emit_option_none(builder, prefix, project_name, imports, context):
                 builder.append("NULL")
@@ -273,20 +278,30 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
             emit_module_expression_state(state, codegen_names.second_child(arena, id))
             builder.append(")")
             return
-        if node.flags == cast[i32](token.TokenKind.EQUAL):
-            if codegen_context.expression_may_be_string(arena, context, codegen_names.first_child(arena, id), source) or codegen_context.expression_may_be_string(arena, context, codegen_names.second_child(arena, id), source):
-                builder.append("cinder_selfhost_string_equal(")
-                codegen_format.emit_string_value_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+        is_comparison = node.flags == cast[i32](token.TokenKind.EQUAL) or node.flags == cast[i32](token.TokenKind.NOT_EQUAL) or node.flags == cast[i32](token.TokenKind.LESS) or node.flags == cast[i32](token.TokenKind.LESS_EQUAL) or node.flags == cast[i32](token.TokenKind.GREATER) or node.flags == cast[i32](token.TokenKind.GREATER_EQUAL)
+        if is_comparison:
+            left = codegen_names.first_child(arena, id)
+            right = codegen_names.second_child(arena, id)
+            if codegen_context.expression_may_be_string(arena, context, left, source) or codegen_context.expression_may_be_string(arena, context, right, source):
+                if node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
+                    builder.append("!")
+                if node.flags == cast[i32](token.TokenKind.EQUAL) or node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
+                    builder.append("cinder_selfhost_string_equal(")
+                else:
+                    builder.append("(cinder_selfhost_string_compare(")
+                codegen_format.emit_string_value_expression(arena, left, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
                 builder.append(", ")
-                codegen_format.emit_string_value_expression(arena, codegen_names.second_child(arena, id), source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+                codegen_format.emit_string_value_expression(arena, right, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
                 builder.append(")")
+                if node.flags == cast[i32](token.TokenKind.LESS):
+                    builder.append(" < 0)")
+                elif node.flags == cast[i32](token.TokenKind.LESS_EQUAL):
+                    builder.append(" <= 0)")
+                elif node.flags == cast[i32](token.TokenKind.GREATER):
+                    builder.append(" > 0)")
+                elif node.flags == cast[i32](token.TokenKind.GREATER_EQUAL):
+                    builder.append(" >= 0)")
                 return
-            builder.append("(")
-            emit_module_expression_state(state, codegen_names.first_child(arena, id))
-            builder.append(" == ")
-            emit_module_expression_state(state, codegen_names.second_child(arena, id))
-            builder.append(")")
-            return
         if node.flags == cast[i32](token.TokenKind.PLUS) and (codegen_context.expression_may_be_string(arena, context, codegen_names.first_child(arena, id), source) or codegen_context.expression_may_be_string(arena, context, codegen_names.second_child(arena, id), source)):
             builder.append("cinder_selfhost_string_concat(")
             codegen_format.emit_string_value_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
