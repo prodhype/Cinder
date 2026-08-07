@@ -190,6 +190,9 @@ def emit_readable_specialized_type_name(
         if codegen_names.range_text_equals(source, node.value_start, node.value_length, "File"):
             builder.append("FILE")
             return
+        if codegen_names.range_text_equals(source, node.value_start, node.value_length, "ConvertError"):
+            builder.append("n_CinderParseError")
+            return
         if node.child_count > 0:
             part = arena.nodes[arena.children[node.first_child + node.child_count - 1].index]
             codegen_names.append_source(builder, source, part.value_start, part.value_length)
@@ -446,6 +449,10 @@ def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: typ
         builder.append("char")
     elif record.kind == types.TypeKind.STRING:
         builder.append("String")
+    elif record.kind == types.TypeKind.STRING_BUILDER:
+        builder.append("StringBuilder")
+    elif record.kind == types.TypeKind.CONVERT_ERROR:
+        builder.append("n_CinderParseError")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE")
     elif record.kind == types.TypeKind.POINTER:
@@ -566,6 +573,10 @@ def emit_semantic_c_type(
         builder.append("char")
     elif record.kind == types.TypeKind.STRING:
         builder.append("CinderString")
+    elif record.kind == types.TypeKind.STRING_BUILDER:
+        builder.append("CinderStringBuilder")
+    elif record.kind == types.TypeKind.CONVERT_ERROR:
+        builder.append("CinderParseError")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE *")
     elif record.kind == types.TypeKind.POINTER:
@@ -692,6 +703,8 @@ def emit_module_nominal_type(
         builder.append("CinderString")
     elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder"):
         builder.append("CinderStringBuilder")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "ConvertError"):
+        builder.append("CinderParseError")
     elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "File"):
         builder.append("FILE *")
     elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "clock_t"):

@@ -11,6 +11,8 @@ enum TypeKind:
     F64
     CHAR
     STRING
+    STRING_BUILDER
+    CONVERT_ERROR
     NAMED
     POINTER
     REFERENCE
@@ -225,6 +227,10 @@ struct TypeTable:
             return type_char()
         if range_text_equals(source, start, length, "String"):
             return type_string()
+        if range_text_equals(source, start, length, "StringBuilder"):
+            return type_string_builder()
+        if range_text_equals(source, start, length, "ConvertError"):
+            return type_convert_error()
         if range_text_equals(source, start, length, "File"):
             return self.nominal(TypeKind.FILE, start, length)
         return self.named(start, length)
@@ -314,6 +320,8 @@ def new_type_table() -> TypeTable:
     table.primitive(TypeKind.F64)
     table.primitive(TypeKind.CHAR)
     table.primitive(TypeKind.STRING)
+    table.primitive(TypeKind.STRING_BUILDER)
+    table.primitive(TypeKind.CONVERT_ERROR)
     return table
 
 
@@ -347,6 +355,14 @@ def type_char() -> TypeId:
 
 def type_string() -> TypeId:
     return TypeId(index=7)
+
+
+def type_string_builder() -> TypeId:
+    return TypeId(index=8)
+
+
+def type_convert_error() -> TypeId:
+    return TypeId(index=9)
 
 
 def first_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:

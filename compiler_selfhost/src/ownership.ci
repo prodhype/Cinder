@@ -56,7 +56,7 @@ def type_needs_drop(type_id: TypeId) -> bool:
     if type_id.index < 0:
         return false
     kind_index = type_id.index
-    return kind_index == types.type_string().index
+    return kind_index == types.type_string().index or kind_index == types.type_string_builder().index
 
 
 def type_needs_drop_for_table(table: &const types.TypeTable, type_id: TypeId) -> bool:
@@ -66,7 +66,7 @@ def type_needs_drop_for_table(table: &const types.TypeTable, type_id: TypeId) ->
 
 
 def type_needs_drop_record(table: &const types.TypeTable, record: types.TypeRecord) -> bool:
-    if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.FILE:
+    if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.STRING_BUILDER or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.FILE:
         return true
     if record.kind == types.TypeKind.CONST:
         return type_needs_drop_for_table(table, record.inner)

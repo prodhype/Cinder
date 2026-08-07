@@ -207,6 +207,10 @@ def append_type_key(builder: &StringBuilder, table: &const types.TypeTable, type
         builder.append("char")
     elif record.kind == types.TypeKind.STRING:
         builder.append("String")
+    elif record.kind == types.TypeKind.STRING_BUILDER:
+        builder.append("StringBuilder")
+    elif record.kind == types.TypeKind.CONVERT_ERROR:
+        builder.append("ConvertError")
     elif record.kind == types.TypeKind.POINTER:
         builder.append("ptr_")
         append_type_key(builder, table, record.inner, source)

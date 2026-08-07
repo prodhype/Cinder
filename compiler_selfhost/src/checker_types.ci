@@ -28,6 +28,41 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "Owned"):
         validate_owned_constructor(checker, arena, id, callee, source, current_scope)
         return
+    if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "String"):
+        argument = call_argument_value(arena, id, 0)
+        if argument.index >= 0:
+            infer_expression_type(checker, arena, argument, source, current_scope)
+        checker.model.record_expr_type(id, types.type_string())
+        return
+    if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "StringBuilder"):
+        checker.model.record_expr_type(id, types.type_string_builder())
+        return
+    if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "input") or checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "to_string"):
+        argument = call_argument_value(arena, id, 0)
+        if argument.index >= 0:
+            infer_expression_type(checker, arena, argument, source, current_scope)
+        checker.model.record_expr_type(id, types.type_string())
+        return
+    if is_parse_builtin_name(source, callee_node.value_start, callee_node.value_length):
+        argument = call_argument_value(arena, id, 0)
+        if argument.index >= 0:
+            infer_expression_type(checker, arena, argument, source, current_scope)
+        value_type = checker.type_table.resolve_type_name(
+            source,
+            callee_node.value_start + 6,
+            callee_node.value_length - 6,
+        )
+        checker.model.record_expr_type(
+            id,
+            checker.type_table.generic2(
+                types.TypeKind.RESULT,
+                callee_node.value_start,
+                callee_node.value_length,
+                value_type,
+                types.type_convert_error(),
+            ),
+        )
+        return
     if is_reflection_builtin_name(source, callee_node.value_start, callee_node.value_length):
         if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_name"):
             checker.model.record_expr_type(id, types.type_string())
@@ -585,6 +620,38 @@ def validate_collection_method_call(
     member_node = arena.nodes[member.index]
     member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
     receiver_record = checker.type_table.types[receiver_type.index]
+    if receiver_record.kind == types.TypeKind.STRING:
+        expected: i32 = 0
+        result = types.type_void()
+        if collections.text_equals(&member_name, "clone"):
+            result = types.type_string()
+        elif collections.text_equals(&member_name, "byte_at"):
+            expected = 1
+            result = types.type_i32()
+        elif collections.text_equals(&member_name, "append") or collections.text_equals(&member_name, "append_char") or collections.text_equals(&member_name, "reserve"):
+            expected = 1
+        elif not collections.text_equals(&member_name, "clear"):
+            return
+        validate_collection_method_argument_count(checker, arena, call_id, expected)
+        argument = call_argument_value(arena, call_id, 0)
+        if argument.index >= 0:
+            infer_expression_type(checker, arena, argument, source, current_scope)
+        checker.model.record_expr_type(call_id, result)
+        return
+    if receiver_record.kind == types.TypeKind.STRING_BUILDER:
+        expected: i32 = 1
+        result = types.type_void()
+        if collections.text_equals(&member_name, "finish"):
+            expected = 0
+            result = types.type_string()
+        elif not collections.text_equals(&member_name, "append") and not collections.text_equals(&member_name, "append_char") and not collections.text_equals(&member_name, "reserve"):
+            return
+        validate_collection_method_argument_count(checker, arena, call_id, expected)
+        argument = call_argument_value(arena, call_id, 0)
+        if argument.index >= 0:
+            infer_expression_type(checker, arena, argument, source, current_scope)
+        checker.model.record_expr_type(call_id, result)
+        return
     if receiver_record.kind == types.TypeKind.MAP and (collections.text_equals(&member_name, "keys") or collections.text_equals(&member_name, "values") or collections.text_equals(&member_name, "items")):
         validate_collection_method_argument_count(checker, arena, call_id, 0)
         checker.model.record_expr_type(call_id, collections.map_view_type(checker.type_table, receiver_type, &member_name))
