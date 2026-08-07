@@ -3,6 +3,7 @@ import classes
 import codegen_legacy
 import codegen_module
 import codegen_names
+import codegen_reflection
 import codegen_specializations
 import project
 import syntax
@@ -75,6 +76,22 @@ def emit_module_header_from_ir_with_classes(
     return codegen_module.emit_module_header_from_ir_with_classes(module, arena, source, module_name, project_name, dependencies, imports, registry, type_table, class_model)
 
 
+def emit_module_header_from_ir_with_models(
+    module: &const backend_ir.IRModule,
+    arena: &const SyntaxArena,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    dependencies: &const List[String],
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+    reflection_model: &const codegen_reflection.ProjectReflectionModel,
+) -> String:
+    return codegen_module.emit_module_header_from_ir_with_models(module, arena, source, module_name, project_name, dependencies, imports, registry, type_table, class_model, reflection_model)
+
+
 def emit_module_source(
     arena: &const SyntaxArena,
     root: NodeId,
@@ -114,6 +131,22 @@ def emit_module_source_from_ir_with_classes(
     class_model: &const classes.ProjectClassModel,
 ) -> String:
     return codegen_module.emit_module_source_from_ir_with_classes(module, arena, source, module_name, project_name, imports, is_entry, registry, type_table, class_model)
+
+
+def emit_module_source_from_ir_with_models(
+    module: &const backend_ir.IRModule,
+    arena: &const SyntaxArena,
+    source: &const String,
+    module_name: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    is_entry: bool,
+    registry: &const codegen_names.SpecializationNameRegistry,
+    type_table: &const types.TypeTable,
+    class_model: &const classes.ProjectClassModel,
+    reflection_model: &const codegen_reflection.ProjectReflectionModel,
+) -> String:
+    return codegen_module.emit_module_source_from_ir_with_models(module, arena, source, module_name, project_name, imports, is_entry, registry, type_table, class_model, reflection_model)
 
 
 def generated_header_name(module_name: &const String) -> String:

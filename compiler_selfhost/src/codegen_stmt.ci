@@ -3,6 +3,7 @@ import codegen_context
 import codegen_expr
 import codegen_context as codegen_model
 import codegen_names
+import codegen_reflection
 import codegen_specializations
 import codegen_type_names
 import project
@@ -27,6 +28,7 @@ def emit_module_block(
     pointer_start = len(context.pointer_names)
     tuple_item_start = len(context.tuple_items)
     semantic_string_start = len(context.semantic_string_names)
+    reflection_binding_start = len(context.reflection_bindings)
     defer_start = len(context.deferred_expressions)
     for offset in range(0, node.child_count):
         emit_module_statement(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
@@ -40,6 +42,8 @@ def emit_module_block(
         context.tuple_items.pop()
     while len(context.semantic_string_names) > semantic_string_start:
         context.semantic_string_names.pop()
+    while len(context.reflection_bindings) > reflection_binding_start:
+        context.reflection_bindings.pop()
     while len(context.deferred_expressions) > defer_start:
         context.deferred_expressions.pop()
 
@@ -171,7 +175,10 @@ def emit_module_statement(
                 context.expected_type = previous_expected
             codegen_context.mark_context_expression_moved(arena, context, expr, source)
         builder.append(";\n")
-        if annotation.index >= 0:
+        if expression_is_named_call(arena, expr, source, "type_info"):
+            codegen_context.register_context_pointer_name(context, source, node.value_start, node.value_length)
+            codegen_context.register_context_reflection_binding(context, source, node.value_start, node.value_length, codegen_context.ReflectionBindingKind.TYPE_INFO, -1, -1)
+        elif annotation.index >= 0:
             codegen_context.register_context_name_type(arena, context, source, node.value_start, node.value_length, annotation)
         elif codegen_context.context_expression_is_pointer_initializer(arena, context, expr, source):
             codegen_context.register_context_pointer_name(context, source, node.value_start, node.value_length)
@@ -826,9 +833,16 @@ def emit_module_for_each(
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
 ) -> void:
+    node = arena.nodes[id.index]
     target = codegen_names.first_child(arena, id)
     iterable = for_each_iterable(arena, id)
     body = codegen_names.last_child(arena, id)
+    if node.flags == 1:
+        emit_comptime_reflection_for_each(arena, target, iterable, body, source, builder, prefix, project_name, imports, context)
+        return
+    if expression_is_named_call(arena, iterable, source, "fields"):
+        emit_runtime_reflection_for_each(arena, target, iterable, body, source, builder, prefix, project_name, imports, context)
+        return
     target_node = arena.nodes[target.index]
     if is_range_call(arena, iterable, source):
         range_type = codegen_context.context_expression_type(arena, context, range_argument_expression(arena, iterable, 1), source)
@@ -903,6 +917,93 @@ def emit_module_for_each(
         if len(context.local_types) > 0:
             context.local_types.pop()
     builder.append("    }\n")
+
+
+def emit_runtime_reflection_for_each(
+    arena: &const SyntaxArena,
+    target: NodeId,
+    iterable: NodeId,
+    body: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    target_node = arena.nodes[target.index]
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("    {\n    CinderList cinder_reflection_fields_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = ")
+    codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+    builder.append(";\n    for (size_t cinder_index = 0; cinder_index < cinder_reflection_fields_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(".length; ++cinder_index) {\n    CinderFieldInfo ")
+    codegen_names.append_source(builder, source, target_node.value_start, target_node.value_length)
+    builder.append(" = ((const CinderFieldInfo *)cinder_reflection_fields_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(".data)[cinder_index];\n")
+    codegen_context.register_context_reflection_binding(context, source, target_node.value_start, target_node.value_length, codegen_context.ReflectionBindingKind.RUNTIME_FIELD, -1, -1)
+    emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+    context.reflection_bindings.pop()
+    builder.append("    }\n    }\n")
+
+
+def emit_comptime_reflection_for_each(
+    arena: &const SyntaxArena,
+    target: NodeId,
+    iterable: NodeId,
+    body: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    if not expression_is_named_call(arena, iterable, source, "fields_of"):
+        return
+    type_argument = codegen_names.first_call_argument(arena, iterable)
+    nominal_index = reflection_type_expression_nominal(arena, type_argument, source, context)
+    count = codegen_reflection.effective_field_count(context.reflection_model, context.class_model, nominal_index)
+    target_node = arena.nodes[target.index]
+    for offset in range(0, count):
+        field_index = codegen_reflection.effective_field_at(context.reflection_model, context.class_model, nominal_index, offset)
+        builder.append("    /* comptime fields iteration ")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](offset))
+        builder.append(" */\n    {\n")
+        codegen_context.register_context_reflection_binding(context, source, target_node.value_start, target_node.value_length, codegen_context.ReflectionBindingKind.COMPTIME_FIELD, nominal_index, field_index)
+        emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+        context.reflection_bindings.pop()
+        builder.append("    }\n")
+
+
+def reflection_type_expression_nominal(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    context: &codegen_model.ModuleCodegenContext,
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        return codegen_reflection.find_nominal_for_name(context.reflection_model, context.imports, &context.module_name, &name)
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, id)
+        member = codegen_names.second_child(arena, id)
+        if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_NAME:
+            receiver_node = arena.nodes[receiver.index]
+            member_node = arena.nodes[member.index]
+            alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            imported = codegen_names.find_import_alias(context.imports, &alias)
+            if len(imported.module_name) > 0:
+                name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+                return codegen_reflection.find_nominal(context.reflection_model, &imported.module_name, &name)
+    return -1
 
 def emit_semantic_collection_for_each(
     arena: &const SyntaxArena,
@@ -1070,6 +1171,17 @@ def is_range_call(arena: &const SyntaxArena, id: NodeId, source: &const String) 
         return false
     callee_node = arena.nodes[callee.index]
     return callee_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "range")
+
+
+def expression_is_named_call(arena: &const SyntaxArena, id: NodeId, source: &const String, expected: String) -> bool:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0:
+        return false
+    callee_node = arena.nodes[callee.index]
+    return callee_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, expected[0:len(expected)])
+
 
 def range_argument_expression(arena: &const SyntaxArena, id: NodeId, argument_index: i32) -> NodeId:
     actual_index: i32 = 0

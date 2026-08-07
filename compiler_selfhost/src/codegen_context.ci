@@ -1,6 +1,7 @@
 import backend_ir
 import classes
 import codegen_names
+import codegen_reflection
 import codegen_type_names
 import generics
 import semantic
@@ -26,6 +27,17 @@ struct ModuleTupleItemBinding:
     first_is_string: bool
     second_is_string: bool
 
+enum ReflectionBindingKind:
+    TYPE_INFO
+    RUNTIME_FIELD
+    COMPTIME_FIELD
+
+struct ModuleReflectionBinding:
+    name: String
+    kind: ReflectionBindingKind
+    nominal_index: i32
+    field_index: i32
+
 struct ModuleCodegenContext:
     root: NodeId
     module_name: String
@@ -33,6 +45,7 @@ struct ModuleCodegenContext:
     type_source: &const String
     imports: &const List[project.ImportBinding]
     class_model: &const classes.ProjectClassModel
+    reflection_model: &const codegen_reflection.ProjectReflectionModel
     specialization_names: &const codegen_names.SpecializationNameRegistry
     semantic_nodes: &const List[backend_ir.IRNode]
     type_table: &const types.TypeTable
@@ -43,6 +56,7 @@ struct ModuleCodegenContext:
     local_types: List[ModuleNameTypeBinding]
     pointer_names: List[String]
     tuple_items: List[ModuleTupleItemBinding]
+    reflection_bindings: List[ModuleReflectionBinding]
     semantic_string_names: List[String]
     iterator_guard_names: List[String]
     field_types: List[ModuleFieldTypeBinding]
@@ -77,6 +91,7 @@ def make_module_codegen_context(
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
     class_model: &const classes.ProjectClassModel,
+    reflection_model: &const codegen_reflection.ProjectReflectionModel,
     semantic_nodes: &const List[backend_ir.IRNode],
     type_table: &const types.TypeTable,
     specialization_args: &const List[types.TypeId],
@@ -86,6 +101,7 @@ def make_module_codegen_context(
     local_types: List[ModuleNameTypeBinding] = []
     pointer_names: List[String] = []
     tuple_items: List[ModuleTupleItemBinding] = []
+    reflection_bindings: List[ModuleReflectionBinding] = []
     semantic_string_names: List[String] = []
     iterator_guard_names: List[String] = []
     field_types: List[ModuleFieldTypeBinding] = []
@@ -100,6 +116,7 @@ def make_module_codegen_context(
         type_source=source,
         imports=imports,
         class_model=class_model,
+        reflection_model=reflection_model,
         specialization_names=registry,
         semantic_nodes=semantic_nodes,
         type_table=type_table,
@@ -110,6 +127,7 @@ def make_module_codegen_context(
         local_types=local_types,
         pointer_names=pointer_names,
         tuple_items=tuple_items,
+        reflection_bindings=reflection_bindings,
         semantic_string_names=semantic_string_names,
         iterator_guard_names=iterator_guard_names,
         field_types=field_types,
@@ -496,6 +514,62 @@ def context_tuple_item_is_string(context: &const ModuleCodegenContext, source: &
                 return binding.second_is_string
             return false
     return false
+
+
+def register_context_reflection_binding(
+    context: &ModuleCodegenContext,
+    source: &const String,
+    start: usize,
+    length: usize,
+    kind: ReflectionBindingKind,
+    nominal_index: i32,
+    field_index: i32,
+) -> void:
+    if length == 0:
+        return
+    context.reflection_bindings.append(
+        ModuleReflectionBinding(
+            name=source[start:start + length],
+            kind=kind,
+            nominal_index=nominal_index,
+            field_index=field_index,
+        )
+    )
+
+
+def context_reflection_binding_index(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> i32:
+    name = source[start:start + length]
+    index = len(context.reflection_bindings)
+    while index > 0:
+        index -= 1
+        if context.reflection_bindings[index].name == name[0:len(name)]:
+            return cast[i32](index)
+    return -1
+
+
+def context_reflection_binding_is(
+    context: &const ModuleCodegenContext,
+    source: &const String,
+    start: usize,
+    length: usize,
+    kind: ReflectionBindingKind,
+) -> bool:
+    index = context_reflection_binding_index(context, source, start, length)
+    return index >= 0 and context.reflection_bindings[cast[usize](index)].kind == kind
+
+
+def context_reflection_binding_field(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> i32:
+    index = context_reflection_binding_index(context, source, start, length)
+    if index < 0:
+        return -1
+    return context.reflection_bindings[cast[usize](index)].field_index
+
+
+def context_reflection_binding_nominal(context: &const ModuleCodegenContext, source: &const String, start: usize, length: usize) -> i32:
+    index = context_reflection_binding_index(context, source, start, length)
+    if index < 0:
+        return -1
+    return context.reflection_bindings[cast[usize](index)].nominal_index
 
 
 def register_context_semantic_string_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
@@ -936,6 +1010,11 @@ def context_expression_is_pointer_like(arena: &const SyntaxArena, context: &Modu
         return node.flags == cast[i32](token.TokenKind.AMPERSAND)
     if node.kind == SyntaxKind.EXPR_ALLOC:
         return true
+    if node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, id)
+        if callee.index >= 0 and arena.nodes[callee.index].kind == SyntaxKind.EXPR_NAME:
+            callee_node = arena.nodes[callee.index]
+            return codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_info")
     if node.kind != SyntaxKind.EXPR_ATTRIBUTE and node.kind != SyntaxKind.EXPR_INDEX:
         return false
     expr_type = context_expression_type(arena, context, id, source)
@@ -1136,7 +1215,7 @@ def context_type_is_string(arena: &const SyntaxArena, type_id: NodeId, source: &
         if callee.index >= 0:
             callee_node = arena.nodes[callee.index]
             if callee_node.kind == SyntaxKind.EXPR_NAME:
-                return codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "String") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "input") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "to_string")
+                return codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "String") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "input") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "to_string") or codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_name")
             if callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
                 member = codegen_names.second_child(arena, callee)
                 if member.index >= 0:
@@ -1150,6 +1229,12 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenC
     if id.index < 0:
         return false
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, id)
+        if callee.index >= 0 and arena.nodes[callee.index].kind == SyntaxKind.EXPR_NAME:
+            callee_node = arena.nodes[callee.index]
+            if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_name"):
+                return true
     if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
         return true
     if node.kind == SyntaxKind.EXPR_NAME and context_name_is_semantic_string(context, source, node.value_start, node.value_length):

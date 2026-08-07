@@ -118,7 +118,15 @@ def emit_print_argument(
     if codegen_context.context_type_is_list(context.type_arena, type_id, context.type_source):
         emit_print_list_value(arena, id, source, builder, prefix, project_name, imports, context, type_id, first, state, emit_nested)
         return
-    if codegen_context.expression_may_be_string(arena, context, id, source):
+    if reflection_attribute_is_c_string(arena, id, source, context):
+        if first:
+            builder.append("printf(\"%s\", ")
+        else:
+            builder.append("printf(\" %s\", ")
+        emit_nested(state, id)
+        builder.append("); ")
+        return
+    elif codegen_context.expression_may_be_string(arena, context, id, source):
         builder.append("cinder_selfhost_print_string_value(")
         emit_string_value_expression(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
     elif codegen_type_names.context_type_name_equals(context.type_arena, type_id, context.type_source, "bool"):
@@ -432,6 +440,11 @@ def emit_fstring_replacement(
     if format_length > 0:
         conversion = format_source.byte_at(format_start + format_length - 1)
     string_value = codegen_context.expression_may_be_string(arena, context, id, source)
+    if reflection_attribute_is_c_string(arena, id, source, context):
+        builder.append("printf(\"%s\", ")
+        emit_nested(state, id)
+        builder.append("); ")
+        return
     if conversion == 115 and fstring_expression_is_type(arena, context, id, source, "bool"):
         builder.append("printf(\"%s\", (")
         emit_nested(state, id)
@@ -484,6 +497,39 @@ def is_float_conversion(conversion: u8) -> bool:
 
 def fstring_expression_is_float(arena: &const SyntaxArena, context: &codegen_context.ModuleCodegenContext, id: NodeId, source: &const String) -> bool:
     return fstring_expression_is_type(arena, context, id, source, "f32") or fstring_expression_is_type(arena, context, id, source, "f64")
+
+
+def reflection_attribute_is_c_string(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    context: &const codegen_context.ModuleCodegenContext,
+) -> bool:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    receiver = codegen_names.first_child(arena, id)
+    member = codegen_names.second_child(arena, id)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind == SyntaxKind.EXPR_NAME:
+        binding_index = codegen_context.context_reflection_binding_index(context, source, receiver_node.value_start, receiver_node.value_length)
+        if binding_index < 0:
+            return member_name == "name" and codegen_names.range_text_equals(source, receiver_node.value_start, receiver_node.value_length, "info")
+        binding: &const codegen_context.ModuleReflectionBinding = &context.reflection_bindings[cast[usize](binding_index)]
+        if binding.kind == codegen_context.ReflectionBindingKind.TYPE_INFO:
+            return member_name == "name"
+        if binding.kind == codegen_context.ReflectionBindingKind.RUNTIME_FIELD:
+            return member_name == "name" or member_name == "type_name"
+        return false
+    if receiver_node.kind == SyntaxKind.EXPR_CALL:
+        callee = codegen_names.first_child(arena, receiver)
+        if callee.index >= 0 and arena.nodes[callee.index].kind == SyntaxKind.EXPR_NAME:
+            callee_node = arena.nodes[callee.index]
+            return member_name == "name" and codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_info")
+    return false
 
 def fstring_expression_is_type(arena: &const SyntaxArena, context: &codegen_context.ModuleCodegenContext, id: NodeId, source: &const String, expected: String) -> bool:
     if id.index < 0:
