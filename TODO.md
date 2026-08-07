@@ -1,6 +1,6 @@
 # Gen3 TODOs
 
-Fresh gen3 run: 35 examples passed and 1 example failed. The run covers `examples/*.ci`, `class_project`, and `module_project`. It excludes `large_project`.
+Fresh gen3 run: 36 examples passed and 0 examples failed. The run covers `examples/*.ci`, `class_project`, and `module_project`. It excludes `large_project`.
 
 1. Keep imported Result call types (done)
 
@@ -18,6 +18,6 @@ Gen3 must lower `.is_ok` and `.is_err` for `Result[T, E]`. Emit a tag check, lik
 
 Gen3 must not guess that a name such as `source` is a `String` when it is an `i32` match field. Use match field types, or semantic type data, before f-string lowering. This fixes `dijkstra_showcase.ci`.
 
-5. Find the List mutation runtime trap
+5. Find the List mutation runtime trap (done)
 
-Record stdout, stderr, and signal data for `binary_sort.ci`. Then fix the fault when `binary_sort(values)` mutates a `List[i32]` passed by value. The example must print the sorted list and exit with 0.
+The failing run produced empty stdout and stderr, then gen3 encoded the child's signal 5 (`SIGTRAP`) as exit 133. `binary_sort` now borrows the caller's `List[i32]` as a mutable `[]i32` slice, prints the sorted list, and exits with 0.
