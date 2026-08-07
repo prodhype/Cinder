@@ -35,6 +35,20 @@ struct ReflectionMethodInfo:
     is_override: bool
 
 
+struct ReflectionVariantFieldInfo:
+    owner: i32
+    name: String
+    type_name: String
+    c_type: String
+
+
+struct ReflectionVariantCaseInfo:
+    owner: i32
+    name: String
+    first_field: i32
+    field_count: i32
+
+
 struct ReflectionNominalInfo:
     module_name: String
     name: String
@@ -52,13 +66,23 @@ struct ProjectReflectionModel:
     nominals: List[ReflectionNominalInfo]
     fields: List[ReflectionFieldInfo]
     methods: List[ReflectionMethodInfo]
+    variant_cases: List[ReflectionVariantCaseInfo]
+    variant_fields: List[ReflectionVariantFieldInfo]
 
 
 def new_project_reflection_model() -> ProjectReflectionModel:
     nominals: List[ReflectionNominalInfo] = []
     fields: List[ReflectionFieldInfo] = []
     methods: List[ReflectionMethodInfo] = []
-    return ProjectReflectionModel(nominals=nominals, fields=fields, methods=methods)
+    variant_cases: List[ReflectionVariantCaseInfo] = []
+    variant_fields: List[ReflectionVariantFieldInfo] = []
+    return ProjectReflectionModel(
+        nominals=nominals,
+        fields=fields,
+        methods=methods,
+        variant_cases=variant_cases,
+        variant_fields=variant_fields,
+    )
 
 
 def collect_project_reflection_model(
@@ -204,6 +228,38 @@ def collect_module_nominal_details(
                 )
             )
             model.nominals[cast[usize](nominal_index)].field_count += 1
+        elif child.kind == SyntaxKind.VARIANT_CASE_DECL and node.kind == SyntaxKind.VARIANT_DECL:
+            case_index = cast[i32](len(model.variant_cases))
+            model.variant_cases.append(
+                ReflectionVariantCaseInfo(
+                    owner=nominal_index,
+                    name=source[child.value_start:child.value_start + child.value_length],
+                    first_field=cast[i32](len(model.variant_fields)),
+                    field_count=0,
+                )
+            )
+            for field_offset in range(0, child.child_count):
+                field_id = arena.children[child.first_child + field_offset]
+                field = arena.nodes[field_id.index]
+                if field.kind != SyntaxKind.FIELD_DECL:
+                    continue
+                field_type = codegen_type_names.find_child_type(arena, field_id)
+                c_type_builder = StringBuilder()
+                emit_reflection_c_type_expression(arena, field_type, source, &c_type_builder, prefix, project_name, imports, registry)
+                c_type = c_type_builder.finish()
+                type_name = ""
+                if field_type.index >= 0:
+                    type_node = arena.nodes[field_type.index]
+                    type_name = source[type_node.start:type_node.start + type_node.length]
+                model.variant_fields.append(
+                    ReflectionVariantFieldInfo(
+                        owner=case_index,
+                        name=source[field.value_start:field.value_start + field.value_length],
+                        type_name=type_name,
+                        c_type=c_type,
+                    )
+                )
+                model.variant_cases[cast[usize](case_index)].field_count += 1
         elif child.kind == SyntaxKind.FUNCTION_DECL and (node.kind == SyntaxKind.STRUCT_DECL or node.kind == SyntaxKind.CLASS_DECL):
             method_name = source[child.value_start:child.value_start + child.value_length]
             if node.kind == SyntaxKind.CLASS_DECL and (method_name == "__init__" or method_name == "__del__"):
@@ -305,6 +361,56 @@ def find_nominal_for_name(
 ) -> i32:
     module_name = classes.module_for_name(imports, current_module, name)
     return find_nominal(model, &module_name, name)
+
+
+def nominal_count(model: &const ProjectReflectionModel) -> i32:
+    return cast[i32](len(model.nominals))
+
+
+def nominal_kind_at(model: &const ProjectReflectionModel, nominal_index: i32) -> ReflectionNominalKind:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return ReflectionNominalKind.STRUCT
+    return model.nominals[cast[usize](nominal_index)].kind
+
+
+def nominal_c_name_at(model: &const ProjectReflectionModel, nominal_index: i32) -> String:
+    if nominal_index < 0 or nominal_index >= cast[i32](len(model.nominals)):
+        return ""
+    name: &const String = &model.nominals[cast[usize](nominal_index)].c_name
+    return name[0:len(name)]
+
+
+def find_variant_case(model: &const ProjectReflectionModel, nominal_index: i32, name: &const String) -> i32:
+    index: usize = 0
+    while index < len(model.variant_cases):
+        case_info: &const ReflectionVariantCaseInfo = &model.variant_cases[index]
+        if case_info.owner == nominal_index and case_info.name == name[0:len(name)]:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def variant_field_at(model: &const ProjectReflectionModel, case_index: i32, wanted: i32) -> i32:
+    if case_index < 0 or case_index >= cast[i32](len(model.variant_cases)) or wanted < 0:
+        return -1
+    case_info: &const ReflectionVariantCaseInfo = &model.variant_cases[cast[usize](case_index)]
+    if wanted >= case_info.field_count:
+        return -1
+    return case_info.first_field + wanted
+
+
+def variant_field_name_at(model: &const ProjectReflectionModel, field_index: i32) -> String:
+    if field_index < 0 or field_index >= cast[i32](len(model.variant_fields)):
+        return ""
+    name: &const String = &model.variant_fields[cast[usize](field_index)].name
+    return name[0:len(name)]
+
+
+def variant_field_c_type_at(model: &const ProjectReflectionModel, field_index: i32) -> String:
+    if field_index < 0 or field_index >= cast[i32](len(model.variant_fields)):
+        return ""
+    c_type: &const String = &model.variant_fields[cast[usize](field_index)].c_type
+    return c_type[0:len(c_type)]
 
 
 def nominal_primary_base(model: &const ProjectReflectionModel, class_model: &const classes.ProjectClassModel, nominal_index: i32) -> i32:

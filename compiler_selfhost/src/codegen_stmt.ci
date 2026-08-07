@@ -13,6 +13,24 @@ import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
+struct MatchValueInfo:
+    syntax_type: NodeId
+    semantic_type: types.TypeId
+    c_type: String
+    valid: bool
+
+
+struct MatchNominalCase:
+    nominal_index: i32
+    case_index: i32
+    declaration: NodeId
+    case_declaration: NodeId
+    c_name: String
+    case_name: String
+    is_enum: bool
+    valid: bool
+
+
 def emit_module_block(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -499,43 +517,58 @@ def emit_module_match(
     context: &codegen_model.ModuleCodegenContext,
 ) -> void:
     subject = codegen_names.first_child(arena, id)
-    subject_type = codegen_context.context_expression_type(arena, context, subject, source)
-    result_c_name = match_result_c_name(arena, subject, source, prefix, project_name, imports, context, subject_type)
+    subject_info = match_subject_value_info(arena, subject, source, prefix, project_name, imports, context)
     builder.append("    {\n    __auto_type cinder_match_value = ")
     previous_expected = context.expected_type
-    context.expected_type = subject_type
+    context.expected_type = subject_info.syntax_type
     codegen_expr.emit_module_expression(arena, subject, source, builder, prefix, project_name, imports, context)
     context.expected_type = previous_expected
-    builder.append(";\n")
+    builder.append(";\n    bool cinder_match_found = false;\n")
     node = arena.nodes[id.index]
-    emitted_case = false
     for offset in range(1, node.child_count):
         case_id = arena.children[node.first_child + offset]
         case_node = arena.nodes[case_id.index]
         if case_node.kind != SyntaxKind.MATCH_CASE:
             continue
         pattern = codegen_names.first_child(arena, case_id)
-        if emitted_case:
-            builder.append("    else if (")
-        else:
-            builder.append("    if (")
-        emit_match_pattern_condition(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type, &result_c_name)
+        builder.append("    if (!cinder_match_found) {\n    if (")
+        root_access = "cinder_match_value"
+        emit_match_pattern_condition(arena, pattern, source, builder, prefix, project_name, imports, context, &root_access, &subject_info)
         builder.append(") {\n")
         local_start = len(context.local_types)
         pointer_start = len(context.pointer_names)
-        emit_match_pattern_captures(arena, pattern, source, builder, prefix, project_name, imports, context, subject_type, &result_c_name)
+        emitted_bindings: List[String] = []
+        emit_match_binding_declarations(arena, pattern, pattern, source, builder, prefix, project_name, imports, context, &root_access, &subject_info, emitted_bindings)
+        guard = match_case_guard(arena, case_id)
         body = codegen_names.find_child_kind(arena, case_id, SyntaxKind.BLOCK)
-        if body.index >= 0:
-            emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+        if guard.index >= 0:
+            builder.append("    if (")
+            codegen_expr.emit_module_expression(arena, guard, source, builder, prefix, project_name, imports, context)
+            builder.append(") {\n    cinder_match_found = true;\n")
+            if body.index >= 0:
+                emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+            builder.append("    }\n")
+        else:
+            builder.append("    cinder_match_found = true;\n")
+            if body.index >= 0:
+                emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
         while len(context.local_types) > local_start:
             context.local_types.pop()
         while len(context.pointer_names) > pointer_start:
             context.pointer_names.pop()
-        builder.append("    }\n")
-        emitted_case = true
+        builder.append("    }\n    }\n")
     builder.append("    }\n")
 
-def match_result_c_name(
+def match_case_guard(arena: &const SyntaxArena, case_id: NodeId) -> NodeId:
+    node = arena.nodes[case_id.index]
+    for offset in range(1, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        if arena.nodes[child_id.index].kind != SyntaxKind.BLOCK:
+            return child_id
+    return syntax.missing_node()
+
+
+def match_subject_value_info(
     arena: &const SyntaxArena,
     subject: NodeId,
     source: &const String,
@@ -543,35 +576,111 @@ def match_result_c_name(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
-    subject_type: NodeId,
-) -> String:
+) -> MatchValueInfo:
+    syntax_type = codegen_context.context_expression_type(arena, context, subject, source)
     table: &const types.TypeTable = context.type_table
     semantic_subject_type = statement_strip_semantic_indirection(table, codegen_context.context_semantic_type(context, subject))
-    if codegen_type_names.semantic_type_is_kind(table, semantic_subject_type, types.TypeKind.OPTION):
-        semantic_name_builder = StringBuilder()
-        codegen_type_names.emit_semantic_specialized_type_name(table, semantic_subject_type, context.type_source, &semantic_name_builder, context.specialization_names)
-        return semantic_name_builder.finish()
-    if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
-        name_builder = StringBuilder()
-        codegen_type_names.emit_specialized_type_name(context.type_arena, subject_type, context.type_source, &name_builder, prefix, project_name, imports, context.specialization_names)
-        return name_builder.finish()
-    type_arena: &const SyntaxArena = context.type_arena
-    if subject_type.index >= 0 and type_arena.nodes[subject_type.index].kind == SyntaxKind.TYPE_GENERIC:
-        name_builder = StringBuilder()
-        codegen_context.emit_context_c_type(context.type_arena, subject_type, context.type_source, &name_builder, prefix, project_name, imports, context)
-        return name_builder.finish()
-    if subject.index < 0:
-        return ""
-    subject_node = arena.nodes[subject.index]
-    if subject_node.kind != SyntaxKind.EXPR_CALL:
+    c_type = match_parse_result_c_name(arena, subject, source)
+    if len(c_type) == 0:
+        c_type = match_value_c_type(syntax_type, semantic_subject_type, prefix, project_name, imports, context)
+    return MatchValueInfo(syntax_type=syntax_type, semantic_type=semantic_subject_type, c_type=c_type, valid=true)
+
+
+def match_value_c_type(
+    syntax_type: NodeId,
+    semantic_type: types.TypeId,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> String:
+    if syntax_type.index >= 0:
+        syntax_builder = StringBuilder()
+        codegen_context.emit_context_c_type(context.type_arena, syntax_type, context.type_source, &syntax_builder, prefix, project_name, imports, context)
+        syntax_name = syntax_builder.finish()
+        if len(syntax_name) > 0:
+            return syntax_name
+    table: &const types.TypeTable = context.type_table
+    if semantic_type.index >= 0 and semantic_type.index < cast[i32](len(table.types)):
+        semantic_builder = StringBuilder()
+        codegen_type_names.emit_semantic_c_type(table, semantic_type, context.type_source, &semantic_builder, prefix, project_name, imports, context.specialization_names)
+        return semantic_builder.finish()
+    return ""
+
+
+def match_parse_result_c_name(arena: &const SyntaxArena, subject: NodeId, source: &const String) -> String:
+    if subject.index < 0 or arena.nodes[subject.index].kind != SyntaxKind.EXPR_CALL:
         return ""
     callee = codegen_names.first_child(arena, subject)
-    if callee.index < 0:
+    if callee.index < 0 or arena.nodes[callee.index].kind != SyntaxKind.EXPR_NAME:
         return ""
     callee_node = arena.nodes[callee.index]
-    if callee_node.kind == SyntaxKind.EXPR_NAME and codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_i32"):
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_bool"):
+        return "CinderResult_bool_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_i32"):
         return "CinderResult_i32_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_i64"):
+        return "CinderResult_i64_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_u32"):
+        return "CinderResult_u32_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_u64"):
+        return "CinderResult_u64_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_isize"):
+        return "CinderResult_isize_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_usize"):
+        return "CinderResult_usize_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_f32"):
+        return "CinderResult_f32_n_CinderParseError"
+    if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "parse_f64"):
+        return "CinderResult_f64_n_CinderParseError"
     return ""
+
+
+def match_text_equals(value: &const String, expected: String) -> bool:
+    if len(value) != len(expected):
+        return false
+    for offset in range(0, len(value)):
+        if value.byte_at(offset) != expected.byte_at(offset):
+            return false
+    return true
+
+
+def missing_match_value_info() -> MatchValueInfo:
+    return MatchValueInfo(
+        syntax_type=syntax.missing_node(),
+        semantic_type=types.missing_type(),
+        c_type="",
+        valid=false,
+    )
+
+
+def match_runtime_payload_info(
+    context: &codegen_model.ModuleCodegenContext,
+    value_info: &const MatchValueInfo,
+    constructor: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> MatchValueInfo:
+    argument_index: i32 = 0
+    if match_text_equals(constructor, "Err"):
+        argument_index = 1
+    syntax_type = syntax.missing_node()
+    if value_info.syntax_type.index >= 0:
+        syntax_type = codegen_context.context_generic_argument(context.type_arena, value_info.syntax_type, argument_index)
+    semantic_type = types.missing_type()
+    table: &const types.TypeTable = context.type_table
+    if value_info.semantic_type.index >= 0 and value_info.semantic_type.index < cast[i32](len(table.types)):
+        record = table.types[value_info.semantic_type.index]
+        if record.kind == types.TypeKind.OPTION:
+            semantic_type = record.inner
+        elif record.kind == types.TypeKind.RESULT:
+            if argument_index == 0:
+                semantic_type = record.inner
+            else:
+                semantic_type = record.second
+    c_type = match_value_c_type(syntax_type, semantic_type, prefix, project_name, imports, context)
+    return MatchValueInfo(syntax_type=syntax_type, semantic_type=semantic_type, c_type=c_type, valid=true)
 
 def emit_match_pattern_condition(
     arena: &const SyntaxArena,
@@ -582,8 +691,8 @@ def emit_match_pattern_condition(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
-    subject_type: NodeId,
-    result_c_name: &const String,
+    value: &const String,
+    value_info: &const MatchValueInfo,
 ) -> void:
     if pattern.index < 0:
         builder.append("false")
@@ -593,61 +702,85 @@ def emit_match_pattern_condition(
         builder.append("true")
         return
     if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
-        emit_match_pattern_condition(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type, result_c_name)
+        emit_match_pattern_condition(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, value, value_info)
+        return
+    if node.kind == SyntaxKind.PATTERN_CAPTURE:
+        emit_match_pattern_condition(arena, codegen_names.second_child(arena, pattern), source, builder, prefix, project_name, imports, context, value, value_info)
         return
     if node.kind == SyntaxKind.PATTERN_OR:
         builder.append("(")
         for offset in range(0, node.child_count):
             if offset > 0:
                 builder.append(" || ")
-            emit_match_pattern_condition(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, subject_type, result_c_name)
+            emit_match_pattern_condition(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, value, value_info)
         builder.append(")")
         return
     if node.kind != SyntaxKind.PATTERN_PATH or node.child_count <= 0:
         builder.append("false")
         return
-    first = arena.children[node.first_child]
-    first_node = arena.nodes[first.index]
-    if node.child_count == 1 and first_node.kind == SyntaxKind.NAME and codegen_names.is_lowercase_start(source, first_node.value_start):
+    name_count = match_pattern_name_count(arena, pattern)
+    if name_count <= 0:
+        builder.append("false")
+        return
+    constructor_id = arena.children[node.first_child + name_count - 1]
+    constructor_node = arena.nodes[constructor_id.index]
+    constructor = source[constructor_node.value_start:constructor_node.value_start + constructor_node.value_length]
+    if node.child_count == 1 and codegen_names.is_lowercase_start(source, constructor_node.value_start):
         builder.append("true")
         return
-    if len(result_c_name) > 0:
-        if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Some") or codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "None"):
-            builder.append("cinder_match_value.tag == ")
-            builder.append(result_c_name[0:len(result_c_name)])
-            if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Some"):
-                builder.append("_Tag_Some")
-            else:
-                builder.append("_Tag_None")
-            return
-        if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok") or codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Err"):
-            builder.append("cinder_match_value.tag == ")
-            builder.append(result_c_name[0:len(result_c_name)])
-            if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok"):
-                builder.append("_Tag_Ok")
-            else:
-                builder.append("_Tag_Err")
-            return
-    if node.child_count >= 2 and first_node.kind == SyntaxKind.NAME:
-        second = arena.children[node.first_child + 1]
-        second_node = arena.nodes[second.index]
-        owner_name = source[first_node.value_start:first_node.value_start + first_node.value_length]
-        case_name = source[second_node.value_start:second_node.value_start + second_node.value_length]
-        variant_id = codegen_names.find_module_variant_declaration(context.type_arena, context.root, context.type_source, &owner_name)
-        if codegen_names.find_variant_case_declaration(context.type_arena, variant_id, context.type_source, &case_name).index >= 0:
-            builder.append("cinder_match_value.tag == ")
-            if len(result_c_name) > 0:
-                builder.append(result_c_name[0:len(result_c_name)])
-            else:
-                builder.append(prefix[0:len(prefix)])
-                builder.append(owner_name[0:len(owner_name)])
-            builder.append("_")
-            builder.append(case_name[0:len(case_name)])
-            return
-    builder.append("false")
+    if match_text_equals(&constructor, "Some") or match_text_equals(&constructor, "None") or match_text_equals(&constructor, "Ok") or match_text_equals(&constructor, "Err"):
+        builder.append("(")
+        builder.append(value[0:len(value)])
+        builder.append(".tag == ")
+        builder.append(value_info.c_type[0:len(value_info.c_type)])
+        builder.append("_Tag_")
+        builder.append(constructor[0:len(constructor)])
+        if name_count < node.child_count:
+            nested = arena.children[node.first_child + name_count]
+            nested_value = match_runtime_field_access(value, &constructor)
+            nested_info = match_runtime_payload_info(context, value_info, &constructor, prefix, project_name, imports)
+            builder.append(" && ")
+            emit_match_pattern_condition(arena, nested, source, builder, prefix, project_name, imports, context, &nested_value, &nested_info)
+        builder.append(")")
+        return
+    nominal_case = match_resolve_nominal_case(arena, pattern, source, prefix, project_name, imports, context, value_info)
+    if not nominal_case.valid:
+        builder.append("false")
+        return
+    builder.append("(")
+    builder.append(value[0:len(value)])
+    if nominal_case.is_enum:
+        builder.append(" == ")
+    else:
+        builder.append(".tag == ")
+    builder.append(nominal_case.c_name[0:len(nominal_case.c_name)])
+    builder.append("_")
+    builder.append(nominal_case.case_name[0:len(nominal_case.case_name)])
+    argument_index: i32 = 0
+    for offset in range(name_count, node.child_count):
+        nested = arena.children[node.first_child + offset]
+        nested_value = match_nominal_field_access(value, &nominal_case, argument_index, context)
+        nested_info = match_nominal_field_info(&nominal_case, argument_index, prefix, project_name, imports, context)
+        builder.append(" && ")
+        emit_match_pattern_condition(arena, nested, source, builder, prefix, project_name, imports, context, &nested_value, &nested_info)
+        argument_index += 1
+    builder.append(")")
 
-def emit_match_pattern_captures(
+
+def match_runtime_field_access(value: &const String, constructor: &const String) -> String:
+    builder = StringBuilder()
+    builder.append(value[0:len(value)])
+    if match_text_equals(constructor, "Some"):
+        builder.append(".data.value")
+    elif match_text_equals(constructor, "Ok"):
+        builder.append(".data.ok")
+    elif match_text_equals(constructor, "Err"):
+        builder.append(".data.err")
+    return builder.finish()
+
+def emit_match_binding_declarations(
     arena: &const SyntaxArena,
+    root_pattern: NodeId,
     pattern: NodeId,
     source: &const String,
     builder: &StringBuilder,
@@ -655,135 +788,416 @@ def emit_match_pattern_captures(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
-    subject_type: NodeId,
-    result_c_name: &const String,
+    root_value: &const String,
+    root_info: &const MatchValueInfo,
+    emitted: &List[String],
 ) -> void:
     if pattern.index < 0:
         return
     node = arena.nodes[pattern.index]
     if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
-        emit_match_pattern_captures(arena, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, subject_type, result_c_name)
+        emit_match_binding_declarations(arena, root_pattern, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
         return
-    if node.kind != SyntaxKind.PATTERN_PATH or node.child_count <= 1:
+    if node.kind == SyntaxKind.PATTERN_CAPTURE or node.kind == SyntaxKind.PATTERN_OR:
+        for offset in range(0, node.child_count):
+            emit_match_binding_declarations(arena, root_pattern, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
         return
-    first = arena.children[node.first_child]
-    first_node = arena.nodes[first.index]
-    if len(result_c_name) > 0:
-        is_ok = codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Ok")
-        is_err = codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Err")
-        if (is_ok or is_err) and node.child_count > 1:
-            nested = arena.children[node.first_child + 1]
-            payload_type = syntax.missing_node()
-            if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
-                payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 0)
-            access = ".data.ok"
-            if is_err:
-                if codegen_context.context_type_is_runtime_generic(context.type_arena, subject_type, context.type_source, "Result"):
-                    payload_type = codegen_context.context_generic_argument(context.type_arena, subject_type, 1)
-                access = ".data.err"
-            emit_match_capture_binding(arena, nested, source, builder, context, payload_type, &access)
+    if node.kind != SyntaxKind.PATTERN_PATH:
+        return
+    name_count = match_pattern_name_count(arena, pattern)
+    if node.child_count == 1 and name_count == 1:
+        name_id = arena.children[node.first_child]
+        name = arena.nodes[name_id.index]
+        if codegen_names.is_lowercase_start(source, name.value_start):
+            emit_match_binding_declaration_once(arena, root_pattern, name_id, source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
+        return
+    for offset in range(name_count, node.child_count):
+        emit_match_binding_declarations(arena, root_pattern, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
+
+def emit_match_binding_declaration_once(
+    arena: &const SyntaxArena,
+    root_pattern: NodeId,
+    name_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    root_value: &const String,
+    root_info: &const MatchValueInfo,
+    emitted: &List[String],
+) -> void:
+    name = arena.nodes[name_id.index]
+    name_text = source[name.value_start:name.value_start + name.value_length]
+    for existing in emitted:
+        if match_text_equals(&existing, name_text[0:len(name_text)]):
             return
-        if codegen_names.range_text_equals(source, first_node.value_start, first_node.value_length, "Some") and node.child_count > 1:
-            nested = arena.children[node.first_child + 1]
-            payload_type = syntax.missing_node()
-            access = ".data.value"
-            emit_match_capture_binding(arena, nested, source, builder, context, payload_type, &access)
-            return
-    if node.child_count < 2:
-        return
-    second = arena.children[node.first_child + 1]
-    second_node = arena.nodes[second.index]
-    owner_name = source[first_node.value_start:first_node.value_start + first_node.value_length]
-    case_name = source[second_node.value_start:second_node.value_start + second_node.value_length]
-    variant_id = codegen_names.find_module_variant_declaration(context.type_arena, context.root, context.type_source, &owner_name)
-    case_id = codegen_names.find_variant_case_declaration(context.type_arena, variant_id, context.type_source, &case_name)
-    if case_id.index < 0:
-        return
-    case_node = codegen_names.arena_node_at(context.type_arena, case_id)
-    pattern_offset: i32 = 2
-    for field_offset in range(0, case_node.child_count):
-        field_id = codegen_names.arena_child_at(context.type_arena, case_node.first_child + field_offset)
-        field = codegen_names.arena_node_at(context.type_arena, field_id)
-        if field.kind != SyntaxKind.FIELD_DECL:
-            continue
-        if pattern_offset < node.child_count:
-            nested = arena.children[node.first_child + pattern_offset]
-            emit_match_variant_capture_binding(
-                arena,
-                nested,
-                source,
-                builder,
-                context,
-                codegen_type_names.find_child_type(context.type_arena, field_id),
-                &case_name,
-                field.value_start,
-                field.value_length,
+    emitted.append(name_text[0:len(name_text)])
+    builder.append("    __auto_type ")
+    builder.append(name_text[0:len(name_text)])
+    builder.append(" = ")
+    binding_info = emit_match_binding_value(arena, root_pattern, &name_text, source, builder, prefix, project_name, imports, context, root_value, root_info)
+    builder.append(";\n")
+    if binding_info.syntax_type.index >= 0:
+        codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
+
+
+def emit_match_binding_value(
+    arena: &const SyntaxArena,
+    pattern: NodeId,
+    name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    value: &const String,
+    value_info: &const MatchValueInfo,
+) -> MatchValueInfo:
+    if pattern.index < 0:
+        return missing_match_value_info()
+    node = arena.nodes[pattern.index]
+    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
+        return emit_match_binding_value(arena, codegen_names.first_child(arena, pattern), name, source, builder, prefix, project_name, imports, context, value, value_info)
+    if node.kind == SyntaxKind.PATTERN_CAPTURE:
+        binding = codegen_names.first_child(arena, pattern)
+        if match_pattern_contains_binding(arena, binding, name, source):
+            return emit_match_binding_value(arena, binding, name, source, builder, prefix, project_name, imports, context, value, value_info)
+        return emit_match_binding_value(arena, codegen_names.second_child(arena, pattern), name, source, builder, prefix, project_name, imports, context, value, value_info)
+    if node.kind == SyntaxKind.PATTERN_OR:
+        return emit_match_or_binding_value(arena, pattern, 0, name, source, builder, prefix, project_name, imports, context, value, value_info)
+    if node.kind != SyntaxKind.PATTERN_PATH:
+        return missing_match_value_info()
+    name_count = match_pattern_name_count(arena, pattern)
+    if node.child_count == 1 and name_count == 1:
+        name_id = arena.children[node.first_child]
+        name_node = arena.nodes[name_id.index]
+        candidate = source[name_node.value_start:name_node.value_start + name_node.value_length]
+        if match_text_equals(&candidate, name[0:len(name)]):
+            builder.append(value[0:len(value)])
+            return MatchValueInfo(
+                syntax_type=value_info.syntax_type,
+                semantic_type=value_info.semantic_type,
+                c_type=value_info.c_type[0:len(value_info.c_type)],
+                valid=value_info.valid,
             )
-        pattern_offset += 1
+        return missing_match_value_info()
+    constructor_id = arena.children[node.first_child + name_count - 1]
+    constructor_node = arena.nodes[constructor_id.index]
+    constructor = source[constructor_node.value_start:constructor_node.value_start + constructor_node.value_length]
+    argument_index: i32 = 0
+    for offset in range(name_count, node.child_count):
+        nested = arena.children[node.first_child + offset]
+        if match_pattern_contains_binding(arena, nested, name, source):
+            if match_text_equals(&constructor, "Some") or match_text_equals(&constructor, "Ok") or match_text_equals(&constructor, "Err"):
+                nested_value = match_runtime_field_access(value, &constructor)
+                nested_info = match_runtime_payload_info(context, value_info, &constructor, prefix, project_name, imports)
+                return emit_match_binding_value(arena, nested, name, source, builder, prefix, project_name, imports, context, &nested_value, &nested_info)
+            nominal_case = match_resolve_nominal_case(arena, pattern, source, prefix, project_name, imports, context, value_info)
+            nested_value = match_nominal_field_access(value, &nominal_case, argument_index, context)
+            nested_info = match_nominal_field_info(&nominal_case, argument_index, prefix, project_name, imports, context)
+            return emit_match_binding_value(arena, nested, name, source, builder, prefix, project_name, imports, context, &nested_value, &nested_info)
+        argument_index += 1
+    return missing_match_value_info()
 
-def emit_match_variant_capture_binding(
+
+def emit_match_or_binding_value(
+    arena: &const SyntaxArena,
+    pattern: NodeId,
+    start_offset: i32,
+    name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    value: &const String,
+    value_info: &const MatchValueInfo,
+) -> MatchValueInfo:
+    node = arena.nodes[pattern.index]
+    current = match_next_binding_alternative(arena, pattern, start_offset, name, source)
+    if current < 0:
+        return missing_match_value_info()
+    nested = arena.children[node.first_child + current]
+    following = match_next_binding_alternative(arena, pattern, current + 1, name, source)
+    if following < 0:
+        return emit_match_binding_value(arena, nested, name, source, builder, prefix, project_name, imports, context, value, value_info)
+    builder.append("(")
+    emit_match_pattern_condition(arena, nested, source, builder, prefix, project_name, imports, context, value, value_info)
+    builder.append(" ? ")
+    selected_info = emit_match_binding_value(arena, nested, name, source, builder, prefix, project_name, imports, context, value, value_info)
+    builder.append(" : ")
+    ignored_info = emit_match_or_binding_value(arena, pattern, following, name, source, builder, prefix, project_name, imports, context, value, value_info)
+    builder.append(")")
+    return selected_info
+
+
+def match_next_binding_alternative(
+    arena: &const SyntaxArena,
+    pattern: NodeId,
+    start_offset: i32,
+    name: &const String,
+    source: &const String,
+) -> i32:
+    node = arena.nodes[pattern.index]
+    offset = start_offset
+    while offset < node.child_count:
+        nested = arena.children[node.first_child + offset]
+        if match_pattern_contains_binding(arena, nested, name, source):
+            return offset
+        offset += 1
+    return -1
+
+
+def match_pattern_contains_binding(arena: &const SyntaxArena, pattern: NodeId, name: &const String, source: &const String) -> bool:
+    if pattern.index < 0:
+        return false
+    node = arena.nodes[pattern.index]
+    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
+        return match_pattern_contains_binding(arena, codegen_names.first_child(arena, pattern), name, source)
+    if node.kind == SyntaxKind.PATTERN_CAPTURE or node.kind == SyntaxKind.PATTERN_OR:
+        for offset in range(0, node.child_count):
+            if match_pattern_contains_binding(arena, arena.children[node.first_child + offset], name, source):
+                return true
+        return false
+    if node.kind != SyntaxKind.PATTERN_PATH:
+        return false
+    name_count = match_pattern_name_count(arena, pattern)
+    if node.child_count == 1 and name_count == 1:
+        name_id = arena.children[node.first_child]
+        name_node = arena.nodes[name_id.index]
+        candidate = source[name_node.value_start:name_node.value_start + name_node.value_length]
+        return match_text_equals(&candidate, name[0:len(name)])
+    for offset in range(name_count, node.child_count):
+        if match_pattern_contains_binding(arena, arena.children[node.first_child + offset], name, source):
+            return true
+    return false
+
+
+def match_pattern_name_count(arena: &const SyntaxArena, pattern: NodeId) -> i32:
+    if pattern.index < 0:
+        return 0
+    node = arena.nodes[pattern.index]
+    count: i32 = 0
+    while count < node.child_count:
+        child = arena.nodes[arena.children[node.first_child + count].index]
+        if child.kind != SyntaxKind.NAME:
+            break
+        count += 1
+    return count
+
+
+def match_resolve_nominal_case(
     arena: &const SyntaxArena,
     pattern: NodeId,
     source: &const String,
-    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
     context: &codegen_model.ModuleCodegenContext,
-    type_id: NodeId,
-    case_name: &const String,
-    field_start: usize,
-    field_length: usize,
-) -> void:
+    value_info: &const MatchValueInfo,
+) -> MatchNominalCase:
     if pattern.index < 0:
-        return
+        return missing_match_nominal_case()
     node = arena.nodes[pattern.index]
-    if node.kind == SyntaxKind.PATTERN_WILDCARD:
-        return
-    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
-        emit_match_variant_capture_binding(arena, codegen_names.first_child(arena, pattern), source, builder, context, type_id, case_name, field_start, field_length)
-        return
-    if node.kind != SyntaxKind.PATTERN_PATH or node.child_count != 1:
-        return
-    name_id = arena.children[node.first_child]
-    name = arena.nodes[name_id.index]
-    if name.kind != SyntaxKind.NAME or not codegen_names.is_lowercase_start(source, name.value_start):
-        return
-    builder.append("    __auto_type ")
-    codegen_names.append_source(builder, source, name.value_start, name.value_length)
-    builder.append(" = cinder_match_value.data.")
-    builder.append(case_name[0:len(case_name)])
-    builder.append(".")
-    codegen_names.append_source(builder, context.type_source, field_start, field_length)
-    builder.append(";\n")
-    codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, type_id)
+    name_count = match_pattern_name_count(arena, pattern)
+    if name_count <= 0:
+        return missing_match_nominal_case()
+    case_id = arena.children[node.first_child + name_count - 1]
+    case_node = arena.nodes[case_id.index]
+    case_name = source[case_node.value_start:case_node.value_start + case_node.value_length]
+    owner_name = ""
+    nominal_index: i32 = -1
+    if name_count >= 2:
+        owner_id = arena.children[node.first_child + name_count - 2]
+        owner = arena.nodes[owner_id.index]
+        owner_name = source[owner.value_start:owner.value_start + owner.value_length]
+        if name_count >= 3:
+            alias_id = arena.children[node.first_child + name_count - 3]
+            alias_node = arena.nodes[alias_id.index]
+            alias = source[alias_node.value_start:alias_node.value_start + alias_node.value_length]
+            imported_alias = codegen_names.find_import_alias(imports, &alias)
+            if len(imported_alias.module_name) > 0:
+                nominal_index = codegen_reflection.find_nominal(context.reflection_model, &imported_alias.module_name, &owner_name)
+        if nominal_index < 0:
+            nominal_index = codegen_reflection.find_nominal_for_name(context.reflection_model, imports, &context.module_name, &owner_name)
+    else:
+        owner_name = codegen_type_names.context_type_owner_name(context.type_arena, value_info.syntax_type, context.type_source)
+        if len(owner_name) > 0:
+            nominal_index = codegen_reflection.find_nominal_for_name(context.reflection_model, imports, &context.module_name, &owner_name)
+    if nominal_index >= 0 and nominal_index < codegen_reflection.nominal_count(context.reflection_model):
+        nominal_kind = codegen_reflection.nominal_kind_at(context.reflection_model, nominal_index)
+        is_enum = nominal_kind == codegen_reflection.ReflectionNominalKind.ENUM
+        metadata_case: i32 = -1
+        if nominal_kind == codegen_reflection.ReflectionNominalKind.VARIANT:
+            metadata_case = codegen_reflection.find_variant_case(context.reflection_model, nominal_index, &case_name)
+            if metadata_case < 0:
+                return missing_match_nominal_case()
+        elif not is_enum:
+            return missing_match_nominal_case()
+        return MatchNominalCase(
+            nominal_index=nominal_index,
+            case_index=metadata_case,
+            declaration=syntax.missing_node(),
+            case_declaration=syntax.missing_node(),
+            c_name=match_reflection_nominal_c_name(value_info, nominal_index, context),
+            case_name=case_name[0:len(case_name)],
+            is_enum=is_enum,
+            valid=true,
+        )
+    if len(owner_name) == 0:
+        return missing_match_nominal_case()
+    declaration = match_find_local_nominal(context.type_arena, context.root, context.type_source, &owner_name)
+    if declaration.index < 0:
+        return missing_match_nominal_case()
+    declaration_node = codegen_names.arena_node_at(context.type_arena, declaration)
+    is_enum = declaration_node.kind == SyntaxKind.ENUM_DECL
+    case_declaration = syntax.missing_node()
+    if declaration_node.kind == SyntaxKind.VARIANT_DECL:
+        case_declaration = codegen_names.find_variant_case_declaration(context.type_arena, declaration, context.type_source, &case_name)
+        if case_declaration.index < 0:
+            return missing_match_nominal_case()
+    elif not is_enum:
+        return missing_match_nominal_case()
+    return MatchNominalCase(
+        nominal_index=-1,
+        case_index=-1,
+        declaration=declaration,
+        case_declaration=case_declaration,
+        c_name=match_local_nominal_c_name(value_info, prefix, &owner_name),
+        case_name=case_name[0:len(case_name)],
+        is_enum=is_enum,
+        valid=true,
+    )
 
-def emit_match_capture_binding(
-    arena: &const SyntaxArena,
-    pattern: NodeId,
-    source: &const String,
-    builder: &StringBuilder,
+
+def match_reflection_nominal_c_name(
+    value_info: &const MatchValueInfo,
+    nominal_index: i32,
     context: &codegen_model.ModuleCodegenContext,
-    type_id: NodeId,
-    access: &const String,
-) -> void:
-    if pattern.index < 0:
-        return
-    node = arena.nodes[pattern.index]
-    if node.kind == SyntaxKind.PATTERN_WILDCARD:
-        return
-    if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
-        emit_match_capture_binding(arena, codegen_names.first_child(arena, pattern), source, builder, context, type_id, access)
-        return
-    if node.kind != SyntaxKind.PATTERN_PATH or node.child_count != 1:
-        return
-    name_id = arena.children[node.first_child]
-    name = arena.nodes[name_id.index]
-    if name.kind != SyntaxKind.NAME or not codegen_names.is_lowercase_start(source, name.value_start):
-        return
-    builder.append("    __auto_type ")
-    codegen_names.append_source(builder, source, name.value_start, name.value_length)
-    builder.append(" = cinder_match_value")
-    builder.append(access[0:len(access)])
-    builder.append(";\n")
-    codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, type_id)
+) -> String:
+    if value_info.syntax_type.index >= 0:
+        syntax_node = codegen_names.arena_node_at(context.type_arena, value_info.syntax_type)
+        if syntax_node.kind == SyntaxKind.TYPE_GENERIC and len(value_info.c_type) > 0:
+            return value_info.c_type[0:len(value_info.c_type)]
+    return codegen_reflection.nominal_c_name_at(context.reflection_model, nominal_index)
+
+
+def match_local_nominal_c_name(value_info: &const MatchValueInfo, prefix: &const String, owner_name: &const String) -> String:
+    if len(value_info.c_type) > 0:
+        return value_info.c_type[0:len(value_info.c_type)]
+    builder = StringBuilder()
+    builder.append(prefix[0:len(prefix)])
+    builder.append(owner_name[0:len(owner_name)])
+    return builder.finish()
+
+
+def missing_match_nominal_case() -> MatchNominalCase:
+    return MatchNominalCase(
+        nominal_index=-1,
+        case_index=-1,
+        declaration=syntax.missing_node(),
+        case_declaration=syntax.missing_node(),
+        c_name="",
+        case_name="",
+        is_enum=false,
+        valid=false,
+    )
+
+
+def match_find_local_nominal(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    name: &const String,
+) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if (node.kind == SyntaxKind.ENUM_DECL or node.kind == SyntaxKind.VARIANT_DECL) and codegen_names.range_text_equals(source, node.value_start, node.value_length, name[0:len(name)]):
+        return id
+    if node.kind == SyntaxKind.MODULE:
+        for offset in range(0, node.child_count):
+            found = match_find_local_nominal(arena, arena.children[node.first_child + offset], source, name)
+            if found.index >= 0:
+                return found
+    return syntax.missing_node()
+
+
+def match_nominal_field_access(
+    value: &const String,
+    nominal_case: &const MatchNominalCase,
+    field_index: i32,
+    context: &codegen_model.ModuleCodegenContext,
+) -> String:
+    field_name = ""
+    if nominal_case.case_index >= 0:
+        metadata_field = codegen_reflection.variant_field_at(context.reflection_model, nominal_case.case_index, field_index)
+        if metadata_field >= 0:
+            field_name = codegen_reflection.variant_field_name_at(context.reflection_model, metadata_field)
+    if len(field_name) == 0:
+        field_id = match_local_variant_field(context.type_arena, nominal_case.case_declaration, field_index)
+        if field_id.index >= 0:
+            field = codegen_names.arena_node_at(context.type_arena, field_id)
+            type_source: &const String = context.type_source
+            field_name = type_source[field.value_start:field.value_start + field.value_length]
+    builder = StringBuilder()
+    builder.append(value[0:len(value)])
+    builder.append(".data.")
+    builder.append(nominal_case.case_name[0:len(nominal_case.case_name)])
+    if len(field_name) > 0:
+        builder.append(".")
+        builder.append(field_name[0:len(field_name)])
+    return builder.finish()
+
+
+def match_nominal_field_info(
+    nominal_case: &const MatchNominalCase,
+    field_index: i32,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> MatchValueInfo:
+    if nominal_case.case_index >= 0:
+        metadata_field = codegen_reflection.variant_field_at(context.reflection_model, nominal_case.case_index, field_index)
+        if metadata_field >= 0:
+            return MatchValueInfo(
+                syntax_type=syntax.missing_node(),
+                semantic_type=types.missing_type(),
+                c_type=codegen_reflection.variant_field_c_type_at(context.reflection_model, metadata_field),
+                valid=true,
+            )
+    field_id = match_local_variant_field(context.type_arena, nominal_case.case_declaration, field_index)
+    if field_id.index < 0:
+        return missing_match_value_info()
+    field_type = codegen_type_names.find_child_type(context.type_arena, field_id)
+    c_type = match_value_c_type(field_type, types.missing_type(), prefix, project_name, imports, context)
+    return MatchValueInfo(
+        syntax_type=field_type,
+        semantic_type=types.missing_type(),
+        c_type=c_type,
+        valid=true,
+    )
+
+
+def match_local_variant_field(arena: &const SyntaxArena, case_id: NodeId, wanted: i32) -> NodeId:
+    if case_id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[case_id.index]
+    seen: i32 = 0
+    for offset in range(0, node.child_count):
+        field_id = arena.children[node.first_child + offset]
+        if arena.nodes[field_id.index].kind != SyntaxKind.FIELD_DECL:
+            continue
+        if seen == wanted:
+            return field_id
+        seen += 1
+    return syntax.missing_node()
+
 
 def emit_module_with(
     arena: &const SyntaxArena,

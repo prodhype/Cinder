@@ -635,6 +635,157 @@ def test_gen1_matches_parse_i32_result_tags_and_captures(
     assert executed.returncode == 0
 
 
+def test_gen1_lowers_nested_guarded_capture_and_or_match_patterns(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "nested_match.ci"
+    source.write_text(
+        "def classify(value: Option[Result[i32, i32]]) -> i32:\n"
+        "    match value:\n"
+        "        case Some(Ok(score)) if score > 3:\n"
+        "            return score\n"
+        "        case Some(Err(_)) | None:\n"
+        "            return 0\n"
+        "        case original @ Some(Ok(_)):\n"
+        "            if original.is_some:\n"
+        "                return 1\n"
+        "    return 2\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert "bool cinder_match_found = false;" in generated
+    assert "cinder_match_value.data.value.data.ok" in generated
+    assert "__auto_type score = cinder_match_value.data.value.data.ok;" in generated
+    assert "__auto_type original = cinder_match_value;" in generated
+    assert "CinderResult_i32_i32_Tag_Err" in generated
+    assert generated.index("__auto_type score") < generated.index("if ((score > 3))")
+
+
+def test_gen1_guarded_or_match_assigns_selected_binding_once(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "guarded_or_match.ci"
+    source.write_text(
+        "def classify(value: Result[i32, i32]) -> i32:\n"
+        "    match value:\n"
+        "        case Ok(number) | Err(number) if number == 2:\n"
+        "            return 10\n"
+        "        case Ok(_) | Err(_):\n"
+        "            return 1\n"
+        "    return 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return classify(Ok(1)) + classify(Err(2)) - 11\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert emitted.stdout.count("__auto_type number =") == 1
+    assert "cinder_match_value.tag == CinderResult_i32_i32_Tag_Ok" in emitted.stdout
+    assert "? cinder_match_value.data.ok : cinder_match_value.data.err" in emitted.stdout
+
+    output = tmp_path / "guarded_or_match"
+    built = run_gen1(gen1_compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
+def test_gen1_rejects_or_match_alternatives_with_different_bindings(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "invalid_or_match.ci"
+    source.write_text(
+        "def classify(value: Option[i32]) -> i32:\n"
+        "    match value:\n"
+        "        case Some(number) | None:\n"
+        "            return number\n"
+        "    return 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(gen1_compiler, "check", str(source))
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E 316 ")
+
+
+def test_gen1_lowers_imported_variant_match_payloads(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        "[project]\n"
+        'name = "match_imports"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "model.ci").write_text(
+        "variant Token:\n"
+        "    Integer(value: i32)\n"
+        "    End\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "from model import Token\n"
+        "\n"
+        "def read(token: Token) -> i32:\n"
+        "    match token:\n"
+        "        case Token.Integer(parsed):\n"
+        "            return parsed\n"
+        "        case Token.End:\n"
+        "            return 0\n"
+        "    return -1\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    generated = tmp_path / "generated"
+    emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(generated),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    main_c = (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+    assert "cinder_match_imports_model__Token_Integer" in main_c
+    assert "__auto_type parsed = cinder_match_value.data.Integer.value;" in main_c
+
+    output = tmp_path / "match-imports"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(tmp_path / "cinder.toml"),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False)
+    assert executed.returncode == 0
+
+
 def test_gen1_emit_c_cleans_up_with_scope_before_return(
     gen1_compiler: Path,
     tmp_path: Path,
