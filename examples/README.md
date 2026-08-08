@@ -74,3 +74,5 @@ momentum, force, kinematics, projectile motion, pendulum period, and centripetal
 `class_project/` is a complete multi-file class ABI example. It defines a reflected abstract interface in one module, implements it in another, and performs dynamic dispatch from the entry module through separately generated headers and C translation units.
 
 `large_project/` is a larger multi-module Breakout demo. It binds SDL2 and SDL_mixer via `extern import` / `extern "C"`, opens a window, draws paddle/ball/bricks across nested `sdl/` and `game/` modules, and plays WAV sound effects. See `large_project/README.md` for install and link flags (manual run; not part of CI).
+
+`go_host/` demonstrates Go as the host language: `@export` Cinder functions with a C ABI wrap an arena-owned expression AST, exhaustive variant matching, and `Result` evaluation, then a small cgo program includes the generated header and links the compiled object. See `go_host/README.md` for build steps (manual run; not part of CI).
