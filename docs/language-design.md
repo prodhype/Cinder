@@ -818,8 +818,9 @@ C headers remain available through `extern import`.
 ## Compiler architecture
 
 The compiler requires Python 3.14+ and emits readable C11.
-Python remains the stage0 implementation; there is no self-hosted Cinder compiler
-yet. The staged path toward one is documented in
+Python remains the stage0 implementation. The native self-hosted chain lives in
+`compiler_selfhost/` and bootstraps to gen3. Bootstrap steps and the ownership
+constraints that still apply are documented in
 [`docs/self-hosting.md`](self-hosting.md).
 
 ```text
@@ -871,7 +872,7 @@ cinder emit-project . -o generated
 
 ## Implemented milestones
 
-The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations. Explicit-environment closures extend function pointers without inferred capture or hidden allocation. The owned String foundation supplies the text ownership and UTF-8 rules needed before a self-hosting effort can begin.
+The first usable compiler milestone established indentation parsing, primitive types, functions, native control flow, structs and methods, pointers, arrays, slices, C imports, and readable C11 generation. Cinder 0.2 added manifest-driven modules and per-module C output. Cinder 0.3 added enums, unions, variants, exhaustive matching, typed Results, and propagation. Cinder 0.4 established the class and interface ABI. Cinder 0.5 added opt-in runtime metadata and compile-time member inspection. Native tuples and lists extend those built-in type-specialization patterns. User-defined generics monomorphize the same way into readable named C specializations. Explicit-environment closures extend function pointers without inferred capture or hidden allocation. The owned String foundation supplies the text ownership and UTF-8 rules used by the native self-hosted compiler.
 
 Copy/move hooks, inline/inferred closures, bound method closures, and broader compile-time execution remain later work.
 
