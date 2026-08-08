@@ -4,6 +4,7 @@ import codegen_names
 import codegen_reflection
 import codegen_type_names
 import generics
+import ownership
 import semantic
 import project
 import syntax
@@ -420,6 +421,11 @@ def register_context_name_type(arena: &const SyntaxArena, context: &ModuleCodege
     if type_id.index >= 0 and context_type_is_pointer_like(arena, type_id):
         context.pointer_names.append(name[0:len(name)])
 
+def register_context_borrowed_name_type(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, start: usize, length: usize, type_id: NodeId) -> void:
+    register_context_name_type(arena, context, source, start, length, type_id)
+    if length > 0 and len(context.local_types) > 0:
+        context.local_types[len(context.local_types) - 1].moved = true
+
 def register_context_pointer_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
     if length == 0:
         return
@@ -509,14 +515,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
         return false
     semantic_type = context_semantic_type(context, type_id)
     if semantic_type.index >= 0 and not codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.ERROR):
-        semantic_record = context.type_table.types[semantic_type.index]
-        if semantic_record.kind == types.TypeKind.STRING or semantic_record.kind == types.TypeKind.STRING_BUILDER or semantic_record.kind == types.TypeKind.LIST or semantic_record.kind == types.TypeKind.MAP or semantic_record.kind == types.TypeKind.SET or semantic_record.kind == types.TypeKind.OPTION or semantic_record.kind == types.TypeKind.OWNED:
-            return true
-        if semantic_record.kind == types.TypeKind.RESULT or semantic_record.kind == types.TypeKind.TUPLE:
-            return semantic_type_contains_owned(context.type_table, semantic_type)
-        if semantic_record.kind == types.TypeKind.CONST:
-            return semantic_type_contains_owned(context.type_table, semantic_record.inner)
-        return false
+        return ownership.type_needs_drop_for_table(context.type_table, semantic_type)
     node = arena.nodes[type_id.index]
     if node.kind == SyntaxKind.EXPR_LITERAL:
         return node.flags == cast[i32](token.TokenKind.STRING)
@@ -1286,7 +1285,7 @@ def emit_context_drops(
             emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
 
 
-def emit_context_owned_drops(
+def emit_context_live_drops(
     arena: &const SyntaxArena,
     context: &ModuleCodegenContext,
     source: &const String,
@@ -1299,63 +1298,20 @@ def emit_context_owned_drops(
     index = len(context.local_types)
     while index > local_start:
         index -= 1
-        if not context.local_types[index].moved and context_type_contains_owned(arena, context, context.local_types[index].type_id, source):
+        if not context.local_types[index].moved and context_type_needs_drop(arena, context, context.local_types[index].type_id, source):
             emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
 
 
-def context_type_is_map_or_set(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
-    if type_id.index < 0:
-        return false
-    node = arena.nodes[type_id.index]
-    if node.kind == SyntaxKind.EXPR_MAP or node.kind == SyntaxKind.EXPR_SET:
-        return true
-    if node.kind != SyntaxKind.TYPE_GENERIC:
-        return false
-    base = codegen_names.first_child(arena, type_id)
-    if base.index < 0:
-        return false
-    base_node = arena.nodes[base.index]
-    return (
-        codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Map")
-        or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Set")
-    )
-
-
-def context_has_live_collection_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String) -> bool:
+def context_has_live_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String) -> bool:
     index = len(context.local_types)
     while index > context.local_start:
         index -= 1
         if (
             not context.local_types[index].moved
-            and (
-                context_type_is_map_or_set(arena, context.local_types[index].type_id, source)
-                or context_type_contains_owned(arena, context, context.local_types[index].type_id, source)
-            )
+            and context_type_needs_drop(arena, context, context.local_types[index].type_id, source)
         ):
             return true
     return false
-
-
-def emit_context_collection_drops(
-    arena: &const SyntaxArena,
-    context: &ModuleCodegenContext,
-    source: &const String,
-    builder: &StringBuilder,
-    prefix: &const String,
-    project_name: &const String,
-    imports: &const List[project.ImportBinding],
-) -> void:
-    index = len(context.local_types)
-    while index > context.local_start:
-        index -= 1
-        if (
-            not context.local_types[index].moved
-            and (
-                context_type_is_map_or_set(arena, context.local_types[index].type_id, source)
-                or context_type_contains_owned(arena, context, context.local_types[index].type_id, source)
-            )
-        ):
-            emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
 
 
 def emit_context_drop(
@@ -1370,6 +1326,20 @@ def emit_context_drop(
     imports: &const List[project.ImportBinding],
 ) -> void:
     if type_id.index < 0 or len(name) == 0:
+        return
+    semantic_type = context_semantic_type(context, type_id)
+    semantic_drop_type = semantic_type
+    while semantic_drop_type.index >= 0 and semantic_drop_type.index < cast[i32](len(context.type_table.types)) and context.type_table.types[semantic_drop_type.index].kind == types.TypeKind.CONST:
+        semantic_drop_type = context.type_table.types[semantic_drop_type.index].inner
+    if (
+        codegen_type_names.semantic_type_is_kind(context.type_table, semantic_drop_type, types.TypeKind.STRUCT)
+        or codegen_type_names.semantic_type_is_kind(context.type_table, semantic_drop_type, types.TypeKind.CLASS)
+    ):
+        builder.append("    ")
+        codegen_type_names.emit_semantic_c_type(context.type_table, semantic_drop_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        builder.append("__drop(&")
+        builder.append(name[0:len(name)])
+        builder.append(");\n")
         return
     node = arena.nodes[type_id.index]
     if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):

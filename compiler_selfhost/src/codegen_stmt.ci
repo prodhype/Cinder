@@ -116,7 +116,7 @@ def emit_module_return_cleanups(
         builder.append("    fclose(")
         builder.append(context.with_resources[index])
         builder.append(");\n")
-    codegen_context.emit_context_collection_drops(arena, context, source, builder, prefix, project_name, imports)
+    codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
 
 def emit_module_statement(
     arena: &const SyntaxArena,
@@ -133,7 +133,7 @@ def emit_module_statement(
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
         expr = codegen_names.first_child(arena, id)
-        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or len(context.iterator_guard_names) > 0 or codegen_context.context_has_live_collection_drops(arena, context, source)
+        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or len(context.iterator_guard_names) > 0 or codegen_context.context_has_live_drops(arena, context, source)
         if not has_cleanups:
             builder.append("    return")
             if expr.index >= 0:
@@ -1390,7 +1390,7 @@ def emit_module_for_each(
     else:
         builder.append(".data)[cinder_index];\n")
     if element_type.index >= 0:
-        codegen_context.register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, element_type)
+        codegen_context.register_context_borrowed_name_type(arena, context, source, target_node.value_start, target_node.value_length, element_type)
     emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
     if element_type.index >= 0:
         if len(context.local_types) > 0:

@@ -1170,7 +1170,7 @@ def emit_module_function(
         context.pointer_start = len(context.pointer_names)
         codegen_context.register_module_parameters(arena, id, source, context)
         codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
-        codegen_context.emit_context_owned_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
+        codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
         while len(context.local_types) > context.local_start:
             context.local_types.pop()
         while len(context.pointer_names) > context.pointer_start:
@@ -1589,7 +1589,7 @@ def emit_module_methods(
                     context.pointer_start = len(context.pointer_names)
                     codegen_context.register_module_parameters(arena, child_id, source, context)
                     codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
-                    codegen_context.emit_context_owned_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
+                    codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
                     while len(context.local_types) > context.local_start:
                         context.local_types.pop()
                     while len(context.pointer_names) > context.pointer_start:

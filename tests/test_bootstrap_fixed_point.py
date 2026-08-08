@@ -1454,6 +1454,117 @@ def test_gen1_emit_c_cleans_up_with_scope_before_return(
     assert materialized_return < cleanup < returned
 
 
+def test_gen1_drops_nominal_locals_on_live_return_path(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "nominal_cleanup.ci"
+    source.write_text(
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.label)\n'
+        "\n"
+        "def sum_values() -> i32:\n"
+        "    first = Resource(1)\n"
+        "    second: Resource = Resource(2)\n"
+        "    return first.label + second.label\n"
+        "\n"
+        "def make(value: i32) -> Resource:\n"
+        "    resource = Resource(value)\n"
+        "    return resource\n"
+        "\n"
+        "def consume(owned: Resource) -> void:\n"
+        "    pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    moved = make(3)\n"
+        "    result = sum_values()\n"
+        "    consume(Resource(4))\n"
+        "    return result + moved.label - 6\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    drop_second = generated.index("Resource__drop(&second);")
+    materialized_return = generated.rfind(
+        "__auto_type cinder_return_value =",
+        0,
+        drop_second,
+    )
+    drop_first = generated.index("Resource__drop(&first);", drop_second)
+    returned = generated.index("return cinder_return_value;", drop_first)
+    assert materialized_return >= 0
+    assert materialized_return < drop_second < drop_first < returned
+
+    moved_return = generated.index("__auto_type cinder_return_value = resource;")
+    moved_return_end = generated.index("return cinder_return_value;", moved_return)
+    assert "Resource__drop(&resource);" not in generated[moved_return:moved_return_end]
+    assert "Resource__drop(&owned);" in generated
+
+    output = tmp_path / "nominal-cleanup"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "nominal-cleanup-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "drop 2\ndrop 1\ndrop 4\ndrop 3\n"
+
+
+def test_gen1_borrows_drop_values_during_list_iteration(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "borrowed_list_iteration.ci"
+    source.write_text(
+        "def contains(values: &const List[String], expected: &const String) -> bool:\n"
+        "    for item in values:\n"
+        "        if item == expected:\n"
+        "            return true\n"
+        "    return false\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    values: List[String] = ["types", "syntax"]\n'
+        '    expected = "types"\n'
+        "    if not contains(values, expected):\n"
+        "        return 1\n"
+        '    if values[0] != "types":\n'
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "cinder_string_drop(&item);" not in emitted.stdout
+
+    output = tmp_path / "borrowed-list-iteration"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "borrowed-list-iteration-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert subprocess.run([str(output)], check=False).returncode == 0
+
+
 def test_gen1_lowers_owned_moves_and_recursive_drop_glue(
     gen1_compiler: Path,
     tmp_path: Path,
