@@ -32,17 +32,17 @@ build.sh         # emit → compile → go build → run
 ./build.sh
 ```
 
-Expected output (Cinder `print` from `__del__` may flush after Go’s
-`Println` when stdout is fully buffered):
+Expected output (each export drops its arena before returning, so the
+`Trace` destructor lines interleave with Go’s `Println` results):
 
 ```text
 built .../examples/go_host/build/go_host
-42
-8
--1
 cinder drop Trace(1)
+42
 cinder drop Trace(2)
+8
 cinder drop Trace(2)
+-1
 ```
 
 What the script does:
