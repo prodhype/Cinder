@@ -2,7 +2,7 @@
 #   π/4 = 1 - 1/3 + 1/5 - 1/7 + ... = Σ_{n=0}^{∞} (-1)^n / (2n + 1)
 #
 # Sign is derived from the index (`i & 1`) instead of a carried `sign = -sign`
-# dependency, which lets optimizing C compilers auto-vectorize the loop.
+# dependency so each term's sign is independent of the previous iteration.
 # inspired by https://niklas-heer.github.io/speed-comparison/
 
 extern "C":

@@ -1,0 +1,167 @@
+# Python hosts a flat C ABI via ctypes. Inside Cinder we own a Session (with a
+# nested audit List), dispatch an exhaustive variant Request with Result/?, then
+# drop the session when the export returns — ownership and exhaustiveness that
+# Python does not check. A separate @export runs a tight Leibniz loop so the
+# host can time native Cinder against the same algorithm in pure Python.
+#
+# Export only C primitives. Do not put String/List/Map on the public C API.
+
+class Session:
+    id: i32
+    audits: List[i32]
+
+    def __init__(self, id: i32):
+        self.id = id
+        self.audits = []
+
+    def __del__(self):
+        print(f"cinder drop Session({self.id})")
+
+    def note(self: &Session, label: i32) -> void:
+        self.audits.append(label)
+
+
+variant Request:
+    Sum(a: i32, b: i32)
+    Quotient(a: i32, b: i32)
+    Clamp(value: i32, lo: i32, hi: i32)
+
+
+def require_non_zero(b: i32) -> Result[i32, i32]:
+    if b == 0:
+        return Err(-1)
+    return Ok(b)
+
+
+def require_ordered_range(lo: i32, hi: i32) -> Result[i32, i32]:
+    if lo > hi:
+        return Err(-2)
+    return Ok(lo)
+
+
+def dispatch(session: &Session, request: Request) -> Result[i32, i32]:
+    result: Result[i32, i32] = Err(-2)
+    match request:
+        case Request.Sum(a, b):
+            session.note(1)
+            result = Ok(a + b)
+        case Request.Quotient(a, b):
+            session.note(2)
+            denom = require_non_zero(b)?
+            result = Ok(a / denom)
+        case Request.Clamp(value, lo, hi):
+            session.note(3)
+            low = require_ordered_range(lo, hi)?
+            if value < low:
+                result = Ok(low)
+            elif value > hi:
+                result = Ok(hi)
+            else:
+                result = Ok(value)
+    return result
+
+
+def run(session_id: i32, request: Request) -> i32:
+    session = Session(session_id)
+    out: i32 = 0
+    match dispatch(session, request):
+        case Ok(value):
+            out = value
+        case Err(code):
+            out = code
+    return out
+
+
+@export
+def cinder_sum(a: i32, b: i32) -> i32:
+    return run(1, Request.Sum(a=a, b=b))
+
+
+@export
+def cinder_div(a: i32, b: i32) -> i32:
+    # Returns -1 when b == 0 via Result; Session still drops.
+    return run(2, Request.Quotient(a=a, b=b))
+
+
+@export
+def cinder_clamp(value: i32, lo: i32, hi: i32) -> i32:
+    # Returns -2 when lo > hi via Result; Session still drops.
+    return run(3, Request.Clamp(value=value, lo=lo, hi=hi))
+
+
+# Hot path for the host timing demo. Same series as examples/leibniz_pi.ci;
+# no Session/print so the measurement is the loop, not destructor I/O.
+@export
+def cinder_leibniz(iterations: i32) -> f64:
+    pi: f64 = 1.0
+    rounds = iterations + 2
+    for i: i32 = 2; i < rounds; i += 1:
+        x = -1.0 + 2.0 * (i & 1)
+        pi += x / (2 * i - 1)
+    return pi * 4.0
+
+
+# The same idea sketched in Python (not executed). Missing pieces vs Cinder:
+# - match on Request is not exhaustive; a new case is a silent runtime gap
+# - Session.__del__ runs at an unpredictable GC time, not at scope end
+# - errors are exceptions or ad-hoc codes, not Result with ? propagation
+#
+# from dataclasses import dataclass
+# from typing import Union
+#
+# @dataclass
+# class Session:
+#     id: int
+#     audits: list[int]
+#
+#     def __del__(self):
+#         # Not prompt or reliable; may run long after the call returns.
+#         print(f"python drop Session({self.id})")
+#
+#     def note(self, label: int) -> None:
+#         self.audits.append(label)
+#
+# @dataclass
+# class Sum:
+#     a: int
+#     b: int
+#
+# @dataclass
+# class Quotient:
+#     a: int
+#     b: int
+#
+# @dataclass
+# class Clamp:
+#     value: int
+#     lo: int
+#     hi: int
+#
+# Request = Union[Sum, Quotient, Clamp]
+#
+# def dispatch(session: Session, request: Request) -> int:
+#     match request:
+#         case Sum(a, b):
+#             session.note(1)
+#             return a + b
+#         case Quotient(a, b):
+#             session.note(2)
+#             if b == 0:
+#                 raise ZeroDivisionError
+#             return a // b
+#         case Clamp(value, lo, hi):
+#             session.note(3)
+#             if lo > hi:
+#                 raise ValueError("lo > hi")
+#             return min(max(value, lo), hi)
+#         # easy to forget when Request grows; the type checker will not catch it
+#         case _:
+#             raise TypeError("unknown request")
+#
+# def run(session_id: int, request: Request) -> int:
+#     session = Session(id=session_id, audits=[])
+#     try:
+#         return dispatch(session, request)
+#     finally:
+#         # Manual stand-in for deterministic drop; forget this and leakage wins.
+#         del session
