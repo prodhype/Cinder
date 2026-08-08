@@ -9,16 +9,21 @@ Inside those exports, Cinder uses **`@reflect` runtime metadata** and
 schema fingerprint. That reflection story is what Rust does not provide in the
 language itself (you need proc-macros or an external crate).
 
+A separate export runs the same **Leibniz π** loop as `examples/leibniz_pi.ci`.
+The host times that native `-O2` loop against an equivalent Rust `--release`
+implementation — a fair native-vs-native check (often near parity), not a
+CPython-style win.
+
 This example is manual; it is not part of the gen3 smoke suite.
 
 ## Layout
 
 ```text
 lib.ci              # @export C-ABI surface (no main)
-host/src/main.rs    # extern "C" caller
+host/src/main.rs    # extern "C" caller + timing
 host/build.rs       # link prebuilt Cinder objects
 host/Cargo.toml
-build.sh            # emit → compile → cargo run
+build.sh            # emit → compile -O2 → cargo build --release → run
 ```
 
 ## Prerequisites
@@ -36,15 +41,21 @@ build.sh            # emit → compile → cargo run
 ```
 
 Expected output (each Cinder export that prints is flushed before Rust’s
-`println`, so field lines appear before `schema_fingerprint`):
+`println`, so field lines appear before `schema_fingerprint`, then the host
+times Leibniz π). Milliseconds and speedup vary by machine; the shape should
+match:
 
 ```text
-built .../examples/rust_host/build/cargo/debug/rust_host
+built .../examples/rust_host/build/cargo/release/rust_host
 field_count=3
 runtime field: x (i32)
 runtime field: y (i32)
 runtime field: z (i32)
 schema_fingerprint=24
+Leibniz π with 1000000000 iterations
+rust: π ≈ 3.141592654588  (544.9 ms)
+cinder: π ≈ 3.141592654588  (536.9 ms)
+speedup: 1.0x (rust / cinder)
 ```
 
 The fingerprint is `sum(offset + size)` over the three `i32` fields
@@ -53,19 +64,23 @@ The fingerprint is `sum(offset + size)` over the three `i32` fields
 What the script does:
 
 1. `cinder emit-project lib.ci -o generated`
-2. Compile `generated/cinder_gen/lib.c` and `cinder/runtime/cinder_runtime.c` to objects under `build/`
-3. `cargo build` the Rust host (build.rs links `build/lib.o` and `build/cinder_runtime.o`)
+2. Compile `generated/cinder_gen/lib.c` and `cinder/runtime/cinder_runtime.c` to objects under `build/` with `-O2`
+3. `cargo build --release` the Rust host (build.rs links `build/lib.o` and `build/cinder_runtime.o`)
 4. Run the binary
 
 ## Why not in Rust?
 
+- **Runtime speed** — the same Leibniz series in Cinder (readable C11, `-O2`)
+  and Rust `--release` are both native; expect roughly similar times on this
+  loop. Keep orchestration in Rust; move hot numeric kernels behind `@export`
+  when you want Cinder’s reflection and ownership story in the same binary.
 - **Runtime reflection** — Cinder `@reflect` emits `CinderTypeInfo` metadata;
   `type_info` / `fields` iterate names and types at runtime. Rust has no
   built-in equivalent; you reach for `#[derive]` crates or hand-maintained tables.
 - **Compile-time field loops** — `for field in comptime fields_of(Vec3)` unrolls
   into ordinary C with layout literals. Rust has no language-level
   `fields_of`; the usual substitute is a proc-macro.
-- **Flat FFI** — Rust only sees `i32` arguments and results. Reflection,
+- **Flat FFI** — Rust only sees `i32`/`f64` arguments and results. Reflection,
   `static_assert` schema checks, and the fingerprint stay inside Cinder.
 
 ## FFI notes
@@ -77,5 +92,7 @@ What the script does:
   metadata helpers need runtime symbols.
 - Cinder does not yet ship a shared-library build mode; the foreign host owns
   linking after `emit-project`.
-- No bindgen: the surface is two `extern "C"` functions declared by hand so the
-  flat ABI lesson stays obvious.
+- No bindgen: the surface is three `extern "C"` functions declared by hand so
+  the flat ABI lesson stays obvious.
+- `build.sh` passes `-O2` and builds the host with `--release` so the timing
+  demo measures optimized native code on both sides.

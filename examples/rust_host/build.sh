@@ -35,21 +35,23 @@ command -v cargo >/dev/null 2>&1 || {
 
 mkdir -p build generated
 
+# -O2 so the Leibniz timing demo reflects optimized native code, not -O0.
 cinder emit-project lib.ci -o generated
-cc -std=c11 -Wall -Wextra -Wpedantic \
+cc -std=c11 -O2 -Wall -Wextra -Wpedantic \
   -I"$REPO_ROOT/cinder/runtime" \
   -I"$ROOT/generated" \
   -c "$ROOT/generated/cinder_gen/lib.c" \
   -o "$ROOT/build/lib.o"
-cc -std=c11 -Wall -Wextra -Wpedantic \
+cc -std=c11 -O2 -Wall -Wextra -Wpedantic \
   -I"$REPO_ROOT/cinder/runtime" \
   -c "$REPO_ROOT/cinder/runtime/cinder_runtime.c" \
   -o "$ROOT/build/cinder_runtime.o"
 
 # Force cargo to relink when the prebuilt Cinder objects change.
 # build.rs links them via rustc-link-arg and declares rerun-if-changed on them.
+# --release so the host Leibniz loop is a fair comparison against Cinder -O2.
 export CARGO_TARGET_DIR="$ROOT/build/cargo"
-cargo build --manifest-path "$ROOT/host/Cargo.toml" --quiet
-BIN="$CARGO_TARGET_DIR/debug/rust_host"
+cargo build --release --manifest-path "$ROOT/host/Cargo.toml" --quiet
+BIN="$CARGO_TARGET_DIR/release/rust_host"
 echo "built $BIN"
 "$BIN"

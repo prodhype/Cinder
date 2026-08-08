@@ -1,6 +1,8 @@
 # Go hosts a flat C ABI. Inside Cinder we build an arena-owned expression AST,
 # evaluate it with exhaustive variant matching and Result/?, then drop the arena
 # when the export returns — ownership and exhaustiveness that Go does not check.
+# A separate @export runs a tight Leibniz loop so the host can time native
+# Cinder (-O2) against the same algorithm in optimized Go.
 #
 # Export only C primitives. Do not put String/List/Map on the public C API.
 
@@ -93,6 +95,18 @@ def cinder_eval_expr(a: i32, b: i32, c: i32) -> i32:
 def cinder_eval_div(a: i32, b: i32, c: i32) -> i32:
     # Builds (a + b) / c — returns -1 when c == 0 via Result.
     return run_binary_tree(a, b, c, '/', 2)
+
+
+# Hot path for the host timing demo. Same series as examples/leibniz_pi.ci;
+# no Trace/print so the measurement is the loop, not destructor I/O.
+@export
+def cinder_leibniz(iterations: i32) -> f64:
+    pi: f64 = 1.0
+    rounds = iterations + 2
+    for i: i32 = 2; i < rounds; i += 1:
+        x = -1.0 + 2.0 * (i & 1)
+        pi += x / (2 * i - 1)
+    return pi * 4.0
 
 
 # The same idea sketched in Go (not compiled). Missing pieces vs Cinder:
