@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install ARMv7 toolchain
         run: |
@@ -28,7 +28,7 @@ jobs:
             qemu-user
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
@@ -80,7 +80,7 @@ jobs:
             -C dist cinder-gen3-linux-armv7
 
       - name: Upload gen3 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cinder-gen3-linux-armv7
           path: dist/cinder-gen3-linux-armv7.tar.gz

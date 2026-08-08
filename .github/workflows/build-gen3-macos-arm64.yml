@@ -16,10 +16,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14"
 
@@ -65,7 +65,7 @@ jobs:
             -C dist cinder-gen3-macos-arm64
 
       - name: Upload gen3 artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cinder-gen3-macos-arm64
           path: dist/cinder-gen3-macos-arm64.tar.gz
