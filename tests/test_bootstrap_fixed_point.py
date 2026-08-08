@@ -1565,6 +1565,143 @@ def test_gen1_borrows_drop_values_during_list_iteration(
     assert subprocess.run([str(output)], check=False).returncode == 0
 
 
+def assert_compiler_drops_destructor_aggregates_on_discard_and_loop_exit(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "destructor_aggregate_cleanup.ci"
+    source.write_text(
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.label)\n'
+        "\n"
+        "struct ArrayHolder:\n"
+        "    items: Resource[2]\n"
+        "\n"
+        "def exercise_fixed_array() -> void:\n"
+        "    fixed: Resource[2] = [Resource(10), Resource(11)]\n"
+        "\n"
+        "def exercise_array_field() -> void:\n"
+        "    holder = ArrayHolder(items=[Resource(12), Resource(13)])\n"
+        "\n"
+        "def take_numbers(values: List[i32]) -> i32:\n"
+        "    return cast[i32](len(values))\n"
+        "\n"
+        "def exercise_nested_transfer() -> void:\n"
+        "    nested: List[List[i32]] = [[1], [2, 3]]\n"
+        "    inner = nested.pop()\n"
+        '    print("moved inner", take_numbers(inner))\n'
+        "\n"
+        "def exercise_discarded_values() -> void:\n"
+        "    Resource(20)\n"
+        "    values: List[Resource] = []\n"
+        "    values.append(Resource(21))\n"
+        "    values.append(Resource(22))\n"
+        "    values.pop()\n"
+        "    values.append(Resource(23))\n"
+        '    print("len", len(values))\n'
+        "\n"
+        "def exercise_loop_exits() -> void:\n"
+        "    for label in range(30, 33):\n"
+        "        current = Resource(label)\n"
+        "        if label == 30:\n"
+        "            continue\n"
+        "        break\n"
+        "\n"
+        "def exercise_iterator_break() -> i32:\n"
+        "    values: Map[i32, i32] = {1: 1}\n"
+        "    for key in values:\n"
+        "        break\n"
+        "    values[2] = 2\n"
+        "    return cast[i32](len(values))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    exercise_fixed_array()\n"
+        "    exercise_array_field()\n"
+        "    exercise_nested_transfer()\n"
+        "    exercise_discarded_values()\n"
+        "    exercise_loop_exits()\n"
+        "    if exercise_iterator_break() != 2:\n"
+        "        return 1\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert "for (size_t cinder_drop_index_" in generated
+    assert "__auto_type cinder_discarded_" in generated
+    discarded_drop = generated.index("Resource__drop(&cinder_discarded_")
+    popped = generated.index('pop from empty list', discarded_drop)
+    popped_drop = generated.index("Resource__drop(&cinder_discarded_", popped)
+    assert discarded_drop < popped < popped_drop
+    drop_current = generated.index("Resource__drop(&current);")
+    continue_statement = generated.index("continue;", drop_current)
+    drop_before_break = generated.index("Resource__drop(&current);", continue_statement)
+    break_statement = generated.index("break;", drop_before_break)
+    assert drop_current < continue_statement < drop_before_break < break_statement
+    inner_declaration = generated.index("__auto_type inner =")
+    transfer_end = generated.index("\n}\n", inner_declaration)
+    transfer_body = generated[inner_declaration:transfer_end]
+    assert "free(inner.data);" not in transfer_body
+    assert "CinderList_i32_drop(&inner);" not in transfer_body
+
+    output = tmp_path / "destructor-aggregate-cleanup"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "destructor-aggregate-cleanup-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == (
+        "drop 11\n"
+        "drop 10\n"
+        "drop 13\n"
+        "drop 12\n"
+        "moved inner 2\n"
+        "drop 20\n"
+        "drop 22\n"
+        "len 2\n"
+        "drop 21\n"
+        "drop 23\n"
+        "drop 30\n"
+        "drop 31\n"
+    )
+
+
+def test_gen1_drops_destructor_aggregates_on_discard_and_loop_exit(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_drops_destructor_aggregates_on_discard_and_loop_exit(
+        gen1_compiler,
+        tmp_path,
+    )
+
+
+def test_gen2_drops_destructor_aggregates_on_discard_and_loop_exit(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_drops_destructor_aggregates_on_discard_and_loop_exit(
+        gen2,
+        tmp_path,
+    )
+
+
 def test_gen1_lowers_owned_moves_and_recursive_drop_glue(
     gen1_compiler: Path,
     tmp_path: Path,

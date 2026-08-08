@@ -1,6 +1,7 @@
 import backend_ir
 import codegen_names
 import codegen_type_names
+import ownership
 import project
 import syntax
 import types
@@ -37,7 +38,9 @@ struct ManagedTypeInfo:
     helper: String
     drop_helper: String
     is_string: bool
+    is_file: bool
     is_c_string: bool
+    is_nominal: bool
     can_clone: bool
     is_complete: bool
     hash_kind: ManagedHashKind
@@ -59,9 +62,13 @@ def collect_module_specialization_names(
         enum_builder = StringBuilder()
         codegen_names.emit_prefixed_name(&enum_builder, prefix, source, node.value_start, node.value_length)
         codegen_names.record_enum_name(registry, enum_builder.finish())
+    elif node.kind == SyntaxKind.STRUCT_DECL or node.kind == SyntaxKind.CLASS_DECL:
+        nominal_builder = StringBuilder()
+        codegen_names.emit_prefixed_name(&nominal_builder, prefix, source, node.value_start, node.value_length)
+        codegen_names.record_nominal_drop_name(registry, nominal_builder.finish())
     for offset in range(0, node.child_count):
         collect_module_specialization_names(registry, arena, arena.children[node.first_child + offset], source, prefix, project_name, imports)
-    if node.kind == SyntaxKind.TYPE_CLOSURE:
+    if node.kind == SyntaxKind.TYPE_CLOSURE or node.kind == SyntaxKind.TYPE_ARRAY:
         canonical_builder = StringBuilder()
         codegen_type_names.emit_canonical_specialized_type_name(arena, id, source, &canonical_builder, prefix, project_name, imports)
         readable_builder = StringBuilder()
@@ -237,7 +244,16 @@ def emit_semantic_closure_specialization(
         parameter_type = table.type_args[cast[usize](record.extra + offset)]
         codegen_type_names.emit_semantic_c_type(table, parameter_type, source, builder, prefix, project_name, imports, registry)
         offset += 1
-    builder.append(");\n};\n")
+    builder.append(");\n};\nstatic inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self == NULL) return;\n")
+    environment_info = semantic_managed_type_info(table, value_environment_type, source, prefix, project_name, imports, registry)
+    if ownership.type_needs_drop_for_table(table, value_environment_type):
+        builder.append("    ")
+        emit_drop_statement(builder, &environment_info, "self->env")
+    builder.append("}\n")
 
 
 def emit_semantic_array_pointer_data_declarator(
@@ -250,11 +266,27 @@ def emit_semantic_array_pointer_data_declarator(
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> void:
+    emit_semantic_array_pointer_declarator(table, type_id, source, builder, prefix, project_name, imports, registry, "data")
+
+
+def emit_semantic_array_pointer_declarator(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    name: String,
+) -> void:
     base_type = type_id
     while codegen_type_names.semantic_type_is_kind(table, base_type, types.TypeKind.ARRAY):
         base_type = table.types[base_type.index].inner
     codegen_type_names.emit_semantic_c_type(table, base_type, source, builder, prefix, project_name, imports, registry)
-    builder.append(" (*data)")
+    builder.append(" (*")
+    builder.append(name[0:len(name)])
+    builder.append(")")
     current = type_id
     while codegen_type_names.semantic_type_is_kind(table, current, types.TypeKind.ARRAY):
         builder.append("[")
@@ -358,6 +390,8 @@ def specialization_type_is_late(
         return true
     if node.kind == SyntaxKind.TYPE_CONST or node.kind == SyntaxKind.TYPE_ARRAY:
         return specialization_type_is_late(arena, codegen_names.first_child(arena, id), source)
+    if node.kind == SyntaxKind.TYPE_NAME:
+        return not codegen_type_names.is_specialization_builtin_name(source, &node)
     if node.kind != SyntaxKind.TYPE_GENERIC:
         return false
     base = codegen_names.first_child(arena, id)
@@ -530,7 +564,16 @@ def emit_module_closure_specialization(
         builder.append(", ")
         codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
         offset += 1
-    builder.append(");\n};\n")
+    builder.append(");\n};\nstatic inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("_drop(")
+    builder.append(name[0:len(name)])
+    builder.append(" *self) {\n    if (self == NULL) return;\n")
+    environment_info = module_managed_type_info(arena, value_environment_type, source, prefix, project_name, imports, registry)
+    if module_type_needs_managed_drop(arena, value_environment_type, source, prefix, project_name, imports, registry):
+        builder.append("    ")
+        emit_drop_statement(builder, &environment_info, "self->env")
+    builder.append("}\n")
 
 
 def emit_module_list_specialization(
@@ -577,17 +620,143 @@ def emit_module_array_pointer_data_declarator(
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> void:
+    emit_module_array_pointer_declarator(arena, type_id, source, builder, prefix, project_name, imports, registry, "data")
+
+
+def emit_module_array_pointer_declarator(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+    name: String,
+) -> void:
     base_type = type_id
     while base_type.index >= 0 and context_type_is_array(arena, base_type):
         base_type = codegen_names.first_child(arena, base_type)
     codegen_type_names.emit_module_c_type(arena, base_type, source, builder, prefix, project_name, imports, registry)
-    builder.append(" (*data)")
+    builder.append(" (*")
+    builder.append(name[0:len(name)])
+    builder.append(")")
     current = type_id
     while current.index >= 0 and context_type_is_array(arena, current):
         builder.append("[")
         append_node_numeric_literal(builder, arena, source, array_length_node(arena, current))
         builder.append("]")
         current = codegen_names.first_child(arena, current)
+
+
+def append_module_array_drop_helper_name(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    builder.append("CinderArray_")
+    codegen_type_names.emit_specialized_type_name(arena, type_id, source, builder, prefix, project_name, imports, registry)
+    builder.append("_drop")
+
+
+def append_semantic_array_drop_helper_name(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+    source: &const String,
+    builder: &StringBuilder,
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    builder.append("CinderArray_")
+    codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, builder, registry)
+    builder.append("_drop")
+
+
+def module_type_needs_managed_drop(
+    arena: &const SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> bool:
+    if type_id.index < 0:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == SyntaxKind.TYPE_CONST or node.kind == SyntaxKind.TYPE_ARRAY:
+        return module_type_needs_managed_drop(arena, codegen_names.first_child(arena, type_id), source, prefix, project_name, imports, registry)
+    if node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_SLICE or node.kind == SyntaxKind.TYPE_DYN:
+        return false
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        base = codegen_names.first_child(arena, type_id)
+        if base.index < 0:
+            return false
+        base_node = arena.nodes[base.index]
+        if (
+            codegen_type_names.is_runtime_generic_name(source, &base_node, "List")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Map")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Set")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Option")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Result")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Owned")
+            or codegen_type_names.is_runtime_generic_name(source, &base_node, "Tuple")
+        ):
+            return true
+        base_builder = StringBuilder()
+        codegen_type_names.emit_module_c_type(arena, base, source, &base_builder, prefix, project_name, imports, registry)
+        base_name = base_builder.finish()
+        return codegen_names.is_registered_nominal_drop_name(registry, &base_name)
+    if node.kind != SyntaxKind.TYPE_NAME:
+        return false
+    if module_type_is_exact_name(arena, type_id, source, "String") or module_type_is_exact_name(arena, type_id, source, "StringBuilder") or module_type_is_exact_name(arena, type_id, source, "File"):
+        return true
+    c_builder = StringBuilder()
+    codegen_type_names.emit_module_c_type(arena, type_id, source, &c_builder, prefix, project_name, imports, registry)
+    c_type = c_builder.finish()
+    return codegen_names.is_registered_nominal_drop_name(registry, &c_type)
+
+
+def emit_module_array_drop_helpers(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    emitted: &List[String],
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    registry: &const codegen_names.SpecializationNameRegistry,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        emit_module_array_drop_helpers(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry)
+    if node.kind != SyntaxKind.TYPE_ARRAY or not module_type_needs_managed_drop(arena, id, source, prefix, project_name, imports, registry):
+        return
+    name_builder = StringBuilder()
+    append_module_array_drop_helper_name(arena, id, source, &name_builder, prefix, project_name, imports, registry)
+    name = name_builder.finish()
+    if codegen_type_names.string_list_contains(emitted, &name):
+        return
+    emitted.append(name[0:len(name)])
+    element = codegen_names.first_child(arena, id)
+    element_info = module_managed_type_info(arena, element, source, prefix, project_name, imports, registry)
+    builder.append("static inline void ")
+    builder.append(name[0:len(name)])
+    builder.append("(")
+    emit_module_array_pointer_declarator(arena, id, source, builder, prefix, project_name, imports, registry, "self")
+    builder.append(") {\n    if (self == NULL) return;\n    for (size_t cinder_index = ")
+    append_node_numeric_literal(builder, arena, source, array_length_node(arena, id))
+    builder.append("; cinder_index-- > 0;) {\n        ")
+    emit_drop_statement(builder, &element_info, "(*self)[cinder_index]")
+    builder.append("    }\n}\n")
+
 
 def emit_module_set_specialization(
     arena: &const SyntaxArena,
@@ -651,7 +820,9 @@ def emit_module_option_specialization(
         helper=String(),
         drop_helper=String(),
         is_string=false,
+        is_file=false,
         is_c_string=false,
+        is_nominal=false,
         can_clone=false,
         is_complete=false,
         hash_kind=ManagedHashKind.UNSUPPORTED,
@@ -919,6 +1090,7 @@ def emit_module_typed_declarator(
         builder.append("]")
         current = codegen_names.first_child(arena, current)
 
+
 def emit_module_prefixed_typed_declarator(
     arena: &const SyntaxArena,
     type_id: NodeId,
@@ -965,8 +1137,17 @@ def module_managed_type_info(
     helper_builder = StringBuilder()
     drop_helper_builder = StringBuilder()
     is_string = module_type_is_exact_name(arena, type_id, source, "String")
+    is_file = module_type_is_exact_name(arena, type_id, source, "File")
     is_c_string = module_type_is_c_string(arena, type_id, source)
     is_enum = codegen_names.is_registered_enum_name(registry, &c_type)
+    is_nominal = codegen_names.is_registered_nominal_drop_name(registry, &c_type)
+    if not is_nominal and type_id.index >= 0 and codegen_type_names.type_node_kind(arena, type_id) == SyntaxKind.TYPE_GENERIC:
+        nominal_base = codegen_names.first_child(arena, type_id)
+        if nominal_base.index >= 0:
+            nominal_base_builder = StringBuilder()
+            codegen_type_names.emit_module_c_type(arena, nominal_base, source, &nominal_base_builder, prefix, project_name, imports, registry)
+            nominal_base_name = nominal_base_builder.finish()
+            is_nominal = codegen_names.is_registered_nominal_drop_name(registry, &nominal_base_name)
     hash_kind = ManagedHashKind.UNSUPPORTED
     if is_string:
         hash_kind = ManagedHashKind.STRING
@@ -1007,13 +1188,20 @@ def module_managed_type_info(
         ):
             codegen_type_names.emit_specialized_type_name(arena, type_id, source, &drop_helper_builder, prefix, project_name, imports, registry)
             drop_helper_builder.append("_drop")
+    elif type_id.index >= 0 and codegen_type_names.type_node_kind(arena, type_id) == SyntaxKind.TYPE_ARRAY and module_type_needs_managed_drop(arena, type_id, source, prefix, project_name, imports, registry):
+        append_module_array_drop_helper_name(arena, type_id, source, &drop_helper_builder, prefix, project_name, imports, registry)
+    elif is_nominal:
+        drop_helper_builder.append(c_type[0:len(c_type)])
+        drop_helper_builder.append("__drop")
     return ManagedTypeInfo(
         c_type=c_type,
         token=token_builder.finish(),
         helper=helper_builder.finish(),
         drop_helper=drop_helper_builder.finish(),
         is_string=is_string,
+        is_file=is_file,
         is_c_string=is_c_string,
+        is_nominal=is_nominal,
         can_clone=can_clone,
         is_complete=is_complete,
         hash_kind=hash_kind,
@@ -1039,7 +1227,9 @@ def semantic_managed_type_info(
     if type_id.index >= 0 and type_id.index < cast[i32](len(table.types)):
         kind = table.types[type_id.index].kind
     is_string = kind == types.TypeKind.STRING
+    is_file = kind == types.TypeKind.FILE
     is_c_string = semantic_type_is_c_string(table, type_id)
+    is_nominal = kind == types.TypeKind.STRUCT or kind == types.TypeKind.CLASS
     c_type = c_builder.finish()
     hash_kind = ManagedHashKind.UNSUPPORTED
     if is_string:
@@ -1054,15 +1244,22 @@ def semantic_managed_type_info(
     if kind == types.TypeKind.LIST or kind == types.TypeKind.MAP or kind == types.TypeKind.SET or kind == types.TypeKind.OPTION or kind == types.TypeKind.RESULT or kind == types.TypeKind.OWNED or kind == types.TypeKind.TUPLE:
         codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &drop_helper_builder, registry)
         drop_helper_builder.append("_drop")
+    elif kind == types.TypeKind.ARRAY and ownership.type_needs_drop_for_table(table, type_id):
+        append_semantic_array_drop_helper_name(table, type_id, source, &drop_helper_builder, registry)
+    elif kind == types.TypeKind.STRUCT or kind == types.TypeKind.CLASS:
+        drop_helper_builder.append(c_type[0:len(c_type)])
+        drop_helper_builder.append("__drop")
     return ManagedTypeInfo(
         c_type=c_type,
         token=token_builder.finish(),
         helper=helper_builder.finish(),
         drop_helper=drop_helper_builder.finish(),
         is_string=is_string,
+        is_file=is_file,
         is_c_string=is_c_string,
+        is_nominal=is_nominal,
         can_clone=can_clone,
-        is_complete=semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR,
+        is_complete=semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR or is_nominal,
         hash_kind=hash_kind,
     )
 
@@ -1567,6 +1764,12 @@ def emit_drop_statement(builder: &StringBuilder, info: &const ManagedTypeInfo, e
         builder.append("cinder_string_drop(&(")
         builder.append(expression[0:len(expression)])
         builder.append("));\n")
+    elif info.is_file:
+        builder.append("if (")
+        builder.append(expression[0:len(expression)])
+        builder.append(" != NULL) fclose(")
+        builder.append(expression[0:len(expression)])
+        builder.append(");\n")
     elif info.is_c_string:
         builder.append("free((void *)(")
         builder.append(expression[0:len(expression)])
@@ -2291,7 +2494,7 @@ def emit_map_specialization_body(
     builder.append(" key;\n    ")
     builder.append(value_info.c_type[0:len(value_info.c_type)])
     builder.append(" value;\n    uint64_t hash;\n    bool occupied;\n};\n")
-    if not key_info.is_complete or key_info.hash_kind == ManagedHashKind.UNSUPPORTED or not value_info.is_complete:
+    if not key_info.is_complete or key_info.hash_kind == ManagedHashKind.UNSUPPORTED or (not value_info.is_complete and not value_info.is_nominal):
         builder.append("static inline void ")
         builder.append(name[0:len(name)])
         builder.append("_drop(")

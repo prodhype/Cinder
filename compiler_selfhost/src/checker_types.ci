@@ -652,6 +652,21 @@ def validate_collection_method_call(
             infer_expression_type(checker, arena, argument, source, current_scope)
         checker.model.record_expr_type(call_id, result)
         return
+    if receiver_record.kind == types.TypeKind.LIST:
+        expected: i32 = 0
+        result = types.type_void()
+        if collections.text_equals(&member_name, "append"):
+            expected = 1
+        elif collections.text_equals(&member_name, "pop"):
+            result = receiver_record.inner
+        elif not collections.text_equals(&member_name, "clear") and not collections.text_equals(&member_name, "sort"):
+            return
+        validate_collection_method_argument_count(checker, arena, call_id, expected)
+        argument = call_argument_value(arena, call_id, 0)
+        if argument.index >= 0:
+            infer_expression_type(checker, arena, argument, source, current_scope)
+        checker.model.record_expr_type(call_id, result)
+        return
     if receiver_record.kind == types.TypeKind.MAP and (collections.text_equals(&member_name, "keys") or collections.text_equals(&member_name, "values") or collections.text_equals(&member_name, "items")):
         validate_collection_method_argument_count(checker, arena, call_id, 0)
         checker.model.record_expr_type(call_id, collections.map_view_type(checker.type_table, receiver_type, &member_name))

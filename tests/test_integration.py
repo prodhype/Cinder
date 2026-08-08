@@ -543,6 +543,87 @@ def test_native_list_pop_move_out_runs_each_destructor_once(tmp_path: Path) -> N
     assert result.stdout == "drop 2\nlen=2\ndrop 1\ndrop 3\n"
 
 
+def test_native_destructor_ownership_across_aggregates_and_loop_exits(
+    tmp_path: Path,
+) -> None:
+    result = build_and_run(
+        tmp_path,
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.label)\n'
+        "\n"
+        "struct ArrayHolder:\n"
+        "    items: Resource[2]\n"
+        "\n"
+        "def exercise_fixed_array() -> void:\n"
+        "    fixed: Resource[2] = [Resource(10), Resource(11)]\n"
+        "\n"
+        "def exercise_array_field() -> void:\n"
+        "    holder = ArrayHolder(items=[Resource(12), Resource(13)])\n"
+        "\n"
+        "def take_numbers(values: List[i32]) -> i32:\n"
+        "    return cast[i32](len(values))\n"
+        "\n"
+        "def exercise_nested_transfer() -> void:\n"
+        "    nested: List[List[i32]] = [[1], [2, 3]]\n"
+        "    inner = nested.pop()\n"
+        '    print("moved inner", take_numbers(inner))\n'
+        "\n"
+        "def exercise_discarded_values() -> void:\n"
+        "    Resource(20)\n"
+        "    values: List[Resource] = []\n"
+        "    values.append(Resource(21))\n"
+        "    values.append(Resource(22))\n"
+        "    values.pop()\n"
+        "    values.append(Resource(23))\n"
+        '    print("len", len(values))\n'
+        "\n"
+        "def exercise_loop_exits() -> void:\n"
+        "    for label in range(30, 33):\n"
+        "        current = Resource(label)\n"
+        "        if label == 30:\n"
+        "            continue\n"
+        "        break\n"
+        "\n"
+        "def exercise_iterator_break() -> i32:\n"
+        "    values: Map[i32, i32] = {1: 1}\n"
+        "    for key in values:\n"
+        "        break\n"
+        "    values[2] = 2\n"
+        "    return cast[i32](len(values))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    exercise_fixed_array()\n"
+        "    exercise_array_field()\n"
+        "    exercise_nested_transfer()\n"
+        "    exercise_discarded_values()\n"
+        "    exercise_loop_exits()\n"
+        "    if exercise_iterator_break() != 2:\n"
+        "        return 1\n"
+        "    return 0\n",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "drop 11\n"
+        "drop 10\n"
+        "drop 13\n"
+        "drop 12\n"
+        "moved inner 2\n"
+        "drop 20\n"
+        "drop 22\n"
+        "len 2\n"
+        "drop 21\n"
+        "drop 23\n"
+        "drop 30\n"
+        "drop 31\n"
+    )
+
+
 def test_native_multiple_abstract_interfaces(tmp_path: Path) -> None:
     result = build_and_run(
         tmp_path,

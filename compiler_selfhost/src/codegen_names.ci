@@ -12,6 +12,8 @@ struct SpecializationNameRegistry:
     readable_starts: List[usize]
     enum_name_bytes: List[char]
     enum_name_starts: List[usize]
+    nominal_drop_name_bytes: List[char]
+    nominal_drop_name_starts: List[usize]
 
 
 def new_specialization_name_registry() -> SpecializationNameRegistry:
@@ -21,6 +23,8 @@ def new_specialization_name_registry() -> SpecializationNameRegistry:
     readable_starts: List[usize] = []
     enum_name_bytes: List[char] = []
     enum_name_starts: List[usize] = []
+    nominal_drop_name_bytes: List[char] = []
+    nominal_drop_name_starts: List[usize] = []
     return SpecializationNameRegistry(
         canonical_bytes=canonical_bytes,
         canonical_starts=canonical_starts,
@@ -28,6 +32,8 @@ def new_specialization_name_registry() -> SpecializationNameRegistry:
         readable_starts=readable_starts,
         enum_name_bytes=enum_name_bytes,
         enum_name_starts=enum_name_starts,
+        nominal_drop_name_bytes=nominal_drop_name_bytes,
+        nominal_drop_name_starts=nominal_drop_name_starts,
     )
 
 def store_specialization_name(stored: &List[char], value: &const String) -> usize:
@@ -89,6 +95,20 @@ def record_enum_name(registry: &SpecializationNameRegistry, name: String) -> voi
 def is_registered_enum_name(registry: &const SpecializationNameRegistry, name: &const String) -> bool:
     for start in registry.enum_name_starts:
         if stored_specialization_name_equals_string(&registry.enum_name_bytes, start, name):
+            return true
+    return false
+
+
+def record_nominal_drop_name(registry: &SpecializationNameRegistry, name: String) -> void:
+    for start in registry.nominal_drop_name_starts:
+        if stored_specialization_name_equals_string(&registry.nominal_drop_name_bytes, start, &name):
+            return
+    registry.nominal_drop_name_starts.append(store_specialization_name(&registry.nominal_drop_name_bytes, &name))
+
+
+def is_registered_nominal_drop_name(registry: &const SpecializationNameRegistry, name: &const String) -> bool:
+    for start in registry.nominal_drop_name_starts:
+        if stored_specialization_name_equals_string(&registry.nominal_drop_name_bytes, start, name):
             return true
     return false
 

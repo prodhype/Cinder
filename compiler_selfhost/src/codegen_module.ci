@@ -163,12 +163,14 @@ def emit_module_header_with_semantics_and_models(
     codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, false)
     emit_module_nominal_declarations(arena, root, source, builder, &prefix, project_name, imports, context)
     emit_module_nominal_drop_definitions(arena, root, source, builder, &prefix, project_name, imports, context)
+    emit_reflection_declarations(builder, module_name, context)
+    codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, true)
+    emitted_array_drop_helpers: List[String] = []
+    codegen_specializations.emit_module_array_drop_helpers(arena, root, source, builder, emitted_array_drop_helpers, &prefix, project_name, imports, registry)
     emitted_late_list_helpers: List[String] = []
     codegen_specializations.emit_module_late_list_helpers(arena, root, source, builder, emitted_late_list_helpers, &prefix, project_name, imports, registry)
     emitted_owned_helpers: List[String] = []
     codegen_specializations.emit_module_owned_helpers(arena, root, source, builder, emitted_owned_helpers, &prefix, project_name, imports, registry)
-    emit_reflection_declarations(builder, module_name, context)
-    codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, true)
     emitted_print_prototypes: List[String] = []
     codegen_specializations.emit_module_collection_print_helpers(arena, root, source, builder, emitted_print_prototypes, &prefix, project_name, imports, registry, false)
     emitted_print_helpers: List[String] = []
@@ -1169,7 +1171,7 @@ def emit_module_function(
         context.local_start = len(context.local_types)
         context.pointer_start = len(context.pointer_names)
         codegen_context.register_module_parameters(arena, id, source, context)
-        codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+        codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
         codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
         while len(context.local_types) > context.local_start:
             context.local_types.pop()
@@ -1588,7 +1590,7 @@ def emit_module_methods(
                     context.local_start = len(context.local_types)
                     context.pointer_start = len(context.pointer_names)
                     codegen_context.register_module_parameters(arena, child_id, source, context)
-                    codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context)
+                    codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
                     codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
                     while len(context.local_types) > context.local_start:
                         context.local_types.pop()
