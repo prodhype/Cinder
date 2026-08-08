@@ -16,88 +16,14 @@ Use it to build the full bootstrap from stage0 to gen3, or to work on the Python
 It writes portable C11 that you can read.
 It can start GCC, Clang, or toolchains that are compatible with MSVC.
 
-## Status
+## Project State
 
-Cinder 0.5.0 completes the first five language milestones.
+Cinder has the main language, project build path, and native bootstrap in place.
+The compiler can check Cinder sources, write readable C11, build projects, and produce a gen3 native compiler from the self-hosted source tree.
 
-The procedural core includes:
-
-- parsing that uses indentation
-- primitive types and C ABI types
-- typed globals and inferred locals
-- functions and function pointer types
-- named arguments
-- native control flow
-- structs and methods
-- pointers and references
-- fixed arrays and slices
-- explicit allocation
-- scoped `defer`
-- C imports and exported C functions
-- readable C11 generation
-
-Native collection support includes:
-
-- heterogeneous value tuples
-- specialized owning Lists, Maps, and Sets
-
-Maps keep insertion order and show live views.
-Sets support hash membership and algebra.
-Optional lookup uses tagged `Option[T]` values.
-`Owned[T]` gives Box-style heap ownership with deterministic drop.
-
-Owned text support includes:
-
-- move-only UTF-8 `String` values
-- copy-on-write static literals and explicit `clone`
-- checked byte access and UTF-8-boundary slicing
-- append, reserve, clear, and concatenation
-- consuming `StringBuilder` construction
-
-The project system includes:
-
-- deterministic `cinder.toml` manifests
-- local imports and dotted module paths
-- dependency order and cycle diagnostics
-- one generated header and translation unit per module
-- deterministic internal symbols
-- content-stable generated files
-- optional amalgamated output
-
-The algebraic-data layer includes:
-
-- C enums and plain unions
-- tagged variants
-- exhaustive `match`
-- `Result[T, E]`
-- contextual `Ok` and `Err`
-- postfix `?` propagation that keeps active cleanups
-
-Cinder 0.4 adds:
-
-- classes, constructors, and destructors
-- private fields
-- one implementation base
-- multiple abstract interfaces
-- checked abstract-method implementation
-- signature-checked overrides
-- direct static dispatch
-- explicit `&dyn Interface` dispatch
-- deterministic derived-before-base destruction
-- move-only values that have destructors
-- cross-module class ABI generation
-
-Cinder 0.5 adds:
-
-- opt-in `@reflect` metadata
-- runtime type, field, and method inspection
-- dynamic runtime type names
-- compile-time type and member queries
-- top-level `static_assert`
-- unrolled `comptime` field and method loops
-
-The implementation is alpha software.
-Exceptions, copy and move hooks, object-file caching, and a stable pre-1.0 binary ABI are future work.
+Cinder is still pre-1.0.
+Source syntax, CLI details, generated helper names, and binary layout can still change before a stability release.
+The design still favors readable generated C, explicit ownership, deterministic cleanup, and ordinary C toolchains.
 
 ## Installation
 
