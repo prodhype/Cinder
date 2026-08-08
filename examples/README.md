@@ -22,6 +22,8 @@
 
 `pointers.ci` demonstrates address-of, raw pointers, transparent references, and pointer indexing.
 
+`unsafe.ci` demonstrates explicit `unsafe` blocks for raw-address casts: store an array element address as `usize`, cast it back to `*u8`, and read a byte while keeping the dangerous boundary visible.
+
 `function_pointers.ci` demonstrates transparent function pointer types: annotate with `def(T…) -> R`, pass a named function by name, store it, and call through the value.
 
 `closures.ci` demonstrates explicit-environment closures: user-declared environment structs, env-first adapter functions, const and mutable environment calls, and first-class closure values.

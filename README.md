@@ -1,29 +1,22 @@
 # Cinder
 
-Cinder is a systems language with static types.
-Its syntax is near to Python.
-The compiler writes readable C11.
-The language uses indentation for blocks and newlines for statements.
-Public boundaries use explicit types.
-Data layouts are compatible with C.
-Cleanup is deterministic.
-The language uses ordinary native toolchains.
+Cinder is a statically typed systems programming language with Python-like syntax and C-compatible semantics.
 
-For normal use, get a gen3 native compiler from GitHub Actions.
-The gen3 compiler does not need Python at run time.
-You need Python 3.14 only for source work.
-Use it to build the full bootstrap from stage0 to gen3, or to work on the Python stage0 implementation.
-It writes portable C11 that you can read.
-It can start GCC, Clang, or toolchains that are compatible with MSVC.
+It gives you indentation-based blocks, newline-terminated statements, explicit types at public boundaries, deterministic cleanup, and predictable data layout.
+Cinder compiles to readable C11, so the generated code can be inspected, debugged, and built with ordinary native toolchains such as GCC, Clang, and MSVC-compatible compilers.
+
+Cinder is also self-hosted. The current gen3 compiler is a native executable compiled from Cinder source and does not require Python at runtime.
+
+For normal development, download a gen3 compiler from GitHub Actions.
+Python 3.14 is only required to run the complete bootstrap from stage0 to gen3 or to work on the original Python compiler implementation.
 
 ## Project State
 
-Cinder has the main language, project build path, and native bootstrap in place.
-The compiler can check Cinder sources, write readable C11, build projects, and produce a gen3 native compiler from the self-hosted source tree.
+Cinder is pre-1.0, but the core language and toolchain are operational.
+The compiler can type-check Cinder programs, generate readable C11, build multi-file projects, and bootstrap the native compiler from the self-hosted source tree.
+The language is still evolving. Source syntax, CLI behavior, generated helper APIs, ABI details, and binary layout may change before the first stability release.
 
-Cinder is still pre-1.0.
-Source syntax, CLI details, generated helper names, and binary layout can still change before a stability release.
-The design still favors readable generated C, explicit ownership, deterministic cleanup, and ordinary C toolchains.
+The core design goals are unlikely to change: readable generated C, explicit ownership, deterministic cleanup, C-compatible data, and compatibility with ordinary native toolchains.
 
 ## Installation
 
@@ -933,6 +926,7 @@ unsafe:
 
 This makes dangerous code visible.
 It does not make raw pointer operations safe in memory.
+See `examples/unsafe.ci` for a runnable raw-address example.
 
 ## Project layout
 
