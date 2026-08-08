@@ -88,11 +88,19 @@ def compile_c11(
 
 
 def runtime_root(executable_path: &const String) -> String:
+    bundled: String = "runtime"
+    if has_runtime(&bundled):
+        return bundled[0:len(bundled)]
+
     relative: String = "cinder/runtime"
     if has_runtime(&relative):
         return relative[0:len(relative)]
 
     binary_dir = fs.parent_dir(executable_path)
+    candidate = fs.join_path(&binary_dir, &bundled)
+    if has_runtime(&candidate):
+        return candidate[0:len(candidate)]
+
     candidate = fs.join_path(&binary_dir, &relative)
     if has_runtime(&candidate):
         return candidate[0:len(candidate)]

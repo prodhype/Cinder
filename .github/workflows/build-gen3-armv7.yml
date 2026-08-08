@@ -41,7 +41,7 @@ jobs:
       - name: Bootstrap gen2
         run: |
           set -euxo pipefail
-          mkdir -p build/bootstrap dist
+          mkdir -p build/bootstrap dist/cinder-gen3-linux-armv7
           cinder build compiler_selfhost \
             -o build/bootstrap/cinder-gen1 \
             --build-dir build/gen1
@@ -54,20 +54,34 @@ jobs:
           set -euxo pipefail
           ./build/bootstrap/cinder-gen2 build compiler_selfhost \
             --cc arm-linux-gnueabihf-gcc \
-            -o dist/cinder-gen3-linux-armv7 \
+            -o dist/cinder-gen3-linux-armv7/cinder \
             --build-dir build/gen3-armv7
-          chmod +x dist/cinder-gen3-linux-armv7
-          file dist/cinder-gen3-linux-armv7
+          chmod +x dist/cinder-gen3-linux-armv7/cinder
+          file dist/cinder-gen3-linux-armv7/cinder
+
+      - name: Bundle runtime files
+        run: |
+          set -euxo pipefail
+          mkdir -p dist/cinder-gen3-linux-armv7/runtime
+          cp cinder/runtime/cinder_runtime.c \
+            cinder/runtime/cinder_runtime.h \
+            dist/cinder-gen3-linux-armv7/runtime/
 
       - name: Verify gen3 with QEMU
         run: |
           set -euxo pipefail
           qemu-arm -L /usr/arm-linux-gnueabihf \
-            ./dist/cinder-gen3-linux-armv7 check examples/module_project
+            ./dist/cinder-gen3-linux-armv7/cinder check examples/module_project
+
+      - name: Archive gen3 bundle
+        run: |
+          set -euxo pipefail
+          COPYFILE_DISABLE=1 tar -czf dist/cinder-gen3-linux-armv7.tar.gz \
+            -C dist cinder-gen3-linux-armv7
 
       - name: Upload gen3 artifact
         uses: actions/upload-artifact@v4
         with:
           name: cinder-gen3-linux-armv7
-          path: dist/cinder-gen3-linux-armv7
+          path: dist/cinder-gen3-linux-armv7.tar.gz
           if-no-files-found: error

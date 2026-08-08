@@ -32,7 +32,7 @@ jobs:
       - name: Bootstrap gen3
         run: |
           set -euxo pipefail
-          mkdir -p build/bootstrap dist
+          mkdir -p build/bootstrap dist/cinder-gen3-macos-arm64
           cinder build compiler_selfhost \
             -o build/bootstrap/cinder-gen1 \
             --build-dir build/gen1
@@ -40,19 +40,33 @@ jobs:
             -o build/bootstrap/cinder-gen2 \
             --build-dir build/gen2
           ./build/bootstrap/cinder-gen2 build compiler_selfhost \
-            -o dist/cinder-gen3-macos-arm64 \
+            -o dist/cinder-gen3-macos-arm64/cinder \
             --build-dir build/gen3
-          chmod +x dist/cinder-gen3-macos-arm64
-          file dist/cinder-gen3-macos-arm64
+          chmod +x dist/cinder-gen3-macos-arm64/cinder
+          file dist/cinder-gen3-macos-arm64/cinder
+
+      - name: Bundle runtime files
+        run: |
+          set -euxo pipefail
+          mkdir -p dist/cinder-gen3-macos-arm64/runtime
+          cp cinder/runtime/cinder_runtime.c \
+            cinder/runtime/cinder_runtime.h \
+            dist/cinder-gen3-macos-arm64/runtime/
 
       - name: Verify gen3
         run: |
           set -euxo pipefail
-          ./dist/cinder-gen3-macos-arm64 check examples/module_project
+          ./dist/cinder-gen3-macos-arm64/cinder check examples/module_project
+
+      - name: Archive gen3 bundle
+        run: |
+          set -euxo pipefail
+          COPYFILE_DISABLE=1 tar -czf dist/cinder-gen3-macos-arm64.tar.gz \
+            -C dist cinder-gen3-macos-arm64
 
       - name: Upload gen3 artifact
         uses: actions/upload-artifact@v4
         with:
           name: cinder-gen3-macos-arm64
-          path: dist/cinder-gen3-macos-arm64
+          path: dist/cinder-gen3-macos-arm64.tar.gz
           if-no-files-found: error
