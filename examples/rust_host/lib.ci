@@ -1,0 +1,62 @@
+# Rust hosts a flat C ABI. Inside Cinder we use @reflect runtime metadata and
+# comptime fields_of unrolling — layout inspection Rust cannot do without
+# proc-macros or an external reflection crate.
+#
+# Export only C primitives. Do not put String/List/Map on the public C API.
+
+@reflect
+struct Vec3:
+    x: i32
+    y: i32
+    z: i32
+
+
+static_assert(field_count(Vec3) == 3, "Vec3 layout changed")
+static_assert(has_field(Vec3, "x"))
+static_assert(has_field(Vec3, "y"))
+static_assert(has_field(Vec3, "z"))
+
+
+def schema_fingerprint() -> i32:
+    # Unrolled at compile time into ordinary C — no runtime loop, no macros.
+    h: i32 = 0
+    for field in comptime fields_of(Vec3):
+        h = h + cast[i32](field.offset) + cast[i32](field.size)
+    return h
+
+
+@export
+def cinder_vec3_field_count() -> i32:
+    v = Vec3(x=1, y=2, z=3)
+    info = type_info(v)
+    return cast[i32](info.field_count)
+
+
+@export
+def cinder_describe_vec3() -> i32:
+    v = Vec3(x=10, y=20, z=30)
+    for field in fields(v):
+        print(f"runtime field: {field.name} ({field.type_name})")
+    return schema_fingerprint()
+
+
+# The same idea sketched in Rust (not compiled). Missing pieces vs Cinder:
+# - no language-level @reflect / type_info / fields iteration
+# - no for field in comptime fields_of(T) without a proc-macro
+# - schema fingerprint would need #[derive] or hand-written trait impls
+#
+# // Needs a derive crate or manual FieldIter impl — not in std.
+# #[derive(Reflect)] // hypothetical / external crate
+# struct Vec3 { x: i32, y: i32, z: i32 }
+#
+# fn schema_fingerprint() -> i32 {
+#     // Rust has no comptime fields_of; this is either a macro expansion or
+#     // handwritten offsets:
+#     0 + 4 + 4 + 8 + 4  // offset+size for x, y, z — brittle if layout changes
+# }
+#
+# fn describe(v: &Vec3) {
+#     // Without reflection metadata, field names are not available at runtime
+#     // unless you derive them or maintain a parallel table by hand.
+#     for field in v.reflect_fields() { /* crate-specific API */ }
+# }
