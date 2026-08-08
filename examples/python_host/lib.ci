@@ -27,6 +27,18 @@ variant Request:
     Clamp(value: i32, lo: i32, hi: i32)
 
 
+def require_non_zero(b: i32) -> Result[i32, i32]:
+    if b == 0:
+        return Err(-1)
+    return Ok(b)
+
+
+def require_ordered_range(lo: i32, hi: i32) -> Result[i32, i32]:
+    if lo > hi:
+        return Err(-2)
+    return Ok(lo)
+
+
 def dispatch(session: &Session, request: Request) -> Result[i32, i32]:
     result: Result[i32, i32] = Err(-2)
     match request:
@@ -35,16 +47,13 @@ def dispatch(session: &Session, request: Request) -> Result[i32, i32]:
             result = Ok(a + b)
         case Request.Quotient(a, b):
             session.note(2)
-            if b == 0:
-                result = Err(-1)
-            else:
-                result = Ok(a / b)
+            denom = require_non_zero(b)?
+            result = Ok(a / denom)
         case Request.Clamp(value, lo, hi):
             session.note(3)
-            if lo > hi:
-                result = Err(-2)
-            elif value < lo:
-                result = Ok(lo)
+            low = require_ordered_range(lo, hi)?
+            if value < low:
+                result = Ok(low)
             elif value > hi:
                 result = Ok(hi)
             else:
