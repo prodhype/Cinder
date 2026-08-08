@@ -91,8 +91,6 @@ def cinder_clamp(value: i32, lo: i32, hi: i32) -> i32:
 
 # Hot path for the host timing demo. Same series as examples/leibniz_pi.ci;
 # no Session/print so the measurement is the loop, not destructor I/O.
-# Sign from (i & 1) lets optimizing C compilers auto-vectorize — a benefit
-# pure Python cannot match for the same loop shape.
 @export
 def cinder_leibniz(iterations: i32) -> f64:
     pi: f64 = 1.0

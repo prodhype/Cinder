@@ -10,10 +10,10 @@ When the export returns — including on error paths — the session drops
 deterministically. That ownership and exhaustiveness story is what Python does
 not check.
 
-A separate export runs the same **Leibniz π** loop as `examples/leibniz_pi.ci`
-(sign from `i & 1` so the C compiler can auto-vectorize). The host times that
-native loop against an equivalent pure-Python implementation — CPython stays
-scalar, while Cinder gets vectorization as part of compiling to C.
+A separate export runs the same **Leibniz π** loop as `examples/leibniz_pi.ci`.
+The host times that native `-O2` loop against an equivalent pure-Python
+implementation — CPython interprets the series; Cinder runs the same algorithm
+as compiled C.
 
 This example is manual; it is not part of the gen3 smoke suite.
 
@@ -66,10 +66,9 @@ What the script does:
 
 ## Why not in Python?
 
-- **Runtime speed** — the same Leibniz series in Cinder (readable C11, `-O2`,
-  often auto-vectorized) finishes roughly two orders of magnitude sooner than
-  the pure-Python loop in this example. Keep orchestration in Python; move hot
-  loops behind `@export`.
+- **Runtime speed** — the same Leibniz series in Cinder (readable C11, `-O2`)
+  finishes roughly two orders of magnitude sooner than the pure-Python loop in
+  this example. Keep orchestration in Python; move hot loops behind `@export`.
 - **Deterministic drop** — Cinder runs `Session.__del__` when the local leaves
   scope, including after `Err` paths. Python `__del__` is tied to the GC and is
   not prompt or reliable; you reach for `try`/`finally` or a context manager and

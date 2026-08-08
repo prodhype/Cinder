@@ -46,7 +46,7 @@ ticks.
 
 `leibniz_pi.ci` approximates π with the Leibniz series over 1,000,000,000 iterations and
 reports wall-clock elapsed time in milliseconds. The loop derives each term's sign from the
-index so optimizing C compilers can auto-vectorize it.
+index rather than carrying a flipped sign across iterations.
 
 `physics.ci` demonstrates common mechanics formulas with the checked math module: energy,
 momentum, force, kinematics, projectile motion, pendulum period, and centripetal acceleration.

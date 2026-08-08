@@ -52,7 +52,6 @@ def call(fn, *args: int) -> None:
 
 def python_leibniz(iterations: int) -> float:
     # Same series as cinder_leibniz / examples/leibniz_pi.ci.
-    # CPython will not auto-vectorize this; the Cinder export can.
     pi = 1.0
     for i in range(2, iterations + 2):
         x = -1.0 + 2.0 * (i & 1)
