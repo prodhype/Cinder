@@ -78,3 +78,5 @@ momentum, force, kinematics, projectile motion, pendulum period, and centripetal
 `go_host/` demonstrates Go as the host language: `@export` Cinder functions with a C ABI wrap an arena-owned expression AST, exhaustive variant matching, and `Result` evaluation, then a small cgo program includes the generated header and links the compiled object. See `go_host/README.md` for build steps (manual run; not part of CI).
 
 `rust_host/` demonstrates Rust as the host language: `@export` Cinder functions with a C ABI use `@reflect` runtime metadata and `comptime fields_of` unrolling (layout inspection Rust lacks without proc-macros), then a small `extern "C"` program links the compiled objects via Cargo. See `rust_host/README.md` for build steps (manual run; not part of CI).
+
+`python_host/` demonstrates Python as the host language: `@export` Cinder functions with a C ABI own a destructor-bearing `Session`, dispatch an exhaustive `variant Request` with `Result`/`?`, and expose a Leibniz π hot path that the ctypes host times against pure Python. See `python_host/README.md` for build steps (manual run; not part of CI).
