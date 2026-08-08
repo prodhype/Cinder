@@ -1,0 +1,25 @@
+def read_byte(address: usize) -> u8:
+    # The cinder checker can't know whether:
+    #   - the address is valid
+    #   - the memory is still alive
+    #   - the memory is at least one byte long
+    #   - the address is correctly aligned for the type
+    #   - the address really points to a u8
+    #   - the read crosses into memory you do not own
+    # The unsafe block does not make the operation safe, it makes the dangerous boundary visible.
+    # The programmer is responsible for ensuring the memory is valid and safe to use.
+    unsafe:
+        pointer = cast[*u8](address)
+        return pointer[0]
+
+
+def main() -> i32:
+    bytes: u8[6] = [67, 105, 110, 100, 101, 114]
+    address: usize = 0
+
+    unsafe:
+        address = cast[usize](&bytes[2])
+
+    value = read_byte(address)
+    print(f"byte at raw address: {value}")
+    return 0
