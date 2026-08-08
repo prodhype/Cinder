@@ -36,6 +36,8 @@
 
 `binary_sort.ci` implements stable binary insertion sort on a numeric List, then prints the sorted collection.
 
+`funnel_hash.ci` implements funnel hashing (Farach-Colton / Krapivin / Kuszmaul, arXiv:2501.02305): fills a 32 Ki-slot table to load 1-1/64, counts probes against a uniform-probing baseline, and checks the paper's O(log²(1/δ)) scale versus classic Θ(1/δ) behavior.
+
 `long_string_sort.ci` demonstrates lexicographic sorting of C strings in a List without importing `string`, then prints the sorted collection.
 
 `algorithm_benchmarks.ci` times exact N-Queens, traveling-salesperson, and edit-distance

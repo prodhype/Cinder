@@ -1,0 +1,572 @@
+# Funnel hashing (Farach-Colton, Krapivin, Kuszmaul; arXiv:2501.02305).
+#
+# Greedy open addressing without reordering: geometrically shrinking bucketed
+# levels, then a special overflow array (B = limited uniform probes, C =
+# two-choice buckets). The paper's advertised bounds are:
+#   - worst-case expected probes: O(log^2 (1/delta))
+#   - amortized expected probes:  O(log (1/delta))
+# Classic uniform probing is Theta(1/delta) in the worst-case expected sense
+# Yao conjectured was optimal for greedy tables.
+
+struct Slot:
+    occupied: bool
+    key: i32
+    value: i32
+
+
+struct ProbeStats:
+    operations: i32
+    total_probes: i64
+    max_probes: i32
+
+
+struct FunnelTable:
+    capacity: i32
+    max_inserts: i32
+    num_inserts: i32
+    inv_delta: i32
+    beta: i32
+    level_count: i32
+    slots: List[Slot]
+    level_offsets: List[i32]
+    level_bucket_counts: List[i32]
+    level_salts: List[u64]
+    special: List[Slot]
+    special_b_size: i32
+    special_c_bucket_size: i32
+    special_c_buckets: i32
+    special_salt: u64
+
+
+struct UniformTable:
+    capacity: i32
+    max_inserts: i32
+    num_inserts: i32
+    slots: List[Slot]
+    salt: u64
+
+
+def empty_slot() -> Slot:
+    return Slot(occupied=false, key=0, value=0)
+
+
+def empty_stats() -> ProbeStats:
+    return ProbeStats(operations=0, total_probes=0, max_probes=0)
+
+
+def record_probes(stats: &ProbeStats, probes: i32) -> void:
+    stats.operations += 1
+    stats.total_probes += cast[i64](probes)
+    if probes > stats.max_probes:
+        stats.max_probes = probes
+
+
+def avg_probes(stats: &const ProbeStats) -> f64:
+    if stats.operations == 0:
+        return 0.0
+    return cast[f64](stats.total_probes) / cast[f64](stats.operations)
+
+
+def ilog2_ceil(value: i32) -> i32:
+    if value <= 1:
+        return 0
+    bits: i32 = 0
+    n = value - 1
+    while n > 0:
+        n = n / 2
+        bits += 1
+    return bits
+
+
+def mix64(value: u64) -> u64:
+    x = value
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EB
+    return x ^ (x >> 31)
+
+
+def hash_with_salt(key: i32, salt: u64) -> u64:
+    return mix64(cast[u64](key) ^ salt)
+
+
+def funnel_bound_log2_sq(inv_delta: i32) -> i32:
+    # Paper-style O(log^2 (1/delta)) yardstick using alpha*beta ~ (4 log + 10)(2 log).
+    log_inv = ilog2_ceil(inv_delta)
+    return (4 * log_inv + 10) * (2 * log_inv)
+
+
+def make_funnel_table(capacity: i32, inv_delta: i32) -> FunnelTable:
+    log_inv = ilog2_ceil(inv_delta)
+    alpha = 4 * log_inv + 10
+    beta = 2 * log_inv
+    if beta < 1:
+        beta = 1
+
+    special_size = (3 * capacity) / (4 * inv_delta)
+    if special_size < 8:
+        special_size = 8
+    primary_size = capacity - special_size
+    if primary_size < beta:
+        primary_size = beta
+        special_size = capacity - primary_size
+        if special_size < 8:
+            special_size = 8
+            primary_size = capacity - special_size
+
+    total_buckets = primary_size / beta
+    if total_buckets < 1:
+        total_buckets = 1
+
+    a1 = total_buckets / 4
+    if a1 < 1:
+        a1 = 1
+
+    slots: List[Slot] = []
+    level_offsets: List[i32] = []
+    level_bucket_counts: List[i32] = []
+    level_salts: List[u64] = []
+    remaining = total_buckets
+    scale_num: i32 = 1
+    scale_den: i32 = 1
+    level_index: i32 = 0
+    next_offset: i32 = 0
+
+    while level_index < alpha and remaining > 0:
+        a_i = (a1 * scale_num) / scale_den
+        if a_i < 1:
+            a_i = 1
+        if a_i > remaining:
+            a_i = remaining
+
+        level_size = a_i * beta
+        level_offsets.append(next_offset)
+        level_bucket_counts.append(a_i)
+        level_salts.append(0x9E3779B97F4A7C15 + cast[u64](level_index) * 0xD1B54A32D192D49B)
+
+        slot_index: i32 = 0
+        while slot_index < level_size:
+            slots.append(empty_slot())
+            slot_index += 1
+
+        next_offset += level_size
+        remaining -= a_i
+        level_index += 1
+
+        if scale_den > 1000000 or remaining == 0:
+            break
+        scale_num = scale_num * 3
+        scale_den = scale_den * 4
+
+    if remaining > 0:
+        if len(level_bucket_counts) == 0:
+            level_offsets.append(next_offset)
+            level_bucket_counts.append(remaining)
+            level_salts.append(0x9E3779B97F4A7C15)
+            added: i32 = 0
+            extra = remaining * beta
+            while added < extra:
+                slots.append(empty_slot())
+                added += 1
+        else:
+            last = cast[i32](len(level_bucket_counts)) - 1
+            extra = remaining * beta
+            added = 0
+            while added < extra:
+                slots.append(empty_slot())
+                added += 1
+            level_bucket_counts[last] = level_bucket_counts[last] + remaining
+
+    # Special array A_{alpha+1}: first half B (limited uniform probes), second half C
+    # (two-choice buckets of size ~ 2 log log n), matching the paper sketch.
+    special_b_size = special_size / 2
+    if special_b_size < 1:
+        special_b_size = 1
+    special_c_size = special_size - special_b_size
+    loglog = ilog2_ceil(ilog2_ceil(capacity + 1) + 1)
+    if loglog < 2:
+        loglog = 2
+    special_c_bucket_size = 2 * loglog
+    if special_c_bucket_size < 4:
+        special_c_bucket_size = 4
+    special_c_buckets = special_c_size / special_c_bucket_size
+    if special_c_buckets < 1:
+        special_c_buckets = 1
+        special_c_bucket_size = special_c_size
+
+    special: List[Slot] = []
+    special_index: i32 = 0
+    while special_index < special_size:
+        special.append(empty_slot())
+        special_index += 1
+
+    max_inserts = capacity - capacity / inv_delta
+    return FunnelTable(
+        capacity=capacity,
+        max_inserts=max_inserts,
+        num_inserts=0,
+        inv_delta=inv_delta,
+        beta=beta,
+        level_count=cast[i32](len(level_bucket_counts)),
+        slots=slots,
+        level_offsets=level_offsets,
+        level_bucket_counts=level_bucket_counts,
+        level_salts=level_salts,
+        special=special,
+        special_b_size=special_b_size,
+        special_c_bucket_size=special_c_bucket_size,
+        special_c_buckets=special_c_buckets,
+        special_salt=0xA0761D6478BD642F,
+    )
+
+
+def make_uniform_table(capacity: i32, inv_delta: i32) -> UniformTable:
+    slots: List[Slot] = []
+    index: i32 = 0
+    while index < capacity:
+        slots.append(empty_slot())
+        index += 1
+    return UniformTable(
+        capacity=capacity,
+        max_inserts=capacity - capacity / inv_delta,
+        num_inserts=0,
+        slots=slots,
+        salt=0xC2B2AE3D27D4EB4F,
+    )
+
+
+def count_free_in_bucket(
+    special: &const List[Slot],
+    bucket_start: i32,
+    bucket_size: i32,
+) -> i32:
+    free: i32 = 0
+    idx = bucket_start
+    end = bucket_start + bucket_size
+    while idx < end:
+        if not special[idx].occupied:
+            free += 1
+        idx += 1
+    return free
+
+
+def funnel_insert(table: &FunnelTable, key: i32, value: i32, stats: &ProbeStats) -> bool:
+    if table.num_inserts >= table.max_inserts:
+        return false
+
+    probes: i32 = 0
+    level_index: i32 = 0
+    while level_index < table.level_count:
+        num_buckets = table.level_bucket_counts[level_index]
+        if num_buckets < 1:
+            level_index += 1
+            continue
+        offset = table.level_offsets[level_index]
+        bucket_index = cast[i32](
+            hash_with_salt(key, table.level_salts[level_index]) % cast[u64](num_buckets)
+        )
+        start = offset + bucket_index * table.beta
+        end = start + table.beta
+        idx = start
+        while idx < end:
+            probes += 1
+            slot = table.slots[idx]
+            if not slot.occupied:
+                table.slots[idx] = Slot(occupied=true, key=key, value=value)
+                table.num_inserts += 1
+                record_probes(stats, probes)
+                return true
+            if slot.key == key:
+                table.slots[idx] = Slot(occupied=true, key=key, value=value)
+                record_probes(stats, probes)
+                return true
+            idx += 1
+        level_index += 1
+
+    # Region B: limited uniform probing.
+    probe_limit = ilog2_ceil(ilog2_ceil(table.capacity + 1) + 1)
+    if probe_limit < 1:
+        probe_limit = 1
+    base = cast[i32](hash_with_salt(key, table.special_salt) % cast[u64](table.special_b_size))
+    probe: i32 = 0
+    while probe < probe_limit:
+        idx = (base + probe) % table.special_b_size
+        probes += 1
+        slot = table.special[idx]
+        if not slot.occupied:
+            table.special[idx] = Slot(occupied=true, key=key, value=value)
+            table.num_inserts += 1
+            record_probes(stats, probes)
+            return true
+        if slot.key == key:
+            table.special[idx] = Slot(occupied=true, key=key, value=value)
+            record_probes(stats, probes)
+            return true
+        probe += 1
+
+    # Region C: two-choice buckets.
+    c_base = table.special_b_size
+    h0 = hash_with_salt(key, table.special_salt ^ 0xD1B54A32D192D49B)
+    h1 = hash_with_salt(key, table.special_salt ^ 0xC2B2AE3D27D4EB4F)
+    bucket0 = cast[i32](h0 % cast[u64](table.special_c_buckets))
+    bucket1 = cast[i32](h1 % cast[u64](table.special_c_buckets))
+    start0 = c_base + bucket0 * table.special_c_bucket_size
+    start1 = c_base + bucket1 * table.special_c_bucket_size
+    free0 = count_free_in_bucket(&table.special, start0, table.special_c_bucket_size)
+    free1 = count_free_in_bucket(&table.special, start1, table.special_c_bucket_size)
+
+    chosen_start = start0
+    if free1 > free0:
+        chosen_start = start1
+
+    # Prefer the emptier bucket; if that fails, try the other.
+    attempt: i32 = 0
+    while attempt < 2:
+        idx = chosen_start
+        end = chosen_start + table.special_c_bucket_size
+        while idx < end:
+            probes += 1
+            slot = table.special[idx]
+            if not slot.occupied:
+                table.special[idx] = Slot(occupied=true, key=key, value=value)
+                table.num_inserts += 1
+                record_probes(stats, probes)
+                return true
+            if slot.key == key:
+                table.special[idx] = Slot(occupied=true, key=key, value=value)
+                record_probes(stats, probes)
+                return true
+            idx += 1
+        if chosen_start == start0:
+            chosen_start = start1
+        else:
+            chosen_start = start0
+        attempt += 1
+
+    record_probes(stats, probes)
+    return false
+
+
+def funnel_get(
+    table: &const FunnelTable,
+    key: i32,
+    stats: &ProbeStats,
+) -> Option[i32]:
+    probes: i32 = 0
+    level_index: i32 = 0
+    while level_index < table.level_count:
+        num_buckets = table.level_bucket_counts[level_index]
+        if num_buckets < 1:
+            level_index += 1
+            continue
+        offset = table.level_offsets[level_index]
+        bucket_index = cast[i32](
+            hash_with_salt(key, table.level_salts[level_index]) % cast[u64](num_buckets)
+        )
+        start = offset + bucket_index * table.beta
+        end = start + table.beta
+        idx = start
+        while idx < end:
+            probes += 1
+            slot = table.slots[idx]
+            if not slot.occupied:
+                break
+            if slot.key == key:
+                record_probes(stats, probes)
+                return Some(slot.value)
+            idx += 1
+        level_index += 1
+
+    probe_limit = ilog2_ceil(ilog2_ceil(table.capacity + 1) + 1)
+    if probe_limit < 1:
+        probe_limit = 1
+    base = cast[i32](hash_with_salt(key, table.special_salt) % cast[u64](table.special_b_size))
+    probe: i32 = 0
+    while probe < probe_limit:
+        idx = (base + probe) % table.special_b_size
+        probes += 1
+        slot = table.special[idx]
+        if not slot.occupied:
+            break
+        if slot.key == key:
+            record_probes(stats, probes)
+            return Some(slot.value)
+        probe += 1
+
+    c_base = table.special_b_size
+    h0 = hash_with_salt(key, table.special_salt ^ 0xD1B54A32D192D49B)
+    h1 = hash_with_salt(key, table.special_salt ^ 0xC2B2AE3D27D4EB4F)
+    bucket0 = cast[i32](h0 % cast[u64](table.special_c_buckets))
+    bucket1 = cast[i32](h1 % cast[u64](table.special_c_buckets))
+    start0 = c_base + bucket0 * table.special_c_bucket_size
+    start1 = c_base + bucket1 * table.special_c_bucket_size
+
+    attempt: i32 = 0
+    chosen_start = start0
+    while attempt < 2:
+        idx = chosen_start
+        end = chosen_start + table.special_c_bucket_size
+        while idx < end:
+            probes += 1
+            slot = table.special[idx]
+            if slot.occupied and slot.key == key:
+                record_probes(stats, probes)
+                return Some(slot.value)
+            idx += 1
+        chosen_start = start1
+        attempt += 1
+
+    record_probes(stats, probes)
+    return None
+
+
+def uniform_insert(table: &UniformTable, key: i32, value: i32, stats: &ProbeStats) -> bool:
+    if table.num_inserts >= table.max_inserts:
+        return false
+
+    start = cast[i32](hash_with_salt(key, table.salt) % cast[u64](table.capacity))
+    probes: i32 = 0
+    step: i32 = 0
+    while step < table.capacity:
+        idx = (start + step) % table.capacity
+        probes += 1
+        slot = table.slots[idx]
+        if not slot.occupied:
+            table.slots[idx] = Slot(occupied=true, key=key, value=value)
+            table.num_inserts += 1
+            record_probes(stats, probes)
+            return true
+        if slot.key == key:
+            table.slots[idx] = Slot(occupied=true, key=key, value=value)
+            record_probes(stats, probes)
+            return true
+        step += 1
+
+    record_probes(stats, probes)
+    return false
+
+
+def uniform_get(
+    table: &const UniformTable,
+    key: i32,
+    stats: &ProbeStats,
+) -> Option[i32]:
+    start = cast[i32](hash_with_salt(key, table.salt) % cast[u64](table.capacity))
+    probes: i32 = 0
+    step: i32 = 0
+    while step < table.capacity:
+        idx = (start + step) % table.capacity
+        probes += 1
+        slot = table.slots[idx]
+        if not slot.occupied:
+            record_probes(stats, probes)
+            return None
+        if slot.key == key:
+            record_probes(stats, probes)
+            return Some(slot.value)
+        step += 1
+
+    record_probes(stats, probes)
+    return None
+
+
+def print_stats(label: String, stats: &const ProbeStats) -> void:
+    print(f"{label}: ops={stats.operations} avg_probes={avg_probes(stats):.3f} max_probes={stats.max_probes}")
+
+
+def main() -> i32:
+    # High load: fill (1 - 1/64) of a 32 Ki-slot table. Paper yardstick is
+    # O(log^2 (1/delta)); uniform probing's classic worst-case scale is Theta(1/delta).
+    capacity: i32 = 32768
+    inv_delta: i32 = 64
+    insert_count = capacity - capacity / inv_delta
+    paper_bound = funnel_bound_log2_sq(inv_delta)
+
+    funnel = make_funnel_table(capacity, inv_delta)
+    uniform = make_uniform_table(capacity, inv_delta)
+
+    print("Funnel hashing stress demo (arXiv:2501.02305)")
+    print(f"n={capacity} delta=1/{inv_delta} target_inserts={insert_count} levels={funnel.level_count} beta={funnel.beta}")
+    print(f"special B={funnel.special_b_size} C_buckets={funnel.special_c_buckets}x{funnel.special_c_bucket_size}")
+    print(f"paper yardstick alpha*beta ~= {paper_bound}; uniform-probing classic scale 1/delta = {inv_delta}")
+
+    funnel_insert_stats = empty_stats()
+    uniform_insert_stats = empty_stats()
+
+    index: i32 = 0
+    while index < insert_count:
+        if not funnel_insert(&funnel, index, index, &funnel_insert_stats):
+            print(f"funnel insert failed at index={index}")
+            return 1
+        if not uniform_insert(&uniform, index, index, &uniform_insert_stats):
+            print(f"uniform insert failed at index={index}")
+            return 1
+        index += 1
+
+    print(f"inserted={funnel.num_inserts}")
+    print_stats("funnel insert", &funnel_insert_stats)
+    print_stats("uniform insert", &uniform_insert_stats)
+
+    funnel_hit_stats = empty_stats()
+    uniform_hit_stats = empty_stats()
+    funnel_miss_stats = empty_stats()
+    uniform_miss_stats = empty_stats()
+    checksum: i64 = 0
+
+    index = 0
+    while index < insert_count:
+        match funnel_get(&funnel, index, &funnel_hit_stats):
+            case Some(value):
+                checksum += cast[i64](value)
+            case None:
+                print(f"funnel missing inserted key index={index}")
+                return 1
+        match uniform_get(&uniform, index, &uniform_hit_stats):
+            case Some(value):
+                checksum += cast[i64](value)
+            case None:
+                print(f"uniform missing inserted key index={index}")
+                return 1
+        index += 1
+
+    miss: i32 = 0
+    while miss < insert_count:
+        key = insert_count + miss
+        match funnel_get(&funnel, key, &funnel_miss_stats):
+            case Some(value):
+                print(f"funnel false hit value={value}")
+                return 1
+            case None:
+                pass
+        match uniform_get(&uniform, key, &uniform_miss_stats):
+            case Some(value):
+                print(f"uniform false hit value={value}")
+                return 1
+            case None:
+                pass
+        miss += 1
+
+    print_stats("funnel successful search", &funnel_hit_stats)
+    print_stats("uniform successful search", &uniform_hit_stats)
+    print_stats("funnel unsuccessful search", &funnel_miss_stats)
+    print_stats("uniform unsuccessful search", &uniform_miss_stats)
+    print(f"checksum={checksum}")
+
+    if funnel_insert_stats.max_probes > paper_bound * 4:
+        print("funnel insert max probes far above paper-style yardstick")
+        return 1
+    if funnel_hit_stats.max_probes > paper_bound * 4:
+        print("funnel search max probes far above paper-style yardstick")
+        return 1
+    if funnel_miss_stats.max_probes > paper_bound * 4:
+        print("funnel miss max probes far above paper-style yardstick")
+        return 1
+
+    if funnel_miss_stats.max_probes >= uniform_miss_stats.max_probes:
+        print("expected funnel miss max < uniform miss max at this load")
+        return 1
+    if funnel_insert_stats.max_probes >= uniform_insert_stats.max_probes:
+        print("expected funnel insert max < uniform insert max at this load")
+        return 1
+
+    print(f"property check: funnel maxima stay on log^2-scale (~{paper_bound}), while uniform maxima track the classic 1/delta regime")
+    return 0
