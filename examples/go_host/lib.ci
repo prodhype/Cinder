@@ -1,0 +1,185 @@
+# Go hosts a flat C ABI. Inside Cinder we build an arena-owned expression AST,
+# evaluate it with exhaustive variant matching and Result/?, then drop the arena
+# when the export returns — ownership and exhaustiveness that Go does not check.
+#
+# Export only C primitives. Do not put String/List/Map on the public C API.
+
+class Trace:
+    label: i32
+
+    def __init__(self, label: i32):
+        self.label = label
+
+    def __del__(self):
+        print(f"cinder drop Trace({self.label})")
+
+
+struct NodeId:
+    index: i32
+
+
+variant ExprKind:
+    Literal(value: i32)
+    Binary(op: char, left: NodeId, right: NodeId)
+
+
+struct Expr:
+    kind: ExprKind
+
+
+struct AstArena:
+    nodes: List[Expr]
+    traces: List[Trace]
+
+    def next_node_id(self: &const AstArena) -> NodeId:
+        return NodeId(index=cast[i32](len(self.nodes)))
+
+    def add_literal(self: &AstArena, value: i32) -> NodeId:
+        id = self.next_node_id()
+        self.nodes.append(Expr(kind=ExprKind.Literal(value=value)))
+        return id
+
+    def add_binary(self: &AstArena, op: char, left: NodeId, right: NodeId) -> NodeId:
+        id = self.next_node_id()
+        self.nodes.append(Expr(kind=ExprKind.Binary(op=op, left=left, right=right)))
+        return id
+
+    def evaluate(self: &const AstArena, node_id: NodeId) -> Result[i32, i32]:
+        node = self.nodes[node_id.index]
+        result: Result[i32, i32] = Err(-2)
+        match node.kind:
+            case ExprKind.Literal(value):
+                result = Ok(value)
+            case ExprKind.Binary(op, left, right):
+                left_value = self.evaluate(left)?
+                right_value = self.evaluate(right)?
+                if op == '+':
+                    result = Ok(left_value + right_value)
+                elif op == '*':
+                    result = Ok(left_value * right_value)
+                elif op == '/':
+                    if right_value == 0:
+                        result = Err(-1)
+                    else:
+                        result = Ok(left_value / right_value)
+                else:
+                    result = Err(-2)
+        return result
+
+
+def run_binary_tree(a: i32, b: i32, c: i32, op: char, trace_label: i32) -> i32:
+    arena = AstArena(nodes=[], traces=[])
+    arena.traces.append(Trace(trace_label))
+    left = arena.add_literal(a)
+    right = arena.add_literal(b)
+    sum_node = arena.add_binary('+', left, right)
+    root = arena.add_binary(op, sum_node, arena.add_literal(c))
+    out: i32 = 0
+    match arena.evaluate(root):
+        case Ok(value):
+            out = value
+        case Err(code):
+            out = code
+    return out
+
+
+@export
+def cinder_eval_expr(a: i32, b: i32, c: i32) -> i32:
+    # Builds (a + b) * c in an arena, evaluates, then drops the arena.
+    return run_binary_tree(a, b, c, '*', 1)
+
+
+@export
+def cinder_eval_div(a: i32, b: i32, c: i32) -> i32:
+    # Builds (a + b) / c — returns -1 when c == 0 via Result.
+    return run_binary_tree(a, b, c, '/', 2)
+
+
+# The same idea sketched in Go (not compiled). Missing pieces vs Cinder:
+# - type switches on Expr are not exhaustive; a new kind is a silent runtime gap
+# - arena lifetime is GC / manual free, not scope-end drop with __del__
+# - errors are (int, error) pairs, not Result with ? propagation
+#
+# type NodeId struct{ Index int32 }
+#
+# type Expr interface{ isExpr() }
+#
+# type Literal struct{ Value int32 }
+# func (Literal) isExpr() {}
+#
+# type Binary struct {
+#     Op    byte
+#     Left  NodeId
+#     Right NodeId
+# }
+# func (Binary) isExpr() {}
+#
+# type Trace struct{ Label int32 }
+# // no deterministic __del__; finalize only if you remember to call it
+# func (t *Trace) Close() { fmt.Println("go drop Trace(", t.Label, ")") }
+#
+# type AstArena struct {
+#     Nodes  []Expr
+#     Traces []*Trace
+# }
+#
+# func (a *AstArena) addLiteral(value int32) NodeId {
+#     id := NodeId{Index: int32(len(a.Nodes))}
+#     a.Nodes = append(a.Nodes, Literal{Value: value})
+#     return id
+# }
+#
+# func (a *AstArena) addBinary(op byte, left, right NodeId) NodeId {
+#     id := NodeId{Index: int32(len(a.Nodes))}
+#     a.Nodes = append(a.Nodes, Binary{Op: op, Left: left, Right: right})
+#     return id
+# }
+#
+# func (a *AstArena) evaluate(id NodeId) (int32, error) {
+#     switch node := a.Nodes[id.Index].(type) {
+#     case Literal:
+#         return node.Value, nil
+#     case Binary:
+#         left, err := a.evaluate(node.Left)
+#         if err != nil {
+#             return 0, err
+#         }
+#         right, err := a.evaluate(node.Right)
+#         if err != nil {
+#             return 0, err
+#         }
+#         switch node.Op {
+#         case '+':
+#             return left + right, nil
+#         case '*':
+#             return left * right, nil
+#         case '/':
+#             if right == 0 {
+#                 return 0, fmt.Errorf("div0")
+#             }
+#             return left / right, nil
+#         default:
+#             return 0, fmt.Errorf("bad op")
+#         }
+#     default:
+#         // easy to forget when Expr grows; the compiler will not catch it
+#         return 0, fmt.Errorf("unknown expr")
+#     }
+# }
+#
+# func runBinaryTree(a, b, c int32, op byte, traceLabel int32) int32 {
+#     arena := &AstArena{}
+#     arena.Traces = append(arena.Traces, &Trace{Label: traceLabel})
+#     defer func() {
+#         for _, t := range arena.Traces {
+#             t.Close() // manual stand-in for deterministic drop
+#         }
+#     }()
+#     sum := arena.addBinary('+', arena.addLiteral(a), arena.addLiteral(b))
+#     root := arena.addBinary(op, sum, arena.addLiteral(c))
+#     value, err := arena.evaluate(root)
+#     if err != nil {
+#         return -1
+#     }
+#     return value
+# }
