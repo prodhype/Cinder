@@ -15,7 +15,10 @@ Data layouts are compatible with C.
 Cleanup is deterministic.
 The language uses ordinary native toolchains.
 
-The compiler needs Python 3.14 or later.
+For normal use, get a gen3 native compiler from GitHub Actions.
+The gen3 compiler does not need Python at run time.
+You need Python 3.14 only for source work.
+Use it to build the full bootstrap from stage0 to gen3, or to work on the Python stage0 implementation.
 It writes portable C11 that you can read.
 It can start GCC, Clang, or toolchains that are compatible with MSVC.
 
@@ -104,6 +107,30 @@ Exceptions, copy and move hooks, object-file caching, and a stable pre-1.0 binar
 
 ## Installation
 
+Get the gen3 artifact for your platform from GitHub Actions.
+Each artifact contains the `cinder` executable and the `runtime/` files that it needs to build native programs.
+Keep the extracted directory together.
+
+Current gen3 artifacts are:
+
+- `cinder-gen3-macos-arm64`
+- `cinder-gen3-linux-x86_64`
+- `cinder-gen3-linux-arm64`
+- `cinder-gen3-linux-armv7`
+
+After you extract the artifact, put the extracted directory on `PATH`, or call the executable by path:
+
+```sh
+tar -xzf cinder-gen3-linux-x86_64.tar.gz
+./cinder-gen3-linux-x86_64/cinder check examples/module_project
+```
+
+Put a C11 compiler on `PATH`.
+Cinder checks `CC` first.
+Then it checks common compiler commands for the host platform.
+Select a specific compiler with `--cc`.
+
+Use Python only when you build the compiler from source.
 Do these steps from the project root:
 
 ```sh
@@ -112,7 +139,7 @@ python3.14 -m venv .venv
 python -m pip install -e .
 ```
 
-On Windows PowerShell, do these steps:
+On Windows PowerShell, set up the Python stage0 compiler with:
 
 ```powershell
 py -3.14 -m venv .venv
@@ -120,10 +147,20 @@ py -3.14 -m venv .venv
 python -m pip install -e .
 ```
 
-Put a C11 compiler on `PATH`.
-Cinder checks `CC` first.
-Then it checks common compiler commands for the host platform.
-Select a specific compiler with `--cc`.
+To build the gen3 compiler from source, build stage0 to gen1, then gen1 to gen2, then gen2 to gen3:
+
+```sh
+mkdir -p build/bootstrap
+cinder build compiler_selfhost \
+  -o build/bootstrap/cinder-gen1 \
+  --build-dir build/gen1
+./build/bootstrap/cinder-gen1 build compiler_selfhost \
+  -o build/bootstrap/cinder-gen2 \
+  --build-dir build/gen2
+./build/bootstrap/cinder-gen2 build compiler_selfhost \
+  -o build/bootstrap/cinder-gen3 \
+  --build-dir build/gen3
+```
 
 ## Commands
 
@@ -999,6 +1036,9 @@ cinder/
     runtime/
         cinder_runtime.h
         cinder_runtime.c
+compiler_selfhost/
+    cinder.toml
+    src/
 examples/
 tests/
 docs/
@@ -1007,11 +1047,17 @@ docs/
 ## Self-hosting
 
 Python 3.14 remains Cinder's stage0 compiler implementation.
-No self-hosted Cinder compiler exists yet.
-See [`docs/self-hosting.md`](docs/self-hosting.md) for the ordered bootstrap milestones and current ownership constraints.
+The `compiler_selfhost/` project builds the native compiler chain.
+Stage0 builds gen1.
+Gen1 builds gen2.
+Gen2 builds gen3.
+GitHub Actions uses that chain to publish gen3 native compiler artifacts.
+Those gen3 binaries do not need Python at run time.
+See [`docs/self-hosting.md`](docs/self-hosting.md) for ownership constraints that still apply.
 
 ## Development
 
+Development of the Python stage0 implementation and the test suite needs Python 3.14.
 Install the development extras.
 Then compile, test, and check the sources:
 
@@ -1031,7 +1077,8 @@ The test suite also checks:
 - content-stable project emission
 - use of generated headers from C++17
 
-CI runs on Linux, macOS, and Windows with Python 3.14.
+CI tests the Python stage0 implementation on Linux, macOS, and Windows with Python 3.14.
+Separate GitHub Actions jobs build gen3 bundles for macOS ARM64 and Linux x86_64, ARM64, and ARMv7.
 
 ## Design constraint
 
