@@ -1,6 +1,8 @@
 # Rust hosts a flat C ABI. Inside Cinder we use @reflect runtime metadata and
 # comptime fields_of unrolling — layout inspection Rust cannot do without
-# proc-macros or an external reflection crate.
+# proc-macros or an external reflection crate. A separate @export runs a tight
+# Leibniz loop so the host can time native Cinder (-O2) against the same
+# algorithm in optimized Rust (--release).
 #
 # Export only C primitives. Do not put String/List/Map on the public C API.
 
@@ -38,6 +40,18 @@ def cinder_describe_vec3() -> i32:
     for field in fields(v):
         print(f"runtime field: {field.name} ({field.type_name})")
     return schema_fingerprint()
+
+
+# Hot path for the host timing demo. Same series as examples/leibniz_pi.ci;
+# no print so the measurement is the loop, not I/O.
+@export
+def cinder_leibniz(iterations: i32) -> f64:
+    pi: f64 = 1.0
+    rounds = iterations + 2
+    for i: i32 = 2; i < rounds; i += 1:
+        x = -1.0 + 2.0 * (i & 1)
+        pi += x / (2 * i - 1)
+    return pi * 4.0
 
 
 # The same idea sketched in Rust (not compiled). Missing pieces vs Cinder:

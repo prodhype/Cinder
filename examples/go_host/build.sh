@@ -27,13 +27,14 @@ command -v go >/dev/null 2>&1 || {
 
 mkdir -p build generated
 
+# -O2 so the Leibniz timing demo reflects optimized native code, not -O0.
 cinder emit-project lib.ci -o generated
-cc -std=c11 -Wall -Wextra -Wpedantic \
+cc -std=c11 -O2 -Wall -Wextra -Wpedantic \
   -I"$REPO_ROOT/cinder/runtime" \
   -I"$ROOT/generated" \
   -c "$ROOT/generated/cinder_gen/lib.c" \
   -o "$ROOT/build/lib.o"
-cc -std=c11 -Wall -Wextra -Wpedantic \
+cc -std=c11 -O2 -Wall -Wextra -Wpedantic \
   -I"$REPO_ROOT/cinder/runtime" \
   -c "$REPO_ROOT/cinder/runtime/cinder_runtime.c" \
   -o "$ROOT/build/cinder_runtime.o"
