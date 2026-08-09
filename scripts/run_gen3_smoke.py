@@ -20,7 +20,7 @@ OUT = ROOT / "smoke_test.txt"
 PROGRESS = Path("/tmp/cinder_gen3_smoke_progress.log")
 MAX_BLOB = 8000
 TIMEOUT_SEC = 60
-EXPECTED_TARGETS = 38
+EXPECTED_TARGETS = 39
 
 STDIN = {
     "input.ci": "World\n",

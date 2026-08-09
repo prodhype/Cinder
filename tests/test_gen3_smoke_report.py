@@ -37,13 +37,14 @@ def test_owned_expected_exit_is_success() -> None:
 
 def test_smoke_targets_cover_top_level_examples_and_projects() -> None:
     targets = smoke.smoke_targets(ROOT)
-    assert len(targets) == smoke.EXPECTED_TARGETS == 38
+    assert len(targets) == smoke.EXPECTED_TARGETS == 39
     assert targets[:-2] == sorted((ROOT / "examples").glob("*.ci"))
     assert [target.name for target in targets[-2:]] == [
         "class_project",
         "module_project",
     ]
     assert ROOT / "examples" / "aggregate_ownership.ci" in targets
+    assert ROOT / "examples" / "ownership_edge_cases.ci" in targets
     assert ROOT / "examples" / "funnel_hash.ci" in targets
 
 
