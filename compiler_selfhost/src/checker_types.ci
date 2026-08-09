@@ -50,6 +50,18 @@ def checker_type_can_clone(table: &const types.TypeTable, type_id: types.TypeId)
     return false
 
 
+def checker_named_scalar_can_clone(table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.CONST:
+        return checker_named_scalar_can_clone(table, record.inner, source)
+    if record.kind != types.TypeKind.NAMED or record.flags != 0 or record.name_length == 0:
+        return false
+    name = source[record.name_start:record.name_start + record.name_length]
+    return name == "i8" or name == "i16" or name == "u8" or name == "u16" or name == "u32" or name == "u64" or name == "isize" or name == "usize" or name == "c_int" or name == "c_long" or name == "c_size_t"
+
+
 def checker_type_needs_drop_inner(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, type_id: types.TypeId, source: &const String, seen: &List[i32]) -> bool:
     if type_id.index < 0 or type_id.index >= cast[i32](len(checker.type_table.types)):
         return false
@@ -241,6 +253,7 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
                 checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
             elif actual > expected:
                 checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+            validate_callable_call_move_arguments(checker, arena, id, callable_type, source, current_scope)
             return
     if symbol.kind == symbols.SymbolKind.LOCAL or symbol.kind == symbols.SymbolKind.PARAMETER or symbol.kind == symbols.SymbolKind.CONSTANT:
         checker.model.record_name_symbol(callee, found)
@@ -425,6 +438,29 @@ def validate_declared_call_move_arguments(
         destination_type = value_type
         if parameter.index >= 0:
             destination_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter, source, value_type)
+        validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
+        argument_index += 1
+
+
+def validate_callable_call_move_arguments(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callable_type: types.TypeRecord,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    call = arena.nodes[call_id.index]
+    argument_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        if arena.nodes[argument_id.index].kind != syntax.SyntaxKind.EXPR_ARGUMENT:
+            continue
+        value = checker_core.last_child(arena, argument_id)
+        value_type = infer_expression_type(checker, arena, value, source, current_scope)
+        destination_type = generic_actual_argument(checker.type_table, callable_type, argument_index)
+        if destination_type.index < 0:
+            destination_type = value_type
         validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
 
@@ -973,7 +1009,7 @@ def validate_collection_method_call(
         argument = call_argument_value(arena, call_id, 0)
         if argument.index >= 0:
             infer_expression_type(checker, arena, argument, source, current_scope)
-        if not checker_type_can_clone(checker.type_table, receiver_record.second):
+        if not checker_type_can_clone(checker.type_table, receiver_record.second) and not checker_named_scalar_can_clone(checker.type_table, receiver_record.second, source):
             call = arena.nodes[call_id.index]
             checker_core.emit_error(checker, 254, call.start, call.length, call.line, call.column)
         checker.model.record_expr_type(call_id, checker.type_table.generic1(types.TypeKind.OPTION, 0, 0, receiver_record.second))

@@ -343,7 +343,11 @@ def emit_module_statement(
         if (
             node.flags == cast[i32](token.TokenKind.ASSIGN)
             and target.index >= 0
-            and (arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME or arena.nodes[target.index].kind == SyntaxKind.EXPR_ATTRIBUTE)
+            and (
+                arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME
+                or arena.nodes[target.index].kind == SyntaxKind.EXPR_ATTRIBUTE
+                or arena.nodes[target.index].kind == SyntaxKind.EXPR_INDEX
+            )
             and codegen_context.context_type_needs_drop(arena, context, target_type, source)
         ):
             temporary_index = context.temporary_index

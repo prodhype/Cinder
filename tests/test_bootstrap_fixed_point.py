@@ -1702,6 +1702,71 @@ def test_gen2_drops_destructor_aggregates_on_discard_and_loop_exit(
     )
 
 
+def assert_compiler_drops_replaced_index_values(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "replaced_index_values.ci"
+    source.write_text(
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.label)\n'
+        "\n"
+        "def replace_array_value() -> void:\n"
+        "    values: Resource[1] = [Resource(1)]\n"
+        "    values[0] = Resource(2)\n"
+        "\n"
+        "def replace_list_value() -> void:\n"
+        "    values: List[Resource] = [Resource(3)]\n"
+        "    values[0] = Resource(4)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    replace_array_value()\n"
+        "    replace_list_value()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert emitted.stdout.count("Resource__drop(&(*cinder_target_") == 2
+
+    output = tmp_path / "replaced-index-values"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "replaced-index-values-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "drop 1\ndrop 2\ndrop 3\ndrop 4\n"
+
+
+def test_gen1_drops_replaced_index_values(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_drops_replaced_index_values(gen1_compiler, tmp_path)
+
+
+def test_gen2_drops_replaced_index_values(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_drops_replaced_index_values(gen2, tmp_path)
+
+
 def assert_compiler_rejects_partial_member_moves(
     compiler: Path,
     tmp_path: Path,
@@ -1880,6 +1945,68 @@ def test_gen2_rejects_shallow_nominal_map_copies(
     assert_compiler_rejects_shallow_nominal_map_copies(gen2, tmp_path)
 
 
+def assert_compiler_supports_named_scalar_map_get(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "named_scalar_map_get.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        "    bytes: Map[i32, u8] = {1: cast[u8](7)}\n"
+        "    words: Map[i32, u32] = {1: cast[u32](11)}\n"
+        "    sizes: Map[i32, usize] = {1: cast[usize](13)}\n"
+        "    byte_value: Option[u8] = bytes.get(1)\n"
+        "    word_value: Option[u32] = words.get(1)\n"
+        "    size_value: Option[usize] = sizes.get(1)\n"
+        "    if not byte_value.is_some or byte_value.value != cast[u8](7):\n"
+        "        return 1\n"
+        "    if not word_value.is_some or word_value.value != cast[u32](11):\n"
+        "        return 2\n"
+        "    if not size_value.is_some or size_value.value != cast[usize](13):\n"
+        "        return 3\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    for helper in (
+        "CinderMap_i32_u8_get",
+        "CinderMap_i32_u32_get",
+        "CinderMap_i32_usize_get",
+    ):
+        assert helper in emitted.stdout
+
+    output = tmp_path / "named-scalar-map-get"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "named-scalar-map-get-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+
+
+def test_gen1_supports_named_scalar_map_get(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_named_scalar_map_get(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_named_scalar_map_get(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_named_scalar_map_get(gen2, tmp_path)
+
+
 def assert_compiler_rejects_consuming_borrowed_foreach_values(
     compiler: Path,
     tmp_path: Path,
@@ -1895,8 +2022,7 @@ def assert_compiler_rejects_consuming_borrowed_foreach_values(
         '        print("drop", self.text)\n'
         "\n"
     )
-    rejected = tmp_path / "consumed_foreach_borrow.ci"
-    rejected.write_text(
+    rejected_sources = (
         resource
         + "def consume(value: Resource) -> void:\n"
         "    pass\n"
@@ -1907,11 +2033,57 @@ def assert_compiler_rejects_consuming_borrowed_foreach_values(
         "    for item in values:\n"
         "        consume(item)\n"
         "    return 0\n",
+        resource
+        + "def consume(value: Resource) -> void:\n"
+        "    pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    callback: def(Resource) -> void = consume\n"
+        "    values: List[Resource] = []\n"
+        '    values.append(Resource("owned"))\n'
+        "    for item in values:\n"
+        "        callback(item)\n"
+        "    return 0\n",
+        resource
+        + "struct ConsumeEnv:\n"
+        "    marker: i32\n"
+        "\n"
+        "def consume_with_env(env: &const ConsumeEnv, value: Resource) -> void:\n"
+        "    pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    callback = closure(ConsumeEnv(marker=0), consume_with_env)\n"
+        "    values: List[Resource] = []\n"
+        '    values.append(Resource("owned"))\n'
+        "    for item in values:\n"
+        "        callback(item)\n"
+        "    return 0\n",
+    )
+    for index, source_text in enumerate(rejected_sources):
+        rejected = tmp_path / f"consumed_foreach_borrow_{index}.ci"
+        rejected.write_text(source_text, encoding="utf-8")
+        checked = run_gen1(compiler, "check", str(rejected))
+        assert checked.returncode == 1
+        assert checked.stdout.startswith("E 254 ")
+
+    borrowed_callable = tmp_path / "callable_inspected_foreach_borrow.ci"
+    borrowed_callable.write_text(
+        resource
+        + "def inspect(value: &const Resource) -> i32:\n"
+        "    return cast[i32](len(value.text))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    callback: def(&const Resource) -> i32 = inspect\n"
+        "    values: List[Resource] = []\n"
+        '    values.append(Resource("owned"))\n'
+        "    total: i32 = 0\n"
+        "    for item in values:\n"
+        "        total += callback(item)\n"
+        "    return total - 5\n",
         encoding="utf-8",
     )
-    checked = run_gen1(compiler, "check", str(rejected))
-    assert checked.returncode == 1
-    assert checked.stdout.startswith("E 254 ")
+    checked = run_gen1(compiler, "check", str(borrowed_callable))
+    assert checked.returncode == 0, checked.stdout
 
     borrowed = tmp_path / "inspected_foreach_borrow.ci"
     borrowed.write_text(
