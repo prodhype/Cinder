@@ -903,8 +903,9 @@ def emit_module_index(
         builder.append("]")
         return
     if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+        builder.append("(*")
         codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
-        builder.append("_at(")
+        builder.append("_at_ref(")
         if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
             builder.append("&")
         emit_nested(state, receiver)
@@ -915,7 +916,7 @@ def emit_module_index(
             context.expected_type = key_type
         emit_nested(state, index)
         context.expected_type = previous_expected
-        builder.append(")")
+        builder.append("))")
         return
     if emit_known_list_index(arena, receiver, index, source, builder, prefix, project_name, imports, context, state, emit_nested):
         return

@@ -1794,6 +1794,92 @@ def test_gen2_rejects_partial_member_moves(
     assert_compiler_rejects_partial_member_moves(gen2, tmp_path)
 
 
+def assert_compiler_rejects_shallow_nominal_map_copies(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    resource = (
+        "class Resource:\n"
+        "    text: String\n"
+        "\n"
+        "    def __init__(self, text: String):\n"
+        "        self.text = text\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.text)\n'
+        "\n"
+    )
+    rejected = tmp_path / "nominal_map_get.ci"
+    rejected.write_text(
+        resource
+        + "def main() -> i32:\n"
+        '    values: Map[i32, Resource] = {1: Resource("owned")}\n'
+        "    copied = values.get(1)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    checked = run_gen1(compiler, "check", str(rejected))
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E 254 ")
+
+    borrowed = tmp_path / "nominal_map_borrow.ci"
+    borrowed.write_text(
+        resource
+        + "def inspect(value: &const Resource) -> i32:\n"
+        "    return cast[i32](len(value.text))\n"
+        "\n"
+        "def main() -> i32:\n"
+        '    values: Map[i32, Resource] = {1: Resource("owned")}\n'
+        "    if inspect(values[1]) != 5:\n"
+        "        return 1\n"
+        "    return cast[i32](len(values)) - 1\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(compiler, "emit-c", str(borrowed))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert " *CinderMap_i32_Resource_at_ref(" in generated
+    assert (
+        "static inline CinderOption_Resource CinderMap_i32_Resource_get("
+        not in generated
+    )
+    assert (
+        "static inline CinderMap_i32_Resource CinderMap_i32_Resource_clone("
+        not in generated
+    )
+    assert "_Resource__drop(&(self->entries[index].value));" in generated
+
+    output = tmp_path / "nominal-map-borrow"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(borrowed),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "nominal-map-borrow-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "drop owned\n"
+
+
+def test_gen1_rejects_shallow_nominal_map_copies(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_rejects_shallow_nominal_map_copies(gen1_compiler, tmp_path)
+
+
+def test_gen2_rejects_shallow_nominal_map_copies(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_rejects_shallow_nominal_map_copies(gen2, tmp_path)
+
+
 def assert_compiler_drops_specialized_nominal_locals(
     compiler: Path,
     tmp_path: Path,

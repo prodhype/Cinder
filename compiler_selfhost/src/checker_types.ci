@@ -25,6 +25,31 @@ def checker_type_needs_drop(checker: &checker_core.Checker, arena: &const syntax
     return checker_type_needs_drop_inner(checker, arena, type_id, source, seen)
 
 
+def checker_type_can_clone(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if (
+        record.kind == types.TypeKind.BOOL
+        or record.kind == types.TypeKind.I32
+        or record.kind == types.TypeKind.I64
+        or record.kind == types.TypeKind.F64
+        or record.kind == types.TypeKind.CHAR
+        or record.kind == types.TypeKind.STRING
+        or record.kind == types.TypeKind.ENUM
+        or record.kind == types.TypeKind.POINTER
+        or record.kind == types.TypeKind.REFERENCE
+    ):
+        return true
+    if record.kind == types.TypeKind.CONST:
+        return checker_type_can_clone(table, record.inner)
+    if record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.OPTION:
+        return checker_type_can_clone(table, record.inner)
+    if record.kind == types.TypeKind.MAP:
+        return checker_type_can_clone(table, record.inner) and checker_type_can_clone(table, record.second)
+    return false
+
+
 def checker_type_needs_drop_inner(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, type_id: types.TypeId, source: &const String, seen: &List[i32]) -> bool:
     if type_id.index < 0 or type_id.index >= cast[i32](len(checker.type_table.types)):
         return false
@@ -913,6 +938,9 @@ def validate_collection_method_call(
         argument = call_argument_value(arena, call_id, 0)
         if argument.index >= 0:
             infer_expression_type(checker, arena, argument, source, current_scope)
+        if not checker_type_can_clone(checker.type_table, receiver_record.second):
+            call = arena.nodes[call_id.index]
+            checker_core.emit_error(checker, 254, call.start, call.length, call.line, call.column)
         checker.model.record_expr_type(call_id, checker.type_table.generic1(types.TypeKind.OPTION, 0, 0, receiver_record.second))
         return
     if receiver_record.kind == types.TypeKind.SET:
