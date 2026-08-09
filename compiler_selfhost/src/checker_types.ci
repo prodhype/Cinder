@@ -9,6 +9,90 @@ import types
 from syntax import NodeId
 
 
+def type_is_borrowed_for_transfer(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        kind = table.types[current.index].kind
+        if kind == types.TypeKind.CONST:
+            current = table.types[current.index].inner
+            continue
+        return kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.SLICE or kind == types.TypeKind.DYN or types.is_map_view_kind(kind)
+    return false
+
+
+def checker_type_needs_drop(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, type_id: types.TypeId, source: &const String) -> bool:
+    seen: List[i32] = []
+    return checker_type_needs_drop_inner(checker, arena, type_id, source, seen)
+
+
+def checker_type_needs_drop_inner(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, type_id: types.TypeId, source: &const String, seen: &List[i32]) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(checker.type_table.types)):
+        return false
+    record = checker.type_table.types[type_id.index]
+    if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.STRING_BUILDER or record.kind == types.TypeKind.FILE or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET:
+        return true
+    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.DYN or types.is_map_view_kind(record.kind):
+        return false
+    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.OPTION:
+        return checker_type_needs_drop_inner(checker, arena, record.inner, source, seen)
+    if record.kind == types.TypeKind.CLOSURE:
+        return checker_type_needs_drop_inner(checker, arena, record.second, source, seen)
+    if record.kind == types.TypeKind.RESULT:
+        return checker_type_needs_drop_inner(checker, arena, record.inner, source, seen) or checker_type_needs_drop_inner(checker, arena, record.second, source, seen)
+    if record.kind == types.TypeKind.TUPLE:
+        offset: i32 = 0
+        while offset < record.flags:
+            if checker_type_needs_drop_inner(checker, arena, checker.type_table.type_args[cast[usize](record.extra + offset)], source, seen):
+                return true
+            offset += 1
+        return false
+    if record.kind != types.TypeKind.STRUCT and record.kind != types.TypeKind.CLASS:
+        return false
+    owner = checker.symbols.find_in_scope(source, symbols.root_scope(), record.name_start, record.name_length)
+    if owner.index < 0:
+        return false
+    seen_index: usize = 0
+    while seen_index < len(seen):
+        if seen[seen_index] == type_id.index:
+            return false
+        seen_index += 1
+    seen.append(type_id.index)
+    owner_symbol = checker.symbols.symbols[owner.index]
+    if record.kind == types.TypeKind.CLASS:
+        for member in checker.symbols.symbols:
+            if member.scope.index == owner_symbol.member_scope.index and member.kind == symbols.SymbolKind.METHOD and checker_core.range_text_equals(source, member.name_start, member.name_length, "__del__"):
+                return true
+    args: List[types.TypeId] = generics.specialization_arguments(checker.type_table, type_id)
+    for member in checker.symbols.symbols:
+        if member.scope.index != owner_symbol.member_scope.index or member.kind != symbols.SymbolKind.FIELD:
+            continue
+        field_type = member.type_id
+        if len(args) > 0 and generics.has_type_params(arena, owner_symbol.node):
+            field_type = generics.substitute_type(checker.type_table, field_type, arena, owner_symbol.node, &args, source)
+        if checker_type_needs_drop_inner(checker, arena, field_type, source, seen):
+            return true
+    return false
+
+
+def validate_partial_move_source(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expression: NodeId,
+    value_type: types.TypeId,
+    destination_type: types.TypeId,
+    source: &const String,
+) -> void:
+    if expression.index < 0 or type_is_borrowed_for_transfer(checker.type_table, destination_type):
+        return
+    kind = arena.nodes[expression.index].kind
+    if kind != syntax.SyntaxKind.EXPR_ATTRIBUTE and kind != syntax.SyntaxKind.EXPR_INDEX:
+        return
+    if not checker_type_needs_drop(checker, arena, value_type, source):
+        return
+    node = arena.nodes[expression.index]
+    checker_core.emit_error(checker, 254, node.start, node.length, node.line, node.column)
+
+
 def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
     call = arena.nodes[id.index]
     callee = checker_core.first_child(arena, id)
@@ -83,6 +167,8 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     if is_nominal_constructor_symbol(symbol.kind) or symbol.kind == symbols.SymbolKind.GLOBAL:
         checker.model.record_name_symbol(callee, found)
         checker.model.record_expr_type(id, symbol.type_id)
+        if symbol.kind == symbols.SymbolKind.STRUCT or symbol.kind == symbols.SymbolKind.CLASS:
+            validate_nominal_constructor_move_arguments(checker, arena, id, found, source, current_scope)
         return
     if symbol.type_id.index >= 0:
         callable_type = checker.type_table.types[symbol.type_id.index]
@@ -111,6 +197,7 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         record_generic_call_specialization(checker, arena, id, source, found)
     elif symbol.kind == symbols.SymbolKind.FUNCTION_TEMPLATE:
         infer_generic_call_specialization(checker, arena, id, source, current_scope, found)
+    validate_declared_call_move_arguments(checker, arena, id, symbol.node, source, current_scope, 0)
     actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
     expected = symbol.flags
     if actual < expected:
@@ -137,6 +224,7 @@ def validate_owned_constructor(
         checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
     argument = call_argument_value(arena, id, 0)
     payload_type = infer_expression_type(checker, arena, argument, source, current_scope)
+    validate_partial_move_source(checker, arena, argument, payload_type, payload_type, source)
     callee_node = arena.nodes[callee.index]
     result = checker.type_table.generic1(
         types.TypeKind.OWNED,
@@ -239,6 +327,113 @@ def call_argument_value(arena: &const syntax.SyntaxArena, id: NodeId, argument_i
                 return checker_core.last_child(arena, child_id)
             seen += 1
     return syntax.missing_node()
+
+
+def declaration_parameter_at(arena: &const syntax.SyntaxArena, declaration: NodeId, wanted: i32) -> NodeId:
+    if declaration.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[declaration.index]
+    seen: i32 = 0
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        if arena.nodes[child_id.index].kind == syntax.SyntaxKind.PARAMETER:
+            if seen == wanted:
+                return child_id
+            seen += 1
+    return syntax.missing_node()
+
+
+def validate_declared_call_move_arguments(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    declaration: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+    skipped_parameters: i32,
+) -> void:
+    call = arena.nodes[call_id.index]
+    argument_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != syntax.SyntaxKind.EXPR_ARGUMENT:
+            continue
+        value = checker_core.last_child(arena, argument_id)
+        value_type = infer_expression_type(checker, arena, value, source, current_scope)
+        parameter = declaration_parameter_at(arena, declaration, argument_index + skipped_parameters)
+        destination_type = value_type
+        if parameter.index >= 0:
+            destination_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter, source, value_type)
+        validate_partial_move_source(checker, arena, value, value_type, destination_type, source)
+        argument_index += 1
+
+
+def nominal_constructor_parameter(
+    checker: &const checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    owner: symbols.SymbolId,
+    argument_id: NodeId,
+    positional_index: i32,
+    source: &const String,
+) -> NodeId:
+    owner_symbol = checker.symbols.symbols[owner.index]
+    argument = arena.nodes[argument_id.index]
+    if argument.flags == 1:
+        name = checker_core.first_child(arena, argument_id)
+        if name.index >= 0:
+            name_node = arena.nodes[name.index]
+            field = checker.symbols.find_in_current_scope(source, owner_symbol.member_scope, name_node.value_start, name_node.value_length)
+            if field.index >= 0 and checker.symbols.symbols[field.index].kind == symbols.SymbolKind.FIELD:
+                return checker.symbols.symbols[field.index].node
+        return syntax.missing_node()
+    seen: i32 = 0
+    for field in checker.symbols.symbols:
+        if field.scope.index == owner_symbol.member_scope.index and field.kind == symbols.SymbolKind.FIELD:
+            if seen == positional_index:
+                return field.node
+            seen += 1
+    return syntax.missing_node()
+
+
+def nominal_initializer_declaration(checker: &const checker_core.Checker, owner: symbols.SymbolId, source: &const String) -> NodeId:
+    owner_symbol = checker.symbols.symbols[owner.index]
+    for member in checker.symbols.symbols:
+        if member.scope.index == owner_symbol.member_scope.index and member.kind == symbols.SymbolKind.METHOD and checker_core.range_text_equals(source, member.name_start, member.name_length, "__init__"):
+            return member.node
+    return syntax.missing_node()
+
+
+def validate_nominal_constructor_move_arguments(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    owner: symbols.SymbolId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    owner_symbol = checker.symbols.symbols[owner.index]
+    if owner_symbol.kind == symbols.SymbolKind.CLASS:
+        initializer = nominal_initializer_declaration(checker, owner, source)
+        if initializer.index >= 0:
+            validate_declared_call_move_arguments(checker, arena, call_id, initializer, source, current_scope, 1)
+        return
+    call = arena.nodes[call_id.index]
+    positional_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != syntax.SyntaxKind.EXPR_ARGUMENT:
+            continue
+        value = checker_core.last_child(arena, argument_id)
+        value_type = infer_expression_type(checker, arena, value, source, current_scope)
+        field = nominal_constructor_parameter(checker, arena, owner, argument_id, positional_index, source)
+        destination_type = value_type
+        if field.index >= 0:
+            destination_type = checker_core.resolve_declared_type_or_default(checker, arena, field, source, value_type)
+        validate_partial_move_source(checker, arena, value, value_type, destination_type, source)
+        if argument.flags == 0:
+            positional_index += 1
 
 
 def strip_const_type(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
@@ -353,6 +548,7 @@ def validate_user_method_call(
     if expected < 0:
         expected = 0
     validate_collection_method_argument_count(checker, arena, call_id, expected)
+    validate_declared_call_move_arguments(checker, arena, call_id, checker.symbols.symbols[method.index].node, source, current_scope, 1)
 
 
 def infer_generic_call_specialization(
@@ -497,12 +693,16 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
     elif node.kind == syntax.SyntaxKind.EXPR_INDEX:
         receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope))
         result = indexed_element_type(checker.type_table, arena, checker_core.second_child(arena, id), source, receiver_type)
-    elif node.kind == syntax.SyntaxKind.EXPR_SLICE or node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+    elif node.kind == syntax.SyntaxKind.EXPR_SLICE:
         result = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+    elif node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        result = infer_attribute_expression_type(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_UNARY:
         operand_type = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
         result = operand_type
-        if node.flags == cast[i32](token.TokenKind.STAR) and operand_type.index >= 0 and operand_type.index < cast[i32](len(checker.type_table.types)):
+        if node.flags == cast[i32](token.TokenKind.AMPERSAND):
+            result = checker.type_table.pointer_to(operand_type)
+        elif node.flags == cast[i32](token.TokenKind.STAR) and operand_type.index >= 0 and operand_type.index < cast[i32](len(checker.type_table.types)):
             operand_record = checker.type_table.types[operand_type.index]
             if operand_record.kind == types.TypeKind.POINTER or operand_record.kind == types.TypeKind.REFERENCE or operand_record.kind == types.TypeKind.OWNED:
                 result = operand_record.inner
@@ -533,6 +733,39 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
                 result = left_type
     checker.model.record_expr_type(id, result)
     return result
+
+
+def infer_attribute_expression_type(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> types.TypeId:
+    receiver = checker_core.first_child(arena, id)
+    member = checker_core.second_child(arena, id)
+    receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, receiver, source, current_scope))
+    if receiver_type.index < 0 or receiver_type.index >= cast[i32](len(checker.type_table.types)) or member.index < 0:
+        return receiver_type
+    receiver_record = checker.type_table.types[receiver_type.index]
+    member_node = arena.nodes[member.index]
+    if receiver_record.kind == types.TypeKind.OPTION and checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "value"):
+        return receiver_record.inner
+    if not types.is_nominal_kind(receiver_record.kind) or receiver_record.name_length == 0:
+        return receiver_type
+    owner = checker.symbols.find_in_scope(source, symbols.root_scope(), receiver_record.name_start, receiver_record.name_length)
+    if owner.index < 0:
+        return receiver_type
+    field = checker.symbols.find_in_current_scope(source, checker.symbols.symbols[owner.index].member_scope, member_node.value_start, member_node.value_length)
+    if field.index < 0 or checker.symbols.symbols[field.index].kind != symbols.SymbolKind.FIELD:
+        return receiver_type
+    checker.model.record_name_symbol(member, field)
+    field_type = checker.symbols.symbols[field.index].type_id
+    args: List[types.TypeId] = generics.specialization_arguments(checker.type_table, receiver_type)
+    declaration = checker.symbols.symbols[owner.index].node
+    if len(args) > 0 and generics.has_type_params(arena, declaration):
+        field_type = generics.substitute_type(checker.type_table, field_type, arena, declaration, &args, source)
+    return field_type
 
 
 def infer_list_literal_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
@@ -655,8 +888,10 @@ def validate_collection_method_call(
     if receiver_record.kind == types.TypeKind.LIST:
         expected: i32 = 0
         result = types.type_void()
+        takes_element = false
         if collections.text_equals(&member_name, "append"):
             expected = 1
+            takes_element = true
         elif collections.text_equals(&member_name, "pop"):
             result = receiver_record.inner
         elif not collections.text_equals(&member_name, "clear") and not collections.text_equals(&member_name, "sort"):
@@ -664,7 +899,9 @@ def validate_collection_method_call(
         validate_collection_method_argument_count(checker, arena, call_id, expected)
         argument = call_argument_value(arena, call_id, 0)
         if argument.index >= 0:
-            infer_expression_type(checker, arena, argument, source, current_scope)
+            argument_type = infer_expression_type(checker, arena, argument, source, current_scope)
+            if takes_element:
+                validate_partial_move_source(checker, arena, argument, argument_type, receiver_record.inner, source)
         checker.model.record_expr_type(call_id, result)
         return
     if receiver_record.kind == types.TypeKind.MAP and (collections.text_equals(&member_name, "keys") or collections.text_equals(&member_name, "values") or collections.text_equals(&member_name, "items")):

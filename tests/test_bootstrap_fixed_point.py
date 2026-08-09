@@ -1702,6 +1702,149 @@ def test_gen2_drops_destructor_aggregates_on_discard_and_loop_exit(
     )
 
 
+def assert_compiler_rejects_partial_member_moves(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    prefix = (
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        "        pass\n"
+        "\n"
+        "struct Holder:\n"
+        "    value: Resource\n"
+        "\n"
+    )
+    invalid_sources = (
+        prefix
+        + "def extract(holder: Holder) -> Resource:\n"
+        "    return holder.value\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        prefix
+        + "def consume(value: Resource) -> void:\n"
+        "    pass\n"
+        "\n"
+        "def extract(holder: Holder) -> void:\n"
+        "    consume(holder.value)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        prefix
+        + "def extract(holder: Holder) -> void:\n"
+        "    values: List[Resource] = []\n"
+        "    values.append(holder.value)\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+    )
+    for index, source_text in enumerate(invalid_sources):
+        source = tmp_path / f"partial_member_move_{index}.ci"
+        source.write_text(source_text, encoding="utf-8")
+        checked = run_gen1(compiler, "check", str(source))
+        assert checked.returncode == 1
+        assert checked.stdout.startswith("E 254 ")
+
+    borrowed = tmp_path / "borrowed_member.ci"
+    borrowed.write_text(
+        prefix
+        + "def inspect(value: &const Resource) -> i32:\n"
+        "    return value.label\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    holder = Holder(value=Resource(1))\n"
+        "    return inspect(holder.value) - 1\n",
+        encoding="utf-8",
+    )
+    checked = run_gen1(compiler, "check", str(borrowed))
+    assert checked.returncode == 0, checked.stdout
+
+
+def test_gen1_rejects_partial_member_moves(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_rejects_partial_member_moves(gen1_compiler, tmp_path)
+
+
+def test_gen2_rejects_partial_member_moves(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_rejects_partial_member_moves(gen2, tmp_path)
+
+
+def assert_compiler_drops_specialized_nominal_locals(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "specialized_nominal_cleanup.ci"
+    source.write_text(
+        "class Resource:\n"
+        "    label: i32\n"
+        "\n"
+        "    def __init__(self, label: i32):\n"
+        "        self.label = label\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.label)\n'
+        "\n"
+        "struct Box[T]:\n"
+        "    value: T\n"
+        "\n"
+        "def exercise() -> void:\n"
+        "    boxed: Box[Resource] = Box(value=Resource(1))\n"
+        "    boxed = Box(value=Resource(2))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    exercise()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "Box_Resource__drop" in emitted.stdout
+    assert "Box_Resource__drop(&boxed);" in emitted.stdout
+
+    output = tmp_path / "specialized-nominal-cleanup"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "specialized-nominal-cleanup-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "drop 1\ndrop 2\n"
+
+
+def test_gen1_drops_specialized_nominal_locals(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_drops_specialized_nominal_locals(gen1_compiler, tmp_path)
+
+
+def test_gen2_drops_specialized_nominal_locals(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_drops_specialized_nominal_locals(gen2, tmp_path)
+
+
 def test_gen1_lowers_owned_moves_and_recursive_drop_glue(
     gen1_compiler: Path,
     tmp_path: Path,

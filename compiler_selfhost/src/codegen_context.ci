@@ -253,6 +253,53 @@ def context_class_for_type(
     return -1
 
 
+def context_nominal_for_type(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    type_id: NodeId,
+    source: &const String,
+) -> i32:
+    current = type_id
+    while current.index >= 0:
+        kind = arena.nodes[current.index].kind
+        if kind == SyntaxKind.TYPE_GENERIC or kind == SyntaxKind.TYPE_CONST or kind == SyntaxKind.TYPE_REFERENCE or kind == SyntaxKind.TYPE_POINTER:
+            current = codegen_names.first_child(arena, current)
+            continue
+        break
+    if current.index < 0 or arena.nodes[current.index].kind != SyntaxKind.TYPE_NAME:
+        return -1
+    node = arena.nodes[current.index]
+    if node.child_count > 1:
+        alias_id = arena.children[node.first_child]
+        name_id = arena.children[node.first_child + node.child_count - 1]
+        alias_node = arena.nodes[alias_id.index]
+        name_node = arena.nodes[name_id.index]
+        alias = source[alias_node.value_start:alias_node.value_start + alias_node.value_length]
+        imported = codegen_names.find_import_alias(context.imports, &alias)
+        if len(imported.module_name) == 0:
+            return -1
+        name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+        return codegen_reflection.find_nominal(context.reflection_model, &imported.module_name, &name)
+    name = source[node.value_start:node.value_start + node.value_length]
+    return codegen_reflection.find_nominal_for_name(context.reflection_model, context.imports, &context.module_name, &name)
+
+
+def context_type_is_drop_nominal(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    type_id: NodeId,
+    source: &const String,
+) -> bool:
+    semantic_type = context_semantic_type(context, type_id)
+    if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.STRUCT) or codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.CLASS):
+        return true
+    nominal = context_nominal_for_type(arena, context, type_id, source)
+    if nominal < 0:
+        return false
+    kind = codegen_reflection.nominal_kind_at(context.reflection_model, nominal)
+    return kind == codegen_reflection.ReflectionNominalKind.STRUCT or kind == codegen_reflection.ReflectionNominalKind.CLASS
+
+
 def context_expression_class(
     arena: &const SyntaxArena,
     context: &ModuleCodegenContext,
@@ -558,8 +605,8 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
     if type_id.index < 0:
         return false
     semantic_type = context_semantic_type(context, type_id)
-    if semantic_type.index >= 0 and not codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.ERROR):
-        return ownership.type_needs_drop_for_table(context.type_table, semantic_type)
+    if semantic_type.index >= 0 and not codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.ERROR) and ownership.type_needs_drop_for_table(context.type_table, semantic_type):
+        return true
     node = arena.nodes[type_id.index]
     if node.kind == SyntaxKind.EXPR_LITERAL:
         return node.flags == cast[i32](token.TokenKind.STRING)
@@ -574,7 +621,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
     if node.kind == SyntaxKind.TYPE_NAME:
         if codegen_names.range_text_equals(source, node.value_start, node.value_length, "String") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "File"):
             return true
-        return context_class_for_type(arena, context, type_id, source) >= 0
+        return context_type_is_drop_nominal(arena, context, type_id, source)
     if node.kind == SyntaxKind.TYPE_GENERIC:
         base = codegen_names.first_child(arena, type_id)
         if base.index < 0:
@@ -586,6 +633,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
             or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Set")
             or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Option")
             or codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Owned")
+            or context_type_is_drop_nominal(arena, context, type_id, source)
             or (
                 (
                     codegen_names.range_text_equals(source, base_node.value_start, base_node.value_length, "Result")
@@ -1601,6 +1649,13 @@ def emit_context_drop(
                 builder.append("    ")
                 codegen_type_names.emit_specialized_type_name(context.type_arena, type_id, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
                 builder.append("_drop(&")
+                builder.append(name[0:len(name)])
+                builder.append(");\n")
+                return
+            if context_type_is_drop_nominal(arena, context, type_id, source):
+                builder.append("    ")
+                emit_context_c_type(arena, type_id, source, builder, prefix, project_name, imports, context)
+                builder.append("__drop(&")
                 builder.append(name[0:len(name)])
                 builder.append(");\n")
                 return
