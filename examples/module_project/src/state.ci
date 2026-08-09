@@ -1,6 +1,17 @@
 from std.atomic import Atomic as A
 
-counter: A[u64] = 0
+enum Code:
+    Zero
+    One
+    Two
+    Three
+    Four
+    Five
+    Six
+    Seven
+
+
+counter: A[u64] = cast[u64](Code.Seven)
 
 
 def read[T](cell: *A[T]) -> T:

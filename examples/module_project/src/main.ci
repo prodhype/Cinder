@@ -20,7 +20,7 @@ def increment(value: i32) -> Result[i32, ParseError]:
 def main() -> i32:
     if qualified_counter.fetch_add(2) != 4 or qualified_counter.load() != 6:
         return 1
-    if state.counter.fetch_add(3) != 0 or state.counter.load() != 3:
+    if state.counter.fetch_add(3) != 7 or state.counter.load() != 10:
         return 2
     if not state.atomic_specializations_work():
         return 3

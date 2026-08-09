@@ -617,7 +617,7 @@ def validate_atomic_declaration(
         checker_core.emit_error(checker, 398, node.start, node.length, node.line, node.column)
     initializer_type = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
     initializer_node = arena.nodes[initializer.index]
-    if is_global and not atomic_global_initializer_is_constant(arena, initializer):
+    if is_global and not atomic_global_initializer_is_constant(checker, arena, initializer, source, current_scope):
         checker_core.emit_error(checker, 18, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
     if types.is_atomic_type(&checker.type_table, initializer_type):
         checker_core.emit_error(checker, 399, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
@@ -645,19 +645,55 @@ def validate_atomic_declaration(
     )
 
 
-def atomic_global_initializer_is_constant(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
+def atomic_global_initializer_is_constant(
+    checker: &const checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
     if id.index < 0:
         return false
     node = arena.nodes[id.index]
     if node.kind == syntax.SyntaxKind.EXPR_LITERAL:
         return true
     if node.kind == syntax.SyntaxKind.EXPR_UNARY:
-        return atomic_global_initializer_is_constant(arena, checker_core.first_child(arena, id))
+        return atomic_global_initializer_is_constant(checker, arena, checker_core.first_child(arena, id), source, current_scope)
     if node.kind == syntax.SyntaxKind.EXPR_BINARY:
-        return atomic_global_initializer_is_constant(arena, checker_core.first_child(arena, id)) and atomic_global_initializer_is_constant(arena, checker_core.second_child(arena, id))
+        return atomic_global_initializer_is_constant(checker, arena, checker_core.first_child(arena, id), source, current_scope) and atomic_global_initializer_is_constant(checker, arena, checker_core.second_child(arena, id), source, current_scope)
     if node.kind == syntax.SyntaxKind.EXPR_CAST and node.child_count > 1:
-        return atomic_global_initializer_is_constant(arena, arena.children[node.first_child + 1])
+        return atomic_global_initializer_is_constant(checker, arena, arena.children[node.first_child + 1], source, current_scope)
+    if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        return atomic_global_attribute_is_enum_member(checker, arena, id, source, current_scope)
     return false
+
+
+def atomic_global_attribute_is_enum_member(
+    checker: &const checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    receiver = checker_core.first_child(arena, id)
+    if receiver.index < 0:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind == syntax.SyntaxKind.EXPR_NAME:
+        found = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
+        return found.index >= 0 and checker.symbols.symbols[found.index].kind == symbols.SymbolKind.ENUM
+    if receiver_node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    module = checker_core.first_child(arena, receiver)
+    enum_name = checker_core.second_child(arena, receiver)
+    if module.index < 0 or enum_name.index < 0:
+        return false
+    module_node = arena.nodes[module.index]
+    enum_node = arena.nodes[enum_name.index]
+    if module_node.kind != syntax.SyntaxKind.EXPR_NAME or enum_node.kind != syntax.SyntaxKind.NAME:
+        return false
+    qualified_name = source[module_node.value_start:module_node.value_start + module_node.value_length] + "." + source[enum_node.value_start:enum_node.value_start + enum_node.value_length]
+    return checker_core.string_list_contains(&checker.imported_enum_names, &qualified_name)
 
 
 def atomic_declaration_initializer(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
