@@ -1,4 +1,6 @@
+import backend_ir
 import codegen_access
+import codegen_atomics
 import codegen_context
 import codegen_expr
 import codegen_context as codegen_model
@@ -212,6 +214,22 @@ def emit_module_statement(
             context.deferred_expressions.append(expr)
         return
     if node.kind == SyntaxKind.VAR_DECL_STMT:
+        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id)
+        if atomic_index >= 0:
+            atomic_node: backend_ir.IRNode = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
+            builder.append("    ")
+            codegen_atomics.append_atomic_wrapper_name(builder, atomic_node.atomic_element_kind)
+            builder.append(" ")
+            codegen_names.append_source(builder, source, node.value_start, node.value_length)
+            builder.append(";\n    atomic_init(&")
+            codegen_names.append_source(builder, source, node.value_start, node.value_length)
+            builder.append(".value, ")
+            codegen_expr.emit_module_expression(arena, atomic_node.atomic_operand0, source, builder, prefix, project_name, imports, context)
+            builder.append(");\n")
+            annotation = codegen_type_names.find_child_type(arena, id)
+            if annotation.index >= 0:
+                codegen_context.register_context_name_type(arena, context, source, node.value_start, node.value_length, annotation)
+            return
         builder.append("    ")
         annotation = codegen_type_names.find_child_type(arena, id)
         expr = codegen_names.last_child(arena, id)

@@ -1,6 +1,7 @@
 import checker_core
 import collections
 import generics
+import ownership
 import semantic
 import symbols
 import syntax
@@ -122,6 +123,13 @@ def validate_partial_move_source(
 ) -> void:
     if expression.index < 0 or type_is_borrowed_for_transfer(checker.type_table, destination_type):
         return
+    if ownership.type_contains_atomic_storage(&checker.type_table, value_type):
+        node = arena.nodes[expression.index]
+        code: i32 = 395
+        if types.is_atomic_type(&checker.type_table, value_type):
+            code = 399
+        checker_core.emit_error(checker, code, node.start, node.length, node.line, node.column)
+        return
     kind = arena.nodes[expression.index].kind
     if kind == syntax.SyntaxKind.EXPR_SET:
         return
@@ -171,6 +179,8 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         return
     callee_node = arena.nodes[callee.index]
     if callee_node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        if validate_atomic_method_call(checker, arena, id, callee, source, current_scope):
+            return
         validate_collection_method_call(checker, arena, id, callee, source, current_scope)
         if checker.model.expr_type(id).index == types.type_error().index:
             validate_user_method_call(checker, arena, id, callee, source, current_scope)
@@ -235,6 +245,20 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         checker_core.emit_error(checker, 48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
         return
     symbol = checker.symbols.symbols[found.index]
+    if symbol.type_id.index >= 0 and symbol.type_id.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[symbol.type_id.index].kind == types.TypeKind.ATOMIC:
+        for offset in range(1, call.child_count):
+            child_id = arena.children[call.first_child + offset]
+            child = arena.nodes[child_id.index]
+            if checker_core.is_type_kind(child.kind):
+                resolved_argument = checker_core.resolve_type_node(checker, arena, child_id, source)
+                ignored_resolved_argument = resolved_argument
+            elif child.kind == syntax.SyntaxKind.EXPR_ARGUMENT:
+                argument_value = checker_core.last_child(arena, child_id)
+                argument_type = infer_expression_type(checker, arena, argument_value, source, current_scope)
+                ignored_argument_type = argument_type
+        checker_core.emit_error(checker, 359, call.start, call.length, call.line, call.column)
+        checker.model.record_expr_type(id, types.type_error())
+        return
     if is_nominal_constructor_symbol(symbol.kind) or symbol.kind == symbols.SymbolKind.GLOBAL:
         checker.model.record_name_symbol(callee, found)
         checker.model.record_expr_type(id, symbol.type_id)
@@ -387,6 +411,227 @@ def validate_closure_constructor(checker: &checker_core.Checker, arena: &const s
     closure_type = checker.type_table.closure_from_args(closure_environment, visible_args, adapter_symbol.type_id)
     checker.model.record_call(id, adapter_symbol_id, closure_type, 1)
     checker.model.record_expr_type(id, closure_type)
+
+
+def validate_atomic_method_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callee_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    receiver = checker_core.first_child(arena, callee_id)
+    member = checker_core.second_child(arena, callee_id)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    receiver_type = infer_expression_type(checker, arena, receiver, source, current_scope)
+    current = receiver_type
+    flags: i32 = 1
+    pointer_receiver = false
+    while current.index >= 0 and current.index < cast[i32](len(checker.type_table.types)):
+        record = checker.type_table.types[current.index]
+        if record.kind == types.TypeKind.CONST:
+            flags = flags | 2
+            current = record.inner
+            continue
+        if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE:
+            pointer_receiver = true
+            flags = flags | 16
+            current = record.inner
+            continue
+        break
+    if current.index < 0 or current.index >= cast[i32](len(checker.type_table.types)):
+        return false
+    atomic_record = checker.type_table.types[current.index]
+    if atomic_record.kind != types.TypeKind.ATOMIC:
+        return false
+
+    call = arena.nodes[call_id.index]
+    if call.flags == 1:
+        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+    member_node = arena.nodes[member.index]
+    kind = atomic_intrinsic_kind(source, &member_node)
+    if kind == semantic.AtomicIntrinsicKind.NONE:
+        checker_core.emit_error(checker, 402, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker.model.record_expr_type(call_id, types.type_error())
+        return true
+    if not pointer_receiver and not atomic_receiver_is_addressable(arena, receiver):
+        receiver_node = arena.nodes[receiver.index]
+        checker_core.emit_error(checker, 403, receiver_node.start, receiver_node.length, receiver_node.line, receiver_node.column)
+    if kind != semantic.AtomicIntrinsicKind.LOAD and (flags & 2) != 0:
+        checker_core.emit_error(checker, 403, member_node.start, member_node.length, member_node.line, member_node.column)
+
+    element_kind = types.atomic_type_element_kind(&checker.type_table, current)
+    if is_atomic_fetch_intrinsic(kind) and not types.atomic_element_is_integer(element_kind):
+        checker_core.emit_error(checker, 403, member_node.start, member_node.length, member_node.line, member_node.column)
+
+    expected: i32 = 1
+    result_type = atomic_record.inner
+    if kind == semantic.AtomicIntrinsicKind.LOAD:
+        expected = 0
+    elif kind == semantic.AtomicIntrinsicKind.STORE:
+        result_type = types.type_void()
+    elif kind == semantic.AtomicIntrinsicKind.COMPARE_EXCHANGE:
+        expected = 2
+        result_type = checker.type_table.atomic_compare_exchange_result(atomic_record.inner, element_kind)
+    actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    if actual < expected:
+        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+        checker.model.record_expr_type(call_id, types.type_error())
+        return true
+    if actual > expected:
+        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+        checker.model.record_expr_type(call_id, types.type_error())
+        return true
+
+    operand0 = syntax.missing_node()
+    operand1 = syntax.missing_node()
+    first_evaluated = syntax.missing_node()
+    second_evaluated = syntax.missing_node()
+    first_role = semantic.AtomicArgumentRole.NONE
+    second_role = semantic.AtomicArgumentRole.NONE
+    source_index: i32 = 0
+    seen_named = false
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != syntax.SyntaxKind.EXPR_ARGUMENT:
+            continue
+        value = checker_core.last_child(arena, argument_id)
+        if argument.flags == 1:
+            seen_named = true
+        elif seen_named:
+            checker_core.emit_error(checker, 76, argument.start, argument.length, argument.line, argument.column)
+        role = semantic.AtomicArgumentRole.VALUE
+        if kind == semantic.AtomicIntrinsicKind.COMPARE_EXCHANGE:
+            if argument.flags == 1:
+                role = compare_exchange_argument_role(arena, argument_id, source)
+            elif operand0.index < 0:
+                role = semantic.AtomicArgumentRole.EXPECTED
+            else:
+                role = semantic.AtomicArgumentRole.DESIRED
+            if role == semantic.AtomicArgumentRole.NONE:
+                checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+            elif role == semantic.AtomicArgumentRole.EXPECTED:
+                if operand0.index >= 0:
+                    checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+                operand0 = value
+            elif role == semantic.AtomicArgumentRole.DESIRED:
+                if operand1.index >= 0:
+                    checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+                operand1 = value
+        else:
+            if argument.flags == 1 and not atomic_argument_name_is(arena, argument_id, source, "value"):
+                checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+            operand0 = value
+        if source_index == 0:
+            first_evaluated = value
+            first_role = role
+        else:
+            second_evaluated = value
+            second_role = role
+        value_type = infer_expression_type(checker, arena, value, source, current_scope)
+        value_node = arena.nodes[value.index]
+        if types.is_atomic_type(&checker.type_table, value_type):
+            checker_core.emit_error(checker, 400, value_node.start, value_node.length, value_node.line, value_node.column)
+        elif not atomic_argument_compatible(checker, atomic_record.inner, value_type, element_kind, source):
+            checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
+        source_index += 1
+    if expected == 2 and (operand0.index < 0 or operand1.index < 0):
+        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+
+    receiver_symbol = symbols.missing_symbol()
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind == syntax.SyntaxKind.EXPR_NAME:
+        receiver_symbol = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
+    checker.model.record_value_use(receiver, semantic.ValueUseKind.ADDRESS, receiver_symbol, current)
+    checker.model.record_atomic_intrinsic(
+        call_id,
+        kind,
+        element_kind,
+        current,
+        atomic_record.inner,
+        result_type,
+        receiver,
+        operand0,
+        operand1,
+        first_evaluated,
+        second_evaluated,
+        first_role,
+        second_role,
+        flags,
+    )
+    checker.model.record_expr_type(callee_id, result_type)
+    checker.model.record_expr_type(call_id, result_type)
+    return true
+
+
+def atomic_intrinsic_kind(source: &const String, member: &const syntax.SyntaxNode) -> semantic.AtomicIntrinsicKind:
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "load"):
+        return semantic.AtomicIntrinsicKind.LOAD
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "store"):
+        return semantic.AtomicIntrinsicKind.STORE
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "exchange"):
+        return semantic.AtomicIntrinsicKind.EXCHANGE
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "compare_exchange"):
+        return semantic.AtomicIntrinsicKind.COMPARE_EXCHANGE
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "fetch_add"):
+        return semantic.AtomicIntrinsicKind.FETCH_ADD
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "fetch_sub"):
+        return semantic.AtomicIntrinsicKind.FETCH_SUB
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "fetch_and"):
+        return semantic.AtomicIntrinsicKind.FETCH_AND
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "fetch_or"):
+        return semantic.AtomicIntrinsicKind.FETCH_OR
+    if checker_core.range_text_equals(source, member.value_start, member.value_length, "fetch_xor"):
+        return semantic.AtomicIntrinsicKind.FETCH_XOR
+    return semantic.AtomicIntrinsicKind.NONE
+
+
+def is_atomic_fetch_intrinsic(kind: semantic.AtomicIntrinsicKind) -> bool:
+    return kind == semantic.AtomicIntrinsicKind.FETCH_ADD or kind == semantic.AtomicIntrinsicKind.FETCH_SUB or kind == semantic.AtomicIntrinsicKind.FETCH_AND or kind == semantic.AtomicIntrinsicKind.FETCH_OR or kind == semantic.AtomicIntrinsicKind.FETCH_XOR
+
+
+def atomic_receiver_is_addressable(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_NAME or node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE or node.kind == syntax.SyntaxKind.EXPR_INDEX:
+        return true
+    return node.kind == syntax.SyntaxKind.EXPR_UNARY and node.flags == cast[i32](token.TokenKind.STAR)
+
+
+def atomic_argument_name_is(arena: &const syntax.SyntaxArena, argument: NodeId, source: &const String, expected: String) -> bool:
+    name = checker_core.first_child(arena, argument)
+    if name.index < 0:
+        return false
+    node = arena.nodes[name.index]
+    return checker_core.range_text_equals(source, node.value_start, node.value_length, expected)
+
+
+def compare_exchange_argument_role(arena: &const syntax.SyntaxArena, argument: NodeId, source: &const String) -> semantic.AtomicArgumentRole:
+    if atomic_argument_name_is(arena, argument, source, "expected"):
+        return semantic.AtomicArgumentRole.EXPECTED
+    if atomic_argument_name_is(arena, argument, source, "desired"):
+        return semantic.AtomicArgumentRole.DESIRED
+    return semantic.AtomicArgumentRole.NONE
+
+
+def atomic_argument_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId, element_kind: types.AtomicElementKind, source: &const String) -> bool:
+    if checker.type_table.same(expected, actual):
+        return true
+    current = types.strip_const(&checker.type_table, actual)
+    if current.index < 0 or current.index >= cast[i32](len(checker.type_table.types)):
+        return false
+    record = checker.type_table.types[current.index]
+    if element_kind == types.AtomicElementKind.BOOL:
+        return record.kind == types.TypeKind.BOOL
+    if not types.atomic_element_is_integer(element_kind):
+        return false
+    if record.kind == types.TypeKind.I32 or record.kind == types.TypeKind.I64 or record.kind == types.TypeKind.CHAR:
+        return true
+    return checker_named_scalar_can_clone(&checker.type_table, current, source)
 
 
 def call_argument_value(arena: &const syntax.SyntaxArena, id: NodeId, argument_index: i32) -> NodeId:
@@ -778,6 +1023,13 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         type_node = checker_core.find_child_type(arena, id)
         result = checker_core.resolve_type_node(checker, arena, type_node, source)
         checker.model.record_type_node(type_node, result)
+        if node.child_count > 1:
+            operand = arena.children[node.first_child + 1]
+            operand_type = infer_expression_type(checker, arena, operand, source, current_scope)
+            if types.is_atomic_type(&checker.type_table, operand_type):
+                operand_node = arena.nodes[operand.index]
+                checker_core.emit_error(checker, 400, operand_node.start, operand_node.length, operand_node.line, operand_node.column)
+                result = types.type_error()
     elif node.kind == syntax.SyntaxKind.EXPR_LIST:
         result = infer_list_literal_type(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_MAP:
@@ -794,26 +1046,35 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
     elif node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
         result = infer_attribute_expression_type(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.EXPR_UNARY:
-        operand_type = infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
+        operand = checker_core.first_child(arena, id)
+        operand_type = infer_expression_type(checker, arena, operand, source, current_scope)
         result = operand_type
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
             result = checker.type_table.pointer_to(operand_type)
+        elif types.is_atomic_type(&checker.type_table, operand_type):
+            operand_node = arena.nodes[operand.index]
+            checker_core.emit_error(checker, 400, operand_node.start, operand_node.length, operand_node.line, operand_node.column)
+            result = types.type_error()
         elif node.flags == cast[i32](token.TokenKind.STAR) and operand_type.index >= 0 and operand_type.index < cast[i32](len(checker.type_table.types)):
             operand_record = checker.type_table.types[operand_type.index]
             if operand_record.kind == types.TypeKind.POINTER or operand_record.kind == types.TypeKind.REFERENCE or operand_record.kind == types.TypeKind.OWNED:
                 result = operand_record.inner
     elif node.kind == syntax.SyntaxKind.EXPR_BINARY:
         operator = node.flags
-        if operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):
-            if operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):
-                infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope)
-                infer_expression_type(checker, arena, checker_core.second_child(arena, id), source, current_scope)
+        left = checker_core.first_child(arena, id)
+        right = checker_core.second_child(arena, id)
+        left_type = infer_expression_type(checker, arena, left, source, current_scope)
+        right_type = infer_expression_type(checker, arena, right, source, current_scope)
+        if types.is_atomic_type(&checker.type_table, left_type) or types.is_atomic_type(&checker.type_table, right_type):
+            operand = left
+            if not types.is_atomic_type(&checker.type_table, left_type):
+                operand = right
+            operand_node = arena.nodes[operand.index]
+            checker_core.emit_error(checker, 400, operand_node.start, operand_node.length, operand_node.line, operand_node.column)
+            result = types.type_error()
+        elif operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):
             result = types.type_bool()
         else:
-            left = checker_core.first_child(arena, id)
-            right = checker_core.second_child(arena, id)
-            left_type = infer_expression_type(checker, arena, left, source, current_scope)
-            right_type = infer_expression_type(checker, arena, right, source, current_scope)
             if is_set_algebra_operator(operator) and semantic_type_is_kind(checker.type_table, left_type, types.TypeKind.SET):
                 if not checker.type_table.same(left_type, right_type):
                     right_node = arena.nodes[right.index]
@@ -847,6 +1108,41 @@ def infer_attribute_expression_type(
     member_node = arena.nodes[member.index]
     if receiver_record.kind == types.TypeKind.OPTION and checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "value"):
         return receiver_record.inner
+    if receiver_record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
+        kind = semantic.AtomicIntrinsicKind.NONE
+        result = types.type_error()
+        if checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "exchanged"):
+            kind = semantic.AtomicIntrinsicKind.RESULT_EXCHANGED
+            result = types.type_bool()
+        elif checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "observed"):
+            kind = semantic.AtomicIntrinsicKind.RESULT_OBSERVED
+            result = receiver_record.inner
+        else:
+            checker_core.emit_error(checker, 402, member_node.start, member_node.length, member_node.line, member_node.column)
+            return types.type_error()
+        missing = syntax.missing_node()
+        checker.model.record_atomic_intrinsic(
+            id,
+            kind,
+            types.atomic_type_element_kind(&checker.type_table, receiver_type),
+            types.missing_type(),
+            receiver_record.inner,
+            result,
+            receiver,
+            missing,
+            missing,
+            missing,
+            missing,
+            semantic.AtomicArgumentRole.NONE,
+            semantic.AtomicArgumentRole.NONE,
+            0,
+        )
+        return result
+    if receiver_record.kind == types.TypeKind.ATOMIC:
+        if atomic_intrinsic_kind(source, &member_node) == semantic.AtomicIntrinsicKind.NONE:
+            checker_core.emit_error(checker, 402, member_node.start, member_node.length, member_node.line, member_node.column)
+            return types.type_error()
+        return receiver_type
     if not types.is_nominal_kind(receiver_record.kind) or receiver_record.name_length == 0:
         return receiver_type
     owner = checker.symbols.find_in_scope(source, symbols.root_scope(), receiver_record.name_start, receiver_record.name_length)
@@ -1064,6 +1360,10 @@ def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, act
         return true
     if expected.index < 0 or actual.index < 0:
         return true
+    expected_atomic = types.is_atomic_type(&checker.type_table, expected)
+    actual_atomic = types.is_atomic_type(&checker.type_table, actual)
+    if expected_atomic or actual_atomic:
+        return false
     expected_kind = checker.type_table.types[expected.index].kind
     actual_kind = checker.type_table.types[actual.index].kind
     if expected_kind == types.TypeKind.ERROR or actual_kind == types.TypeKind.ERROR:

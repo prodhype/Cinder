@@ -367,4 +367,4 @@ def join_strings(values: &const List[String]) -> String:
 
 
 def is_builtin_module(module_name: &const String) -> bool:
-    return module_name == "stdio" or module_name == "math" or module_name == "stdlib" or module_name == "string" or module_name == "cinder" or module_name == "process"
+    return module_name == "stdio" or module_name == "math" or module_name == "stdlib" or module_name == "string" or module_name == "cinder" or module_name == "process" or module_name == "std.atomic"

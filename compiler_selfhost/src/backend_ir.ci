@@ -1,5 +1,6 @@
 import semantic
 import syntax
+import token
 import types
 from syntax import NodeId, SyntaxArena, SyntaxKind
 from types import TypeId
@@ -35,6 +36,27 @@ enum IRNodeKind:
     CAST
     PROPAGATE
     UNSUPPORTED
+    ATOMIC_INIT
+    ATOMIC_LOAD
+    ATOMIC_STORE
+    ATOMIC_EXCHANGE
+    ATOMIC_COMPARE_EXCHANGE
+    ATOMIC_FETCH
+    ATOMIC_RESULT_FIELD
+
+
+enum IRAtomicFetchKind:
+    INVALID
+    ADD
+    SUB
+    AND
+    OR
+    XOR
+
+
+enum IRAtomicMemoryOrder:
+    INVALID
+    SEQ_CST
 
 
 struct IRNodeId:
@@ -48,6 +70,21 @@ struct IRNode:
     first_child: i32
     child_count: i32
     flags: i32
+    atomic_kind: semantic.AtomicIntrinsicKind
+    atomic_element_kind: types.AtomicElementKind
+    atomic_type: TypeId
+    atomic_element_type: TypeId
+    atomic_receiver: NodeId
+    atomic_operand0: NodeId
+    atomic_operand1: NodeId
+    atomic_operand0_type: TypeId
+    atomic_operand1_type: TypeId
+    atomic_first_evaluated: NodeId
+    atomic_second_evaluated: NodeId
+    atomic_first_role: semantic.AtomicArgumentRole
+    atomic_second_role: semantic.AtomicArgumentRole
+    atomic_fetch_kind: IRAtomicFetchKind
+    atomic_order: IRAtomicMemoryOrder
 
 
 struct BackendSummary:
@@ -74,6 +111,7 @@ struct IRModule:
     user_specializations: List[semantic.UserSpecialization]
     root: IRNodeId
     summary: BackendSummary
+    is_valid: bool
 
     def add_node(self: &IRModule, kind: IRNodeKind, syntax_id: NodeId, type_id: TypeId, children: &const List[IRNodeId], flags: i32) -> IRNodeId:
         first_child = cast[i32](len(self.children))
@@ -93,6 +131,21 @@ struct IRModule:
                 first_child=first_child,
                 child_count=child_count,
                 flags=flags,
+                atomic_kind=semantic.AtomicIntrinsicKind.NONE,
+                atomic_element_kind=types.AtomicElementKind.INVALID,
+                atomic_type=types.missing_type(),
+                atomic_element_type=types.missing_type(),
+                atomic_receiver=syntax.missing_node(),
+                atomic_operand0=syntax.missing_node(),
+                atomic_operand1=syntax.missing_node(),
+                atomic_operand0_type=types.missing_type(),
+                atomic_operand1_type=types.missing_type(),
+                atomic_first_evaluated=syntax.missing_node(),
+                atomic_second_evaluated=syntax.missing_node(),
+                atomic_first_role=semantic.AtomicArgumentRole.NONE,
+                atomic_second_role=semantic.AtomicArgumentRole.NONE,
+                atomic_fetch_kind=IRAtomicFetchKind.INVALID,
+                atomic_order=IRAtomicMemoryOrder.INVALID,
             )
         )
         return id
@@ -134,10 +187,12 @@ def lower(arena: &const SyntaxArena, root: NodeId, model: &const semantic.Semant
         user_specializations=user_specializations,
         root=missing_ir_node(),
         summary=summary,
+        is_valid=true,
     )
     module.root = lower_node(module, arena, root, model)
     copy_semantic_specializations(module, model)
     collect_module_specializations(module, table)
+    module.is_valid = validate_atomic_ir(module, table)
     return module
 
 
@@ -241,7 +296,172 @@ def lower_node(module: &IRModule, arena: &const SyntaxArena, id: NodeId, model: 
         if lowered.index >= 0:
             child_nodes.append(lowered)
         offset += 1
-    return module.add_node(ir_kind_for_syntax(node.kind), id, ir_type_for_node(node.kind, id, model), child_nodes, node.flags)
+    lowered = module.add_node(ir_kind_for_syntax(node.kind), id, ir_type_for_node(node.kind, id, model), child_nodes, node.flags)
+    attach_atomic_metadata(module, lowered, id, model)
+    return lowered
+
+
+def attach_atomic_metadata(module: &IRModule, lowered: IRNodeId, syntax_id: NodeId, model: &const semantic.SemanticModel) -> void:
+    atomic_intrinsics: &const List[semantic.AtomicIntrinsicResolution] = &model.atomic_intrinsics
+    for resolution in atomic_intrinsics:
+        if resolution.node.index != syntax_id.index:
+            continue
+        node: &IRNode = &module.nodes[lowered.index]
+        node.kind = atomic_ir_kind(resolution.kind)
+        node.type_id = resolution.result_type
+        node.flags = resolution.flags
+        node.atomic_kind = resolution.kind
+        node.atomic_element_kind = resolution.element_kind
+        node.atomic_type = resolution.atomic_type
+        node.atomic_element_type = resolution.element_type
+        node.atomic_receiver = resolution.receiver
+        node.atomic_operand0 = resolution.operand0
+        node.atomic_operand1 = resolution.operand1
+        if resolution.operand0.index >= 0:
+            node.atomic_operand0_type = resolution.element_type
+        if resolution.operand1.index >= 0:
+            node.atomic_operand1_type = resolution.element_type
+        node.atomic_first_evaluated = resolution.first_evaluated
+        node.atomic_second_evaluated = resolution.second_evaluated
+        node.atomic_first_role = resolution.first_role
+        node.atomic_second_role = resolution.second_role
+        node.atomic_fetch_kind = atomic_fetch_kind(resolution.kind)
+        if resolution.kind != semantic.AtomicIntrinsicKind.INIT and resolution.kind != semantic.AtomicIntrinsicKind.RESULT_EXCHANGED and resolution.kind != semantic.AtomicIntrinsicKind.RESULT_OBSERVED:
+            node.atomic_order = IRAtomicMemoryOrder.SEQ_CST
+        return
+
+
+def atomic_ir_kind(kind: semantic.AtomicIntrinsicKind) -> IRNodeKind:
+    if kind == semantic.AtomicIntrinsicKind.INIT:
+        return IRNodeKind.ATOMIC_INIT
+    if kind == semantic.AtomicIntrinsicKind.LOAD:
+        return IRNodeKind.ATOMIC_LOAD
+    if kind == semantic.AtomicIntrinsicKind.STORE:
+        return IRNodeKind.ATOMIC_STORE
+    if kind == semantic.AtomicIntrinsicKind.EXCHANGE:
+        return IRNodeKind.ATOMIC_EXCHANGE
+    if kind == semantic.AtomicIntrinsicKind.COMPARE_EXCHANGE:
+        return IRNodeKind.ATOMIC_COMPARE_EXCHANGE
+    if kind == semantic.AtomicIntrinsicKind.FETCH_ADD or kind == semantic.AtomicIntrinsicKind.FETCH_SUB or kind == semantic.AtomicIntrinsicKind.FETCH_AND or kind == semantic.AtomicIntrinsicKind.FETCH_OR or kind == semantic.AtomicIntrinsicKind.FETCH_XOR:
+        return IRNodeKind.ATOMIC_FETCH
+    if kind == semantic.AtomicIntrinsicKind.RESULT_EXCHANGED or kind == semantic.AtomicIntrinsicKind.RESULT_OBSERVED:
+        return IRNodeKind.ATOMIC_RESULT_FIELD
+    return IRNodeKind.UNSUPPORTED
+
+
+def atomic_fetch_kind(kind: semantic.AtomicIntrinsicKind) -> IRAtomicFetchKind:
+    if kind == semantic.AtomicIntrinsicKind.FETCH_ADD:
+        return IRAtomicFetchKind.ADD
+    if kind == semantic.AtomicIntrinsicKind.FETCH_SUB:
+        return IRAtomicFetchKind.SUB
+    if kind == semantic.AtomicIntrinsicKind.FETCH_AND:
+        return IRAtomicFetchKind.AND
+    if kind == semantic.AtomicIntrinsicKind.FETCH_OR:
+        return IRAtomicFetchKind.OR
+    if kind == semantic.AtomicIntrinsicKind.FETCH_XOR:
+        return IRAtomicFetchKind.XOR
+    return IRAtomicFetchKind.INVALID
+
+
+def validate_atomic_ir(module: &const IRModule, table: &const types.TypeTable) -> bool:
+    for node in module.nodes:
+        if ir_node_may_escape_atomic_value(node.kind) and ir_type_matches_atomic_storage(module, node.type_id) and not atomic_syntax_is_receiver(module, node.syntax) and not atomic_node_has_unary_parent(module, node.syntax):
+            return false
+        if not ir_node_is_atomic(node.kind):
+            continue
+        if node.atomic_kind == semantic.AtomicIntrinsicKind.NONE or node.atomic_element_kind == types.AtomicElementKind.INVALID or node.atomic_element_type.index < 0:
+            return false
+        if node.atomic_type.index >= 0:
+            if node.atomic_type.index >= cast[i32](len(table.types)):
+                return false
+            atomic_record = table.types[node.atomic_type.index]
+            if atomic_record.kind != types.TypeKind.ATOMIC or atomic_record.extra != cast[i32](node.atomic_element_kind) or not table.same(atomic_record.inner, node.atomic_element_type):
+                return false
+        if node.kind == IRNodeKind.ATOMIC_INIT:
+            if node.atomic_operand0.index < 0 or node.atomic_receiver.index >= 0 or node.atomic_order != IRAtomicMemoryOrder.INVALID or not table.same(node.type_id, node.atomic_type) or not table.same(node.atomic_operand0_type, node.atomic_element_type):
+                return false
+            continue
+        if node.kind == IRNodeKind.ATOMIC_RESULT_FIELD:
+            if node.atomic_receiver.index < 0 or node.atomic_operand0.index >= 0 or node.atomic_operand1.index >= 0 or node.atomic_order != IRAtomicMemoryOrder.INVALID:
+                return false
+            if node.atomic_kind == semantic.AtomicIntrinsicKind.RESULT_EXCHANGED:
+                if not table.same(node.type_id, types.type_bool()):
+                    return false
+            elif node.atomic_kind == semantic.AtomicIntrinsicKind.RESULT_OBSERVED:
+                if not table.same(node.type_id, node.atomic_element_type):
+                    return false
+            else:
+                return false
+            continue
+        if node.atomic_receiver.index < 0 or (node.flags & 1) == 0 or node.atomic_order != IRAtomicMemoryOrder.SEQ_CST:
+            return false
+        if node.kind == IRNodeKind.ATOMIC_LOAD:
+            if node.atomic_operand0.index >= 0 or node.atomic_operand1.index >= 0 or not table.same(node.type_id, node.atomic_element_type):
+                return false
+            continue
+        if node.kind == IRNodeKind.ATOMIC_COMPARE_EXCHANGE:
+            if node.atomic_operand0.index < 0 or node.atomic_operand1.index < 0 or node.atomic_first_evaluated.index < 0 or node.atomic_second_evaluated.index < 0:
+                return false
+            if node.atomic_first_role == semantic.AtomicArgumentRole.NONE or node.atomic_second_role == semantic.AtomicArgumentRole.NONE:
+                return false
+            if not table.same(node.atomic_operand0_type, node.atomic_element_type) or not table.same(node.atomic_operand1_type, node.atomic_element_type):
+                return false
+            if node.type_id.index < 0 or node.type_id.index >= cast[i32](len(table.types)):
+                return false
+            result_record = table.types[node.type_id.index]
+            if result_record.kind != types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT or result_record.extra != cast[i32](node.atomic_element_kind) or not table.same(result_record.inner, node.atomic_element_type):
+                return false
+            continue
+        if node.atomic_operand0.index < 0 or node.atomic_operand1.index >= 0 or node.atomic_first_evaluated.index < 0:
+            return false
+        if not table.same(node.atomic_operand0_type, node.atomic_element_type) or node.atomic_operand1_type.index >= 0:
+            return false
+        if node.kind == IRNodeKind.ATOMIC_STORE:
+            if node.type_id.index != types.type_void().index:
+                return false
+        elif not table.same(node.type_id, node.atomic_element_type):
+            return false
+        if node.kind == IRNodeKind.ATOMIC_FETCH and (not types.atomic_element_is_integer(node.atomic_element_kind) or node.atomic_fetch_kind == IRAtomicFetchKind.INVALID):
+            return false
+        if node.kind != IRNodeKind.ATOMIC_FETCH and node.atomic_fetch_kind != IRAtomicFetchKind.INVALID:
+            return false
+    return true
+
+
+def ir_node_is_atomic(kind: IRNodeKind) -> bool:
+    return kind == IRNodeKind.ATOMIC_INIT or kind == IRNodeKind.ATOMIC_LOAD or kind == IRNodeKind.ATOMIC_STORE or kind == IRNodeKind.ATOMIC_EXCHANGE or kind == IRNodeKind.ATOMIC_COMPARE_EXCHANGE or kind == IRNodeKind.ATOMIC_FETCH or kind == IRNodeKind.ATOMIC_RESULT_FIELD
+
+
+def ir_node_may_escape_atomic_value(kind: IRNodeKind) -> bool:
+    return kind == IRNodeKind.NAME or kind == IRNodeKind.CALL or kind == IRNodeKind.BINARY or kind == IRNodeKind.UNARY or kind == IRNodeKind.CAST or kind == IRNodeKind.PROPAGATE or kind == IRNodeKind.EXPR
+
+
+def ir_type_matches_atomic_storage(module: &const IRModule, type_id: TypeId) -> bool:
+    if type_id.index < 0:
+        return false
+    for node in module.nodes:
+        if ir_node_is_atomic(node.kind) and node.atomic_type.index == type_id.index:
+            return true
+    return false
+
+
+def atomic_syntax_is_receiver(module: &const IRModule, syntax_id: NodeId) -> bool:
+    for node in module.nodes:
+        if ir_node_is_atomic(node.kind) and node.atomic_receiver.index == syntax_id.index:
+            return true
+    return false
+
+
+def atomic_node_has_unary_parent(module: &const IRModule, syntax_id: NodeId) -> bool:
+    for node in module.nodes:
+        if node.kind == IRNodeKind.UNARY and node.flags == cast[i32](token.TokenKind.AMPERSAND):
+            offset: i32 = 0
+            while offset < node.child_count:
+                child = module.children[cast[usize](node.first_child + offset)]
+                if child.index >= 0 and module.nodes[child.index].syntax.index == syntax_id.index:
+                    return true
+                offset += 1
+    return false
 
 
 def ir_kind_for_syntax(kind: SyntaxKind) -> IRNodeKind:

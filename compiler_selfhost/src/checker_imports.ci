@@ -2,15 +2,107 @@ import checker_core
 import lexer
 import parser
 import project
+import semantic
 import symbols
 import syntax
+import types
 from syntax import NodeId
 
 
 def validate_import_member_calls(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:
+    collect_imported_atomic_types(checker, arena, root, source, imports, modules)
     collect_qualified_import_enum_names(checker, imports, modules)
     validate_from_import_members_in_node(checker, arena, root, source, modules)
     validate_import_member_calls_in_node(checker, arena, root, source, imports, modules)
+
+
+def collect_imported_atomic_types(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    modules: &const List[project.ParsedModule],
+) -> void:
+    for imported in imports:
+        if len(imported.member) == 0:
+            continue
+        atomic_type = imported_member_atomic_type(checker, &imported.module_name, &imported.member, modules)
+        if atomic_type.index < 0:
+            continue
+        symbol_index: usize = 0
+        while symbol_index < len(checker.symbols.symbols):
+            symbol = checker.symbols.symbols[symbol_index]
+            if symbol.scope.index == symbols.root_scope().index and checker_core.range_text_equals(source, symbol.name_start, symbol.name_length, imported.alias[0:len(imported.alias)]):
+                checker.symbols.symbols[symbol_index].type_id = atomic_type
+            symbol_index += 1
+    collect_qualified_atomic_types_in_node(checker, arena, root, source, imports, modules)
+
+
+def collect_qualified_atomic_types_in_node(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    modules: &const List[project.ParsedModule],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = checker_core.first_child(arena, id)
+        member = checker_core.second_child(arena, id)
+        if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == syntax.SyntaxKind.EXPR_NAME:
+            receiver_node = arena.nodes[receiver.index]
+            member_node = arena.nodes[member.index]
+            for imported in imports:
+                if len(imported.member) == 0 and checker_core.range_text_equals(source, receiver_node.value_start, receiver_node.value_length, imported.alias[0:len(imported.alias)]):
+                    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+                    atomic_type = imported_member_atomic_type(checker, &imported.module_name, &member_name, modules)
+                    if atomic_type.index >= 0:
+                        checker.model.record_expr_type(id, atomic_type)
+    for offset in range(0, node.child_count):
+        collect_qualified_atomic_types_in_node(checker, arena, arena.children[node.first_child + offset], source, imports, modules)
+
+
+def imported_member_atomic_type(
+    checker: &checker_core.Checker,
+    module_name: &const String,
+    member_name: &const String,
+    modules: &const List[project.ParsedModule],
+) -> types.TypeId:
+    for module in modules:
+        if not (module.name == module_name[0:len(module_name)]):
+            continue
+        module_source = module.source[0:len(module.source)]
+        scan = lexer.new_lexer(module_source[0:len(module_source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        module_root = parsed.parse_module()
+        parsed_arena: &const syntax.SyntaxArena = &parsed.arena
+        declaration = find_exported_declaration(parsed_arena, module_root, &module_source, member_name)
+        if declaration.index < 0 or parsed_arena.nodes[declaration.index].kind != syntax.SyntaxKind.GLOBAL_DECL:
+            return types.missing_type()
+        annotation = checker_core.find_child_type(parsed_arena, declaration)
+        if annotation.index < 0:
+            return types.missing_type()
+        annotation_node = parsed_arena.nodes[annotation.index]
+        if annotation_node.kind != syntax.SyntaxKind.TYPE_GENERIC or annotation_node.child_count != 2:
+            return types.missing_type()
+        base = checker_core.first_child(parsed_arena, annotation)
+        argument = checker_core.second_child(parsed_arena, annotation)
+        if base.index < 0 or argument.index < 0:
+            return types.missing_type()
+        base_node = parsed_arena.nodes[base.index]
+        if not checker_core.range_text_equals(&module_source, base_node.value_start, base_node.value_length, "Atomic"):
+            return types.missing_type()
+        element_type = checker.type_table.resolve_type_node(parsed_arena, argument, &module_source)
+        element_kind = types.atomic_element_kind(&checker.type_table, element_type, &module_source)
+        if element_kind == types.AtomicElementKind.INVALID:
+            return types.missing_type()
+        return checker.type_table.atomic_of(element_type, element_kind)
+    return types.missing_type()
 
 
 def collect_qualified_import_enum_names(checker: &checker_core.Checker, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:

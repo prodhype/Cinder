@@ -146,6 +146,12 @@ VALID_SOURCES = [
     "extern \"C\":\n"
     "    type FILE\n"
     "    def printf(format: const char*, ...) -> c_int\n",
+    "from std.atomic import Atomic\n"
+    "\n"
+    "counter: Atomic[u64] = 0\n"
+    "\n"
+    "def increment() -> u64:\n"
+    "    return counter.fetch_add(1)\n",
 ]
 
 

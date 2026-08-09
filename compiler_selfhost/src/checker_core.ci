@@ -3,6 +3,7 @@ import symbols
 import syntax
 import types
 import generics
+import ownership
 from syntax import NodeId
 
 
@@ -124,6 +125,9 @@ def resolve_type_node_unsubstituted(checker: &Checker, arena: &const syntax.Synt
                 if is_nominal_symbol_kind(symbol.kind) and generics.has_type_params(arena, symbol.node):
                     emit_error(checker, 352, node.start, node.length, node.line, node.column)
                 return symbol.type_id
+            if symbol.type_id.index >= 0 and symbol.type_id.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[symbol.type_id.index].kind == types.TypeKind.ATOMIC:
+                emit_error(checker, 351, node.start, node.length, node.line, node.column)
+                return types.type_error()
         return checker.type_table.resolve_type_name(source, node.value_start, node.value_length)
     if node.kind == syntax.SyntaxKind.TYPE_POINTER:
         return checker.type_table.pointer_to(resolve_type_node(checker, arena, first_child(arena, id), source))
@@ -168,6 +172,16 @@ def resolve_generic_type_node(checker: &Checker, arena: &const syntax.SyntaxAren
         symbol_type = found_symbol.type_id
         if symbol_type.index >= 0 and symbol_type.index < cast[i32](len(checker.type_table.types)):
             kind = checker.type_table.types[symbol_type.index].kind
+            if kind == types.TypeKind.ATOMIC:
+                if actual_args != 1:
+                    emit_error(checker, 352, node.start, node.length, node.line, node.column)
+                    return types.type_error()
+                element_kind = types.atomic_element_kind(&checker.type_table, args[0], source)
+                if element_kind == types.AtomicElementKind.INVALID:
+                    argument_node = arena.nodes[arena.children[node.first_child + 1].index]
+                    emit_error(checker, 394, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+                    return types.type_error()
+                return checker.type_table.atomic_of(types.strip_const(&checker.type_table, args[0]), element_kind)
     return checker.type_table.generic_from_args(kind, base.value_start, base.value_length, args)
 
 
@@ -185,8 +199,16 @@ def resolve_callable_type_node(checker: &Checker, arena: &const syntax.SyntaxAre
         parameter_end -= 1
         return_type = resolve_type_node(checker, arena, arena.children[node.first_child + parameter_end], source)
     while offset < parameter_end:
-        args.append(resolve_type_node(checker, arena, arena.children[node.first_child + offset], source))
+        parameter_node = arena.children[node.first_child + offset]
+        parameter_type = resolve_type_node(checker, arena, parameter_node, source)
+        if ownership.type_contains_atomic_storage(&checker.type_table, parameter_type):
+            parameter_syntax = arena.nodes[parameter_node.index]
+            emit_error(checker, 396, parameter_syntax.start, parameter_syntax.length, parameter_syntax.line, parameter_syntax.column)
+        args.append(parameter_type)
         offset += 1
+    if ownership.type_contains_atomic_storage(&checker.type_table, return_type):
+        return_node = arena.nodes[arena.children[node.first_child + parameter_end].index]
+        emit_error(checker, 396, return_node.start, return_node.length, return_node.line, return_node.column)
     if is_closure:
         return checker.type_table.closure_from_args(environment, args, return_type)
     return checker.type_table.function_from_args(args, return_type)

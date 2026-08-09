@@ -52,8 +52,11 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
         root = parsed.parse_module()
         checked: checker_core.Checker = checker.new_checker()
         checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
+        checker.validate_import_member_calls(checked, parsed.arena, root, graph.modules[index].source, &graph.modules[index].imports, &graph.modules)
         checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
         ir = backend_ir.lower(parsed.arena, root, checked.model, checked.type_table)
+        if not ir.is_valid:
+            return emit_error("internal atomic IR validation failed")
         header = codegen.emit_module_header_from_ir_with_models(
             ir,
             parsed.arena,
@@ -105,8 +108,11 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
         root = parsed.parse_module()
         checked: checker_core.Checker = checker.new_checker()
         checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
+        checker.validate_import_member_calls(checked, parsed.arena, root, graph.modules[index].source, &graph.modules[index].imports, &graph.modules)
         checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
         ir = backend_ir.lower(parsed.arena, root, checked.model, checked.type_table)
+        if not ir.is_valid:
+            return ""
         header = codegen.emit_module_header_from_ir_with_models(
             ir,
             parsed.arena,
@@ -131,8 +137,11 @@ def amalgamated_c(graph: &const project.ProjectGraph) -> String:
         root = parsed.parse_module()
         checked: checker_core.Checker = checker.new_checker()
         checker.collect_symbols(checked, parsed.arena, root, graph.modules[index].source)
+        checker.validate_import_member_calls(checked, parsed.arena, root, graph.modules[index].source, &graph.modules[index].imports, &graph.modules)
         checker.validate_names(checked, parsed.arena, root, graph.modules[index].source)
         ir = backend_ir.lower(parsed.arena, root, checked.model, checked.type_table)
+        if not ir.is_valid:
+            return ""
         source = codegen.emit_module_source_from_ir_with_models(
             ir,
             parsed.arena,

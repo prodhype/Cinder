@@ -1,5 +1,6 @@
 import backend_ir
 import classes
+import codegen_atomics
 import codegen_context
 import codegen_expr
 import codegen_names
@@ -144,6 +145,8 @@ def emit_module_header_with_semantics_and_models(
     builder.append("#include <math.h>\n")
     builder.append("#include <time.h>\n")
     builder.append("#include \"cinder_runtime.h\"\n")
+    if codegen_atomics.module_uses_atomics(semantic_nodes, type_table):
+        codegen_atomics.emit_atomic_header_support(builder)
     emit_common_support(builder)
     for dependency in dependencies:
         if not project.is_builtin_module(&dependency):
@@ -467,6 +470,8 @@ def emit_module_header_from_ir(
     registry: &const codegen_names.SpecializationNameRegistry,
     type_table: &const types.TypeTable,
 ) -> String:
+    if not module.is_valid:
+        return ""
     if module.root.index < 0:
         return emit_module_header_with_semantics(arena, syntax.missing_node(), source, module_name, project_name, dependencies, imports, registry, module.nodes, module.specialization_args, module.call_specializations, module.user_specializations, type_table)
     root = module.nodes[module.root.index].syntax
@@ -485,6 +490,8 @@ def emit_module_header_from_ir_with_classes(
     type_table: &const types.TypeTable,
     class_model: &const classes.ProjectClassModel,
 ) -> String:
+    if not module.is_valid:
+        return ""
     root = syntax.missing_node()
     if module.root.index >= 0:
         root = module.nodes[module.root.index].syntax
@@ -519,6 +526,8 @@ def emit_module_header_from_ir_with_models(
     class_model: &const classes.ProjectClassModel,
     reflection_model: &const codegen_reflection.ProjectReflectionModel,
 ) -> String:
+    if not module.is_valid:
+        return ""
     root = syntax.missing_node()
     if module.root.index >= 0:
         root = module.nodes[module.root.index].syntax
@@ -663,6 +672,8 @@ def emit_module_source_from_ir(
     registry: &const codegen_names.SpecializationNameRegistry,
     type_table: &const types.TypeTable,
 ) -> String:
+    if not module.is_valid:
+        return ""
     if module.root.index < 0:
         return emit_module_source_with_semantics(arena, syntax.missing_node(), source, module_name, project_name, imports, is_entry, registry, module.nodes, module.specialization_types, module.specialization_args, module.call_specializations, module.user_specializations, type_table)
     root = module.nodes[module.root.index].syntax
@@ -681,6 +692,8 @@ def emit_module_source_from_ir_with_classes(
     type_table: &const types.TypeTable,
     class_model: &const classes.ProjectClassModel,
 ) -> String:
+    if not module.is_valid:
+        return ""
     root = syntax.missing_node()
     if module.root.index >= 0:
         root = module.nodes[module.root.index].syntax
@@ -716,6 +729,8 @@ def emit_module_source_from_ir_with_models(
     class_model: &const classes.ProjectClassModel,
     reflection_model: &const codegen_reflection.ProjectReflectionModel,
 ) -> String:
+    if not module.is_valid:
+        return ""
     root = syntax.missing_node()
     if module.root.index >= 0:
         root = module.nodes[module.root.index].syntax
@@ -1016,7 +1031,13 @@ def emit_module_declarations(
         if node.flags == 1:
             builder.append("const ")
         annotation = codegen_type_names.find_child_type(arena, id)
-        if annotation.index >= 0:
+        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id)
+        if atomic_index >= 0:
+            atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
+            codegen_atomics.append_atomic_wrapper_name(builder, atomic_node.atomic_element_kind)
+            builder.append(" ")
+            codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        elif annotation.index >= 0:
             if codegen_specializations.context_type_is_array(arena, annotation):
                 codegen_specializations.emit_module_prefixed_typed_declarator(arena, annotation, source, builder, prefix, project_name, imports, node.value_start, node.value_length, context.specialization_names)
             else:
@@ -1110,7 +1131,13 @@ def emit_module_top_level(
         if node.flags == 1:
             builder.append("const ")
         annotation = codegen_type_names.find_child_type(arena, id)
-        if annotation.index >= 0:
+        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id)
+        if atomic_index >= 0:
+            atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
+            codegen_atomics.append_atomic_wrapper_name(builder, atomic_node.atomic_element_kind)
+            builder.append(" ")
+            codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        elif annotation.index >= 0:
             if codegen_specializations.context_type_is_array(arena, annotation):
                 codegen_specializations.emit_module_prefixed_typed_declarator(arena, annotation, source, builder, prefix, project_name, imports, node.value_start, node.value_length, context.specialization_names)
             else:
@@ -1122,7 +1149,12 @@ def emit_module_top_level(
             builder.append(" ")
             codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
         initializer = codegen_names.last_child(arena, id)
-        if initializer.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[initializer.index].kind):
+        if atomic_index >= 0:
+            atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
+            builder.append(" = { .value = ATOMIC_VAR_INIT(")
+            codegen_expr.emit_module_expression(arena, atomic_node.atomic_operand0, source, builder, prefix, project_name, imports, context)
+            builder.append(") }")
+        elif initializer.index >= 0 and not codegen_type_names.is_type_kind(arena.nodes[initializer.index].kind):
             builder.append(" = ")
             if annotation.index >= 0 and codegen_specializations.context_type_is_array(arena, annotation):
                 codegen_expr.emit_module_array_initializer(arena, initializer, annotation, source, builder, prefix, project_name, imports, context)
@@ -1171,6 +1203,7 @@ def emit_module_function(
         context.local_start = len(context.local_types)
         context.pointer_start = len(context.pointer_names)
         codegen_context.register_module_parameters(arena, id, source, context)
+        codegen_atomics.emit_function_temporaries(arena, id, context.semantic_nodes, builder)
         codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
         codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
         while len(context.local_types) > context.local_start:
@@ -1590,6 +1623,7 @@ def emit_module_methods(
                     context.local_start = len(context.local_types)
                     context.pointer_start = len(context.pointer_names)
                     codegen_context.register_module_parameters(arena, child_id, source, context)
+                    codegen_atomics.emit_function_temporaries(arena, child_id, context.semantic_nodes, builder)
                     codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
                     codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
                     while len(context.local_types) > context.local_start:

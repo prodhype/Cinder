@@ -1,3 +1,4 @@
+import backend_ir
 import cinder
 import checker
 import checker_core
@@ -171,6 +172,10 @@ def check_graph(graph: &const project.ProjectGraph) -> bool:
         checker.validate_names(check, parsed.arena, root, graph.modules[index].source)
         if len(check.diagnostics) > 0:
             checker_core.dump_diagnostics(check)
+            return false
+        ir = backend_ir.lower(parsed.arena, root, check.model, check.type_table)
+        if not ir.is_valid:
+            stderr("internal error: atomic IR validation failed\n")
             return false
         index += 1
     return true

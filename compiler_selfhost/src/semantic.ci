@@ -12,6 +12,29 @@ enum ValueUseKind:
     ADDRESS
 
 
+enum AtomicIntrinsicKind:
+    NONE
+    INIT
+    LOAD
+    STORE
+    EXCHANGE
+    COMPARE_EXCHANGE
+    FETCH_ADD
+    FETCH_SUB
+    FETCH_AND
+    FETCH_OR
+    FETCH_XOR
+    RESULT_EXCHANGED
+    RESULT_OBSERVED
+
+
+enum AtomicArgumentRole:
+    NONE
+    VALUE
+    EXPECTED
+    DESIRED
+
+
 struct NodeTypeBinding:
     node: NodeId
     type_id: TypeId
@@ -44,6 +67,23 @@ struct CallResolution:
     node: NodeId
     callee: SymbolId
     return_type: TypeId
+    flags: i32
+
+
+struct AtomicIntrinsicResolution:
+    node: NodeId
+    kind: AtomicIntrinsicKind
+    element_kind: types.AtomicElementKind
+    atomic_type: TypeId
+    element_type: TypeId
+    result_type: TypeId
+    receiver: NodeId
+    operand0: NodeId
+    operand1: NodeId
+    first_evaluated: NodeId
+    second_evaluated: NodeId
+    first_role: AtomicArgumentRole
+    second_role: AtomicArgumentRole
     flags: i32
 
 
@@ -81,6 +121,7 @@ struct SemanticModel:
     user_specializations: List[UserSpecialization]
     cleanups: List[CleanupBinding]
     value_use_resolutions: List[ValueUseResolution]
+    atomic_intrinsics: List[AtomicIntrinsicResolution]
 
     def record_expr_type(self: &SemanticModel, node: NodeId, type_id: TypeId) -> void:
         record_node_type(self.expr_types, node, type_id)
@@ -171,6 +212,60 @@ struct SemanticModel:
             index += 1
         self.value_use_resolutions.append(ValueUseResolution(node=node, kind=kind, symbol=symbol, type_id=type_id))
 
+    def record_atomic_intrinsic(
+        self: &SemanticModel,
+        node: NodeId,
+        kind: AtomicIntrinsicKind,
+        element_kind: types.AtomicElementKind,
+        atomic_type: TypeId,
+        element_type: TypeId,
+        result_type: TypeId,
+        receiver: NodeId,
+        operand0: NodeId,
+        operand1: NodeId,
+        first_evaluated: NodeId,
+        second_evaluated: NodeId,
+        first_role: AtomicArgumentRole,
+        second_role: AtomicArgumentRole,
+        flags: i32,
+    ) -> void:
+        index: usize = 0
+        while index < len(self.atomic_intrinsics):
+            if self.atomic_intrinsics[index].node.index == node.index:
+                self.atomic_intrinsics[index].kind = kind
+                self.atomic_intrinsics[index].element_kind = element_kind
+                self.atomic_intrinsics[index].atomic_type = atomic_type
+                self.atomic_intrinsics[index].element_type = element_type
+                self.atomic_intrinsics[index].result_type = result_type
+                self.atomic_intrinsics[index].receiver = receiver
+                self.atomic_intrinsics[index].operand0 = operand0
+                self.atomic_intrinsics[index].operand1 = operand1
+                self.atomic_intrinsics[index].first_evaluated = first_evaluated
+                self.atomic_intrinsics[index].second_evaluated = second_evaluated
+                self.atomic_intrinsics[index].first_role = first_role
+                self.atomic_intrinsics[index].second_role = second_role
+                self.atomic_intrinsics[index].flags = flags
+                return
+            index += 1
+        self.atomic_intrinsics.append(
+            AtomicIntrinsicResolution(
+                node=node,
+                kind=kind,
+                element_kind=element_kind,
+                atomic_type=atomic_type,
+                element_type=element_type,
+                result_type=result_type,
+                receiver=receiver,
+                operand0=operand0,
+                operand1=operand1,
+                first_evaluated=first_evaluated,
+                second_evaluated=second_evaluated,
+                first_role=first_role,
+                second_role=second_role,
+                flags=flags,
+            )
+        )
+
     def expr_type(self: &const SemanticModel, node: NodeId) -> TypeId:
         return find_node_type(self.expr_types, node)
 
@@ -205,6 +300,7 @@ def new_semantic_model() -> SemanticModel:
     user_specializations: List[UserSpecialization] = []
     cleanups: List[CleanupBinding] = []
     value_use_resolutions: List[ValueUseResolution] = []
+    atomic_intrinsics: List[AtomicIntrinsicResolution] = []
     return SemanticModel(
         expr_types=expr_types,
         type_nodes=type_nodes,
@@ -224,6 +320,7 @@ def new_semantic_model() -> SemanticModel:
         user_specializations=user_specializations,
         cleanups=cleanups,
         value_use_resolutions=value_use_resolutions,
+        atomic_intrinsics=atomic_intrinsics,
     )
 
 

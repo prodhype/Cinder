@@ -4739,3 +4739,182 @@ def test_gen1_map_views_cross_module_boundaries(
     assert built.returncode == 0, built.stderr
     executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
     assert executed.returncode == 0, executed.stderr
+
+
+def assert_compiler_supports_atomic_scalars(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "atomic_scalars.ci"
+    source.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "global_counter: Atomic[u64] = 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    ready: Atomic[bool] = false\n"
+        "    counter: Atomic[u64] = 1\n"
+        "    small: Atomic[u32] = 4\n"
+        "    index: Atomic[usize] = 6\n"
+        "    if ready.exchange(true):\n"
+        "        return 1\n"
+        "    ready_result = ready.compare_exchange(expected=true, desired=false)\n"
+        "    if not ready_result.exchanged or not ready_result.observed:\n"
+        "        return 2\n"
+        "    if ready.load():\n"
+        "        return 3\n"
+        "    ready_ref: &const Atomic[bool] = &ready\n"
+        "    if ready_ref.load():\n"
+        "        return 4\n"
+        "    if small.fetch_add(2) != 4 or small.load() != 6:\n"
+        "        return 13\n"
+        "    if index.fetch_sub(1) != 6 or index.load() != 5:\n"
+        "        return 14\n"
+        "    counter_ref: *Atomic[u64] = &counter\n"
+        "    if counter_ref.load() != 1:\n"
+        "        return 15\n"
+        "    if global_counter.fetch_add(1) != 0 or global_counter.load() != 1:\n"
+        "        return 16\n"
+        "    counter.store(2)\n"
+        "    if counter.exchange(3) != 2:\n"
+        "        return 5\n"
+        "    if counter.fetch_add(4) != 3:\n"
+        "        return 6\n"
+        "    if counter.fetch_sub(2) != 7:\n"
+        "        return 7\n"
+        "    if counter.fetch_and(6) != 5:\n"
+        "        return 8\n"
+        "    if counter.fetch_or(1) != 4:\n"
+        "        return 9\n"
+        "    if counter.fetch_xor(7) != 5:\n"
+        "        return 10\n"
+        "    exchanged = counter.compare_exchange(expected=2, desired=9)\n"
+        "    if not exchanged.exchanged or exchanged.observed != 2:\n"
+        "        return 11\n"
+        "    observed = counter.compare_exchange(desired=10, expected=0)\n"
+        "    if observed.exchanged or observed.observed != 9:\n"
+        "        return 12\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(compiler, "check", str(source))
+    assert checked.returncode == 0, checked.stderr
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    for snippet in (
+        "#include <stdatomic.h>",
+        "_Atomic(uint32_t) value;",
+        "_Atomic(uint64_t) value;",
+        "_Atomic(size_t) value;",
+        "ATOMIC_VAR_INIT(",
+        "atomic_init(",
+        "atomic_load_explicit(",
+        "atomic_store_explicit(",
+        "atomic_exchange_explicit(",
+        "atomic_compare_exchange_strong_explicit(",
+        "atomic_fetch_add_explicit(",
+        "atomic_fetch_sub_explicit(",
+        "atomic_fetch_and_explicit(",
+        "atomic_fetch_or_explicit(",
+        "atomic_fetch_xor_explicit(",
+        "memory_order_seq_cst",
+    ):
+        assert snippet in emitted.stdout
+
+    generated = tmp_path / "atomic-generated"
+    emitted_project = run_gen1(
+        compiler,
+        "emit-project",
+        str(source),
+        "-o",
+        str(generated),
+    )
+    assert emitted_project.returncode == 0, emitted_project.stderr
+    header = generated / "cinder_gen" / "atomic_scalars.cinder.h"
+    header_text = header.read_text(encoding="utf-8")
+    assert "typedef struct CinderAtomic_u64 CinderAtomic_u64;" in header_text
+    assert "#ifndef __cplusplus" in header_text
+    assert (
+        "#ifndef __cplusplus\n"
+        "struct CinderAtomic_u64 { _Atomic(uint64_t) value; };\n"
+        "#endif"
+    ) in header_text
+
+    output = tmp_path / "atomic-scalars"
+    built = run_gen1(compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr
+
+    pointer_only = tmp_path / "atomic_pointer_only.ci"
+    pointer_only.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def identity(cell: *Atomic[u64]) -> *Atomic[u64]:\n"
+        "    return cell\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    pointer_emitted = run_gen1(compiler, "emit-c", str(pointer_only))
+    assert pointer_emitted.returncode == 0, pointer_emitted.stderr
+    assert "#include <stdatomic.h>" in pointer_emitted.stdout
+    assert "_Atomic(uint64_t) value;" in pointer_emitted.stdout
+
+    invalid_cases = (
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[String] = \"bad\"\n"
+            "    return 0\n",
+            394,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    loaded: u64 = value\n"
+            "    return 0\n",
+            400,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    value = 1\n"
+            "    return 0\n",
+            401,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[bool] = false\n"
+            "    value.fetch_add(true)\n"
+            "    return 0\n",
+            403,
+        ),
+    )
+    for index, (invalid_source, code) in enumerate(invalid_cases):
+        invalid = tmp_path / f"invalid_atomic_{index}.ci"
+        invalid.write_text(invalid_source, encoding="utf-8")
+        rejected = run_gen1(compiler, "check", str(invalid))
+        assert rejected.returncode == 1
+        assert rejected.stdout.startswith(f"E {code} ")
+
+
+def test_gen1_supports_atomic_scalars(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_scalars(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_atomic_scalars(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_atomic_scalars(gen2, tmp_path)

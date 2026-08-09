@@ -13,7 +13,7 @@ def emit_c(arena: &const SyntaxArena, root: NodeId, source: &const String) -> St
     return builder.finish()
 
 def emit_c_from_ir(module: &const backend_ir.IRModule, arena: &const SyntaxArena, source: &const String) -> String:
-    if module.root.index < 0:
+    if not module.is_valid or module.root.index < 0:
         return emit_c(arena, syntax.missing_node(), source)
     root = module.nodes[module.root.index].syntax
     return emit_c(arena, root, source)

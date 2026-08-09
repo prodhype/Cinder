@@ -38,6 +38,16 @@ enum TypeKind:
     MAP_VALUES
     MAP_ITEMS
     FILE
+    ATOMIC
+    ATOMIC_COMPARE_EXCHANGE_RESULT
+
+
+enum AtomicElementKind:
+    INVALID
+    BOOL
+    U32
+    U64
+    USIZE
 
 
 struct TypeId:
@@ -96,6 +106,12 @@ struct TypeTable:
 
     def dyn_of(self: &TypeTable, inner: TypeId) -> TypeId:
         return self.add(TypeKind.DYN, 0, 0, inner, 0, 0)
+
+    def atomic_of(self: &TypeTable, inner: TypeId, element_kind: AtomicElementKind) -> TypeId:
+        return self.add(TypeKind.ATOMIC, 0, 0, inner, cast[i32](element_kind), 0)
+
+    def atomic_compare_exchange_result(self: &TypeTable, inner: TypeId, element_kind: AtomicElementKind) -> TypeId:
+        return self.add(TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT, 0, 0, inner, cast[i32](element_kind), 0)
 
     def named(self: &TypeTable, start: usize, length: usize) -> TypeId:
         return self.add(TypeKind.NAMED, start, length, missing_type(), 0, 0)
@@ -162,6 +178,8 @@ struct TypeTable:
                     return false
                 offset += 1
             return true
+        if left_type.kind == TypeKind.ATOMIC or left_type.kind == TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
+            return left_type.extra == right_type.extra and self.same(left_type.inner, right_type.inner)
         if left_type.kind == TypeKind.ARRAY:
             return left_type.extra == right_type.extra and self.same(left_type.inner, right_type.inner)
         if left_type.kind == TypeKind.POINTER or left_type.kind == TypeKind.REFERENCE or left_type.kind == TypeKind.SLICE or left_type.kind == TypeKind.CONST or left_type.kind == TypeKind.DYN:
@@ -306,6 +324,58 @@ def is_map_view_kind(kind: TypeKind) -> bool:
 
 def is_nominal_kind(kind: TypeKind) -> bool:
     return kind == TypeKind.NAMED or kind == TypeKind.ENUM or kind == TypeKind.UNION or kind == TypeKind.VARIANT or kind == TypeKind.CLASS or kind == TypeKind.STRUCT or kind == TypeKind.FILE
+
+
+def strip_const(table: &const TypeTable, type_id: TypeId) -> TypeId:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)) and table.types[current.index].kind == TypeKind.CONST:
+        current = table.types[current.index].inner
+    return current
+
+
+def atomic_element_kind(table: &const TypeTable, type_id: TypeId, source: &const String) -> AtomicElementKind:
+    current = strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return AtomicElementKind.INVALID
+    record = table.types[current.index]
+    if record.kind == TypeKind.BOOL:
+        return AtomicElementKind.BOOL
+    if record.kind != TypeKind.NAMED or record.flags != 0 or record.name_length == 0:
+        return AtomicElementKind.INVALID
+    if range_text_equals(source, record.name_start, record.name_length, "u32"):
+        return AtomicElementKind.U32
+    if range_text_equals(source, record.name_start, record.name_length, "u64"):
+        return AtomicElementKind.U64
+    if range_text_equals(source, record.name_start, record.name_length, "usize"):
+        return AtomicElementKind.USIZE
+    return AtomicElementKind.INVALID
+
+
+def atomic_type_element_kind(table: &const TypeTable, type_id: TypeId) -> AtomicElementKind:
+    current = strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return AtomicElementKind.INVALID
+    record = table.types[current.index]
+    if record.kind != TypeKind.ATOMIC and record.kind != TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
+        return AtomicElementKind.INVALID
+    if record.extra == cast[i32](AtomicElementKind.BOOL):
+        return AtomicElementKind.BOOL
+    if record.extra == cast[i32](AtomicElementKind.U32):
+        return AtomicElementKind.U32
+    if record.extra == cast[i32](AtomicElementKind.U64):
+        return AtomicElementKind.U64
+    if record.extra == cast[i32](AtomicElementKind.USIZE):
+        return AtomicElementKind.USIZE
+    return AtomicElementKind.INVALID
+
+
+def atomic_element_is_integer(kind: AtomicElementKind) -> bool:
+    return kind == AtomicElementKind.U32 or kind == AtomicElementKind.U64 or kind == AtomicElementKind.USIZE
+
+
+def is_atomic_type(table: &const TypeTable, type_id: TypeId) -> bool:
+    current = strip_const(table, type_id)
+    return current.index >= 0 and current.index < cast[i32](len(table.types)) and table.types[current.index].kind == TypeKind.ATOMIC
 
 
 def new_type_table() -> TypeTable:
