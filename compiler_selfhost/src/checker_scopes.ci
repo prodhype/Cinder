@@ -51,7 +51,8 @@ def validate_specialized_declaration(checker: &checker_core.Checker, arena: &con
         return
     for offset in range(0, node.child_count):
         child_id = arena.children[node.first_child + offset]
-        if arena.nodes[child_id.index].kind == syntax.SyntaxKind.FUNCTION_DECL:
+        child_kind = arena.nodes[child_id.index].kind
+        if child_kind == syntax.SyntaxKind.FUNCTION_DECL or child_kind == syntax.SyntaxKind.FIELD_DECL or child_kind == syntax.SyntaxKind.VARIANT_CASE_DECL:
             validate_names_in_scope(checker, arena, child_id, source, symbols.root_scope(), types.type_void())
 
 

@@ -332,6 +332,33 @@ def test_atomic_requires_initializer_and_rejects_by_value_storage() -> None:
     assert "cannot pass atomic storage by value" in parameter
 
 
+def test_late_generic_specialization_rejects_atomic_fields() -> None:
+    field = diagnostics(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "struct Box[T]:\n"
+        "    value: T\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    boxed: Box[Atomic[u64]]\n"
+        "    return 0\n"
+    )
+    assert "C395" in field
+    assert "struct field Box.value cannot contain atomic storage" in field
+
+    generated = compile_unit(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "struct Box[T]:\n"
+        "    value: T\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    boxed: Box[*Atomic[u64]]\n"
+        "    return 0\n"
+    ).c_source
+    assert "CinderAtomic_u64 *value;" in generated
+
+
 def test_atomic_reference_receiver_is_supported() -> None:
     generated = compile_unit(
         "from std.atomic import Atomic\n"

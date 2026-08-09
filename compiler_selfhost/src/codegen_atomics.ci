@@ -17,11 +17,9 @@ def semantic_type_contains_atomic(table: &const types.TypeTable, type_id: types.
     record = table.types[type_id.index]
     if record.kind == types.TypeKind.ATOMIC or record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
         return true
-    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE:
+    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.DYN or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or types.is_map_view_kind(record.kind):
         return semantic_type_contains_atomic(table, record.inner)
-    if record.kind == types.TypeKind.OPTION:
-        return semantic_type_contains_atomic(table, record.inner)
-    if record.kind == types.TypeKind.RESULT:
+    if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
         return semantic_type_contains_atomic(table, record.inner) or semantic_type_contains_atomic(table, record.second)
     if record.kind == types.TypeKind.TUPLE:
         offset: i32 = 0
@@ -30,6 +28,8 @@ def semantic_type_contains_atomic(table: &const types.TypeTable, type_id: types.
                 return true
             offset += 1
     if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+        if record.kind == types.TypeKind.CLOSURE and semantic_type_contains_atomic(table, record.second):
+            return true
         if semantic_type_contains_atomic(table, record.inner):
             return true
         offset: i32 = 0

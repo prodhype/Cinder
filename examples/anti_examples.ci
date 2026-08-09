@@ -5,6 +5,9 @@
 #
 #     cinder check examples/anti_examples.ci
 
+from std.atomic import Atomic
+
+
 # -----------------------------------------------------------------------------
 # Layout, declarations, and calls
 
@@ -462,6 +465,14 @@ static_assert(field_count(ReflectedRecord) == 1)
 # CORRECT: apply type arguments; the compiler monomorphizes to readable C.
 struct Box[T]:
     value: T
+
+
+# WRONG: specializing a generic field with Atomic stores the immobile cell by value.
+# def invalid_atomic_box() -> void:
+#     boxed: Box[Atomic[u64]]
+
+# CORRECT: generic aggregates may store a pointer or reference to an Atomic cell.
+# boxed: Box[*Atomic[u64]]
 
 
 def main() -> i32:

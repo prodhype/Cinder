@@ -4969,6 +4969,10 @@ def assert_compiler_supports_atomic_scalars(
         "    optional: Option[*Atomic[u64]],\n"
         "    result: Result[*Atomic[u64], *Atomic[u32]],\n"
         "    pair: Tuple[*Atomic[u64], *Atomic[u32]],\n"
+        "    values: List[*Atomic[u64]],\n"
+        "    owned: Owned[*Atomic[u64]],\n"
+        "    mapping: Map[i32, *Atomic[u64]],\n"
+        "    view: MapValues[i32, *Atomic[u64]],\n"
         ") -> i32:\n"
         "    return 0\n"
         "\n"
@@ -5063,6 +5067,17 @@ def assert_compiler_supports_atomic_scalars(
             "    indirect.load()\n"
             "    return 0\n",
             403,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "\n"
+            "struct Box[T]:\n"
+            "    value: T\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    boxed: Box[Atomic[u64]]\n"
+            "    return 0\n",
+            395,
         ),
     )
     for index, (invalid_source, code) in enumerate(invalid_cases):

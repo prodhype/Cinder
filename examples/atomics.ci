@@ -21,6 +21,10 @@ def accept_nested_atomic_pointers(
     optional: Option[*Atomic[u64]],
     result: Result[*Atomic[u64], *Atomic[u32]],
     pair: Tuple[*Atomic[u64], *Atomic[u32]],
+    values: List[*Atomic[u64]],
+    owned_values: Owned[List[*Atomic[u64]]],
+    mapping: Map[i32, *Atomic[u64]],
+    mapped_values: MapValues[i32, *Atomic[u64]],
 ) -> i32:
     return 0
 

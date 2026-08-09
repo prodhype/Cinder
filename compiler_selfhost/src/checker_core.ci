@@ -163,6 +163,20 @@ def resolve_generic_type_node(checker: &Checker, arena: &const syntax.SyntaxAren
             second_arg = arena.children[node.first_child + 2]
         if range_text_equals(source, base.value_start, base.value_length, "Option"):
             return checker.type_table.generic1(types.TypeKind.OPTION, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Owned"):
+            return checker.type_table.generic1(types.TypeKind.OWNED, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "List"):
+            return checker.type_table.generic1(types.TypeKind.LIST, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Set"):
+            return checker.type_table.generic1(types.TypeKind.SET, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Map"):
+            return checker.type_table.generic2(types.TypeKind.MAP, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source), resolve_type_node(checker, arena, second_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "MapKeys"):
+            return checker.type_table.map_view(types.TypeKind.MAP_KEYS, checker.type_table.generic2(types.TypeKind.MAP, 0, 0, resolve_type_node(checker, arena, first_arg, source), resolve_type_node(checker, arena, second_arg, source)))
+        if range_text_equals(source, base.value_start, base.value_length, "MapValues"):
+            return checker.type_table.map_view(types.TypeKind.MAP_VALUES, checker.type_table.generic2(types.TypeKind.MAP, 0, 0, resolve_type_node(checker, arena, first_arg, source), resolve_type_node(checker, arena, second_arg, source)))
+        if range_text_equals(source, base.value_start, base.value_length, "MapItems"):
+            return checker.type_table.map_view(types.TypeKind.MAP_ITEMS, checker.type_table.generic2(types.TypeKind.MAP, 0, 0, resolve_type_node(checker, arena, first_arg, source), resolve_type_node(checker, arena, second_arg, source)))
         if range_text_equals(source, base.value_start, base.value_length, "Result"):
             return checker.type_table.generic2(types.TypeKind.RESULT, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source), resolve_type_node(checker, arena, second_arg, source))
         if range_text_equals(source, base.value_start, base.value_length, "Tuple"):

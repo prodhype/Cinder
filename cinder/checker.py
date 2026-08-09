@@ -404,6 +404,8 @@ class Checker:
         self.active_collection_iterators: list[_CollectionStorage] = []
         self.map_view_storages: dict[int, _CollectionStorage] = {}
         self.moved_variables: set[int] = set()
+        self._validated_lifetime_nominals: set[int] = set()
+        self._validated_lifetime_functions: set[int] = set()
 
     def check(self) -> SemanticModel:
         self._install_builtins()
@@ -1755,74 +1757,16 @@ class Checker:
 
     def _validate_lifetime_types(self) -> None:
         for struct in self.structs.values():
-            for field in struct.fields.values():
-                self._validate_list_elements(field.type, field.span)
-                if self.type_contains_atomic_storage(field.type):
-                    self._error(
-                        f"struct field {struct.name}.{field.name} cannot contain atomic storage",
-                        field.span,
-                        code="C395",
-                        note="store a pointer or reference to an Atomic cell instead",
-                    )
+            self._validate_nominal_lifetime_type(struct)
 
         for class_ in self.classes.values():
-            for field in class_.fields.values():
-                self._validate_list_elements(field.type, field.span)
-                if self.type_contains_atomic_storage(field.type):
-                    self._error(
-                        f"class field {class_.name}.{field.name} cannot contain atomic storage",
-                        field.span,
-                        code="C395",
-                        note="store a pointer or reference to an Atomic cell instead",
-                    )
+            self._validate_nominal_lifetime_type(class_)
 
         for union in self.unions.values():
-            for field in union.fields.values():
-                self._validate_list_elements(field.type, field.span)
-                if self.type_contains_atomic_storage(field.type):
-                    self._error(
-                        f"union field {union.name}.{field.name} cannot contain atomic storage",
-                        field.span,
-                        code="C395",
-                    )
-                if self._contains_owning_container_value(field.type):
-                    self._error(
-                        f"union field {union.name}.{field.name} cannot own a collection",
-                        field.span,
-                        code="C247",
-                    )
-                if self._contains_destructible_value(field.type):
-                    self._error(
-                        f"union field {union.name}.{field.name} contains a class with a destructor",
-                        field.span,
-                        code="C222",
-                    )
+            self._validate_nominal_lifetime_type(union)
 
         for variant in self.variants.values():
-            for case in variant.cases.values():
-                for field in case.fields.values():
-                    self._validate_list_elements(field.type, field.span)
-                    if self.type_contains_atomic_storage(field.type):
-                        self._error(
-                            f"variant payload {variant.name}.{case.name}.{field.name} "
-                            "cannot contain atomic storage",
-                            field.span,
-                            code="C395",
-                        )
-                    if self._contains_owning_container_value(field.type):
-                        self._error(
-                            f"variant payload {variant.name}.{case.name}.{field.name} "
-                            "cannot own a collection",
-                            field.span,
-                            code="C247",
-                        )
-                    if self._contains_destructible_value(field.type):
-                        self._error(
-                            f"variant payload {variant.name}.{case.name}.{field.name} "
-                            "contains a class with a destructor",
-                            field.span,
-                            code="C223",
-                        )
+            self._validate_nominal_lifetime_type(variant)
 
         for global_ in self.globals.values():
             self._validate_list_elements(global_.type, global_.span)
@@ -1859,23 +1803,114 @@ class Checker:
             functions.extend(class_.methods.values())
 
         for function in functions:
-            for parameter in function.parameters:
-                self._validate_list_elements(parameter.type, parameter.span)
-                if self.type_contains_atomic_storage(parameter.type):
+            self._validate_function_lifetime_type(function)
+
+    def _validate_nominal_lifetime_type(self, symbol: NominalSymbol) -> None:
+        identity = id(symbol)
+        if identity in self._validated_lifetime_nominals:
+            return
+        self._validated_lifetime_nominals.add(identity)
+
+        if isinstance(symbol, StructSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+                if self.type_contains_atomic_storage(field.type):
                     self._error(
-                        f"parameter {parameter.name!r} cannot pass atomic storage by value",
-                        parameter.span,
-                        code="C396",
-                        note="accept a pointer or reference to Atomic instead",
+                        f"struct field {symbol.name}.{field.name} cannot contain atomic storage",
+                        field.span,
+                        code="C395",
+                        note="store a pointer or reference to an Atomic cell instead",
                     )
-            self._validate_list_elements(function.return_type, function.span)
-            if self.type_contains_atomic_storage(function.return_type):
+            for method in symbol.methods.values():
+                self._validate_function_lifetime_type(method)
+            return
+
+        if isinstance(symbol, ClassSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+                if self.type_contains_atomic_storage(field.type):
+                    self._error(
+                        f"class field {symbol.name}.{field.name} cannot contain atomic storage",
+                        field.span,
+                        code="C395",
+                        note="store a pointer or reference to an Atomic cell instead",
+                    )
+            for method in symbol.methods.values():
+                self._validate_function_lifetime_type(method)
+            return
+
+        if isinstance(symbol, UnionSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+                if self.type_contains_atomic_storage(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} cannot contain atomic storage",
+                        field.span,
+                        code="C395",
+                    )
+                if self._contains_owning_container_value(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} cannot own a collection",
+                        field.span,
+                        code="C247",
+                    )
+                if self._contains_destructible_value(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} contains a class with a destructor",
+                        field.span,
+                        code="C222",
+                    )
+            return
+
+        if isinstance(symbol, VariantSymbol):
+            for case in symbol.cases.values():
+                for field in case.fields.values():
+                    self._validate_list_elements(field.type, field.span)
+                    if self.type_contains_atomic_storage(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "cannot contain atomic storage",
+                            field.span,
+                            code="C395",
+                        )
+                    if self._contains_owning_container_value(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "cannot own a collection",
+                            field.span,
+                            code="C247",
+                        )
+                    if self._contains_destructible_value(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "contains a class with a destructor",
+                            field.span,
+                            code="C223",
+                        )
+
+    def _validate_function_lifetime_type(self, function: FunctionSymbol) -> None:
+        identity = id(function)
+        if identity in self._validated_lifetime_functions:
+            return
+        self._validated_lifetime_functions.add(identity)
+
+        for parameter in function.parameters:
+            self._validate_list_elements(parameter.type, parameter.span)
+            if self.type_contains_atomic_storage(parameter.type):
                 self._error(
-                    f"function {function.name!r} cannot return atomic storage by value",
-                    function.span,
+                    f"parameter {parameter.name!r} cannot pass atomic storage by value",
+                    parameter.span,
                     code="C396",
-                    note="return a pointer or operate on an Atomic reference instead",
+                    note="accept a pointer or reference to Atomic instead",
                 )
+        self._validate_list_elements(function.return_type, function.span)
+        if self.type_contains_atomic_storage(function.return_type):
+            self._error(
+                f"function {function.name!r} cannot return atomic storage by value",
+                function.span,
+                code="C396",
+                note="return a pointer or operate on an Atomic reference instead",
+            )
 
     def _validate_list_elements(self, type_: Type, span: Span) -> None:
         raw = strip_const(type_)
@@ -9770,56 +9805,7 @@ class Checker:
         self._validate_constructor_chain(class_)
 
     def _validate_specialized_nominal(self, symbol: NominalSymbol) -> None:
-        if isinstance(symbol, StructSymbol):
-            for field in symbol.fields.values():
-                self._validate_list_elements(field.type, field.span)
-            for method in symbol.methods.values():
-                for parameter in method.parameters:
-                    self._validate_list_elements(parameter.type, parameter.span)
-                self._validate_list_elements(method.return_type, method.span)
-            return
-        if isinstance(symbol, ClassSymbol):
-            for field in symbol.fields.values():
-                self._validate_list_elements(field.type, field.span)
-            for method in symbol.methods.values():
-                for parameter in method.parameters:
-                    self._validate_list_elements(parameter.type, parameter.span)
-                self._validate_list_elements(method.return_type, method.span)
-            return
-        if isinstance(symbol, UnionSymbol):
-            for field in symbol.fields.values():
-                self._validate_list_elements(field.type, field.span)
-                if self._contains_owning_container_value(field.type):
-                    self._error(
-                        f"union field {symbol.name}.{field.name} cannot own a collection",
-                        field.span,
-                        code="C247",
-                    )
-                if self._contains_destructible_value(field.type):
-                    self._error(
-                        f"union field {symbol.name}.{field.name} contains a class with a destructor",
-                        field.span,
-                        code="C222",
-                    )
-            return
-        if isinstance(symbol, VariantSymbol):
-            for case in symbol.cases.values():
-                for field in case.fields.values():
-                    self._validate_list_elements(field.type, field.span)
-                    if self._contains_owning_container_value(field.type):
-                        self._error(
-                            f"variant payload {symbol.name}.{case.name}.{field.name} "
-                            "cannot own a collection",
-                            field.span,
-                            code="C247",
-                        )
-                    if self._contains_destructible_value(field.type):
-                        self._error(
-                            f"variant payload {symbol.name}.{case.name}.{field.name} "
-                            "contains a class with a destructor",
-                            field.span,
-                            code="C223",
-                        )
+        self._validate_nominal_lifetime_type(symbol)
 
     def _fill_enum_members(
         self,
@@ -10005,9 +9991,7 @@ class Checker:
         self._function_specializations[cache_key] = symbol
         self.functions[mangled_key] = symbol
         self.function_symbols[id(specialized_decl)] = symbol
-        for parameter in symbol.parameters:
-            self._validate_list_elements(parameter.type, parameter.span)
-        self._validate_list_elements(symbol.return_type, symbol.span)
+        self._validate_function_lifetime_type(symbol)
         if self._checking_functions:
             self._pending_specialized_checks.append((symbol, None))
         return symbol

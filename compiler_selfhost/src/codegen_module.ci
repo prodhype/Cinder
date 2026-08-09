@@ -173,7 +173,7 @@ def emit_module_header_with_semantics_and_models(
     emitted_late_list_helpers: List[String] = []
     codegen_specializations.emit_module_late_list_helpers(arena, root, source, builder, emitted_late_list_helpers, &prefix, project_name, imports, registry)
     emitted_owned_helpers: List[String] = []
-    codegen_specializations.emit_module_owned_helpers(arena, root, source, builder, emitted_owned_helpers, &prefix, project_name, imports, registry)
+    codegen_specializations.emit_module_owned_helpers(arena, root, source, builder, emitted_owned_helpers, &prefix, project_name, imports, registry, context)
     emitted_print_prototypes: List[String] = []
     codegen_specializations.emit_module_collection_print_helpers(arena, root, source, builder, emitted_print_prototypes, &prefix, project_name, imports, registry, false)
     emitted_print_helpers: List[String] = []
