@@ -1,6 +1,8 @@
 import checker_core
+import checker_imports
 import classes
 import generics
+import project
 import reflection
 import semantic
 import symbols
@@ -10,12 +12,24 @@ import variants
 from syntax import NodeId
 
 
-def collect_symbols(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String) -> void:
+def collect_symbols(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    modules: &const List[project.ParsedModule],
+) -> void:
     checker.model.record_scope(root, symbols.root_scope())
-    collect_symbols_in_node(checker, arena, root, source)
+    collect_symbols_in_node(checker, arena, root, source, modules)
 
 
-def collect_symbols_in_node(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+def collect_symbols_in_node(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    modules: &const List[project.ParsedModule],
+) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
@@ -77,7 +91,7 @@ def collect_symbols_in_node(checker: &checker_core.Checker, arena: &const syntax
             )
             checker.model.record_declaration_symbol(id, symbol)
     elif node.kind == syntax.SyntaxKind.FROM_IMPORT_DECL:
-        collect_from_import_symbols(checker, arena, id, source)
+        collect_from_import_symbols(checker, arena, id, source, modules)
     elif node.kind == syntax.SyntaxKind.CLASS_DECL:
         symbol = checker.symbols.add_symbol(
             symbols.SymbolKind.CLASS,
@@ -172,12 +186,18 @@ def collect_symbols_in_node(checker: &checker_core.Checker, arena: &const syntax
         )
         checker.model.record_declaration_symbol(id, symbol)
     for offset in range(0, node.child_count):
-        collect_symbols_in_node(checker, arena, arena.children[node.first_child + offset], source)
+        collect_symbols_in_node(checker, arena, arena.children[node.first_child + offset], source, modules)
 
 
-def collect_from_import_symbols(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:
+def collect_from_import_symbols(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    modules: &const List[project.ParsedModule],
+) -> void:
     node = arena.nodes[id.index]
-    atomic_module = from_import_module_is_atomic(arena, id, source)
+    module_name = from_import_module_name(arena, id, source)
     for offset in range(0, node.child_count):
         child_id = arena.children[node.first_child + offset]
         child = arena.nodes[child_id.index]
@@ -193,9 +213,10 @@ def collect_from_import_symbols(checker: &checker_core.Checker, arena: &const sy
                 name_node = arena.nodes[name.index]
                 symbol_kind = symbols.SymbolKind.GLOBAL
                 imported_type = types.missing_type()
-                if atomic_module and original_name.index >= 0:
+                if original_name.index >= 0:
                     original_node = arena.nodes[original_name.index]
-                    if checker_core.range_text_equals(source, original_node.value_start, original_node.value_length, "Atomic"):
+                    original_text = source[original_node.value_start:original_node.value_start + original_node.value_length]
+                    if checker_imports.imported_member_is_atomic_template(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.BUILTIN
                         imported_type = checker.type_table.atomic_of(types.type_error(), types.AtomicElementKind.INVALID)
                 symbol = checker.symbols.add_symbol(
@@ -210,12 +231,12 @@ def collect_from_import_symbols(checker: &checker_core.Checker, arena: &const sy
                 checker.model.record_declaration_symbol(child_id, symbol)
 
 
-def from_import_module_is_atomic(arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> bool:
+def from_import_module_name(arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> String:
     dotted = checker_core.find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
     if dotted.index < 0:
-        return false
+        return ""
     node = arena.nodes[dotted.index]
-    return checker_core.range_text_equals(source, node.start, node.length, "std.atomic")
+    return source[node.start:node.start + node.length]
 
 
 def collect_type_parameter_symbols(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, declaration: NodeId, source: &const String, owner: symbols.SymbolId) -> void:

@@ -27,7 +27,12 @@ def collect_imported_atomic_types(
     for imported in imports:
         if len(imported.member) == 0:
             continue
-        atomic_type = imported_member_atomic_type(checker, &imported.module_name, &imported.member, modules)
+        is_atomic_template = imported_member_is_atomic_template(&imported.module_name, &imported.member, modules)
+        atomic_type = types.missing_type()
+        if is_atomic_template:
+            atomic_type = checker.type_table.atomic_of(types.type_error(), types.AtomicElementKind.INVALID)
+        else:
+            atomic_type = imported_member_atomic_type(checker, &imported.module_name, &imported.member, modules)
         if atomic_type.index < 0:
             continue
         symbol_index: usize = 0
@@ -35,6 +40,8 @@ def collect_imported_atomic_types(
             symbol = checker.symbols.symbols[symbol_index]
             if symbol.scope.index == symbols.root_scope().index and checker_core.range_text_equals(source, symbol.name_start, symbol.name_length, imported.alias[0:len(imported.alias)]):
                 checker.symbols.symbols[symbol_index].type_id = atomic_type
+                if is_atomic_template:
+                    checker.symbols.symbols[symbol_index].kind = symbols.SymbolKind.BUILTIN
             symbol_index += 1
     collect_qualified_atomic_types_in_node(checker, arena, root, source, imports, modules)
 
@@ -95,7 +102,7 @@ def imported_member_atomic_type(
         if base.index < 0 or argument.index < 0:
             return types.missing_type()
         base_node = parsed_arena.nodes[base.index]
-        if not atomic_type_import_matches(&module_source, &base_node, &module.imports):
+        if not atomic_type_import_matches(&module_source, &base_node, &module.imports, modules):
             return types.missing_type()
         element_type = checker.type_table.resolve_type_node(parsed_arena, argument, &module_source)
         element_kind = types.atomic_element_kind(&checker.type_table, element_type, &module_source)
@@ -109,10 +116,29 @@ def atomic_type_import_matches(
     source: &const String,
     base: &const syntax.SyntaxNode,
     imports: &const List[project.ImportBinding],
+    modules: &const List[project.ParsedModule],
 ) -> bool:
     for imported in imports:
-        if imported.module_name == "std.atomic" and imported.member == "Atomic" and checker_core.range_text_equals(source, base.value_start, base.value_length, imported.alias[0:len(imported.alias)]):
-            return true
+        if checker_core.range_text_equals(source, base.value_start, base.value_length, imported.alias[0:len(imported.alias)]):
+            return imported_member_is_atomic_template(&imported.module_name, &imported.member, modules)
+    return false
+
+
+def imported_member_is_atomic_template(
+    module_name: &const String,
+    member_name: &const String,
+    modules: &const List[project.ParsedModule],
+) -> bool:
+    if module_name == "std.atomic" and member_name == "Atomic":
+        return true
+    for module in modules:
+        if not (module.name == module_name[0:len(module_name)]):
+            continue
+        module_imports: &const List[project.ImportBinding] = &module.imports
+        for imported in module_imports:
+            if imported.alias == member_name[0:len(member_name)] and len(imported.member) > 0:
+                return imported_member_is_atomic_template(&imported.module_name, &imported.member, modules)
+        return false
     return false
 
 
@@ -189,7 +215,8 @@ def validate_from_import_members(checker: &checker_core.Checker, arena: &const s
                     member_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
                     declaration = find_exported_declaration(parsed.arena, module_root, &module_source, &member_name)
                     if declaration.index < 0:
-                        checker_core.emit_error(checker, 48, name_node.start, name_node.length, name_node.line, name_node.column)
+                        if not imported_member_is_atomic_template(&module_name, &member_name, modules):
+                            checker_core.emit_error(checker, 48, name_node.start, name_node.length, name_node.line, name_node.column)
                     elif exported_declaration_kind(parsed.arena, declaration) == syntax.SyntaxKind.ENUM_DECL:
                         binding_id = name_id
                         for binding_offset in range(0, imported.child_count):

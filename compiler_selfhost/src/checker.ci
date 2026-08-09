@@ -15,8 +15,14 @@ def new_checker() -> checker_core.Checker:
     return checker_core.new_checker()
 
 
-def collect_symbols(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String) -> void:
-    checker_symbols.collect_symbols(checker, arena, root, source)
+def collect_symbols(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    root: NodeId,
+    source: &const String,
+    modules: &const List[project.ParsedModule],
+) -> void:
+    checker_symbols.collect_symbols(checker, arena, root, source, modules)
 
 
 def validate_import_member_calls(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:
@@ -41,7 +47,8 @@ def check_and_dump(source: String) -> i32:
         return 1
 
     checker: checker_core.Checker = new_checker()
-    collect_symbols(checker, parsed.arena, root, scan.source)
+    modules: List[project.ParsedModule] = []
+    collect_symbols(checker, parsed.arena, root, scan.source, &modules)
     validate_names(checker, parsed.arena, root, scan.source)
     if len(checker.diagnostics) > 0:
         checker_core.dump_diagnostics(checker)

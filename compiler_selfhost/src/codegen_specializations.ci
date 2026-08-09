@@ -1,4 +1,6 @@
 import backend_ir
+import codegen_atomics
+import codegen_context
 import codegen_names
 import codegen_type_names
 import ownership
@@ -423,13 +425,14 @@ def emit_module_type_specializations(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
     late_phase: bool,
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
-        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, late_phase)
+        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, context, late_phase)
     is_closure = node.kind == SyntaxKind.TYPE_CLOSURE
     is_list = false
     is_set = false
@@ -504,7 +507,7 @@ def emit_module_type_specializations(
     builder.append(name[0:len(name)])
     builder.append("\n")
     if is_closure:
-        emit_module_closure_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+        emit_module_closure_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
     elif is_result:
         emit_module_result_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
     elif is_list:
@@ -531,8 +534,14 @@ def emit_module_closure_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
+    semantic_type = codegen_context.context_semantic_type(context, id)
+    table: &const types.TypeTable = context.type_table
+    if codegen_atomics.semantic_type_contains_atomic(table, semantic_type) and codegen_type_names.semantic_type_is_kind(table, semantic_type, types.TypeKind.CLOSURE):
+        emit_semantic_closure_specialization(table, semantic_type, source, builder, name, prefix, project_name, imports, registry)
+        return
     if node.child_count <= 0:
         builder.append("struct ")
         builder.append(name[0:len(name)])
@@ -550,19 +559,19 @@ def emit_module_closure_specialization(
     builder.append("struct ")
     builder.append(name[0:len(name)])
     builder.append(" {\n    ")
-    codegen_type_names.emit_module_c_type(arena, value_environment_type, source, builder, prefix, project_name, imports, registry)
+    codegen_context.emit_context_c_type(arena, value_environment_type, source, builder, prefix, project_name, imports, context)
     builder.append(" env;\n    ")
     if return_type.index >= 0:
-        codegen_type_names.emit_module_c_type(arena, return_type, source, builder, prefix, project_name, imports, registry)
+        codegen_context.emit_context_c_type(arena, return_type, source, builder, prefix, project_name, imports, context)
     else:
         builder.append("void")
     builder.append(" (*call)(")
-    codegen_type_names.emit_module_c_type(arena, environment_type, source, builder, prefix, project_name, imports, registry)
+    codegen_context.emit_context_c_type(arena, environment_type, source, builder, prefix, project_name, imports, context)
     builder.append(" *")
     offset: i32 = 1
     while offset < parameter_end:
         builder.append(", ")
-        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
+        codegen_context.emit_context_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
         offset += 1
     builder.append(");\n};\nstatic inline void ")
     builder.append(name[0:len(name)])

@@ -163,11 +163,11 @@ def emit_module_header_with_semantics_and_models(
     emit_module_nominal_drop_prototypes(arena, root, source, builder, &prefix, context)
     emitted_drop_prototypes: List[String] = []
     codegen_specializations.emit_module_drop_helper_prototypes(arena, root, source, builder, emitted_drop_prototypes, &prefix, project_name, imports, registry)
-    codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, false)
+    codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, context, false)
     emit_module_nominal_declarations(arena, root, source, builder, &prefix, project_name, imports, context)
     emit_module_nominal_drop_definitions(arena, root, source, builder, &prefix, project_name, imports, context)
     emit_reflection_declarations(builder, module_name, context)
-    codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, true)
+    codegen_specializations.emit_module_type_specializations(arena, root, source, builder, emitted_specializations, &prefix, project_name, imports, registry, context, true)
     emitted_array_drop_helpers: List[String] = []
     codegen_specializations.emit_module_array_drop_helpers(arena, root, source, builder, emitted_array_drop_helpers, &prefix, project_name, imports, registry)
     emitted_late_list_helpers: List[String] = []
@@ -1309,7 +1309,7 @@ def emit_module_parameter(
     node = arena.nodes[id.index]
     parameter_type = codegen_type_names.find_child_type(arena, id)
     if parameter_type.index >= 0 and arena.nodes[parameter_type.index].kind == SyntaxKind.TYPE_FUNCTION:
-        emit_module_function_pointer_parameter(arena, parameter_type, source, builder, prefix, project_name, imports, node.value_start, node.value_length, context.specialization_names)
+        emit_module_function_pointer_parameter(arena, parameter_type, source, builder, prefix, project_name, imports, node.value_start, node.value_length, context)
         return
     codegen_context.emit_context_c_type(arena, parameter_type, source, builder, prefix, project_name, imports, context)
     builder.append(" ")
@@ -1325,16 +1325,36 @@ def emit_module_function_pointer_parameter(
     imports: &const List[project.ImportBinding],
     name_start: usize,
     name_length: usize,
-    registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[type_id.index]
+    semantic_type = codegen_context.context_semantic_type(context, type_id)
+    table: &const types.TypeTable = context.type_table
+    if codegen_atomics.semantic_type_contains_atomic(table, semantic_type) and codegen_type_names.semantic_type_is_kind(table, semantic_type, types.TypeKind.FUNCTION):
+        record = table.types[semantic_type.index]
+        codegen_type_names.emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, context.specialization_names)
+        builder.append(" (*")
+        codegen_names.append_source(builder, source, name_start, name_length)
+        builder.append(")(")
+        if record.flags == 0:
+            builder.append("void")
+        else:
+            offset: i32 = 0
+            while offset < record.flags:
+                if offset > 0:
+                    builder.append(", ")
+                argument = table.type_args[cast[usize](record.extra + offset)]
+                codegen_type_names.emit_semantic_c_type(table, argument, source, builder, prefix, project_name, imports, context.specialization_names)
+                offset += 1
+        builder.append(")")
+        return
     if node.child_count <= 0:
         builder.append("void (*")
         codegen_names.append_source(builder, source, name_start, name_length)
         builder.append(")(void)")
         return
     return_type = arena.children[node.first_child + node.child_count - 1]
-    codegen_type_names.emit_module_c_type(arena, return_type, source, builder, prefix, project_name, imports, registry)
+    codegen_context.emit_context_c_type(arena, return_type, source, builder, prefix, project_name, imports, context)
     builder.append(" (*")
     codegen_names.append_source(builder, source, name_start, name_length)
     builder.append(")(")
@@ -1344,7 +1364,7 @@ def emit_module_function_pointer_parameter(
         for offset in range(0, node.child_count - 1):
             if offset > 0:
                 builder.append(", ")
-            codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
+            codegen_context.emit_context_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
     builder.append(")")
 
 

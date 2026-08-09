@@ -1,5 +1,6 @@
 import backend_ir
 import classes
+import codegen_atomics
 import codegen_names
 import codegen_reflection
 import codegen_type_names
@@ -1067,7 +1068,7 @@ def emit_context_c_type(
     context: &ModuleCodegenContext,
 ) -> void:
     semantic_type = context_semantic_type(context, id)
-    if semantic_type_contains_atomic(context.type_table, semantic_type):
+    if codegen_atomics.semantic_type_contains_atomic(context.type_table, semantic_type):
         codegen_type_names.emit_semantic_c_type(context.type_table, semantic_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
         return
     user_specializations: &const List[semantic.UserSpecialization] = context.user_specializations
@@ -1124,17 +1125,6 @@ def emit_context_c_type(
                 offset += 1
             return
     codegen_type_names.emit_module_c_type(arena, id, source, builder, prefix, project_name, imports, context.specialization_names)
-
-
-def semantic_type_contains_atomic(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
-    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
-        return false
-    record = table.types[type_id.index]
-    if record.kind == types.TypeKind.ATOMIC or record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
-        return true
-    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE:
-        return semantic_type_contains_atomic(table, record.inner)
-    return false
 
 
 def emit_context_type_key(
