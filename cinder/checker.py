@@ -271,18 +271,9 @@ class SemanticModel:
 
     def module_symbol(self) -> ModuleSymbol:
         constants: dict[str, ConstantSymbol] = {}
-        public_globals: dict[str, VariableSymbol] = {}
-        for name, symbol in self.globals.items():
-            if symbol.is_const:
-                constants[name] = ConstantSymbol(
-                    name,
-                    symbol.span,
-                    SymbolKind.CONSTANT,
-                    symbol.type,
-                    symbol.c_name or name,
-                )
-            else:
-                public_globals[name] = symbol
+        # Source-level const globals are addressable C objects, not
+        # substitutional constants such as macros or enum members.
+        public_globals: dict[str, VariableSymbol] = dict(self.globals)
         type_symbols: dict[str, NominalSymbol] = {}
         type_symbols.update(self.structs)
         type_symbols.update(self.classes)

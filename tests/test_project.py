@@ -476,6 +476,54 @@ def test_cross_module_atomic_global_builds_and_runs(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.parametrize(
+    ("imports", "declaration_type", "initializer"),
+    [
+        (
+            "from std.atomic import Atomic\nfrom values import INITIAL",
+            "Atomic[u64]",
+            "INITIAL",
+        ),
+        (
+            "from std.atomic import Atomic\nimport values",
+            "Atomic[u64]",
+            "values.INITIAL",
+        ),
+        ("from values import INITIAL", "u64", "INITIAL"),
+    ],
+    ids=("direct-atomic", "qualified-atomic", "plain-global"),
+)
+def test_imported_const_object_is_rejected_in_global_initializer(
+    tmp_path: Path,
+    imports: str,
+    declaration_type: str,
+    initializer: str,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        '[project]\nsource-root = "src"\nentry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "values.ci").write_text(
+        "const INITIAL: u64 = 7\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        f"{imports}\n"
+        "\n"
+        f"counter: {declaration_type} = {initializer}\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CompilationFailed) as captured:
+        Compiler().compile_project(tmp_path)
+    assert any(diagnostic.code == "C018" for diagnostic in captured.value.diagnostics)
+
+
 @pytestmark_native
 def test_cross_module_class_interface_and_reflection_abi(tmp_path: Path) -> None:
     source_root = tmp_path / "src"
