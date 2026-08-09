@@ -155,6 +155,23 @@ def resolve_generic_type_node(checker: &Checker, arena: &const syntax.SyntaxAren
     base_id = arena.children[node.first_child]
     base = arena.nodes[base_id.index]
     if is_runtime_generic_name(source, &base):
+        first_arg = syntax.missing_node()
+        second_arg = syntax.missing_node()
+        if node.child_count > 1:
+            first_arg = arena.children[node.first_child + 1]
+        if node.child_count > 2:
+            second_arg = arena.children[node.first_child + 2]
+        if range_text_equals(source, base.value_start, base.value_length, "Option"):
+            return checker.type_table.generic1(types.TypeKind.OPTION, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Result"):
+            return checker.type_table.generic2(types.TypeKind.RESULT, base.value_start, base.value_length, resolve_type_node(checker, arena, first_arg, source), resolve_type_node(checker, arena, second_arg, source))
+        if range_text_equals(source, base.value_start, base.value_length, "Tuple"):
+            tuple_args: List[types.TypeId] = []
+            tuple_offset: i32 = 1
+            while tuple_offset < node.child_count:
+                tuple_args.append(resolve_type_node(checker, arena, arena.children[node.first_child + tuple_offset], source))
+                tuple_offset += 1
+            return checker.type_table.tuple_from_args(tuple_args)
         return checker.type_table.resolve_generic_type_node(arena, id, source)
     args: List[types.TypeId] = []
     offset: i32 = 1

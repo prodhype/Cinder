@@ -19,6 +19,16 @@ def semantic_type_contains_atomic(table: &const types.TypeTable, type_id: types.
         return true
     if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE:
         return semantic_type_contains_atomic(table, record.inner)
+    if record.kind == types.TypeKind.OPTION:
+        return semantic_type_contains_atomic(table, record.inner)
+    if record.kind == types.TypeKind.RESULT:
+        return semantic_type_contains_atomic(table, record.inner) or semantic_type_contains_atomic(table, record.second)
+    if record.kind == types.TypeKind.TUPLE:
+        offset: i32 = 0
+        while offset < record.flags:
+            if semantic_type_contains_atomic(table, table.type_args[cast[usize](record.extra + offset)]):
+                return true
+            offset += 1
     if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
         if semantic_type_contains_atomic(table, record.inner):
             return true

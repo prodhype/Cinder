@@ -17,12 +17,30 @@ def read[T](cell: *Atomic[T]) -> T:
     return cell.load()
 
 
+def accept_nested_atomic_pointers(
+    optional: Option[*Atomic[u64]],
+    result: Result[*Atomic[u64], *Atomic[u32]],
+    pair: Tuple[*Atomic[u64], *Atomic[u32]],
+) -> i32:
+    return 0
+
+
 def main() -> i32:
     # These Atomic values are local. counter starts at 1. ready starts as false.
     counter: Atomic[u64] = 1
     ready: Atomic[bool] = false
     small: Atomic[u32] = 7
     wide: Atomic[u64] = 0x100000001
+    converted_ready: Atomic[bool] = 1
+    converted_counter: Atomic[u64] = 2.0
+
+    # Atomic inputs accept the same scalar conversions as ordinary assignments.
+    if not converted_ready.load() or converted_counter.load() != 2:
+        return 2
+    converted_ready.store(0)
+    converted_counter.store(3.0)
+    if converted_ready.load() or converted_counter.load() != 3:
+        return 3
 
     # Each generic specialization keeps its own element and receiver metadata.
     small_read = read(&small)

@@ -4845,6 +4845,14 @@ def assert_compiler_supports_atomic_scalars(
         "    counter: Atomic[u64] = 1\n"
         "    small: Atomic[u32] = 4\n"
         "    index: Atomic[usize] = 6\n"
+        "    converted_ready: Atomic[bool] = 1\n"
+        "    converted_counter: Atomic[u64] = 2.0\n"
+        "    if not converted_ready.load() or converted_counter.load() != 2:\n"
+        "        return 17\n"
+        "    converted_ready.store(0)\n"
+        "    converted_counter.store(3.0)\n"
+        "    if converted_ready.load() or converted_counter.load() != 3:\n"
+        "        return 18\n"
         "    if ready.exchange(true):\n"
         "        return 1\n"
         "    ready_result = ready.compare_exchange(expected=true, desired=false)\n"
@@ -4952,6 +4960,55 @@ def assert_compiler_supports_atomic_scalars(
     assert pointer_emitted.returncode == 0, pointer_emitted.stderr
     assert "#include <stdatomic.h>" in pointer_emitted.stdout
     assert "_Atomic(uint64_t) value;" in pointer_emitted.stdout
+
+    nested_only = tmp_path / "atomic_nested_specializations.ci"
+    nested_only.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def accept_nested_atomic_pointers(\n"
+        "    optional: Option[*Atomic[u64]],\n"
+        "    result: Result[*Atomic[u64], *Atomic[u32]],\n"
+        "    pair: Tuple[*Atomic[u64], *Atomic[u32]],\n"
+        ") -> i32:\n"
+        "    return 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    nested_checked = run_gen1(compiler, "check", str(nested_only))
+    assert nested_checked.returncode == 0, nested_checked.stderr
+    nested_emitted = run_gen1(compiler, "emit-c", str(nested_only))
+    assert nested_emitted.returncode == 0, nested_emitted.stderr
+    for snippet in (
+        "#include <stdatomic.h>",
+        "typedef struct CinderAtomic_u64 CinderAtomic_u64;",
+        "CinderAtomic_u64 * value;",
+        "CinderAtomic_u64 * ok;",
+        "CinderAtomic_u32 * err;",
+        "CinderAtomic_u64 * item_0;",
+        "CinderAtomic_u32 * item_1;",
+    ):
+        assert snippet in nested_emitted.stdout
+    assert "std_atomic__Atomic" not in nested_emitted.stdout
+    nested_output = tmp_path / "atomic-nested-specializations"
+    nested_built = run_gen1(
+        compiler,
+        "build",
+        str(nested_only),
+        "-o",
+        str(nested_output),
+        "--build-dir",
+        str(tmp_path / "atomic-nested-specializations-build"),
+    )
+    assert nested_built.returncode == 0, nested_built.stderr
+    nested_executed = subprocess.run(
+        [str(nested_output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert nested_executed.returncode == 0, nested_executed.stderr
 
     invalid_cases = (
         (

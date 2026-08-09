@@ -542,7 +542,7 @@ def validate_atomic_method_call(
         value_node = arena.nodes[value.index]
         if types.is_atomic_type(&checker.type_table, value_type):
             checker_core.emit_error(checker, 400, value_node.start, value_node.length, value_node.line, value_node.column)
-        elif not atomic_argument_compatible(checker, atomic_record.inner, value_type, element_kind, source):
+        elif not types_compatible(checker, atomic_record.inner, value_type):
             checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
         source_index += 1
     if expected == 2 and (operand0.index < 0 or operand1.index < 0):
@@ -623,22 +623,6 @@ def compare_exchange_argument_role(arena: &const syntax.SyntaxArena, argument: N
     if atomic_argument_name_is(arena, argument, source, "desired"):
         return semantic.AtomicArgumentRole.DESIRED
     return semantic.AtomicArgumentRole.NONE
-
-
-def atomic_argument_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId, element_kind: types.AtomicElementKind, source: &const String) -> bool:
-    if checker.type_table.same(expected, actual):
-        return true
-    current = types.strip_const(&checker.type_table, actual)
-    if current.index < 0 or current.index >= cast[i32](len(checker.type_table.types)):
-        return false
-    record = checker.type_table.types[current.index]
-    if element_kind == types.AtomicElementKind.BOOL:
-        return record.kind == types.TypeKind.BOOL
-    if not types.atomic_element_is_integer(element_kind):
-        return false
-    if record.kind == types.TypeKind.I32 or record.kind == types.TypeKind.I64 or record.kind == types.TypeKind.CHAR:
-        return true
-    return checker_named_scalar_can_clone(&checker.type_table, current, source)
 
 
 def call_argument_value(arena: &const syntax.SyntaxArena, id: NodeId, argument_index: i32) -> NodeId:

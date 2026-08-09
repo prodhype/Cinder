@@ -621,7 +621,7 @@ def validate_atomic_declaration(
         checker_core.emit_error(checker, 18, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
     if types.is_atomic_type(&checker.type_table, initializer_type):
         checker_core.emit_error(checker, 399, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
-    elif not checker_types.atomic_argument_compatible(checker, atomic_record.inner, initializer_type, types.atomic_type_element_kind(&checker.type_table, atomic_type), source):
+    elif not checker_types.types_compatible(checker, atomic_record.inner, initializer_type):
         checker_core.emit_error(checker, 107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
     flags: i32 = 4
     if is_global:
