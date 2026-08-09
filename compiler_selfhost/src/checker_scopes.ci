@@ -231,6 +231,11 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
     elif node.kind == syntax.SyntaxKind.EXPR_TUPLE:
         inferred_tuple = checker_types.infer_expression_type(checker, arena, id, source, current_scope)
         ignored_inferred_tuple = inferred_tuple
+    elif node.kind == syntax.SyntaxKind.EXPR_STMT:
+        expression = checker_core.first_child(arena, id)
+        if expression.index >= 0:
+            expression_type = checker_types.infer_expression_type(checker, arena, expression, source, current_scope)
+            checker_types.validate_partial_move_source(checker, arena, expression, expression_type, expression_type, source)
     elif node.kind == syntax.SyntaxKind.RETURN_STMT:
         if node.child_count == 0:
             if expected_return.index != types.type_void().index:

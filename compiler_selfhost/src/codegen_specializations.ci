@@ -1889,7 +1889,7 @@ def emit_semantic_list_specialization(
     builder.append(" { ")
     builder.append(element_info.c_type[0:len(element_info.c_type)])
     builder.append(" *data; size_t length; size_t capacity; };\n")
-    if element_info.is_complete:
+    if element_info.is_complete or element_info.is_file:
         emit_list_helper_suite(builder, name, &element_info)
 
 
@@ -2097,7 +2097,7 @@ def emit_list_helper_suite(builder: &StringBuilder, name: &const String, element
     builder.append("_drop(")
     builder.append(name[0:len(name)])
     builder.append(" *self) {\n    if (self == NULL) return;\n")
-    if element_info.is_string or len(element_info.drop_helper) > 0:
+    if element_info.is_string or element_info.is_file or len(element_info.drop_helper) > 0:
         builder.append("    for (size_t index = 0; index < self->length; index += 1) {\n        ")
         emit_drop_statement(builder, element_info, "self->data[index]")
         builder.append("    }\n")

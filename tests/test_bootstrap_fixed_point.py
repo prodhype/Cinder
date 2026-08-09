@@ -1743,6 +1743,19 @@ def assert_compiler_rejects_partial_member_moves(
         "\n"
         "def main() -> i32:\n"
         "    return 0\n",
+        prefix
+        + "def discard(holder: Holder) -> void:\n"
+        "    holder.value\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        prefix
+        + "def discard() -> void:\n"
+        "    values: Resource[1] = [Resource(1)]\n"
+        "    values[0]\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
     )
     for index, source_text in enumerate(invalid_sources):
         source = tmp_path / f"partial_member_move_{index}.ci"
@@ -3445,6 +3458,64 @@ def test_gen1_emits_inferred_list_specialization(
     compiled = compile_generated_project(generated, executable)
     assert compiled.returncode == 0, compiled.stderr
     assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+def test_gen1_drops_explicit_and_inferred_file_list_elements(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    explicit = tmp_path / "explicit_file_list.ci"
+    explicit.write_text(
+        "def main() -> i32:\n"
+        "    files: List[File] = []\n"
+        '    files.append(open("explicit_file_list.txt", "w"))\n'
+        "    return len(files) - 1\n",
+        encoding="utf-8",
+    )
+    explicit_emitted = run_gen1(gen1_compiler, "emit-c", str(explicit))
+    assert explicit_emitted.returncode == 0, explicit_emitted.stderr
+    explicit_drop_start = explicit_emitted.stdout.index(
+        "static inline void CinderList_FILE_drop(CinderList_FILE *self) {"
+    )
+    explicit_drop_end = explicit_emitted.stdout.index("#endif", explicit_drop_start)
+    explicit_drop = explicit_emitted.stdout[explicit_drop_start:explicit_drop_end]
+    assert "for (size_t index = 0; index < self->length; index += 1)" in explicit_drop
+    assert "fclose(self->data[index]);" in explicit_drop
+
+    inferred = tmp_path / "inferred_file_list.ci"
+    inferred.write_text(
+        "def open_files() -> List[File]:\n"
+        "    files: List[File] = []\n"
+        '    files.append(open("inferred_file_list.txt", "w"))\n'
+        "    return files\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    files = open_files()\n"
+        "    return len(files) - 1\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "inferred-file-list-generated"
+    inferred_emitted = run_gen1(
+        gen1_compiler,
+        "emit-project",
+        str(inferred),
+        "-o",
+        str(generated),
+    )
+    assert inferred_emitted.returncode == 0, inferred_emitted.stderr
+    generated_source = generated / "cinder_gen" / "inferred_file_list.c"
+    source_text = generated_source.read_text(encoding="utf-8")
+    inferred_drop_start = source_text.index(
+        "static inline void CinderList_FILE_drop(CinderList_FILE *self) {"
+    )
+    inferred_drop_end = source_text.index("#endif", inferred_drop_start)
+    inferred_drop = source_text[inferred_drop_start:inferred_drop_end]
+    assert "for (size_t index = 0; index < self->length; index += 1)" in inferred_drop
+    assert "fclose(self->data[index]);" in inferred_drop
+
+    executable = tmp_path / "inferred-file-list"
+    compiled = compile_generated_project(generated, executable)
+    assert compiled.returncode == 0, compiled.stderr
 
 
 def test_gen1_builds_and_runs_result_specialization_example(
