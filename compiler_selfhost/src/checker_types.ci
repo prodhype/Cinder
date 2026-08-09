@@ -111,6 +111,25 @@ def validate_partial_move_source(
     if expression.index < 0 or type_is_borrowed_for_transfer(checker.type_table, destination_type):
         return
     kind = arena.nodes[expression.index].kind
+    if kind == syntax.SyntaxKind.EXPR_SET:
+        return
+    if kind == syntax.SyntaxKind.EXPR_MAP:
+        expression_node = arena.nodes[expression.index]
+        for offset in range(0, expression_node.child_count):
+            entry_id = arena.children[expression_node.first_child + offset]
+            entry = arena.nodes[entry_id.index]
+            if entry.kind == syntax.SyntaxKind.EXPR_MAP_ENTRY and entry.child_count > 1:
+                value = arena.children[entry.first_child + 1]
+                value_type = infer_expression_type(checker, arena, value, source, current_scope)
+                validate_partial_move_source(checker, arena, value, value_type, value_type, source, current_scope)
+        return
+    if kind == syntax.SyntaxKind.EXPR_LIST or kind == syntax.SyntaxKind.EXPR_TUPLE:
+        expression_node = arena.nodes[expression.index]
+        for offset in range(0, expression_node.child_count):
+            child_id = arena.children[expression_node.first_child + offset]
+            child_type = infer_expression_type(checker, arena, child_id, source, current_scope)
+            validate_partial_move_source(checker, arena, child_id, child_type, child_type, source, current_scope)
+        return
     if kind == syntax.SyntaxKind.EXPR_NAME:
         node = arena.nodes[expression.index]
         found = symbols.missing_symbol()
@@ -301,6 +320,7 @@ def validate_closure_constructor(checker: &checker_core.Checker, arena: &const s
         checker_core.emit_error(checker, 380, environment_node.start, environment_node.length, environment_node.line, environment_node.column)
         checker.model.record_expr_type(id, types.type_error())
         return
+    validate_partial_move_source(checker, arena, environment_expression, environment_type, environment_type, source, current_scope)
     if adapter_expression.index < 0:
         checker.model.record_expr_type(id, types.type_error())
         return

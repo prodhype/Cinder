@@ -2290,12 +2290,12 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append("_hash(value);\n    bool found = false;\n    size_t slot = ")
     builder.append(name[0:len(name)])
     builder.append("_find_slot(self, value, hash, &found);\n    if (found) {\n")
-    if not element_info.is_c_string:
+    if not element_info.is_string and not element_info.is_c_string:
         builder.append("        ")
         emit_drop_statement(builder, element_info, "value")
     builder.append("        return false;\n    }\n    if (self->entries[slot].state == 2) self->tombstones -= 1;\n")
     builder.append("    self->entries[slot].value = ")
-    if element_info.is_c_string:
+    if element_info.is_string or element_info.is_c_string:
         emit_clone_expression(builder, element_info, "value")
     else:
         builder.append("value")
@@ -2332,7 +2332,7 @@ def emit_set_specialization_body(builder: &StringBuilder, name: &const String, e
     builder.append("_reserve(&result, self->capacity);\n    for (size_t index = 0; index < self->capacity; index += 1) {\n        if (self->entries[index].state != 1) continue;\n        ")
     builder.append(element_info.c_type[0:len(element_info.c_type)])
     builder.append(" value = ")
-    if element_info.is_c_string:
+    if element_info.is_string or element_info.is_c_string:
         builder.append("self->entries[index].value")
     else:
         emit_clone_expression(builder, element_info, "self->entries[index].value")
@@ -2365,7 +2365,7 @@ def emit_set_algebra_helpers(builder: &StringBuilder, name: &const String, eleme
     builder.append(" *other) {\n    if (self == NULL || other == NULL || self == other) return;\n    for (size_t index = 0; index < other->capacity; index += 1) {\n        if (other->entries[index].state != 1) continue;\n        ")
     builder.append(element_info.c_type[0:len(element_info.c_type)])
     builder.append(" value = ")
-    if element_info.is_c_string:
+    if element_info.is_string or element_info.is_c_string:
         builder.append("other->entries[index].value")
     else:
         emit_clone_expression(builder, element_info, "other->entries[index].value")
@@ -2461,7 +2461,7 @@ def emit_set_filtered_copy_loop(
     builder.append("->entries[index].value)) {\n            ")
     builder.append(element_info.c_type[0:len(element_info.c_type)])
     builder.append(" value = ")
-    if element_info.is_c_string:
+    if element_info.is_string or element_info.is_c_string:
         builder.append(source_name[0:len(source_name)])
         builder.append("->entries[index].value")
     else:
@@ -2588,7 +2588,7 @@ def emit_map_specialization_body(
     builder.append(" *existing = ")
     builder.append(name[0:len(name)])
     builder.append("_lookup_mut(self, key);\n    if (existing != NULL) {\n        ")
-    if not key_info.is_c_string:
+    if not key_info.is_string and not key_info.is_c_string:
         emit_drop_statement(builder, key_info, "key")
     builder.append("        ")
     emit_drop_statement(builder, value_info, "*existing")
@@ -2601,7 +2601,7 @@ def emit_map_specialization_body(
     builder.append("_Entry *)cinder_grow_array(self->entries, &self->entries_capacity, entry_index + 1, sizeof(")
     builder.append(name[0:len(name)])
     builder.append("_Entry));\n    self->entries_length += 1;\n    self->entries[entry_index].key = ")
-    if key_info.is_c_string:
+    if key_info.is_string or key_info.is_c_string:
         emit_clone_expression(builder, key_info, "key")
     else:
         builder.append("key")
@@ -2683,7 +2683,7 @@ def emit_map_specialization_body(
         builder.append("_reserve(&result, self->capacity);\n    for (size_t index = 0; index < self->entries_length; index += 1) {\n        if (!self->entries[index].occupied) continue;\n        ")
         builder.append(key_info.c_type[0:len(key_info.c_type)])
         builder.append(" key = ")
-        if key_info.is_c_string:
+        if key_info.is_string or key_info.is_c_string:
             builder.append("self->entries[index].key")
         else:
             emit_clone_expression(builder, key_info, "self->entries[index].key")

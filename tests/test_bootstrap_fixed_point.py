@@ -2034,6 +2034,208 @@ def test_gen2_supports_file_valued_maps(
     assert_compiler_supports_file_valued_maps(gen2, tmp_path)
 
 
+def aggregate_move_resource_definition() -> str:
+    return (
+        "class Resource:\n"
+        "    label: i32\n"
+        "    text: String\n"
+        "\n"
+        "    def __init__(self, label: i32, text: String):\n"
+        "        self.label = label\n"
+        "        self.text = text\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.label)\n'
+        "\n"
+    )
+
+
+def assert_compiler_validates_aggregate_literal_moves(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    prefix = (
+        aggregate_move_resource_definition()
+        + "struct Holder:\n"
+        "    value: Resource\n"
+        "    text: String\n"
+        "\n"
+    )
+    invalid_initializers = (
+        "    values: List[Resource] = [holder.value]\n",
+        "    values: Map[i32, Resource] = {1: holder.value}\n",
+        "    values: Tuple[Resource] = (holder.value,)\n",
+        "    values: Resource[1] = [holder.value]\n",
+    )
+    for index, initializer in enumerate(invalid_initializers):
+        rejected = tmp_path / f"partial_aggregate_move_{index}.ci"
+        rejected.write_text(
+            prefix
+            + "def main() -> i32:\n"
+            '    holder = Holder(value=Resource(9, "owned"), text="set")\n'
+            + initializer
+            + "    return 0\n",
+            encoding="utf-8",
+        )
+        checked = run_gen1(compiler, "check", str(rejected))
+        assert checked.returncode == 1
+        assert checked.stdout.startswith("E 254 ")
+
+    accepted = tmp_path / "nested_local_aggregate_moves.ci"
+    accepted.write_text(
+        aggregate_move_resource_definition()
+        + "struct TextHolder:\n"
+        "    text: String\n"
+        "\n"
+        + "def check_clones() -> i32:\n"
+        '    set_value = "set"\n'
+        "    set_values: Set[String] = {set_value}\n"
+        '    key_holder = TextHolder(text="key")\n'
+        "    key_values: Map[String, i32] = {key_holder.text: 1}\n"
+        '    set_value.append("x")\n'
+        '    key_holder.text.append("x")\n'
+        '    if "set" not in set_values or "setx" in set_values:\n'
+        "        return 1\n"
+        '    if "key" not in key_values or "keyx" in key_values:\n'
+        "        return 2\n"
+        "    return 0\n"
+        "\n"
+        + "def exercise() -> void:\n"
+        '    list_resource = Resource(1, "list")\n'
+        "    list_values: List[Resource] = [list_resource]\n"
+        '    map_resource = Resource(2, "map")\n'
+        "    map_values: Map[i32, Resource] = {1: map_resource}\n"
+        '    tuple_resource = Resource(3, "tuple")\n'
+        "    tuple_values: Tuple[Resource] = (tuple_resource,)\n"
+        '    array_resource = Resource(4, "array")\n'
+        "    array_values: Resource[1] = [array_resource]\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    exercise()\n"
+        "    return check_clones()\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(compiler, "emit-c", str(accepted))
+    assert emitted.returncode == 0, emitted.stderr
+    for name in (
+        "list_resource",
+        "map_resource",
+        "tuple_resource",
+        "array_resource",
+    ):
+        assert f"_Resource__drop(&{name});" not in emitted.stdout
+    assert "cinder_string_drop(&set_value);" in emitted.stdout
+
+    output = tmp_path / "nested-local-aggregate-moves"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(accepted),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "nested-local-aggregate-moves-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert sorted(ran.stdout.splitlines()) == [
+        "drop 1",
+        "drop 2",
+        "drop 3",
+        "drop 4",
+    ]
+
+
+def test_gen1_validates_aggregate_literal_moves(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_validates_aggregate_literal_moves(gen1_compiler, tmp_path)
+
+
+def test_gen2_validates_aggregate_literal_moves(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_validates_aggregate_literal_moves(gen2, tmp_path)
+
+
+def assert_compiler_validates_closure_environment_moves(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    prefix = (
+        aggregate_move_resource_definition()
+        + "struct Env:\n"
+        "    resource: Resource\n"
+        "\n"
+        "struct Holder:\n"
+        "    env: Env\n"
+        "\n"
+        "def read_env(env: &const Env) -> i32:\n"
+        "    return env.resource.label\n"
+        "\n"
+    )
+    rejected = tmp_path / "partial_closure_environment_move.ci"
+    rejected.write_text(
+        prefix
+        + "def main() -> i32:\n"
+        '    holder = Holder(env=Env(resource=Resource(8, "owned")))\n'
+        "    callback = closure(holder.env, read_env)\n"
+        "    return callback() - 8\n",
+        encoding="utf-8",
+    )
+    checked = run_gen1(compiler, "check", str(rejected))
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E 254 ")
+
+    accepted = tmp_path / "local_closure_environment_move.ci"
+    accepted.write_text(
+        prefix
+        + "def main() -> i32:\n"
+        '    env = Env(resource=Resource(7, "owned"))\n'
+        "    callback = closure(env, read_env)\n"
+        "    return callback() - 7\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(compiler, "emit-c", str(accepted))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "_Env__drop(&env);" not in emitted.stdout
+    assert "_Env__drop(&(self->env));" in emitted.stdout
+
+    output = tmp_path / "local-closure-environment-move"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(accepted),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "local-closure-environment-move-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "drop 7\n"
+
+
+def test_gen1_validates_closure_environment_moves(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_validates_closure_environment_moves(gen1_compiler, tmp_path)
+
+
+def test_gen2_validates_closure_environment_moves(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_validates_closure_environment_moves(gen2, tmp_path)
+
+
 def assert_compiler_drops_specialized_nominal_locals(
     compiler: Path,
     tmp_path: Path,

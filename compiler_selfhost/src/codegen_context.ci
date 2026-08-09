@@ -648,6 +648,19 @@ def mark_context_expression_moved(arena: &const SyntaxArena, context: &ModuleCod
     if id.index < 0:
         return
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_SET:
+        return
+    if node.kind == SyntaxKind.EXPR_MAP:
+        for offset in range(0, node.child_count):
+            entry_id = arena.children[node.first_child + offset]
+            entry = arena.nodes[entry_id.index]
+            if entry.kind == SyntaxKind.EXPR_MAP_ENTRY and entry.child_count > 1:
+                mark_context_expression_moved(arena, context, arena.children[entry.first_child + 1], source)
+        return
+    if node.kind == SyntaxKind.EXPR_LIST or node.kind == SyntaxKind.EXPR_TUPLE:
+        for offset in range(0, node.child_count):
+            mark_context_expression_moved(arena, context, arena.children[node.first_child + offset], source)
+        return
     if node.kind != SyntaxKind.EXPR_NAME:
         return
     name = source[node.value_start:node.value_start + node.value_length]
