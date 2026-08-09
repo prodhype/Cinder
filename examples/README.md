@@ -16,6 +16,8 @@
 
 `aggregate_ownership.ci` demonstrates aggregate ownership: struct/class fields owning Lists/Maps/Sets/Files and destructor-bearing classes; nested collections and owning elements; by-value parameters and returns; `Option`/`Result`/`Tuple`/array wrappers; field reassignment; and local moves.
 
+`ownership_edge_cases.ci` is a runnable ownership regression matrix: drop-before-store for every supported assignment target, single-evaluation checks for indexed replacement, owning and borrowing calls through function/closure values, and `Map.get` coverage for named scalar values.
+
 `owned.ci` demonstrates `Owned[T]` heap ownership: construct with `Owned(value)`, mutate through `*`, borrow with `&*`, nest `Option[Owned[Node]]`, move-only transfer, and deterministic drop of destructor-bearing payloads.
 
 `generics.ci` demonstrates user-defined generics: monomorphized `struct Box[T]`, `def identity[T]`, `variant Tagged[T]`, and `abstract class Writer[T]` specialized to readable C names such as `Box_i32`.

@@ -1,0 +1,296 @@
+# Ownership edge cases for replacement, callable transfers, and Map.get cloning.
+#
+# Covered here:
+# - drop-before-store for names, fields, fixed arrays, Lists, nested Lists, and Maps
+# - single evaluation of indexed targets, Map keys, and replacement expressions
+# - calls through function and closure locals with fresh and moved owning values
+# - calls through function- and closure-valued parameters
+# - borrowed foreach elements passed through borrowing function and closure values
+# - Map.get for every named scalar supported by semantic clone codegen
+# - present and missing Map.get results
+#
+# Rejected ownership transfers are kept as commented anti-patterns beside the
+# accepted borrowing forms.
+
+drop_count: i32 = 0
+drop_sum: i32 = 0
+factory_calls: i32 = 0
+index_calls: i32 = 0
+key_calls: i32 = 0
+
+
+class Resource:
+    label: i32
+    text: String
+
+    def __init__(self, label: i32):
+        self.label = label
+        self.text = to_string(label)
+
+    def __del__(self):
+        drop_count += 1
+        drop_sum += self.label
+
+
+struct Holder:
+    value: Resource
+
+
+struct ConsumeEnv:
+    offset: i32
+
+
+def make_resource(label: i32) -> Resource:
+    factory_calls += 1
+    return Resource(label)
+
+
+def first_index() -> usize:
+    index_calls += 1
+    return 0
+
+
+def existing_key() -> i32:
+    key_calls += 1
+    return 1
+
+
+def exercise_assignment_targets() -> i32:
+    fixed: Resource[1] = [Resource(1)]
+    before = drop_count
+    before_factory = factory_calls
+    before_index = index_calls
+    fixed[first_index()] = make_resource(2)
+    if factory_calls != before_factory + 1 or index_calls != before_index + 1:
+        return 1
+    if drop_count != before + 1:
+        return 2
+
+    values: List[Resource] = [Resource(3)]
+    before = drop_count
+    before_factory = factory_calls
+    before_index = index_calls
+    values[first_index()] = make_resource(4)
+    if factory_calls != before_factory + 1 or index_calls != before_index + 1:
+        return 3
+    if drop_count != before + 1:
+        return 4
+
+    nested: List[List[Resource]] = [[Resource(5)]]
+    before = drop_count
+    before_factory = factory_calls
+    before_index = index_calls
+    nested[first_index()] = [make_resource(6)]
+    if factory_calls != before_factory + 1 or index_calls != before_index + 1:
+        return 5
+    if drop_count != before + 1:
+        return 6
+
+    mapped: Map[i32, Resource] = {1: Resource(7)}
+    before = drop_count
+    before_factory = factory_calls
+    before_key = key_calls
+    mapped[existing_key()] = make_resource(8)
+    if factory_calls != before_factory + 1 or key_calls != before_key + 1:
+        return 7
+    if drop_count != before + 1:
+        return 8
+
+    local = Resource(9)
+    before = drop_count
+    local = Resource(10)
+    if drop_count != before + 1:
+        return 9
+
+    holder = Holder(value=Resource(11))
+    before = drop_count
+    holder.value = Resource(12)
+    if drop_count != before + 1:
+        return 10
+
+    return 0
+
+
+def consume_resource(resource: Resource) -> i32:
+    return resource.label
+
+
+def inspect_resource(resource: &const Resource) -> i32:
+    return resource.label
+
+
+def invoke_function(
+    callback: def(Resource) -> i32,
+    resource: Resource,
+) -> i32:
+    return callback(resource)
+
+
+def exercise_function_values() -> i32:
+    callback = consume_resource
+    before = drop_count
+
+    if callback(Resource(20)) != 20 or drop_count != before + 1:
+        return 1
+
+    moved = Resource(21)
+    if callback(moved) != 21 or drop_count != before + 2:
+        return 2
+
+    if invoke_function(callback, Resource(22)) != 22 or drop_count != before + 3:
+        return 3
+
+    inspect = inspect_resource
+    borrowed_values: List[Resource] = [Resource(23), Resource(24)]
+    before_borrow = drop_count
+    total: i32 = 0
+    for item in borrowed_values:
+        total += inspect(&item)
+        # WRONG: callback(item)
+        # E254: callback takes Resource by value, but item is borrowed from the List.
+    if total != 47 or drop_count != before_borrow:
+        return 4
+
+    return 0
+
+
+def consume_with_env(env: &const ConsumeEnv, resource: Resource) -> i32:
+    return resource.label + env.offset
+
+
+def inspect_with_env(env: &const ConsumeEnv, resource: &const Resource) -> i32:
+    return resource.label + env.offset
+
+
+def invoke_closure(
+    callback: closure[const ConsumeEnv](Resource) -> i32,
+    resource: Resource,
+) -> i32:
+    return callback(resource)
+
+
+def exercise_closure_values() -> i32:
+    consume = closure(ConsumeEnv(offset=1), consume_with_env)
+    before = drop_count
+
+    if consume(Resource(30)) != 31 or drop_count != before + 1:
+        return 1
+
+    moved = Resource(31)
+    if consume(moved) != 32 or drop_count != before + 2:
+        return 2
+
+    if invoke_closure(consume, Resource(32)) != 33 or drop_count != before + 3:
+        return 3
+
+    inspect = closure(ConsumeEnv(offset=2), inspect_with_env)
+    borrowed_values: List[Resource] = [Resource(33), Resource(34)]
+    before_borrow = drop_count
+    total: i32 = 0
+    for item in borrowed_values:
+        total += inspect(item)
+        # WRONG: consume(item)
+        # E254: the consuming closure cannot take a borrowed foreach element.
+    if total != 71 or drop_count != before_borrow:
+        return 4
+
+    return 0
+
+
+def exercise_named_scalar_map_get() -> i32:
+    i8_values: Map[i32, i8] = {1: cast[i8](8)}
+    i8_value: Option[i8] = i8_values.get(1)
+    if not i8_value.is_some or i8_value.value != cast[i8](8):
+        return 1
+
+    i16_values: Map[i32, i16] = {1: cast[i16](16)}
+    i16_value: Option[i16] = i16_values.get(1)
+    if not i16_value.is_some or i16_value.value != cast[i16](16):
+        return 2
+
+    u8_values: Map[i32, u8] = {1: cast[u8](18)}
+    u8_value: Option[u8] = u8_values.get(1)
+    if not u8_value.is_some or u8_value.value != cast[u8](18):
+        return 3
+
+    u16_values: Map[i32, u16] = {1: cast[u16](26)}
+    u16_value: Option[u16] = u16_values.get(1)
+    if not u16_value.is_some or u16_value.value != cast[u16](26):
+        return 4
+
+    u32_values: Map[i32, u32] = {1: cast[u32](32)}
+    u32_value: Option[u32] = u32_values.get(1)
+    if not u32_value.is_some or u32_value.value != cast[u32](32):
+        return 5
+
+    u64_values: Map[i32, u64] = {1: cast[u64](64)}
+    u64_value: Option[u64] = u64_values.get(1)
+    if not u64_value.is_some or u64_value.value != cast[u64](64):
+        return 6
+
+    isize_values: Map[i32, isize] = {1: cast[isize](70)}
+    isize_value: Option[isize] = isize_values.get(1)
+    if not isize_value.is_some or isize_value.value != cast[isize](70):
+        return 7
+
+    usize_values: Map[i32, usize] = {1: cast[usize](80)}
+    usize_value: Option[usize] = usize_values.get(1)
+    if not usize_value.is_some or usize_value.value != cast[usize](80):
+        return 8
+
+    c_int_values: Map[i32, c_int] = {1: cast[c_int](90)}
+    c_int_value: Option[c_int] = c_int_values.get(1)
+    if not c_int_value.is_some or c_int_value.value != cast[c_int](90):
+        return 9
+
+    c_long_values: Map[i32, c_long] = {1: cast[c_long](100)}
+    c_long_value: Option[c_long] = c_long_values.get(1)
+    if not c_long_value.is_some or c_long_value.value != cast[c_long](100):
+        return 10
+
+    c_size_values: Map[i32, c_size_t] = {1: cast[c_size_t](110)}
+    c_size_value: Option[c_size_t] = c_size_values.get(1)
+    if not c_size_value.is_some or c_size_value.value != cast[c_size_t](110):
+        return 11
+
+    missing: Option[u8] = u8_values.get(2)
+    if missing.is_some:
+        return 12
+
+    # User-defined destructor-bearing values remain non-cloneable:
+    # resources: Map[i32, Resource] = {1: Resource(40)}
+    # copied = resources.get(1)  # E254
+
+    return 0
+
+
+def main() -> i32:
+    assignment_result = exercise_assignment_targets()
+    if assignment_result != 0:
+        return 10 + assignment_result
+    if drop_count != 12 or drop_sum != 78:
+        return 21
+
+    function_result = exercise_function_values()
+    if function_result != 0:
+        return 30 + function_result
+    if drop_count != 17 or drop_sum != 188:
+        return 35
+
+    closure_result = exercise_closure_values()
+    if closure_result != 0:
+        return 40 + closure_result
+    if drop_count != 22 or drop_sum != 348:
+        return 45
+
+    scalar_result = exercise_named_scalar_map_get()
+    if scalar_result != 0:
+        return 50 + scalar_result
+
+    print("ownership edge cases: ok")
+    print("drop_count: ", drop_count)
+    print("drop_sum: ", drop_sum)
+    print("factory_calls: ", factory_calls)
+    print("index_calls: ", index_calls)
+    print("key_calls: ", key_calls)
+    return 0
