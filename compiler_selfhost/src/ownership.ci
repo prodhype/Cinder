@@ -68,12 +68,21 @@ def type_needs_drop_for_table(table: &const types.TypeTable, type_id: TypeId) ->
 def type_needs_drop_record(table: &const types.TypeTable, record: types.TypeRecord) -> bool:
     if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.STRING_BUILDER or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.FILE:
         return true
-    if record.kind == types.TypeKind.CONST:
+    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.ARRAY:
         return type_needs_drop_for_table(table, record.inner)
     if record.kind == types.TypeKind.CLOSURE:
         return type_needs_drop_for_table(table, record.second)
-    if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.RESULT or record.kind == types.TypeKind.TUPLE:
-        return true
+    if record.kind == types.TypeKind.OPTION:
+        return type_needs_drop_for_table(table, record.inner)
+    if record.kind == types.TypeKind.RESULT:
+        return type_needs_drop_for_table(table, record.inner) or type_needs_drop_for_table(table, record.second)
+    if record.kind == types.TypeKind.TUPLE:
+        offset: i32 = 0
+        while offset < record.flags:
+            if type_needs_drop_for_table(table, table.type_args[cast[usize](record.extra + offset)]):
+                return true
+            offset += 1
+        return false
     if record.kind == types.TypeKind.STRUCT or record.kind == types.TypeKind.CLASS:
         return true
     return false

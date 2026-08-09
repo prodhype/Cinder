@@ -35,6 +35,18 @@ def test_owned_expected_exit_is_success() -> None:
     assert smoke.classify(42, "drop 1\n", "", False, 42) == "ok"
 
 
+def test_smoke_targets_cover_top_level_examples_and_projects() -> None:
+    targets = smoke.smoke_targets(ROOT)
+    assert len(targets) == smoke.EXPECTED_TARGETS == 38
+    assert targets[:-2] == sorted((ROOT / "examples").glob("*.ci"))
+    assert [target.name for target in targets[-2:]] == [
+        "class_project",
+        "module_project",
+    ]
+    assert ROOT / "examples" / "aggregate_ownership.ci" in targets
+    assert ROOT / "examples" / "funnel_hash.ci" in targets
+
+
 def test_generic_list_assignment_is_an_expected_aggregate_error() -> None:
     message = (
         "assigning to 'CinderList_i32' (aka 'struct CinderList_i32') "
@@ -226,3 +238,29 @@ def test_render_reports_missing_first_c_error_for_non_toolchain_failures() -> No
     )
 
     assert "- examples/input.ci: no non-warning C error found (kind: gen3_timeout)" in report
+
+
+def test_render_runtime_signal_and_raw_stderr() -> None:
+    stderr = "libsystem_malloc: BUG IN CLIENT OF LIBMALLOC: not an allocated block"
+    result = {
+        "rel": "examples/aggregate_ownership.ci",
+        "status": "FAIL",
+        "kind": "gen3_runtime_nonzero",
+        "exit": 133,
+        "stdout": "",
+        "stderr": stderr,
+        "elapsed": 0.8,
+        "timed_out": False,
+        "first_c_error": None,
+    }
+
+    report = smoke.render_report(
+        [result],
+        report_mode="full",
+        gen3=ROOT / ".cinder" / "selfhost-proof" / "cinder-gen3",
+        now="2026-08-08 00:00:00 UTC",
+    )
+
+    assert "gen3 exit=133" in report
+    assert "signal: SIGTRAP" in report
+    assert stderr in report

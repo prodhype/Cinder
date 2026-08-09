@@ -231,6 +231,11 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
     elif node.kind == syntax.SyntaxKind.EXPR_TUPLE:
         inferred_tuple = checker_types.infer_expression_type(checker, arena, id, source, current_scope)
         ignored_inferred_tuple = inferred_tuple
+    elif node.kind == syntax.SyntaxKind.EXPR_STMT:
+        expression = checker_core.first_child(arena, id)
+        if expression.index >= 0:
+            expression_type = checker_types.infer_expression_type(checker, arena, expression, source, current_scope)
+            checker_types.validate_partial_move_source(checker, arena, expression, expression_type, expression_type, source, current_scope)
     elif node.kind == syntax.SyntaxKind.RETURN_STMT:
         if node.child_count == 0:
             if expected_return.index != types.type_void().index:
@@ -238,6 +243,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             return
         returned = checker_core.first_child(arena, id)
         returned_type = checker_types.infer_expression_type(checker, arena, returned, source, current_scope)
+        checker_types.validate_partial_move_source(checker, arena, returned, returned_type, expected_return, source, current_scope)
         if expected_return.index != types.type_void().index and returned_type.index != types.type_error().index and not checker_types.types_compatible(checker, expected_return, returned_type) and not (checker.specialization_declaration.index < 0 and checker_core.type_is_unbound_parameter(checker, expected_return, source)):
             returned_node = arena.nodes[returned.index]
             checker_core.emit_error(checker, 107, returned_node.start, returned_node.length, returned_node.line, returned_node.column)
@@ -245,6 +251,12 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
     elif node.kind == syntax.SyntaxKind.ASSIGN_STMT:
         declare_assignment_target_if_missing(checker, arena, id, source, current_scope)
         validate_set_compound_assignment(checker, arena, id, source, current_scope)
+        target = checker_core.first_child(arena, id)
+        value = checker_core.second_child(arena, id)
+        if target.index >= 0 and value.index >= 0:
+            target_type = checker_types.infer_expression_type(checker, arena, target, source, current_scope)
+            value_type = checker_types.infer_expression_type(checker, arena, value, source, current_scope)
+            checker_types.validate_partial_move_source(checker, arena, value, value_type, target_type, source, current_scope)
     elif node.kind == syntax.SyntaxKind.FOR_EACH_STMT:
         declare_for_each_target_if_missing(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.IF_STMT or node.kind == syntax.SyntaxKind.WHILE_STMT:
@@ -383,7 +395,7 @@ def declare_for_each_target_if_missing(checker: &checker_core.Checker, arena: &c
         local_type,
         target,
         current_scope,
-        0,
+        1,
     )
     checker.model.record_declaration_symbol(target, symbol)
     checker.model.record_expr_type(target, local_type)
@@ -496,6 +508,7 @@ def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.Synta
             checker_core.emit_error(checker, 297, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
         elif inferred_type.kind == types.TypeKind.SET and not checker_types.semantic_type_is_hashable(checker.type_table, inferred_type.inner, source):
             checker_core.emit_error(checker, 300, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+        checker_types.validate_partial_move_source(checker, arena, initializer, inferred, inferred, source, current_scope)
         return
     annotation_type = checker_core.resolve_type_node(checker, arena, annotation, source)
     checker.model.record_type_node(annotation, annotation_type)
@@ -506,6 +519,7 @@ def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.Synta
     initializer_node = arena.nodes[initializer.index]
     if initializer_type.index >= 0 and initializer_type.index != types.type_error().index and not checker_types.types_compatible(checker, annotation_type, initializer_type):
         checker_core.emit_error(checker, 107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+    checker_types.validate_partial_move_source(checker, arena, initializer, initializer_type, annotation_type, source, current_scope)
 
 
 def initializer_matches_nominal_annotation(

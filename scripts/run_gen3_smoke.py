@@ -20,7 +20,7 @@ OUT = ROOT / "smoke_test.txt"
 PROGRESS = Path("/tmp/cinder_gen3_smoke_progress.log")
 MAX_BLOB = 8000
 TIMEOUT_SEC = 60
-EXPECTED_TARGETS = 37
+EXPECTED_TARGETS = 38
 
 STDIN = {
     "input.ci": "World\n",
@@ -229,6 +229,16 @@ def compiler_error_lines(stdout: str, stderr: str) -> list[str]:
         if parsed["severity"].lower() in {"error", "fatal error"}:
             errors.append(line)
     return errors
+
+
+def exit_signal_name(exit_code: int) -> str:
+    signal_number = -exit_code if exit_code < 0 else exit_code - 128
+    if signal_number <= 0:
+        return ""
+    try:
+        return signal.Signals(signal_number).name
+    except ValueError:
+        return ""
 
 
 def _parse_c_diagnostic(line: str) -> dict[str, str] | None:
@@ -532,6 +542,9 @@ def _append_failures(
             lines.append(f"gen3 exit=timeout after {timeout}s")
         else:
             lines.append(f"gen3 exit={r['exit']}")
+            signal_name = exit_signal_name(int(r["exit"]))
+            if signal_name:
+                lines.append(f"signal: {signal_name}")
         lines.append(f"kind: {r['kind']}")
         first_c_error = r.get("first_c_error")
         if isinstance(first_c_error, FirstCError):
@@ -551,6 +564,8 @@ def _append_failures(
         errors = compiler_error_lines(str(r["stdout"]), str(r["stderr"]))
         if errors:
             lines.append(truncate("\n".join(errors)).rstrip("\n"))
+        elif str(r["stderr"]).strip():
+            lines.append(truncate(str(r["stderr"]).strip()).rstrip("\n"))
         else:
             lines.append(f"(no parsed C errors; kind: {r['kind']})")
         lines.append("")
