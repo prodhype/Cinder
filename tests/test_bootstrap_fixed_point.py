@@ -1880,6 +1880,160 @@ def test_gen2_rejects_shallow_nominal_map_copies(
     assert_compiler_rejects_shallow_nominal_map_copies(gen2, tmp_path)
 
 
+def assert_compiler_rejects_consuming_borrowed_foreach_values(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    resource = (
+        "class Resource:\n"
+        "    text: String\n"
+        "\n"
+        "    def __init__(self, text: String):\n"
+        "        self.text = text\n"
+        "\n"
+        "    def __del__(self):\n"
+        '        print("drop", self.text)\n'
+        "\n"
+    )
+    rejected = tmp_path / "consumed_foreach_borrow.ci"
+    rejected.write_text(
+        resource
+        + "def consume(value: Resource) -> void:\n"
+        "    pass\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[Resource] = []\n"
+        '    values.append(Resource("owned"))\n'
+        "    for item in values:\n"
+        "        consume(item)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    checked = run_gen1(compiler, "check", str(rejected))
+    assert checked.returncode == 1
+    assert checked.stdout.startswith("E 254 ")
+
+    borrowed = tmp_path / "inspected_foreach_borrow.ci"
+    borrowed.write_text(
+        resource
+        + "def inspect(value: &const Resource) -> i32:\n"
+        "    return cast[i32](len(value.text))\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    values: List[Resource] = []\n"
+        '    values.append(Resource("owned"))\n'
+        "    total: i32 = 0\n"
+        "    for item in values:\n"
+        "        total += inspect(item)\n"
+        "    return total - 5\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(compiler, "emit-c", str(borrowed))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "_Resource__drop(&item);" not in emitted.stdout
+
+    output = tmp_path / "inspected-foreach-borrow"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(borrowed),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "inspected-foreach-borrow-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout == "drop owned\n"
+
+
+def test_gen1_rejects_consuming_borrowed_foreach_values(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_rejects_consuming_borrowed_foreach_values(
+        gen1_compiler,
+        tmp_path,
+    )
+
+
+def test_gen2_rejects_consuming_borrowed_foreach_values(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_rejects_consuming_borrowed_foreach_values(gen2, tmp_path)
+
+
+def assert_compiler_supports_file_valued_maps(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "file_map_first.bin"
+    second = tmp_path / "file_map_second.bin"
+    source = tmp_path / "file_valued_map.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        f'    files: Map[i32, File] = {{1: open("{first}", "wb")}}\n'
+        "    payload: u8[1] = [65]\n"
+        "    if files[1].write(payload) != 1:\n"
+        "        return 1\n"
+        f'    files[1] = open("{second}", "wb")\n'
+        "    if len(files) != 1:\n"
+        "        return 2\n"
+        "    files.clear()\n"
+        "    return cast[i32](len(files))\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    for helper in (
+        "CinderMap_i32_FILE_set",
+        "CinderMap_i32_FILE_len",
+        "CinderMap_i32_FILE_at_ref",
+        "CinderMap_i32_FILE_clear",
+    ):
+        assert helper in generated
+    assert "FILE * const *CinderMap_i32_FILE_lookup(" in generated
+    assert "FILE * const *CinderMap_i32_FILE_at_ref(" in generated
+    assert "fclose(self->entries[index].value);" in generated
+    assert "CinderMap_i32_FILE_get(" not in generated
+    assert "CinderMap_i32_FILE_clone(" not in generated
+
+    output = tmp_path / "file-valued-map"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "file-valued-map-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+    assert first.read_bytes() == b"A"
+    assert second.read_bytes() == b""
+
+
+def test_gen1_supports_file_valued_maps(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_file_valued_maps(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_file_valued_maps(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_file_valued_maps(gen2, tmp_path)
+
+
 def assert_compiler_drops_specialized_nominal_locals(
     compiler: Path,
     tmp_path: Path,

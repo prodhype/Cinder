@@ -2494,7 +2494,7 @@ def emit_map_specialization_body(
     builder.append(" key;\n    ")
     builder.append(value_info.c_type[0:len(value_info.c_type)])
     builder.append(" value;\n    uint64_t hash;\n    bool occupied;\n};\n")
-    if not key_info.is_complete or key_info.hash_kind == ManagedHashKind.UNSUPPORTED or (not value_info.is_complete and not value_info.is_nominal):
+    if not key_info.is_complete or key_info.hash_kind == ManagedHashKind.UNSUPPORTED or (not value_info.is_complete and not value_info.is_nominal and not value_info.is_file):
         builder.append("static inline void ")
         builder.append(name[0:len(name)])
         builder.append("_drop(")
@@ -2561,9 +2561,9 @@ def emit_map_specialization_body(
     builder.append(name[0:len(name)])
     builder.append("_hash(key));\n    if (bucket == SIZE_MAX) return NULL;\n    return &self->entries[self->buckets[bucket]].value;\n}\n")
 
-    builder.append("static inline const ")
+    builder.append("static inline ")
     builder.append(value_info.c_type[0:len(value_info.c_type)])
-    builder.append(" *")
+    builder.append(" const *")
     builder.append(name[0:len(name)])
     builder.append("_lookup(const ")
     builder.append(name[0:len(name)])
@@ -2610,17 +2610,17 @@ def emit_map_specialization_body(
     builder.append("_hash(key);\n    self->entries[entry_index].occupied = true;\n")
     builder.append("    size_t slot = (size_t)self->entries[entry_index].hash & (self->capacity - 1);\n    while (self->buckets[slot] != SIZE_MAX) slot = (slot + 1) & (self->capacity - 1);\n    self->buckets[slot] = entry_index;\n    self->length += 1;\n}\n")
 
-    builder.append("static inline const ")
+    builder.append("static inline ")
     builder.append(value_info.c_type[0:len(value_info.c_type)])
-    builder.append(" *")
+    builder.append(" const *")
     builder.append(name[0:len(name)])
     builder.append("_at_ref(const ")
     builder.append(name[0:len(name)])
     builder.append(" *self, ")
     builder.append(key_info.c_type[0:len(key_info.c_type)])
-    builder.append(" key) {\n    const ")
+    builder.append(" key) {\n    ")
     builder.append(value_info.c_type[0:len(value_info.c_type)])
-    builder.append(" *value = ")
+    builder.append(" const *value = ")
     builder.append(name[0:len(name)])
     builder.append("_lookup(self, key);\n    if (value == NULL) cinder_panic(\"missing map key\");\n    return value;\n}\n")
 
@@ -2700,7 +2700,7 @@ def emit_map_specialization_body(
     builder.append("_drop(")
     builder.append(name[0:len(name)])
     builder.append(" *self) {\n    if (self == NULL) return;\n    if (self->active_iterators != 0) cinder_panic(\"map dropped during iteration\");\n")
-    if key_info.is_string or key_info.is_c_string or len(key_info.drop_helper) > 0 or value_info.is_string or value_info.is_c_string or len(value_info.drop_helper) > 0:
+    if key_info.is_string or key_info.is_c_string or len(key_info.drop_helper) > 0 or value_info.is_string or value_info.is_file or value_info.is_c_string or len(value_info.drop_helper) > 0:
         builder.append("    for (size_t index = 0; index < self->entries_length; index += 1) {\n        if (!self->entries[index].occupied) continue;\n        ")
         emit_drop_statement(builder, key_info, "self->entries[index].key")
         builder.append("        ")

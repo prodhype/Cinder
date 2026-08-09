@@ -106,10 +106,25 @@ def validate_partial_move_source(
     value_type: types.TypeId,
     destination_type: types.TypeId,
     source: &const String,
+    current_scope: symbols.ScopeId,
 ) -> void:
     if expression.index < 0 or type_is_borrowed_for_transfer(checker.type_table, destination_type):
         return
     kind = arena.nodes[expression.index].kind
+    if kind == syntax.SyntaxKind.EXPR_NAME:
+        node = arena.nodes[expression.index]
+        found = symbols.missing_symbol()
+        for binding: semantic.NodeSymbolBinding in checker.model.name_symbols:
+            if binding.node.index == expression.index:
+                found = binding.symbol
+        if (
+            found.index >= 0
+            and checker.symbols.symbols[found.index].kind == symbols.SymbolKind.LOCAL
+            and checker.symbols.symbols[found.index].flags == 1
+            and checker_type_needs_drop(checker, arena, destination_type, source)
+        ):
+            checker_core.emit_error(checker, 254, node.start, node.length, node.line, node.column)
+        return
     if kind != syntax.SyntaxKind.EXPR_ATTRIBUTE and kind != syntax.SyntaxKind.EXPR_INDEX:
         return
     if not checker_type_needs_drop(checker, arena, value_type, source):
@@ -249,7 +264,7 @@ def validate_owned_constructor(
         checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
     argument = call_argument_value(arena, id, 0)
     payload_type = infer_expression_type(checker, arena, argument, source, current_scope)
-    validate_partial_move_source(checker, arena, argument, payload_type, payload_type, source)
+    validate_partial_move_source(checker, arena, argument, payload_type, payload_type, source, current_scope)
     callee_node = arena.nodes[callee.index]
     result = checker.type_table.generic1(
         types.TypeKind.OWNED,
@@ -390,7 +405,7 @@ def validate_declared_call_move_arguments(
         destination_type = value_type
         if parameter.index >= 0:
             destination_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter, source, value_type)
-        validate_partial_move_source(checker, arena, value, value_type, destination_type, source)
+        validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
 
 
@@ -456,7 +471,7 @@ def validate_nominal_constructor_move_arguments(
         destination_type = value_type
         if field.index >= 0:
             destination_type = checker_core.resolve_declared_type_or_default(checker, arena, field, source, value_type)
-        validate_partial_move_source(checker, arena, value, value_type, destination_type, source)
+        validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         if argument.flags == 0:
             positional_index += 1
 
@@ -926,7 +941,7 @@ def validate_collection_method_call(
         if argument.index >= 0:
             argument_type = infer_expression_type(checker, arena, argument, source, current_scope)
             if takes_element:
-                validate_partial_move_source(checker, arena, argument, argument_type, receiver_record.inner, source)
+                validate_partial_move_source(checker, arena, argument, argument_type, receiver_record.inner, source, current_scope)
         checker.model.record_expr_type(call_id, result)
         return
     if receiver_record.kind == types.TypeKind.MAP and (collections.text_equals(&member_name, "keys") or collections.text_equals(&member_name, "values") or collections.text_equals(&member_name, "items")):
