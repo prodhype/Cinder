@@ -1031,7 +1031,7 @@ def emit_module_declarations(
         if node.flags == 1:
             builder.append("const ")
         annotation = codegen_type_names.find_child_type(arena, id)
-        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id)
+        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id, context.active_user_specialization)
         if atomic_index >= 0:
             atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
             codegen_atomics.append_atomic_wrapper_name(builder, atomic_node.atomic_element_kind)
@@ -1131,7 +1131,7 @@ def emit_module_top_level(
         if node.flags == 1:
             builder.append("const ")
         annotation = codegen_type_names.find_child_type(arena, id)
-        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id)
+        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id, context.active_user_specialization)
         if atomic_index >= 0:
             atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
             codegen_atomics.append_atomic_wrapper_name(builder, atomic_node.atomic_element_kind)
@@ -1203,7 +1203,7 @@ def emit_module_function(
         context.local_start = len(context.local_types)
         context.pointer_start = len(context.pointer_names)
         codegen_context.register_module_parameters(arena, id, source, context)
-        codegen_atomics.emit_function_temporaries(arena, id, context.semantic_nodes, builder)
+        codegen_atomics.emit_function_temporaries(arena, id, context.semantic_nodes, context.active_user_specialization, builder)
         codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
         codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
         while len(context.local_types) > context.local_start:
@@ -1623,7 +1623,7 @@ def emit_module_methods(
                     context.local_start = len(context.local_types)
                     context.pointer_start = len(context.pointer_names)
                     codegen_context.register_module_parameters(arena, child_id, source, context)
-                    codegen_atomics.emit_function_temporaries(arena, child_id, context.semantic_nodes, builder)
+                    codegen_atomics.emit_function_temporaries(arena, child_id, context.semantic_nodes, context.active_user_specialization, builder)
                     codegen_stmt.emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
                     codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
                     while len(context.local_types) > context.local_start:

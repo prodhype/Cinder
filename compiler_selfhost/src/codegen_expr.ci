@@ -208,7 +208,7 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     if id.index < 0:
         builder.append("0")
         return
-    atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id)
+    atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id, context.active_user_specialization)
     if atomic_index >= 0:
         atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
         if atomic_node.kind != backend_ir.IRNodeKind.ATOMIC_INIT:

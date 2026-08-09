@@ -167,6 +167,20 @@ def test_atomic_generic_pointer_inference_checks_argument_once() -> None:
     assert "atomic_load_explicit" in generated
 
 
+def test_atomic_rejects_receiver_beyond_one_pointer_layer() -> None:
+    rendered = diagnostics(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 0\n"
+        "    pointer: *Atomic[u64] = &cell\n"
+        "    indirect: **Atomic[u64] = &pointer\n"
+        "    return cast[i32](indirect.load())\n"
+    )
+
+    assert "has no member 'load'" in rendered
+
+
 def test_atomic_receiver_records_address_use() -> None:
     unit = compile_unit(
         "from std.atomic import Atomic\n"

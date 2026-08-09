@@ -66,6 +66,7 @@ struct IRNodeId:
 struct IRNode:
     kind: IRNodeKind
     syntax: NodeId
+    specialization: i32
     type_id: TypeId
     first_child: i32
     child_count: i32
@@ -113,7 +114,7 @@ struct IRModule:
     summary: BackendSummary
     is_valid: bool
 
-    def add_node(self: &IRModule, kind: IRNodeKind, syntax_id: NodeId, type_id: TypeId, children: &const List[IRNodeId], flags: i32) -> IRNodeId:
+    def add_node(self: &IRModule, kind: IRNodeKind, syntax_id: NodeId, specialization: i32, type_id: TypeId, children: &const List[IRNodeId], flags: i32) -> IRNodeId:
         first_child = cast[i32](len(self.children))
         index: usize = 0
         while index < len(children):
@@ -127,6 +128,7 @@ struct IRModule:
             IRNode(
                 kind=kind,
                 syntax=syntax_id,
+                specialization=specialization,
                 type_id=type_id,
                 first_child=first_child,
                 child_count=child_count,
@@ -189,7 +191,14 @@ def lower(arena: &const SyntaxArena, root: NodeId, model: &const semantic.Semant
         summary=summary,
         is_valid=true,
     )
-    module.root = lower_node(module, arena, root, model)
+    module.root = lower_node(module, arena, root, model, -1)
+    model_user_specializations: &const List[semantic.UserSpecialization] = &model.user_specializations
+    specialization_index: i32 = 0
+    while specialization_index < cast[i32](len(model_user_specializations)):
+        declaration = model_user_specializations[cast[usize](specialization_index)].declaration
+        if declaration.index >= 0:
+            lower_node(module, arena, declaration, model, specialization_index)
+        specialization_index += 1
     copy_semantic_specializations(module, model)
     collect_module_specializations(module, table)
     module.is_valid = validate_atomic_ir(module, table)
@@ -285,26 +294,26 @@ def summarize_ir(module: &const IRModule) -> BackendSummary:
     return module.summary
 
 
-def lower_node(module: &IRModule, arena: &const SyntaxArena, id: NodeId, model: &const semantic.SemanticModel) -> IRNodeId:
+def lower_node(module: &IRModule, arena: &const SyntaxArena, id: NodeId, model: &const semantic.SemanticModel, specialization: i32) -> IRNodeId:
     if id.index < 0:
         return missing_ir_node()
     node = arena.nodes[id.index]
     child_nodes: List[IRNodeId] = []
     offset: i32 = 0
     while offset < node.child_count:
-        lowered = lower_node(module, arena, arena.children[node.first_child + offset], model)
+        lowered = lower_node(module, arena, arena.children[node.first_child + offset], model, specialization)
         if lowered.index >= 0:
             child_nodes.append(lowered)
         offset += 1
-    lowered = module.add_node(ir_kind_for_syntax(node.kind), id, ir_type_for_node(node.kind, id, model), child_nodes, node.flags)
-    attach_atomic_metadata(module, lowered, id, model)
+    lowered = module.add_node(ir_kind_for_syntax(node.kind), id, specialization, ir_type_for_node(node.kind, id, model, specialization), child_nodes, node.flags)
+    attach_atomic_metadata(module, lowered, id, model, specialization)
     return lowered
 
 
-def attach_atomic_metadata(module: &IRModule, lowered: IRNodeId, syntax_id: NodeId, model: &const semantic.SemanticModel) -> void:
+def attach_atomic_metadata(module: &IRModule, lowered: IRNodeId, syntax_id: NodeId, model: &const semantic.SemanticModel, specialization: i32) -> void:
     atomic_intrinsics: &const List[semantic.AtomicIntrinsicResolution] = &model.atomic_intrinsics
     for resolution in atomic_intrinsics:
-        if resolution.node.index != syntax_id.index:
+        if resolution.node.index != syntax_id.index or resolution.specialization != specialization:
             continue
         node: &IRNode = &module.nodes[lowered.index]
         node.kind = atomic_ir_kind(resolution.kind)
@@ -365,7 +374,7 @@ def atomic_fetch_kind(kind: semantic.AtomicIntrinsicKind) -> IRAtomicFetchKind:
 
 def validate_atomic_ir(module: &const IRModule, table: &const types.TypeTable) -> bool:
     for node in module.nodes:
-        if ir_node_may_escape_atomic_value(node.kind) and ir_type_matches_atomic_storage(module, node.type_id) and not atomic_syntax_is_receiver(module, node.syntax) and not atomic_node_has_unary_parent(module, node.syntax):
+        if ir_node_may_escape_atomic_value(node.kind) and ir_type_matches_atomic_storage(module, node.type_id, node.specialization) and not atomic_syntax_is_receiver(module, node.syntax, node.specialization) and not atomic_node_has_unary_parent(module, node.syntax, node.specialization):
             return false
         if not ir_node_is_atomic(node.kind):
             continue
@@ -394,6 +403,8 @@ def validate_atomic_ir(module: &const IRModule, table: &const types.TypeTable) -
                 return false
             continue
         if node.atomic_receiver.index < 0 or (node.flags & 1) == 0 or node.atomic_order != IRAtomicMemoryOrder.SEQ_CST:
+            return false
+        if not atomic_receiver_type_is_valid(module, table, node):
             return false
         if node.kind == IRNodeKind.ATOMIC_LOAD:
             if node.atomic_operand0.index >= 0 or node.atomic_operand1.index >= 0 or not table.same(node.type_id, node.atomic_element_type):
@@ -436,25 +447,25 @@ def ir_node_may_escape_atomic_value(kind: IRNodeKind) -> bool:
     return kind == IRNodeKind.NAME or kind == IRNodeKind.CALL or kind == IRNodeKind.BINARY or kind == IRNodeKind.UNARY or kind == IRNodeKind.CAST or kind == IRNodeKind.PROPAGATE or kind == IRNodeKind.EXPR
 
 
-def ir_type_matches_atomic_storage(module: &const IRModule, type_id: TypeId) -> bool:
+def ir_type_matches_atomic_storage(module: &const IRModule, type_id: TypeId, specialization: i32) -> bool:
     if type_id.index < 0:
         return false
     for node in module.nodes:
-        if ir_node_is_atomic(node.kind) and node.atomic_type.index == type_id.index:
+        if node.specialization == specialization and ir_node_is_atomic(node.kind) and node.atomic_type.index == type_id.index:
             return true
     return false
 
 
-def atomic_syntax_is_receiver(module: &const IRModule, syntax_id: NodeId) -> bool:
+def atomic_syntax_is_receiver(module: &const IRModule, syntax_id: NodeId, specialization: i32) -> bool:
     for node in module.nodes:
-        if ir_node_is_atomic(node.kind) and node.atomic_receiver.index == syntax_id.index:
+        if node.specialization == specialization and ir_node_is_atomic(node.kind) and node.atomic_receiver.index == syntax_id.index:
             return true
     return false
 
 
-def atomic_node_has_unary_parent(module: &const IRModule, syntax_id: NodeId) -> bool:
+def atomic_node_has_unary_parent(module: &const IRModule, syntax_id: NodeId, specialization: i32) -> bool:
     for node in module.nodes:
-        if node.kind == IRNodeKind.UNARY and node.flags == cast[i32](token.TokenKind.AMPERSAND):
+        if node.specialization == specialization and node.kind == IRNodeKind.UNARY and node.flags == cast[i32](token.TokenKind.AMPERSAND):
             offset: i32 = 0
             while offset < node.child_count:
                 child = module.children[cast[usize](node.first_child + offset)]
@@ -462,6 +473,32 @@ def atomic_node_has_unary_parent(module: &const IRModule, syntax_id: NodeId) -> 
                     return true
                 offset += 1
     return false
+
+
+def atomic_receiver_type_is_valid(module: &const IRModule, table: &const types.TypeTable, operation: &const IRNode) -> bool:
+    receiver_type = type_for_syntax(module, operation.atomic_receiver, operation.specialization)
+    current = receiver_type
+    indirections: i32 = 0
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        record = table.types[current.index]
+        if record.kind == types.TypeKind.CONST:
+            current = record.inner
+            continue
+        if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE:
+            indirections += 1
+            if indirections > 1:
+                return false
+            current = record.inner
+            continue
+        break
+    return current.index >= 0 and table.same(current, operation.atomic_type)
+
+
+def type_for_syntax(module: &const IRModule, syntax_id: NodeId, specialization: i32) -> TypeId:
+    for node in module.nodes:
+        if node.syntax.index == syntax_id.index and node.specialization == specialization:
+            return node.type_id
+    return types.missing_type()
 
 
 def ir_kind_for_syntax(kind: SyntaxKind) -> IRNodeKind:
@@ -522,11 +559,11 @@ def ir_kind_for_syntax(kind: SyntaxKind) -> IRNodeKind:
     return IRNodeKind.UNSUPPORTED
 
 
-def ir_type_for_node(kind: SyntaxKind, id: NodeId, model: &const semantic.SemanticModel) -> TypeId:
+def ir_type_for_node(kind: SyntaxKind, id: NodeId, model: &const semantic.SemanticModel, specialization: i32) -> TypeId:
     if is_expression_kind(kind) or kind == SyntaxKind.NAME:
-        return model.expr_type(id)
+        return model.expr_type_for_specialization(id, specialization)
     if is_type_kind(kind):
-        return model.type_node(id)
+        return model.type_node_for_specialization(id, specialization)
     return types.type_error()
 
 

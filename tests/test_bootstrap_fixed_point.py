@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -52,6 +53,31 @@ def gen2_compiler(gen1_compiler: Path, tmp_path_factory: pytest.TempPathFactory)
     assert built.stdout.strip() == str(gen2.resolve())
     assert gen2.is_file()
     return gen2, build_dir
+
+
+@pytest.fixture(scope="module")
+def gen3_compiler(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    gen2, _gen2_build_dir = gen2_compiler
+    build_root = tmp_path_factory.mktemp("bootstrap_gen3_build")
+    gen3 = build_root / (
+        "cinder-gen3.exe" if shutil.which("cl") and not shutil.which("cc") else "cinder-gen3"
+    )
+    built = run_gen1(
+        gen2,
+        "build",
+        str(ROOT / "compiler_selfhost"),
+        "-o",
+        str(gen3),
+        "--build-dir",
+        str(build_root / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert built.stdout.strip() == str(gen3.resolve())
+    assert gen3.is_file()
+    return gen3
 
 
 def run_gen1(gen1: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -4741,6 +4767,69 @@ def test_gen1_map_views_cross_module_boundaries(
     assert executed.returncode == 0, executed.stderr
 
 
+def assert_compiler_preserves_atomic_generic_specializations(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "atomic_generic_specializations.ci"
+    source.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def read[T](cell: *Atomic[T]) -> T:\n"
+        "    return cell.load()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    small: Atomic[u32] = 7\n"
+        "    wide: Atomic[u64] = 0x100000001\n"
+        "    if read[u32](&small) != 7:\n"
+        "        return 1\n"
+        "    if read[u64](&wide) != 0x100000001:\n"
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(compiler, "check", str(source))
+    assert checked.returncode == 0, checked.stderr
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    u32_function = re.search(
+        r"uint32_t [^(]*__read_u32\(CinderAtomic_u32 \* cell\) \{(?P<body>.*?)\n\}",
+        emitted.stdout,
+        re.DOTALL,
+    )
+    u64_function = re.search(
+        r"uint64_t [^(]*__read_u64\(CinderAtomic_u64 \* cell\) \{(?P<body>.*?)\n\}",
+        emitted.stdout,
+        re.DOTALL,
+    )
+    assert u32_function is not None
+    assert u64_function is not None
+    u32_body = u32_function.group("body")
+    u64_body = u64_function.group("body")
+    assert "CinderAtomic_u32 *cinder_atomic_receiver_" in u32_body
+    assert "CinderAtomic_u64 *cinder_atomic_receiver_" not in u32_body
+    assert "CinderAtomic_u64 *cinder_atomic_receiver_" in u64_body
+    assert "CinderAtomic_u32 *cinder_atomic_receiver_" not in u64_body
+    assert "atomic_load_explicit" in u32_body
+    assert "atomic_load_explicit" in u64_body
+
+    output = tmp_path / "atomic-generic-specializations"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "atomic-generic-specializations-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr
+
+
 def assert_compiler_supports_atomic_scalars(
     compiler: Path,
     tmp_path: Path,
@@ -4896,6 +4985,16 @@ def assert_compiler_supports_atomic_scalars(
             "    return 0\n",
             403,
         ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    pointer: *Atomic[u64] = &value\n"
+            "    indirect: **Atomic[u64] = &pointer\n"
+            "    indirect.load()\n"
+            "    return 0\n",
+            403,
+        ),
     )
     for index, (invalid_source, code) in enumerate(invalid_cases):
         invalid = tmp_path / f"invalid_atomic_{index}.ci"
@@ -4976,6 +5075,28 @@ def assert_compiler_supports_atomic_import_forms(
     assert executed.returncode == 0, executed.stderr
 
 
+def test_gen1_preserves_atomic_generic_specializations(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_preserves_atomic_generic_specializations(gen1_compiler, tmp_path)
+
+
+def test_gen2_preserves_atomic_generic_specializations(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_preserves_atomic_generic_specializations(gen2, tmp_path)
+
+
+def test_gen3_preserves_atomic_generic_specializations(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_preserves_atomic_generic_specializations(gen3_compiler, tmp_path)
+
+
 def test_gen1_supports_atomic_scalars(
     gen1_compiler: Path,
     tmp_path: Path,
@@ -4989,6 +5110,13 @@ def test_gen2_supports_atomic_scalars(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_supports_atomic_scalars(gen2, tmp_path)
+
+
+def test_gen3_supports_atomic_scalars(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_scalars(gen3_compiler, tmp_path)
 
 
 def test_gen1_supports_atomic_import_forms(

@@ -214,7 +214,7 @@ def emit_module_statement(
             context.deferred_expressions.append(expr)
         return
     if node.kind == SyntaxKind.VAR_DECL_STMT:
-        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id)
+        atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id, context.active_user_specialization)
         if atomic_index >= 0:
             atomic_node: backend_ir.IRNode = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
             builder.append("    ")

@@ -22,10 +22,10 @@ def semantic_type_contains_atomic(table: &const types.TypeTable, type_id: types.
     return false
 
 
-def atomic_node_index(nodes: &const List[backend_ir.IRNode], syntax_id: NodeId) -> i32:
+def atomic_node_index(nodes: &const List[backend_ir.IRNode], syntax_id: NodeId, specialization: i32) -> i32:
     index: i32 = 0
     for node in nodes:
-        if node.syntax.index == syntax_id.index and backend_ir.ir_node_is_atomic(node.kind):
+        if node.syntax.index == syntax_id.index and node.specialization == specialization and backend_ir.ir_node_is_atomic(node.kind):
             return index
         index += 1
     return -1
@@ -140,9 +140,9 @@ def emit_atomic_result(builder: &StringBuilder, kind: types.AtomicElementKind) -
     builder.append(";\n#endif\n")
 
 
-def emit_function_temporaries(arena: &const SyntaxArena, function_id: NodeId, nodes: &const List[backend_ir.IRNode], builder: &StringBuilder) -> void:
+def emit_function_temporaries(arena: &const SyntaxArena, function_id: NodeId, nodes: &const List[backend_ir.IRNode], specialization: i32, builder: &StringBuilder) -> void:
     for node in nodes:
-        if not atomic_operation_needs_temporaries(node.kind) or not syntax_subtree_contains(arena, function_id, node.syntax):
+        if node.specialization != specialization or not atomic_operation_needs_temporaries(node.kind) or not syntax_subtree_contains(arena, function_id, node.syntax):
             continue
         builder.append("    ")
         if (node.flags & 2) != 0:

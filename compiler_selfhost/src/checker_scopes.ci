@@ -31,11 +31,13 @@ def validate_specializations(checker: &checker_core.Checker, arena: &const synta
             checker.specialization_args.append(specialization_args[cast[usize](first_arg + offset)])
             offset += 1
         checker.specialization_declaration = declaration
+        checker.model.active_user_specialization = cast[i32](index)
         validate_specialized_declaration(checker, arena, declaration, source)
         if declaration.index >= 0 and arena.nodes[declaration.index].kind == syntax.SyntaxKind.CLASS_DECL:
             validate_specialized_class_implementations(checker, arena, declaration, source)
         index += 1
     checker.specialization_declaration = syntax.missing_node()
+    checker.model.active_user_specialization = -1
     while len(checker.specialization_args) > 0:
         checker.specialization_args.pop()
 

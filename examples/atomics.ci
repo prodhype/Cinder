@@ -1,6 +1,6 @@
 # An Atomic value is a value that more than one thread can read and write as one operation.
 # The operation is not split. Other threads do not see a change that is not complete.
-# This example uses Atomic[bool] and Atomic[u64].
+# This example uses Atomic[bool], Atomic[u32], and Atomic[u64].
 
 from std.atomic import Atomic
 
@@ -21,10 +21,13 @@ def main() -> i32:
     # These Atomic values are local. counter starts at 1. ready starts as false.
     counter: Atomic[u64] = 1
     ready: Atomic[bool] = false
+    small: Atomic[u32] = 7
+    wide: Atomic[u64] = 0x100000001
 
-    # Generic inference unwraps *Atomic[T] without changing the address use of counter.
-    inferred = read(&counter)
-    if inferred != 1:
+    # Each generic specialization keeps its own element and receiver metadata.
+    small_read = read(&small)
+    wide_read = read(&wide)
+    if small_read != 7 or wide_read != 0x100000001:
         return 1
 
     # Bool Atomic values let you do load, store, exchange, and compare_exchange.

@@ -429,6 +429,7 @@ def validate_atomic_method_call(
     current = receiver_type
     flags: i32 = 1
     pointer_receiver = false
+    indirection_count: i32 = 0
     while current.index >= 0 and current.index < cast[i32](len(checker.type_table.types)):
         record = checker.type_table.types[current.index]
         if record.kind == types.TypeKind.CONST:
@@ -437,6 +438,7 @@ def validate_atomic_method_call(
             continue
         if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE:
             pointer_receiver = true
+            indirection_count += 1
             flags = flags | 16
             current = record.inner
             continue
@@ -446,6 +448,11 @@ def validate_atomic_method_call(
     atomic_record = checker.type_table.types[current.index]
     if atomic_record.kind != types.TypeKind.ATOMIC:
         return false
+    if indirection_count > 1:
+        receiver_node = arena.nodes[receiver.index]
+        checker_core.emit_error(checker, 403, receiver_node.start, receiver_node.length, receiver_node.line, receiver_node.column)
+        checker.model.record_expr_type(call_id, types.type_error())
+        return true
 
     call = arena.nodes[call_id.index]
     if call.flags == 1:

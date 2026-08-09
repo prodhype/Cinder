@@ -1037,8 +1037,12 @@ def context_field_type_for_receiver(
 def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.TypeId:
     semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
     for node in semantic_nodes:
-        if node.syntax.index == id.index:
+        if node.syntax.index == id.index and node.specialization == context.active_user_specialization:
             return node.type_id
+    if context.active_user_specialization >= 0:
+        for node in semantic_nodes:
+            if node.syntax.index == id.index and node.specialization < 0:
+                return node.type_id
     return types.missing_type()
 
 
