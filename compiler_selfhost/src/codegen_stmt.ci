@@ -263,17 +263,49 @@ def emit_module_statement(
             key = codegen_names.second_child(arena, target)
             if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
                 receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
-                codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+                name_builder = StringBuilder()
+                codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, &name_builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
+                name = name_builder.finish()
+                previous_expected = context.expected_type
+                key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
+                key_is_string = codegen_context.context_type_is_string(context.type_arena, key_type, context.type_source)
+                if not key_is_string:
+                    semantic_key_type = codegen_context.context_semantic_type(context, key)
+                    key_is_string = codegen_context.context_semantic_type_is_kind(context, semantic_key_type, types.TypeKind.STRING)
+                materialize_key = false
+                temporary_index: i32 = -1
+                if key_is_string and key.index >= 0 and not codegen_context.context_expression_is_pointer_like(arena, context, key, source):
+                    key_node = arena.nodes[key.index]
+                    materialize_key = (
+                        key_node.kind != SyntaxKind.EXPR_NAME
+                        and key_node.kind != SyntaxKind.EXPR_ATTRIBUTE
+                        and key_node.kind != SyntaxKind.EXPR_INDEX
+                        and key_node.kind != SyntaxKind.EXPR_LITERAL
+                    )
+                if materialize_key:
+                    temporary_index = context.temporary_index
+                    context.temporary_index += 1
+                    builder.append("{\n        CinderString cinder_map_key_")
+                    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+                    builder.append(" = ")
+                    if key_type.index >= 0:
+                        context.expected_type = key_type
+                    codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
+                    context.expected_type = previous_expected
+                    builder.append(";\n        ")
+                builder.append(name[0:len(name)])
                 builder.append("_set(")
                 if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
                     builder.append("&")
                 codegen_expr.emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
                 builder.append(", ")
-                previous_expected = context.expected_type
-                key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
-                if key_type.index >= 0:
-                    context.expected_type = key_type
-                codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
+                if materialize_key:
+                    builder.append("cinder_map_key_")
+                    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+                else:
+                    if key_type.index >= 0:
+                        context.expected_type = key_type
+                    codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
                 builder.append(", ")
                 value = codegen_names.second_child(arena, id)
                 value_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 1)
@@ -282,7 +314,12 @@ def emit_module_statement(
                 codegen_expr.emit_module_expression(arena, value, source, builder, prefix, project_name, imports, context)
                 context.expected_type = previous_expected
                 builder.append(");\n")
-                codegen_context.mark_context_expression_moved(arena, context, key, source)
+                if materialize_key:
+                    builder.append("        cinder_string_drop(&cinder_map_key_")
+                    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+                    builder.append(");\n    }\n")
+                if not key_is_string:
+                    codegen_context.mark_context_expression_moved(arena, context, key, source)
                 codegen_context.mark_context_expression_moved(arena, context, value, source)
                 return
         if node.flags == cast[i32](token.TokenKind.ASSIGN) and target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:

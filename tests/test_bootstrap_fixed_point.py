@@ -2162,6 +2162,83 @@ def test_gen2_validates_aggregate_literal_moves(
     assert_compiler_validates_aggregate_literal_moves(gen2, tmp_path)
 
 
+def assert_compiler_borrows_cloned_string_collection_inputs(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "cloned_string_collection_inputs.ci"
+    source.write_text(
+        "def main() -> i32:\n"
+        '    names: Set[String] = {"seed"}\n'
+        "    set_value = to_string(10)\n"
+        "    names.add(set_value)\n"
+        '    set_value.append("x")\n'
+        '    if "10" not in names or "10x" in names:\n'
+        "        return 1\n"
+        "\n"
+        "    scores: Map[String, i32] = {}\n"
+        "    map_key = to_string(20)\n"
+        "    scores[map_key] = 7\n"
+        '    map_key.append("x")\n'
+        '    if scores["20"] != 7 or "20x" in scores:\n'
+        "        return 2\n"
+        "\n"
+        "    names.add(to_string(30))\n"
+        "    names.add(to_string(30))\n"
+        "    scores[to_string(40)] = 9\n"
+        "    scores[to_string(40)] = 11\n"
+        '    if "30" not in names or len(names) != 3:\n'
+        "        return 3\n"
+        '    if scores["40"] != 11 or len(scores) != 2:\n'
+        "        return 4\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    generated = emitted.stdout
+    assert "cinder_string_drop(&set_value);" in generated
+    assert "cinder_string_drop(&map_key);" in generated
+    assert generated.count("CinderString cinder_set_item_") == 2
+    assert generated.count("cinder_string_drop(&cinder_set_item_") == 2
+    assert generated.count("CinderString cinder_map_key_") == 2
+    assert generated.count("cinder_string_drop(&cinder_map_key_") == 2
+
+    output = tmp_path / (
+        "cloned-string-collection-inputs.exe"
+        if shutil.which("cl") and not shutil.which("cc")
+        else "cloned-string-collection-inputs"
+    )
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "cloned-string-collection-inputs-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(output)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+
+
+def test_gen1_borrows_cloned_string_collection_inputs(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_borrows_cloned_string_collection_inputs(gen1_compiler, tmp_path)
+
+
+def test_gen2_borrows_cloned_string_collection_inputs(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_borrows_cloned_string_collection_inputs(gen2, tmp_path)
+
+
 def assert_compiler_validates_closure_environment_moves(
     compiler: Path,
     tmp_path: Path,
