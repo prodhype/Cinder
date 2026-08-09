@@ -668,6 +668,27 @@ def declaration_parameter_at(arena: &const syntax.SyntaxArena, declaration: Node
     return syntax.missing_node()
 
 
+def validate_atomic_call_argument_type(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    value: NodeId,
+    value_type: types.TypeId,
+    destination_type: types.TypeId,
+    source: &const String,
+) -> void:
+    if value.index < 0:
+        return
+    if checker_core.type_is_unbound_parameter(checker, destination_type, source) or checker_core.type_is_unbound_parameter(checker, value_type, source):
+        return
+    expected_atomic = semantic_type_is_kind(checker.type_table, destination_type, types.TypeKind.ATOMIC)
+    if not expected_atomic:
+        return
+    if types_compatible(checker, destination_type, value_type):
+        return
+    node = arena.nodes[value.index]
+    checker_core.emit_error(checker, 107, node.start, node.length, node.line, node.column)
+
+
 def validate_declared_call_move_arguments(
     checker: &checker_core.Checker,
     arena: &const syntax.SyntaxArena,
@@ -690,6 +711,7 @@ def validate_declared_call_move_arguments(
         destination_type = value_type
         if parameter.index >= 0:
             destination_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter, source, value_type)
+        validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)
         validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
 
@@ -713,6 +735,7 @@ def validate_callable_call_move_arguments(
         destination_type = generic_actual_argument(checker.type_table, callable_type, argument_index)
         if destination_type.index < 0:
             destination_type = value_type
+        validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)
         validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
 
@@ -1375,6 +1398,18 @@ def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, act
     actual_atomic = types.is_atomic_type(&checker.type_table, actual)
     if expected_atomic or actual_atomic:
         return false
+    expected_value = strip_collection_indirection(checker.type_table, expected)
+    actual_value = strip_collection_indirection(checker.type_table, actual)
+    expected_value_atomic = types.is_atomic_type(&checker.type_table, expected_value)
+    actual_value_atomic = types.is_atomic_type(&checker.type_table, actual_value)
+    if expected_value_atomic or actual_value_atomic:
+        if not expected_value_atomic or not actual_value_atomic:
+            return false
+        expected_element = types.atomic_type_element_kind(&checker.type_table, expected_value)
+        actual_element = types.atomic_type_element_kind(&checker.type_table, actual_value)
+        if expected_element != types.AtomicElementKind.INVALID or actual_element != types.AtomicElementKind.INVALID:
+            return expected_element == actual_element
+        return checker.type_table.same(expected_value, actual_value)
     expected_kind = checker.type_table.types[expected.index].kind
     actual_kind = checker.type_table.types[actual.index].kind
     if expected_kind == types.TypeKind.ERROR or actual_kind == types.TypeKind.ERROR:

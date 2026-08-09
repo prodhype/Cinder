@@ -346,6 +346,51 @@ def test_atomic_reference_receiver_is_supported() -> None:
     assert "atomic_fetch_add_explicit" in generated
 
 
+@pytest.mark.parametrize("handle_type", ("*Atomic[u64]", "&Atomic[u64]"))
+def test_atomic_const_handle_binding_can_mutate_cell(handle_type: str) -> None:
+    generated = compile_unit(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 0\n"
+        f"    const handle: {handle_type} = &cell\n"
+        "    handle.store(5)\n"
+        "    return cast[i32](handle.load())\n"
+    ).c_source
+
+    assert "atomic_store_explicit" in generated
+
+
+def test_atomic_const_pointee_rejects_mutation() -> None:
+    rendered = diagnostics(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 0\n"
+        "    handle: *const Atomic[u64] = &cell\n"
+        "    handle.store(5)\n"
+        "    return 0\n"
+    )
+
+    assert "cannot mutate an Atomic cell through a const receiver" in rendered
+
+
+def test_atomic_pointer_argument_requires_matching_element_type() -> None:
+    rendered = diagnostics(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def load64(cell: *Atomic[u64]) -> u64:\n"
+        "    return cell.load()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    narrow: Atomic[u32] = 0\n"
+        "    load64(&narrow)\n"
+        "    return 0\n"
+    )
+
+    assert "expected *Atomic[u64], got *Atomic[u32]" in rendered
+
+
 def test_atomic_ir_validation_rejects_malformed_operation() -> None:
     unit = compile_unit(
         "from std.atomic import Atomic\n"

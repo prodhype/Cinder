@@ -6109,9 +6109,10 @@ class Checker:
             )
 
         mutating = intrinsic is not AtomicIntrinsicKind.LOAD
-        target_is_const = self._lvalue_is_const(receiver)
         if isinstance(receiver_storage, (PointerType, ReferenceType)):
-            target_is_const = target_is_const or isinstance(receiver_storage.inner, ConstType)
+            target_is_const = isinstance(receiver_storage.inner, ConstType)
+        else:
+            target_is_const = self._lvalue_is_const(receiver)
         if mutating and target_is_const:
             self._error(
                 "cannot mutate an Atomic cell through a const receiver",

@@ -45,8 +45,10 @@ def main() -> i32:
     # load reads the current value.
     loaded = counter.load()
     print(f"load: {loaded}")
-    # store writes a new value.
-    counter.store(5)
+    # A const pointer binding cannot point somewhere else, but its mutable cell can change.
+    const counter_pointer: *Atomic[u64] = &counter
+    # store writes a new value through that pointer.
+    counter_pointer.store(5)
     # exchange writes 7 and gives the old value.
     old = counter.exchange(7)
     # fetch_add adds 3 and gives the value that was there before the add.

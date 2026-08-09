@@ -256,7 +256,7 @@ def type_is_unbound_parameter(checker: &const Checker, type_id: types.TypeId, so
     if type_id.index < 0 or type_id.index >= cast[i32](len(checker.type_table.types)):
         return false
     record = checker.type_table.types[type_id.index]
-    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.DYN:
+    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.DYN or record.kind == types.TypeKind.ATOMIC:
         return type_is_unbound_parameter(checker, record.inner, source)
     if record.name_length == 0:
         return false

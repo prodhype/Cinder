@@ -4859,12 +4859,12 @@ def assert_compiler_supports_atomic_scalars(
         "        return 13\n"
         "    if index.fetch_sub(1) != 6 or index.load() != 5:\n"
         "        return 14\n"
-        "    counter_ref: *Atomic[u64] = &counter\n"
+        "    const counter_ref: *Atomic[u64] = &counter\n"
         "    if counter_ref.load() != 1:\n"
         "        return 15\n"
         "    if global_counter.fetch_add(1) != 0 or global_counter.load() != 1:\n"
         "        return 16\n"
-        "    counter.store(2)\n"
+        "    counter_ref.store(2)\n"
         "    if counter.exchange(3) != 2:\n"
         "        return 5\n"
         "    if counter.fetch_add(4) != 3:\n"
@@ -4984,6 +4984,18 @@ def assert_compiler_supports_atomic_scalars(
             "    value.fetch_add(true)\n"
             "    return 0\n",
             403,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "\n"
+            "def load64(cell: *Atomic[u64]) -> u64:\n"
+            "    return cell.load()\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    narrow: Atomic[u32] = 0\n"
+            "    load64(&narrow)\n"
+            "    return 0\n",
+            107,
         ),
         (
             "from std.atomic import Atomic\n"
