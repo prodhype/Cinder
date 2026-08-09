@@ -4905,6 +4905,77 @@ def assert_compiler_supports_atomic_scalars(
         assert rejected.stdout.startswith(f"E {code} ")
 
 
+def assert_compiler_supports_atomic_import_forms(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    manifest = tmp_path / "cinder.toml"
+    manifest.write_text(
+        '[project]\nname = "atomic_imports"\nsource-root = "src"\nentry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "state.ci").write_text(
+        "from std.atomic import Atomic as A\n"
+        "\n"
+        "counter: A[u64] = 0\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import std.atomic as atom\n"
+        "import state\n"
+        "\n"
+        "global_counter: atom.Atomic[u64] = 4\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    local_counter: atom.Atomic[u64] = 2\n"
+        "    if local_counter.fetch_add(1) != 2 or local_counter.load() != 3:\n"
+        "        return 1\n"
+        "    if global_counter.load() != 4:\n"
+        "        return 2\n"
+        "    if state.counter.fetch_add(3) != 0 or state.counter.load() != 3:\n"
+        "        return 3\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(compiler, "check", str(manifest))
+    assert checked.returncode == 0, checked.stderr
+
+    generated = tmp_path / "atomic-import-generated"
+    emitted = run_gen1(
+        compiler,
+        "emit-project",
+        str(manifest),
+        "-o",
+        str(generated),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    generated_text = (
+        (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+        + (generated / "cinder_gen" / "state.c").read_text(encoding="utf-8")
+    )
+    assert "CinderAtomic_u64" in generated_text
+    assert "atomic_fetch_add_explicit" in generated_text
+    assert "std_atomic__Atomic" not in generated_text
+    assert "Atomic_u64_fetch_add" not in generated_text
+
+    output = tmp_path / "atomic-imports"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(manifest),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "atomic-import-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr
+
+
 def test_gen1_supports_atomic_scalars(
     gen1_compiler: Path,
     tmp_path: Path,
@@ -4918,3 +4989,18 @@ def test_gen2_supports_atomic_scalars(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_supports_atomic_scalars(gen2, tmp_path)
+
+
+def test_gen1_supports_atomic_import_forms(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_import_forms(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_atomic_import_forms(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_atomic_import_forms(gen2, tmp_path)

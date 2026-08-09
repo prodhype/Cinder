@@ -95,7 +95,7 @@ def imported_member_atomic_type(
         if base.index < 0 or argument.index < 0:
             return types.missing_type()
         base_node = parsed_arena.nodes[base.index]
-        if not checker_core.range_text_equals(&module_source, base_node.value_start, base_node.value_length, "Atomic"):
+        if not atomic_type_import_matches(&module_source, &base_node, &module.imports):
             return types.missing_type()
         element_type = checker.type_table.resolve_type_node(parsed_arena, argument, &module_source)
         element_kind = types.atomic_element_kind(&checker.type_table, element_type, &module_source)
@@ -103,6 +103,17 @@ def imported_member_atomic_type(
             return types.missing_type()
         return checker.type_table.atomic_of(element_type, element_kind)
     return types.missing_type()
+
+
+def atomic_type_import_matches(
+    source: &const String,
+    base: &const syntax.SyntaxNode,
+    imports: &const List[project.ImportBinding],
+) -> bool:
+    for imported in imports:
+        if imported.module_name == "std.atomic" and imported.member == "Atomic" and checker_core.range_text_equals(source, base.value_start, base.value_length, imported.alias[0:len(imported.alias)]):
+            return true
+    return false
 
 
 def collect_qualified_import_enum_names(checker: &checker_core.Checker, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:

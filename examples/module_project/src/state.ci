@@ -1,0 +1,3 @@
+from std.atomic import Atomic as A
+
+counter: A[u64] = 0

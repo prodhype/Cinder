@@ -196,6 +196,28 @@ def test_address_operand() -> None:
     assert semantic.value_use(unary) is None
 
 
+def test_generic_atomic_inference_preserves_address_operand() -> None:
+    semantic = compile_semantic(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def read[T](cell: *Atomic[T]) -> T:\n"
+        "    return cell.load()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 7\n"
+        "    return cast[i32](read(&cell))\n"
+    )
+    unary = next(
+        node
+        for node in iter_nodes(function_decl(semantic.module, "main"))
+        if isinstance(node, ast.UnaryExpr) and node.operator == "&"
+    )
+    assert isinstance(unary.operand, ast.NameExpr)
+    resolution = semantic.value_use(unary.operand)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.ADDRESS
+
+
 def test_atomic_method_receiver_is_address_use() -> None:
     semantic = compile_semantic(
         "from std.atomic import Atomic\n"

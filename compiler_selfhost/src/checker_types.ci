@@ -985,6 +985,10 @@ def generic_actual_argument(table: &const types.TypeTable, record: types.TypeRec
         if index == 0:
             return record.inner
         return types.missing_type()
+    if record.kind == types.TypeKind.ATOMIC:
+        if index == 0:
+            return record.inner
+        return types.missing_type()
     if index < record.flags:
         return table.type_args[cast[usize](record.extra + index)]
     return types.missing_type()

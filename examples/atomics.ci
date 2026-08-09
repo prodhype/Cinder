@@ -13,10 +13,19 @@ def increment(counter: &Atomic[u64]) -> u64:
     return counter.fetch_add(1)
 
 
+def read[T](cell: *Atomic[T]) -> T:
+    return cell.load()
+
+
 def main() -> i32:
     # These Atomic values are local. counter starts at 1. ready starts as false.
     counter: Atomic[u64] = 1
     ready: Atomic[bool] = false
+
+    # Generic inference unwraps *Atomic[T] without changing the address use of counter.
+    inferred = read(&counter)
+    if inferred != 1:
+        return 1
 
     # Bool Atomic values let you do load, store, exchange, and compare_exchange.
     # They do not let you do fetch_add or other fetch arithmetic operations.

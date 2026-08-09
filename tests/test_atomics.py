@@ -151,6 +151,22 @@ def test_atomic_pointer_declarations_emit_opaque_cell_type_without_operations() 
     assert "_Atomic(uint64_t) value;" in unit.c_source
 
 
+def test_atomic_generic_pointer_inference_checks_argument_once() -> None:
+    generated = compile_unit(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def read[T](cell: *Atomic[T]) -> T:\n"
+        "    return cell.load()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 7\n"
+        "    return cast[i32](read(&cell))\n"
+    ).c_source
+
+    assert "read_u64" in generated
+    assert "atomic_load_explicit" in generated
+
+
 def test_atomic_receiver_records_address_use() -> None:
     unit = compile_unit(
         "from std.atomic import Atomic\n"

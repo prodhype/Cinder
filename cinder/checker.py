@@ -5758,6 +5758,7 @@ class Checker:
                 assert template is not None
                 self.name_symbols[id(expression.callee)] = template
                 self.expr_types[id(expression.callee)] = FunctionValueType(template.name)
+                prechecked_argument_types: dict[int, Type] | None = None
                 if expression.type_arguments:
                     specialized = self._instantiate_function_template(
                         template,
@@ -5766,8 +5767,8 @@ class Checker:
                         span=expression.span,
                     )
                 else:
-                    inferred = self._infer_function_type_args(template, expression)
-                    if inferred is None:
+                    inference = self._infer_function_type_args(template, expression)
+                    if inference is None:
                         self._error(
                             f"cannot infer type arguments for generic function {template.name!r}",
                             expression.span,
@@ -5775,6 +5776,7 @@ class Checker:
                             note="provide explicit type arguments like name[T](...)",
                         )
                         return ERROR
+                    inferred, prechecked_argument_types = inference
                     specialized = self._instantiate_function_template(
                         template,
                         None,
@@ -5784,7 +5786,12 @@ class Checker:
                 if specialized is None:
                     return ERROR
                 self.name_symbols[id(expression.callee)] = specialized
-                self._validate_function_call(expression, specialized, skip_parameters=0)
+                self._validate_function_call(
+                    expression,
+                    specialized,
+                    skip_parameters=0,
+                    prechecked_argument_types=prechecked_argument_types,
+                )
                 return specialized.return_type
             if isinstance(symbol, FunctionSymbol):
                 if expression.type_arguments:
@@ -5906,6 +5913,7 @@ class Checker:
                 and isinstance(resolution.compile_value, FunctionTemplateSymbol)
             ):
                 template = resolution.compile_value
+                module_prechecked_argument_types: dict[int, Type] | None = None
                 if expression.type_arguments:
                     specialized = self._instantiate_function_template(
                         template,
@@ -5914,8 +5922,8 @@ class Checker:
                         span=expression.span,
                     )
                 else:
-                    inferred = self._infer_function_type_args(template, expression)
-                    if inferred is None:
+                    module_inference = self._infer_function_type_args(template, expression)
+                    if module_inference is None:
                         self._error(
                             f"cannot infer type arguments for generic function {template.name!r}",
                             expression.span,
@@ -5923,15 +5931,21 @@ class Checker:
                             note="provide explicit type arguments like name[T](...)",
                         )
                         return ERROR
+                    module_inferred, module_prechecked_argument_types = module_inference
                     specialized = self._instantiate_function_template(
                         template,
                         None,
-                        inferred,
+                        module_inferred,
                         span=expression.span,
                     )
                 if specialized is None:
                     return ERROR
-                self._validate_function_call(expression, specialized, skip_parameters=0)
+                self._validate_function_call(
+                    expression,
+                    specialized,
+                    skip_parameters=0,
+                    prechecked_argument_types=module_prechecked_argument_types,
+                )
                 return specialized.return_type
             if resolution is not None and resolution.kind == "method" and resolution.method:
                 self._validate_method_receiver(expression.callee.value, resolution.method)
@@ -7748,6 +7762,7 @@ class Checker:
         function: FunctionSymbol,
         *,
         skip_parameters: int,
+        prechecked_argument_types: dict[int, Type] | None = None,
     ) -> None:
         parameters = function.parameters[skip_parameters:]
         assigned: list[int | None] = [None] * len(parameters)
@@ -7755,6 +7770,14 @@ class Checker:
         seen_named = False
         next_position = 0
         parameter_by_name = {parameter.name: index for index, parameter in enumerate(parameters)}
+
+        def argument_type(argument_index: int, expected: Type | None = None) -> Type:
+            if (
+                prechecked_argument_types is not None
+                and argument_index in prechecked_argument_types
+            ):
+                return prechecked_argument_types[argument_index]
+            return self._check_expr(call.arguments[argument_index].value, expected=expected)
 
         for argument_index, argument in enumerate(call.arguments):
             if argument.name is not None:
@@ -7766,7 +7789,7 @@ class Checker:
                         argument.span,
                         code="C074",
                     )
-                    self._check_expr(argument.value)
+                    argument_type(argument_index)
                     continue
                 if assigned[parameter_index] is not None:
                     self._error(
@@ -7796,7 +7819,7 @@ class Checker:
                     argument.span,
                     code="C077",
                 )
-                self._check_expr(argument.value)
+                argument_type(argument_index)
 
         for parameter_index, argument_index in enumerate(assigned):
             if argument_index is None:
@@ -7817,7 +7840,7 @@ class Checker:
             expected = parameters[parameter_index].type
             expected_types.append(expected)
             argument = call.arguments[argument_index]
-            actual = self._check_expr(argument.value, expected=expected)
+            actual = argument_type(argument_index, expected)
             list_slice_argument = self._is_list_slice_argument(expected, actual)
             ffi_string_borrow = (
                 function.is_extern
@@ -7857,7 +7880,7 @@ class Checker:
 
         for argument_index in variadic_indices:
             argument = call.arguments[argument_index]
-            actual = self._check_expr(argument.value)
+            actual = argument_type(argument_index)
             ffi_string_borrow = function.is_extern and isinstance(
                 value_type(actual),
                 StringType,
@@ -10114,7 +10137,7 @@ class Checker:
         self,
         template: FunctionTemplateSymbol,
         call: ast.CallExpr,
-    ) -> tuple[Type, ...] | None:
+    ) -> tuple[tuple[Type, ...], dict[int, Type]] | None:
         declaration = template.declaration
         params = [parameter for parameter in declaration.parameters if not parameter.is_variadic]
         if len(call.arguments) != len(params):
@@ -10213,8 +10236,12 @@ class Checker:
                 case _:
                     return True
 
-        for argument, parameter in zip(call.arguments, params, strict=False):
+        argument_types: dict[int, Type] = {}
+        for argument_index, (argument, parameter) in enumerate(
+            zip(call.arguments, params, strict=False)
+        ):
             actual = self._check_expr(argument.value)
+            argument_types[argument_index] = actual
             if not unify(parameter.annotation, actual):
                 return None
 
@@ -10224,7 +10251,7 @@ class Checker:
             if inferred_type is None:
                 return None
             type_args.append(inferred_type)
-        return tuple(type_args)
+        return tuple(type_args), argument_types
 
     def _resolve_type(self, node: ast.TypeNode, *, allow_opaque: bool = False) -> Type:
         cached = self.type_nodes.get(id(node))

@@ -170,19 +170,49 @@ def resolve_generic_type_node(checker: &Checker, arena: &const syntax.SyntaxAren
         if expected_args > 0 and expected_args != actual_args:
             emit_error(checker, 352, node.start, node.length, node.line, node.column)
         symbol_type = found_symbol.type_id
+        is_atomic_template = is_qualified_atomic_type_import(checker, arena, base_id, source, found)
         if symbol_type.index >= 0 and symbol_type.index < cast[i32](len(checker.type_table.types)):
             kind = checker.type_table.types[symbol_type.index].kind
             if kind == types.TypeKind.ATOMIC:
-                if actual_args != 1:
-                    emit_error(checker, 352, node.start, node.length, node.line, node.column)
-                    return types.type_error()
-                element_kind = types.atomic_element_kind(&checker.type_table, args[0], source)
-                if element_kind == types.AtomicElementKind.INVALID:
-                    argument_node = arena.nodes[arena.children[node.first_child + 1].index]
-                    emit_error(checker, 394, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
-                    return types.type_error()
-                return checker.type_table.atomic_of(types.strip_const(&checker.type_table, args[0]), element_kind)
+                is_atomic_template = true
+        if is_atomic_template:
+            if actual_args != 1:
+                emit_error(checker, 352, node.start, node.length, node.line, node.column)
+                return types.type_error()
+            element_kind = types.atomic_element_kind(&checker.type_table, args[0], source)
+            if element_kind == types.AtomicElementKind.INVALID:
+                if type_is_unbound_parameter(checker, args[0], source):
+                    return checker.type_table.atomic_of(types.strip_const(&checker.type_table, args[0]), element_kind)
+                argument_node = arena.nodes[arena.children[node.first_child + 1].index]
+                emit_error(checker, 394, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+                return types.type_error()
+            return checker.type_table.atomic_of(types.strip_const(&checker.type_table, args[0]), element_kind)
     return checker.type_table.generic_from_args(kind, base.value_start, base.value_length, args)
+
+
+def is_qualified_atomic_type_import(
+    checker: &const Checker,
+    arena: &const syntax.SyntaxArena,
+    base: NodeId,
+    source: &const String,
+    found: symbols.SymbolId,
+) -> bool:
+    if base.index < 0 or found.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
+    if base_node.kind != syntax.SyntaxKind.TYPE_NAME or base_node.child_count != 2:
+        return false
+    leaf = arena.nodes[arena.children[base_node.first_child + 1].index]
+    if not range_text_equals(source, leaf.value_start, leaf.value_length, "Atomic"):
+        return false
+    declaration = checker.symbols.symbols[found.index].node
+    if declaration.index < 0 or arena.nodes[declaration.index].kind != syntax.SyntaxKind.IMPORT_DECL:
+        return false
+    imported = find_child_kind(arena, declaration, syntax.SyntaxKind.DOTTED_NAME)
+    if imported.index < 0:
+        return false
+    imported_node = arena.nodes[imported.index]
+    return range_text_equals(source, imported_node.start, imported_node.length, "std.atomic")
 
 
 def resolve_callable_type_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, is_closure: bool) -> types.TypeId:
