@@ -1388,6 +1388,34 @@ def is_set_algebra_operator(operator: i32) -> bool:
     return operator == cast[i32](token.TokenKind.PIPE) or operator == cast[i32](token.TokenKind.AMPERSAND) or operator == cast[i32](token.TokenKind.MINUS) or operator == cast[i32](token.TokenKind.CARET)
 
 
+def atomic_indirection_const_compatible(table: &const types.TypeTable, expected: types.TypeId, actual: types.TypeId) -> bool:
+    expected_current = types.strip_const(table, expected)
+    actual_current = types.strip_const(table, actual)
+    while expected_current.index >= 0 and expected_current.index < cast[i32](len(table.types)) and actual_current.index >= 0 and actual_current.index < cast[i32](len(table.types)):
+        expected_record = table.types[expected_current.index]
+        actual_record = table.types[actual_current.index]
+        expected_is_const = expected_record.kind == types.TypeKind.CONST
+        actual_is_const = actual_record.kind == types.TypeKind.CONST
+        if actual_is_const and not expected_is_const:
+            return false
+        if expected_is_const:
+            expected_current = expected_record.inner
+        if actual_is_const:
+            actual_current = actual_record.inner
+        if expected_is_const or actual_is_const:
+            continue
+        expected_is_indirection = expected_record.kind == types.TypeKind.REFERENCE or expected_record.kind == types.TypeKind.POINTER
+        actual_is_indirection = actual_record.kind == types.TypeKind.REFERENCE or actual_record.kind == types.TypeKind.POINTER
+        if expected_is_indirection or actual_is_indirection:
+            if not expected_is_indirection or not actual_is_indirection:
+                return false
+            expected_current = expected_record.inner
+            actual_current = actual_record.inner
+            continue
+        return true
+    return false
+
+
 def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId) -> bool:
     if checker.type_table.same(expected, actual):
         return true
@@ -1405,6 +1433,8 @@ def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, act
         if not expected_value_atomic or not actual_value_atomic:
             return false
         if collection_indirection_depth(checker.type_table, expected) != collection_indirection_depth(checker.type_table, actual):
+            return false
+        if not atomic_indirection_const_compatible(checker.type_table, expected, actual):
             return false
         expected_element = types.atomic_type_element_kind(&checker.type_table, expected_value)
         actual_element = types.atomic_type_element_kind(&checker.type_table, actual_value)

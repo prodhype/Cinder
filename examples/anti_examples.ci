@@ -499,6 +499,27 @@ def atomic_pointer_call_example() -> u64:
     return load_atomic_pointer(pointer)
 
 
+def store_atomic_pointer(cell: *Atomic[u64], value: u64) -> void:
+    cell.store(value)
+
+
+def load_const_atomic_pointer(cell: *const Atomic[u64]) -> u64:
+    return cell.load()
+
+
+# WRONG: a pointer to a const Atomic cell cannot flow to a mutable parameter.
+# def invalid_const_atomic_pointer_call() -> void:
+#     cell: Atomic[u64] = 9
+#     readonly: *const Atomic[u64] = &cell
+#     store_atomic_pointer(readonly, 10)
+
+# CORRECT: a mutable Atomic pointer can flow to a const parameter for reading.
+def const_atomic_pointer_call_example() -> u64:
+    cell: Atomic[u64] = 10
+    mutable: *Atomic[u64] = &cell
+    return load_const_atomic_pointer(mutable)
+
+
 # WRONG: a generic type requires type arguments at use sites.
 # value: Box
 
@@ -556,6 +577,8 @@ def main() -> i32:
         return 17
     if atomic_pointer_call_example() != 9:
         return 18
+    if const_atomic_pointer_call_example() != 10:
+        return 19
 
     print_compile_time_fields()
     return 0

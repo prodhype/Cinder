@@ -4955,9 +4955,14 @@ def assert_compiler_supports_atomic_scalars(
         "def identity(cell: *Atomic[u64]) -> *Atomic[u64]:\n"
         "    return cell\n"
         "\n"
+        "def read_const(cell: *const Atomic[u64]) -> u64:\n"
+        "    return cell.load()\n"
+        "\n"
         "def main() -> i32:\n"
         "    if identity(pointer).load() != 13:\n"
         "        return 1\n"
+        "    if read_const(pointer) != 13:\n"
+        "        return 2\n"
         "    return 0\n",
         encoding="utf-8",
     )
@@ -4966,6 +4971,7 @@ def assert_compiler_supports_atomic_scalars(
     assert "#include <stdatomic.h>" in pointer_emitted.stdout
     assert "_Atomic(uint64_t) value;" in pointer_emitted.stdout
     assert "CinderAtomic_u64 *" in pointer_emitted.stdout
+    assert "const CinderAtomic_u64 *" in pointer_emitted.stdout
     assert "std_atomic__Atomic" not in pointer_emitted.stdout
     pointer_output = tmp_path / "atomic-pointer-only"
     pointer_built = run_gen1(
@@ -5111,6 +5117,19 @@ def assert_compiler_supports_atomic_scalars(
             "def main() -> i32:\n"
             "    narrow: Atomic[u32] = 0\n"
             "    load64(&narrow)\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "\n"
+            "def store64(cell: *Atomic[u64]) -> void:\n"
+            "    cell.store(1)\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    readonly: *const Atomic[u64] = &value\n"
+            "    store64(readonly)\n"
             "    return 0\n",
             107,
         ),
