@@ -5063,6 +5063,20 @@ def assert_compiler_supports_atomic_scalars(
         ),
         (
             "from std.atomic import Atomic\n"
+            "value: const Atomic[u64] = 1\n"
+            "def main() -> i32:\n"
+            "    return 0\n",
+            398,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: const Atomic[u64] = 1\n"
+            "    return 0\n",
+            398,
+        ),
+        (
+            "from std.atomic import Atomic\n"
             "def main() -> i32:\n"
             "    value: Atomic[u64] = 0\n"
             "    loaded: u64 = value\n"

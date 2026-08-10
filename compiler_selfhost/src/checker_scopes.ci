@@ -609,16 +609,17 @@ def validate_atomic_declaration(
     is_global: bool,
 ) -> void:
     node = arena.nodes[id.index]
-    atomic_record = checker.type_table.types[types.strip_const(&checker.type_table, atomic_type).index]
+    storage_atomic_type = types.strip_const(&checker.type_table, atomic_type)
+    atomic_record = checker.type_table.types[storage_atomic_type.index]
     initializer = atomic_declaration_initializer(arena, id)
     if initializer.index < 0:
         checker_core.emit_error(checker, 397, node.start, node.length, node.line, node.column)
         return
-    if node.flags == 1:
+    if node.flags == 1 or storage_atomic_type.index != atomic_type.index:
         checker_core.emit_error(checker, 398, node.start, node.length, node.line, node.column)
     initializer_type = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
     initializer_node = arena.nodes[initializer.index]
-    element_kind = types.atomic_type_element_kind(&checker.type_table, atomic_type)
+    element_kind = types.atomic_type_element_kind(&checker.type_table, storage_atomic_type)
     if is_global and not atomic_global_initializer_is_constant(checker, arena, initializer, source, current_scope):
         checker_core.emit_error(checker, 18, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
     if types.is_atomic_type(&checker.type_table, initializer_type):
@@ -633,9 +634,9 @@ def validate_atomic_declaration(
         id,
         semantic.AtomicIntrinsicKind.INIT,
         element_kind,
-        atomic_type,
+        storage_atomic_type,
         atomic_record.inner,
-        atomic_type,
+        storage_atomic_type,
         missing,
         initializer,
         missing,

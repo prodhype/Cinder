@@ -370,6 +370,31 @@ def test_atomic_requires_initializer_and_rejects_by_value_storage() -> None:
     assert "cannot pass atomic storage by value" in parameter
 
 
+@pytest.mark.parametrize(
+    ("declaration", "message"),
+    [
+        (
+            "value: const Atomic[u64] = 1\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    return 0\n",
+            "Atomic globals cannot be const",
+        ),
+        (
+            "def main() -> i32:\n"
+            "    value: const Atomic[u64] = 1\n"
+            "    return 0\n",
+            "Atomic locals cannot be const",
+        ),
+    ],
+)
+def test_atomic_rejects_const_qualified_storage(declaration: str, message: str) -> None:
+    rendered = diagnostics("from std.atomic import Atomic\n\n" + declaration)
+
+    assert "C398" in rendered
+    assert message in rendered
+
+
 def test_late_generic_specialization_rejects_atomic_fields() -> None:
     field = diagnostics(
         "from std.atomic import Atomic\n"

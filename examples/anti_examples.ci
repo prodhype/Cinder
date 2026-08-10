@@ -499,6 +499,15 @@ def atomic_pointer_call_example() -> u64:
     return load_atomic_pointer(pointer)
 
 
+# WRONG: Atomic storage cannot be const-qualified at global scope.
+# const_atomic_global: const Atomic[u64] = 1
+
+
+# WRONG: Atomic storage cannot be const-qualified in a local annotation either.
+# def invalid_const_atomic_local() -> void:
+#     cell: const Atomic[u64] = 1
+
+
 def store_atomic_pointer(cell: *Atomic[u64], value: u64) -> void:
     cell.store(value)
 
