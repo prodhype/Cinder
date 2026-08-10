@@ -157,8 +157,7 @@ def resolve_imported_atomic_annotation(
     argument = checker_core.second_child(arena, annotation)
     if base.index < 0 or argument.index < 0:
         return types.missing_type()
-    base_node = arena.nodes[base.index]
-    if not atomic_type_import_matches(source, &base_node, imports, modules):
+    if not atomic_type_import_matches(arena, base, source, imports, modules):
         return types.missing_type()
     element_type = checker.type_table.resolve_type_node(arena, argument, source)
     element_kind = types.atomic_element_kind(&checker.type_table, element_type, source)
@@ -168,20 +167,23 @@ def resolve_imported_atomic_annotation(
 
 
 def atomic_type_import_matches(
+    arena: &const syntax.SyntaxArena,
+    base: NodeId,
     source: &const String,
-    base: &const syntax.SyntaxNode,
     imports: &const List[project.ImportBinding],
     modules: &const List[project.ParsedModule],
 ) -> bool:
+    if base.index < 0:
+        return false
+    base_node = arena.nodes[base.index]
     for imported in imports:
-        if checker_core.range_text_equals(source, base.value_start, base.value_length, imported.alias[0:len(imported.alias)]):
-            if base.child_count == 1:
+        if checker_core.range_text_equals(source, base_node.value_start, base_node.value_length, imported.alias[0:len(imported.alias)]):
+            if base_node.child_count == 1:
                 return imported_member_is_atomic_template(&imported.module_name, &imported.member, modules)
-            if base.child_count == 2 and len(imported.member) == 0:
-                qualified_name = imported.alias[0:len(imported.alias)] + ".Atomic"
-                if checker_core.range_text_equals(source, base.start, base.length, qualified_name):
-                    atomic_name = "Atomic"
-                    return imported_member_is_atomic_template(&imported.module_name, &atomic_name, modules)
+            if base_node.child_count == 2 and len(imported.member) == 0:
+                leaf = arena.nodes[arena.children[base_node.first_child + 1].index]
+                member_name = source[leaf.value_start:leaf.value_start + leaf.value_length]
+                return imported_member_is_atomic_template(&imported.module_name, &member_name, modules)
     return false
 
 

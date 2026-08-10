@@ -1,4 +1,5 @@
 import std.atomic as atom
+import api
 import model
 import state
 import support.parser as parser
@@ -13,6 +14,7 @@ from state import Atomic
 qualified_counter: atom.Atomic[u64] = 4
 reexported_counter: Atomic[u64] = 11
 qualified_reexported_counter: state.Atomic[u64] = 13
+renamed_qualified_reexported_counter: api.Cell[u64] = 0
 
 
 struct AtomicReaderEnv:
@@ -68,6 +70,8 @@ def increment(value: i32) -> Result[i32, ParseError]:
 def main() -> i32:
     if qualified_counter.fetch_add(2) != 4 or qualified_counter.load() != 6:
         return 1
+    if renamed_qualified_reexported_counter.exchange(12) != 0 or renamed_qualified_reexported_counter.load() != 12:
+        return 10
     if state.counter.fetch_add(3) != 7 or state.counter.load() != 10:
         return 2
     if state.pointer().fetch_add(5) != 10 or state.counter.load() != 15:

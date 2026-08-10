@@ -20,7 +20,49 @@ def collect_symbols(
     modules: &const List[project.ParsedModule],
 ) -> void:
     checker.model.record_scope(root, symbols.root_scope())
+    collect_qualified_atomic_template_names_in_node(checker, arena, root, source, modules)
     collect_symbols_in_node(checker, arena, root, source, modules)
+
+
+def collect_qualified_atomic_template_names_in_node(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    modules: &const List[project.ParsedModule],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.IMPORT_DECL:
+        imported = checker_core.find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
+        if imported.index >= 0:
+            imported_node = arena.nodes[imported.index]
+            module_name = source[imported_node.start:imported_node.start + imported_node.length]
+            binding_node = imported_node
+            for offset in range(0, node.child_count):
+                child_id = arena.children[node.first_child + offset]
+                child = arena.nodes[child_id.index]
+                if child.kind == syntax.SyntaxKind.NAME and child.flags == 1:
+                    binding_node = child
+            binding_name = source[binding_node.value_start:binding_node.value_start + binding_node.value_length]
+            if module_name == "std.atomic":
+                record_qualified_atomic_template_name(checker, binding_name[0:len(binding_name)] + ".Atomic")
+            for module in modules:
+                if not (module.name == module_name):
+                    continue
+                module_imports: &const List[project.ImportBinding] = &module.imports
+                for module_import in module_imports:
+                    if len(module_import.member) > 0 and checker_imports.imported_member_is_atomic_template(&module_import.module_name, &module_import.member, modules):
+                        record_qualified_atomic_template_name(checker, binding_name[0:len(binding_name)] + "." + module_import.alias[0:len(module_import.alias)])
+    for offset in range(0, node.child_count):
+        collect_qualified_atomic_template_names_in_node(checker, arena, arena.children[node.first_child + offset], source, modules)
+
+
+def record_qualified_atomic_template_name(checker: &checker_core.Checker, name: String) -> void:
+    if checker_core.string_list_contains(&checker.qualified_atomic_template_names, &name):
+        return
+    checker.qualified_atomic_template_names.append(name[0:len(name)])
 
 
 def collect_symbols_in_node(
@@ -74,11 +116,6 @@ def collect_symbols_in_node(
         imported = checker_core.find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
         if imported.index >= 0:
             imported_node = arena.nodes[imported.index]
-            module_name = source[imported_node.start:imported_node.start + imported_node.length]
-            atomic_name = "Atomic"
-            import_flags: i32 = 0
-            if checker_imports.imported_member_is_atomic_template(&module_name, &atomic_name, modules):
-                import_flags = 1
             binding_node = imported_node
             for offset in range(0, node.child_count):
                 child_id = arena.children[node.first_child + offset]
@@ -92,7 +129,7 @@ def collect_symbols_in_node(
                 types.missing_type(),
                 id,
                 symbols.root_scope(),
-                import_flags,
+                0,
             )
             checker.model.record_declaration_symbol(id, symbol)
     elif node.kind == syntax.SyntaxKind.FROM_IMPORT_DECL:

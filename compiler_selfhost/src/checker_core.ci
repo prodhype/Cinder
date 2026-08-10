@@ -21,6 +21,7 @@ struct Checker:
     model: semantic.SemanticModel
     diagnostics: List[CheckerDiagnostic]
     imported_enum_names: List[String]
+    qualified_atomic_template_names: List[String]
     specialization_declaration: NodeId
     specialization_args: List[types.TypeId]
 
@@ -35,6 +36,7 @@ struct Checker:
 def new_checker() -> Checker:
     diagnostics: List[CheckerDiagnostic] = []
     imported_enum_names: List[String] = []
+    qualified_atomic_template_names: List[String] = []
     specialization_args: List[types.TypeId] = []
     return Checker(
         type_table=types.new_type_table(),
@@ -42,6 +44,7 @@ def new_checker() -> Checker:
         model=semantic.new_semantic_model(),
         diagnostics=diagnostics,
         imported_enum_names=imported_enum_names,
+        qualified_atomic_template_names=qualified_atomic_template_names,
         specialization_declaration=syntax.missing_node(),
         specialization_args=specialization_args,
     )
@@ -234,13 +237,12 @@ def is_qualified_atomic_type_import(
     if base_node.kind != syntax.SyntaxKind.TYPE_NAME or base_node.child_count != 2:
         return false
     leaf = arena.nodes[arena.children[base_node.first_child + 1].index]
-    if not range_text_equals(source, leaf.value_start, leaf.value_length, "Atomic"):
-        return false
     found_symbol = checker.symbols.symbols[found.index]
     declaration = found_symbol.node
     if declaration.index < 0 or arena.nodes[declaration.index].kind != syntax.SyntaxKind.IMPORT_DECL:
         return false
-    return found_symbol.flags == 1
+    qualified_name = source[base_node.value_start:base_node.value_start + base_node.value_length] + "." + source[leaf.value_start:leaf.value_start + leaf.value_length]
+    return string_list_contains(&checker.qualified_atomic_template_names, &qualified_name)
 
 
 def resolve_callable_type_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, is_closure: bool) -> types.TypeId:

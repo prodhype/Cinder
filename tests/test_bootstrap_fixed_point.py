@@ -5196,8 +5196,20 @@ def assert_compiler_supports_atomic_import_forms(
         "    return &counter\n",
         encoding="utf-8",
     )
+    (source_root / "bridge.ci").write_text(
+        "from std.atomic import Atomic as Storage\n",
+        encoding="utf-8",
+    )
     (source_root / "api.ci").write_text(
-        "from std.atomic import Atomic\n",
+        "import bridge\n"
+        "from std.atomic import Atomic\n"
+        "from std.atomic import Atomic as Cell\n"
+        "from bridge import Storage as Slot\n"
+        "\n"
+        "qualified_counter: bridge.Storage[u64] = 8\n"
+        "\n"
+        "def qualified_pointer() -> *bridge.Storage[u64]:\n"
+        "    return &qualified_counter\n",
         encoding="utf-8",
     )
     (source_root / "main.ci").write_text(
@@ -5207,6 +5219,8 @@ def assert_compiler_supports_atomic_import_forms(
         "\n"
         "global_counter: atom.Atomic[u64] = 4\n"
         "api_counter: api.Atomic[u64] = 5\n"
+        "aliased_api_counter: api.Cell[u64] = 6\n"
+        "transitive_api_counter: api.Slot[u64] = 7\n"
         "\n"
         "def main() -> i32:\n"
         "    local_counter: atom.Atomic[u64] = 2\n"
@@ -5220,6 +5234,14 @@ def assert_compiler_supports_atomic_import_forms(
         "        return 4\n"
         "    if state.pointer().fetch_add(2) != 3 or state.counter.load() != 5:\n"
         "        return 5\n"
+        "    if aliased_api_counter.fetch_add(1) != 6 or aliased_api_counter.load() != 7:\n"
+        "        return 6\n"
+        "    if transitive_api_counter.exchange(9) != 7 or transitive_api_counter.load() != 9:\n"
+        "        return 7\n"
+        "    if api.qualified_counter.exchange(10) != 8 or api.qualified_counter.load() != 10:\n"
+        "        return 8\n"
+        "    if api.qualified_pointer().fetch_add(2) != 10 or api.qualified_counter.load() != 12:\n"
+        "        return 9\n"
         "    return 0\n",
         encoding="utf-8",
     )
@@ -5239,6 +5261,7 @@ def assert_compiler_supports_atomic_import_forms(
     generated_text = (
         (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
         + (generated / "cinder_gen" / "state.c").read_text(encoding="utf-8")
+        + (generated / "cinder_gen" / "api.c").read_text(encoding="utf-8")
     )
     imported_pointer_call = "cinder_atomic_imports_state__pointer()"
     assert "CinderAtomic_u64" in generated_text
@@ -5252,6 +5275,9 @@ def assert_compiler_supports_atomic_import_forms(
     assert "std_atomic__Atomic" not in generated_text
     assert "Atomic_u64_fetch_add" not in generated_text
     assert "api__Atomic" not in generated_text
+    assert "api__Cell" not in generated_text
+    assert "api__Slot" not in generated_text
+    assert "bridge__Storage" not in generated_text
 
     output = tmp_path / "atomic-imports"
     built = run_gen1(
