@@ -299,6 +299,21 @@ def test_atomic_method_arguments_are_checked_semantically() -> None:
     assert "missing argument 'desired'" in wrong_shape
 
 
+@pytest.mark.parametrize("statement", ["counter.load", "print(counter.load)"])
+def test_atomic_method_attributes_must_be_called(statement: str) -> None:
+    rendered = diagnostics(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    counter: Atomic[u64] = 0\n"
+        f"    {statement}\n"
+        "    return 0\n"
+    )
+
+    assert "C403" in rendered
+    assert "atomic method 'load' must be called" in rendered
+
+
 def test_atomic_requires_initializer_and_rejects_by_value_storage() -> None:
     missing = diagnostics(
         "from std.atomic import Atomic\n"

@@ -4583,7 +4583,13 @@ class Checker:
             return self._constructor_payload_is_irrefutable(unwrapped)
         return False
 
-    def _check_expr(self, expression: ast.Expression, expected: Type | None = None) -> Type:
+    def _check_expr(
+        self,
+        expression: ast.Expression,
+        expected: Type | None = None,
+        *,
+        allow_atomic_method: bool = False,
+    ) -> Type:
         match expression:
             case ast.LiteralExpr():
                 result = self._check_literal(expression, expected)
@@ -4599,6 +4605,19 @@ class Checker:
                 result = self._check_binary(expression)
             case ast.AttributeExpr():
                 result = self._check_attribute(expression, expected)
+                resolution = self.attribute_resolutions.get(id(expression))
+                if (
+                    not allow_atomic_method
+                    and resolution is not None
+                    and resolution.kind == "atomic_method"
+                ):
+                    self._error(
+                        f"atomic method {expression.name!r} must be called",
+                        expression.span,
+                        code="C403",
+                        note="add parentheses and any required arguments to invoke the operation",
+                    )
+                    result = ERROR
             case ast.IndexExpr():
                 result = self._check_index(expression)
             case ast.SliceExpr():
@@ -5912,7 +5931,7 @@ class Checker:
                 return self._check_super_call(expression, super_method)
             # Pass expected type so generic enum/variant constructors like
             # Tagged.Some(...) can specialize from context.
-            self._check_expr(expression.callee, expected)
+            self._check_expr(expression.callee, expected, allow_atomic_method=True)
             resolution = self.attribute_resolutions.get(id(expression.callee))
             if (
                 resolution is not None
