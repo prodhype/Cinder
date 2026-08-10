@@ -69,6 +69,20 @@ def collect_qualified_atomic_types_in_node(
                     atomic_type = imported_member_atomic_type(checker, &imported.module_name, &member_name, modules)
                     if atomic_type.index >= 0:
                         checker.model.record_expr_type(id, atomic_type)
+    elif node.kind == syntax.SyntaxKind.EXPR_CALL:
+        callee = checker_core.first_child(arena, id)
+        if callee.index >= 0 and arena.nodes[callee.index].kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+            receiver = checker_core.first_child(arena, callee)
+            member = checker_core.second_child(arena, callee)
+            if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == syntax.SyntaxKind.EXPR_NAME:
+                receiver_node = arena.nodes[receiver.index]
+                member_node = arena.nodes[member.index]
+                for imported in imports:
+                    if len(imported.member) == 0 and checker_core.range_text_equals(source, receiver_node.value_start, receiver_node.value_length, imported.alias[0:len(imported.alias)]):
+                        member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+                        return_type = imported_function_atomic_return_type(checker, &imported.module_name, &member_name, modules)
+                        if return_type.index >= 0:
+                            checker.model.record_expr_type(id, return_type)
     for offset in range(0, node.child_count):
         collect_qualified_atomic_types_in_node(checker, arena, arena.children[node.first_child + offset], source, imports, modules)
 
@@ -77,6 +91,25 @@ def imported_member_atomic_type(
     checker: &checker_core.Checker,
     module_name: &const String,
     member_name: &const String,
+    modules: &const List[project.ParsedModule],
+) -> types.TypeId:
+    return imported_declaration_atomic_type(checker, module_name, member_name, syntax.SyntaxKind.GLOBAL_DECL, modules)
+
+
+def imported_function_atomic_return_type(
+    checker: &checker_core.Checker,
+    module_name: &const String,
+    member_name: &const String,
+    modules: &const List[project.ParsedModule],
+) -> types.TypeId:
+    return imported_declaration_atomic_type(checker, module_name, member_name, syntax.SyntaxKind.FUNCTION_DECL, modules)
+
+
+def imported_declaration_atomic_type(
+    checker: &checker_core.Checker,
+    module_name: &const String,
+    member_name: &const String,
+    declaration_kind: syntax.SyntaxKind,
     modules: &const List[project.ParsedModule],
 ) -> types.TypeId:
     for module in modules:
@@ -89,27 +122,49 @@ def imported_member_atomic_type(
         module_root = parsed.parse_module()
         parsed_arena: &const syntax.SyntaxArena = &parsed.arena
         declaration = find_exported_declaration(parsed_arena, module_root, &module_source, member_name)
-        if declaration.index < 0 or parsed_arena.nodes[declaration.index].kind != syntax.SyntaxKind.GLOBAL_DECL:
+        if declaration.index < 0 or parsed_arena.nodes[declaration.index].kind != declaration_kind:
             return types.missing_type()
         annotation = checker_core.find_child_type(parsed_arena, declaration)
         if annotation.index < 0:
             return types.missing_type()
-        annotation_node = parsed_arena.nodes[annotation.index]
-        if annotation_node.kind != syntax.SyntaxKind.TYPE_GENERIC or annotation_node.child_count != 2:
-            return types.missing_type()
-        base = checker_core.first_child(parsed_arena, annotation)
-        argument = checker_core.second_child(parsed_arena, annotation)
-        if base.index < 0 or argument.index < 0:
-            return types.missing_type()
-        base_node = parsed_arena.nodes[base.index]
-        if not atomic_type_import_matches(&module_source, &base_node, &module.imports, modules):
-            return types.missing_type()
-        element_type = checker.type_table.resolve_type_node(parsed_arena, argument, &module_source)
-        element_kind = types.atomic_element_kind(&checker.type_table, element_type, &module_source)
-        if element_kind == types.AtomicElementKind.INVALID:
-            return types.missing_type()
-        return checker.type_table.atomic_of(element_type, element_kind)
+        return resolve_imported_atomic_annotation(checker, parsed_arena, annotation, &module_source, &module.imports, modules)
     return types.missing_type()
+
+
+def resolve_imported_atomic_annotation(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    annotation: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    modules: &const List[project.ParsedModule],
+) -> types.TypeId:
+    if annotation.index < 0:
+        return types.missing_type()
+    annotation_node = arena.nodes[annotation.index]
+    if annotation_node.kind == syntax.SyntaxKind.TYPE_POINTER or annotation_node.kind == syntax.SyntaxKind.TYPE_REFERENCE or annotation_node.kind == syntax.SyntaxKind.TYPE_CONST:
+        inner = resolve_imported_atomic_annotation(checker, arena, checker_core.first_child(arena, annotation), source, imports, modules)
+        if inner.index < 0:
+            return types.missing_type()
+        if annotation_node.kind == syntax.SyntaxKind.TYPE_POINTER:
+            return checker.type_table.pointer_to(inner)
+        if annotation_node.kind == syntax.SyntaxKind.TYPE_REFERENCE:
+            return checker.type_table.reference_to(inner)
+        return checker.type_table.const_of(inner)
+    if annotation_node.kind != syntax.SyntaxKind.TYPE_GENERIC or annotation_node.child_count != 2:
+        return types.missing_type()
+    base = checker_core.first_child(arena, annotation)
+    argument = checker_core.second_child(arena, annotation)
+    if base.index < 0 or argument.index < 0:
+        return types.missing_type()
+    base_node = arena.nodes[base.index]
+    if not atomic_type_import_matches(source, &base_node, imports, modules):
+        return types.missing_type()
+    element_type = checker.type_table.resolve_type_node(arena, argument, source)
+    element_kind = types.atomic_element_kind(&checker.type_table, element_type, source)
+    if element_kind == types.AtomicElementKind.INVALID:
+        return types.missing_type()
+    return checker.type_table.atomic_of(element_type, element_kind)
 
 
 def atomic_type_import_matches(
@@ -120,7 +175,13 @@ def atomic_type_import_matches(
 ) -> bool:
     for imported in imports:
         if checker_core.range_text_equals(source, base.value_start, base.value_length, imported.alias[0:len(imported.alias)]):
-            return imported_member_is_atomic_template(&imported.module_name, &imported.member, modules)
+            if base.child_count == 1:
+                return imported_member_is_atomic_template(&imported.module_name, &imported.member, modules)
+            if base.child_count == 2 and len(imported.member) == 0:
+                qualified_name = imported.alias[0:len(imported.alias)] + ".Atomic"
+                if checker_core.range_text_equals(source, base.start, base.length, qualified_name):
+                    atomic_name = "Atomic"
+                    return imported_member_is_atomic_template(&imported.module_name, &atomic_name, modules)
     return false
 
 

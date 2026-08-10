@@ -5140,7 +5140,10 @@ def assert_compiler_supports_atomic_import_forms(
     (source_root / "state.ci").write_text(
         "from std.atomic import Atomic as A\n"
         "\n"
-        "counter: A[u64] = 0\n",
+        "counter: A[u64] = 0\n"
+        "\n"
+        "def pointer() -> *A[u64]:\n"
+        "    return &counter\n",
         encoding="utf-8",
     )
     (source_root / "api.ci").write_text(
@@ -5165,6 +5168,8 @@ def assert_compiler_supports_atomic_import_forms(
         "        return 3\n"
         "    if api_counter.exchange(6) != 5 or api_counter.load() != 6:\n"
         "        return 4\n"
+        "    if state.pointer().fetch_add(2) != 3 or state.counter.load() != 5:\n"
+        "        return 5\n"
         "    return 0\n",
         encoding="utf-8",
     )
@@ -5185,8 +5190,15 @@ def assert_compiler_supports_atomic_import_forms(
         (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
         + (generated / "cinder_gen" / "state.c").read_text(encoding="utf-8")
     )
+    imported_pointer_call = "cinder_atomic_imports_state__pointer()"
     assert "CinderAtomic_u64" in generated_text
     assert "atomic_fetch_add_explicit" in generated_text
+    assert re.search(
+        rf"cinder_atomic_receiver_\d+ = {re.escape(imported_pointer_call)}",
+        generated_text,
+    )
+    assert f"fetch_add(&{imported_pointer_call}" not in generated_text
+    assert f"= &({imported_pointer_call})" not in generated_text
     assert "std_atomic__Atomic" not in generated_text
     assert "Atomic_u64_fetch_add" not in generated_text
     assert "api__Atomic" not in generated_text

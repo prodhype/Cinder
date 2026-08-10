@@ -73,7 +73,7 @@ momentum, force, kinematics, projectile motion, pendulum period, and centripetal
 
 `anti_examples.ci` pairs commented-out code that Cinder rejects with explanations and live corrected versions. The file itself remains checkable and runnable.
 
-`module_project/` is a complete manifest-driven multi-file project. It demonstrates dotted local modules, aliases, transitive imports, generated headers and translation units, cross-module nominal types, Result propagation across module boundaries, qualified `atom.Atomic[T]` syntax, re-exported `Atomic` templates in function and closure signatures, exported Atomic globals, and specialization-safe generic Atomic loads for both `u32` and `u64`.
+`module_project/` is a complete manifest-driven multi-file project. It demonstrates dotted local modules, aliases, transitive imports, generated headers and translation units, cross-module nominal types, Result propagation across module boundaries, qualified `atom.Atomic[T]` syntax, re-exported `Atomic` templates in function and closure signatures, exported Atomic globals, chained operations on imported functions returning `*Atomic[T]`, and specialization-safe generic Atomic loads for both `u32` and `u64`.
 
 `class_project/` is a complete multi-file class ABI example. It defines a reflected abstract interface in one module, implements it in another, and performs dynamic dispatch from the entry module through separately generated headers and C translation units.
 
