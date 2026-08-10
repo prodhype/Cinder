@@ -39,6 +39,10 @@ def main() -> i32:
     wide: Atomic[u64] = 0x100000001
     converted_ready: Atomic[bool] = 1
     converted_counter: Atomic[u64] = 2.0
+    indexed_cell: Atomic[u64] = 11
+    indexed_cells: List[*Atomic[u64]] = []
+    defer indexed_cells.clear()
+    indexed_cells.append(&indexed_cell)
     hits_pointer = &hits
     if hits_pointer.load() != 0:
         return 4
@@ -50,6 +54,11 @@ def main() -> i32:
     converted_counter.store(3.0)
     if converted_ready.load() or converted_counter.load() != 3:
         return 3
+
+    # Indexed Atomic receivers use the list element's semantic wrapper type.
+    indexed_cells[0].store(12)
+    if indexed_cells[0].load() != 12:
+        return 5
 
     # Each generic specialization keeps its own element and receiver metadata.
     small_read = read(&small)

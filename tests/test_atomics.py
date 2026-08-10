@@ -299,6 +299,29 @@ def test_atomic_method_arguments_are_checked_semantically() -> None:
     assert "missing argument 'desired'" in wrong_shape
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    counter: Atomic[u64] = [1]\n",
+        "    counter: Atomic[u64] = 0\n"
+        "    counter.store([1])\n",
+        "    counter: Atomic[u64] = 0\n"
+        "    counter.compare_exchange(expected=0, desired=[1])\n",
+    ],
+)
+def test_atomic_rejects_aggregate_values(body: str) -> None:
+    rendered = diagnostics(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def main() -> i32:\n"
+        f"{body}"
+        "    return 0\n"
+    )
+
+    assert "C107" in rendered
+    assert "expected u64" in rendered
+
+
 @pytest.mark.parametrize("statement", ["counter.load", "print(counter.load)"])
 def test_atomic_method_attributes_must_be_called(statement: str) -> None:
     rendered = diagnostics(

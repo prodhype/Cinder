@@ -5002,6 +5002,13 @@ def assert_compiler_supports_atomic_scalars(
         "    return 0\n"
         "\n"
         "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 1\n"
+        "    values: List[*Atomic[u64]] = []\n"
+        "    defer values.clear()\n"
+        "    values.append(&cell)\n"
+        "    values[0].store(4)\n"
+        "    if values[0].load() != 4:\n"
+        "        return 1\n"
         "    return 0\n",
         encoding="utf-8",
     )
@@ -5017,6 +5024,7 @@ def assert_compiler_supports_atomic_scalars(
         "CinderAtomic_u32 * err;",
         "CinderAtomic_u64 * item_0;",
         "CinderAtomic_u32 * item_1;",
+        "((CinderAtomic_u64 * *)",
     ):
         assert snippet in nested_emitted.stdout
     assert "std_atomic__Atomic" not in nested_emitted.stdout
@@ -5070,6 +5078,29 @@ def assert_compiler_supports_atomic_scalars(
             "    value.fetch_add(true)\n"
             "    return 0\n",
             403,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = [1]\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    value.store([1])\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    value.compare_exchange(expected=0, desired=[1])\n"
+            "    return 0\n",
+            107,
         ),
         (
             "from std.atomic import Atomic\n"

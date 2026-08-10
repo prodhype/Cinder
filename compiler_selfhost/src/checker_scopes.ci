@@ -618,11 +618,12 @@ def validate_atomic_declaration(
         checker_core.emit_error(checker, 398, node.start, node.length, node.line, node.column)
     initializer_type = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
     initializer_node = arena.nodes[initializer.index]
+    element_kind = types.atomic_type_element_kind(&checker.type_table, atomic_type)
     if is_global and not atomic_global_initializer_is_constant(checker, arena, initializer, source, current_scope):
         checker_core.emit_error(checker, 18, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
     if types.is_atomic_type(&checker.type_table, initializer_type):
         checker_core.emit_error(checker, 399, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
-    elif not checker_types.types_compatible(checker, atomic_record.inner, initializer_type):
+    elif not checker_types.atomic_value_type_is_compatible(checker, element_kind, initializer_type, source):
         checker_core.emit_error(checker, 107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
     flags: i32 = 4
     if is_global:
@@ -631,7 +632,7 @@ def validate_atomic_declaration(
     checker.model.record_atomic_intrinsic(
         id,
         semantic.AtomicIntrinsicKind.INIT,
-        types.atomic_type_element_kind(&checker.type_table, atomic_type),
+        element_kind,
         atomic_type,
         atomic_record.inner,
         atomic_type,

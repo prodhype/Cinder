@@ -470,6 +470,18 @@ def atomic_load_example() -> u64:
     return cell.load()
 
 
+# WRONG: Atomic operations accept scalar values, not aggregate containers.
+# def invalid_atomic_aggregate_store() -> void:
+#     cell: Atomic[u64] = 0
+#     cell.store([1])
+
+# CORRECT: store a scalar compatible with the Atomic element type.
+def atomic_scalar_store_example() -> u64:
+    cell: Atomic[u64] = 0
+    cell.store(1)
+    return cell.load()
+
+
 def load_atomic_pointer(cell: *Atomic[u64]) -> u64:
     return cell.load()
 

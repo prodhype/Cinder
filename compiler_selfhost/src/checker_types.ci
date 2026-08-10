@@ -542,7 +542,7 @@ def validate_atomic_method_call(
         value_node = arena.nodes[value.index]
         if types.is_atomic_type(&checker.type_table, value_type):
             checker_core.emit_error(checker, 400, value_node.start, value_node.length, value_node.line, value_node.column)
-        elif not types_compatible(checker, atomic_record.inner, value_type):
+        elif not atomic_value_type_is_compatible(checker, element_kind, value_type, source):
             checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
         source_index += 1
     if expected == 2 and (operand0.index < 0 or operand1.index < 0):
@@ -1426,6 +1426,43 @@ def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, act
             return true
         return false
     return true
+
+
+def atomic_value_type_is_compatible(checker: &checker_core.Checker, element_kind: types.AtomicElementKind, actual: types.TypeId, source: &const String) -> bool:
+    if actual.index < 0:
+        return true
+    actual_value = types.strip_const(&checker.type_table, actual)
+    if actual_value.index < 0 or actual_value.index >= cast[i32](len(checker.type_table.types)):
+        return true
+    actual_kind = checker.type_table.types[actual_value.index].kind
+    if actual_kind == types.TypeKind.ERROR:
+        return true
+    if types.atomic_element_is_integer(element_kind):
+        return semantic_type_is_numeric(checker.type_table, actual, source)
+    if element_kind == types.AtomicElementKind.BOOL:
+        return semantic_type_is_scalar(checker.type_table, actual, source)
+    return true
+
+
+def semantic_type_is_numeric(table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if is_numeric_kind(record.kind):
+        return true
+    if record.kind != types.TypeKind.NAMED or record.flags != 0 or record.name_length == 0:
+        return false
+    name = source[record.name_start:record.name_start + record.name_length]
+    return name == "i8" or name == "i16" or name == "u8" or name == "u16" or name == "u32" or name == "u64" or name == "f32" or name == "isize" or name == "usize" or name == "c_int" or name == "c_long" or name == "c_size_t"
+
+
+def semantic_type_is_scalar(table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    kind = table.types[current.index].kind
+    return kind == types.TypeKind.BOOL or semantic_type_is_numeric(table, current, source) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN
 
 
 def specialized_operand_types_compatible(checker: &checker_core.Checker, left: types.TypeId, right: types.TypeId) -> bool:
