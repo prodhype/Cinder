@@ -236,14 +236,11 @@ def is_qualified_atomic_type_import(
     leaf = arena.nodes[arena.children[base_node.first_child + 1].index]
     if not range_text_equals(source, leaf.value_start, leaf.value_length, "Atomic"):
         return false
-    declaration = checker.symbols.symbols[found.index].node
+    found_symbol = checker.symbols.symbols[found.index]
+    declaration = found_symbol.node
     if declaration.index < 0 or arena.nodes[declaration.index].kind != syntax.SyntaxKind.IMPORT_DECL:
         return false
-    imported = find_child_kind(arena, declaration, syntax.SyntaxKind.DOTTED_NAME)
-    if imported.index < 0:
-        return false
-    imported_node = arena.nodes[imported.index]
-    return range_text_equals(source, imported_node.start, imported_node.length, "std.atomic")
+    return found_symbol.flags == 1
 
 
 def resolve_callable_type_node(checker: &Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, is_closure: bool) -> types.TypeId:

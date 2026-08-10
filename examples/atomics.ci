@@ -6,6 +6,8 @@ from std.atomic import Atomic
 
 # This Atomic counter is in the module. The value is 0 when the program starts.
 hits: Atomic[u64] = 0
+# A module-scope pointer uses the Atomic cell's semantic type in generated C.
+hits_pointer: *Atomic[u64]
 
 
 # Add 1 to the Atomic counter. Give the value that was there before the add.
@@ -37,6 +39,9 @@ def main() -> i32:
     wide: Atomic[u64] = 0x100000001
     converted_ready: Atomic[bool] = 1
     converted_counter: Atomic[u64] = 2.0
+    hits_pointer = &hits
+    if hits_pointer.load() != 0:
+        return 4
 
     # Atomic inputs accept the same scalar conversions as ordinary assignments.
     if not converted_ready.load() or converted_counter.load() != 2:
@@ -97,6 +102,6 @@ def main() -> i32:
     # The increment function changes the same hits counter.
     first = increment(&hits)
     second = increment(&hits)
-    hits_now = hits.load()
+    hits_now = hits_pointer.load()
     print(f"hits via &Atomic: first={first} second={second} now={hits_now}")
     return 0

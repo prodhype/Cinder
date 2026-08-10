@@ -470,6 +470,23 @@ def atomic_load_example() -> u64:
     return cell.load()
 
 
+def load_atomic_pointer(cell: *Atomic[u64]) -> u64:
+    return cell.load()
+
+
+# WRONG: taking the address of an Atomic pointer adds an indirection level.
+# def invalid_atomic_pointer_call() -> u64:
+#     cell: Atomic[u64] = 9
+#     pointer: *Atomic[u64] = &cell
+#     return load_atomic_pointer(&pointer)
+
+# CORRECT: pass the pointer at the depth required by the parameter.
+def atomic_pointer_call_example() -> u64:
+    cell: Atomic[u64] = 9
+    pointer: *Atomic[u64] = &cell
+    return load_atomic_pointer(pointer)
+
+
 # WRONG: a generic type requires type arguments at use sites.
 # value: Box
 
@@ -525,6 +542,8 @@ def main() -> i32:
         return 14
     if atomic_load_example() != 7:
         return 17
+    if atomic_pointer_call_example() != 9:
+        return 18
 
     print_compile_time_fields()
     return 0

@@ -12,6 +12,7 @@ from state import Atomic
 # CORRECT: use a constant expression for global initialization.
 qualified_counter: atom.Atomic[u64] = 4
 reexported_counter: Atomic[u64] = 11
+qualified_reexported_counter: state.Atomic[u64] = 13
 
 
 struct AtomicReaderEnv:
@@ -80,6 +81,8 @@ def main() -> i32:
         return 6
     if initialize_local_from_imported_const() != 1:
         return 7
+    if qualified_reexported_counter.fetch_add(2) != 13 or qualified_reexported_counter.load() != 15:
+        return 8
 
     result = increment(41)
 

@@ -74,6 +74,11 @@ def collect_symbols_in_node(
         imported = checker_core.find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
         if imported.index >= 0:
             imported_node = arena.nodes[imported.index]
+            module_name = source[imported_node.start:imported_node.start + imported_node.length]
+            atomic_name = "Atomic"
+            import_flags: i32 = 0
+            if checker_imports.imported_member_is_atomic_template(&module_name, &atomic_name, modules):
+                import_flags = 1
             binding_node = imported_node
             for offset in range(0, node.child_count):
                 child_id = arena.children[node.first_child + offset]
@@ -87,7 +92,7 @@ def collect_symbols_in_node(
                 types.missing_type(),
                 id,
                 symbols.root_scope(),
-                0,
+                import_flags,
             )
             checker.model.record_declaration_symbol(id, symbol)
     elif node.kind == syntax.SyntaxKind.FROM_IMPORT_DECL:

@@ -1141,7 +1141,7 @@ def emit_module_top_level(
             if codegen_specializations.context_type_is_array(arena, annotation):
                 codegen_specializations.emit_module_prefixed_typed_declarator(arena, annotation, source, builder, prefix, project_name, imports, node.value_start, node.value_length, context.specialization_names)
             else:
-                codegen_type_names.emit_module_c_type(arena, annotation, source, builder, prefix, project_name, imports, context.specialization_names)
+                codegen_context.emit_context_c_type(arena, annotation, source, builder, prefix, project_name, imports, context)
                 builder.append(" ")
                 codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
         else:

@@ -1364,6 +1364,21 @@ def strip_collection_indirection(table: &const types.TypeTable, type_id: types.T
     return current
 
 
+def collection_indirection_depth(table: &const types.TypeTable, type_id: types.TypeId) -> i32:
+    current = type_id
+    depth: i32 = 0
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        record = table.types[current.index]
+        if record.kind == types.TypeKind.CONST:
+            current = record.inner
+            continue
+        if record.kind != types.TypeKind.REFERENCE and record.kind != types.TypeKind.POINTER:
+            break
+        depth += 1
+        current = record.inner
+    return depth
+
+
 def semantic_type_is_kind(table: &const types.TypeTable, type_id: types.TypeId, kind: types.TypeKind) -> bool:
     value_type = strip_collection_indirection(table, type_id)
     return value_type.index >= 0 and value_type.index < cast[i32](len(table.types)) and table.types[value_type.index].kind == kind
@@ -1388,6 +1403,8 @@ def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, act
     actual_value_atomic = types.is_atomic_type(&checker.type_table, actual_value)
     if expected_value_atomic or actual_value_atomic:
         if not expected_value_atomic or not actual_value_atomic:
+            return false
+        if collection_indirection_depth(checker.type_table, expected) != collection_indirection_depth(checker.type_table, actual):
             return false
         expected_element = types.atomic_type_element_kind(&checker.type_table, expected_value)
         actual_element = types.atomic_type_element_kind(&checker.type_table, actual_value)

@@ -4949,10 +4949,15 @@ def assert_compiler_supports_atomic_scalars(
     pointer_only.write_text(
         "from std.atomic import Atomic\n"
         "\n"
+        "cell: Atomic[u64] = 13\n"
+        "pointer: *Atomic[u64] = &cell\n"
+        "\n"
         "def identity(cell: *Atomic[u64]) -> *Atomic[u64]:\n"
         "    return cell\n"
         "\n"
         "def main() -> i32:\n"
+        "    if identity(pointer).load() != 13:\n"
+        "        return 1\n"
         "    return 0\n",
         encoding="utf-8",
     )
@@ -4960,6 +4965,26 @@ def assert_compiler_supports_atomic_scalars(
     assert pointer_emitted.returncode == 0, pointer_emitted.stderr
     assert "#include <stdatomic.h>" in pointer_emitted.stdout
     assert "_Atomic(uint64_t) value;" in pointer_emitted.stdout
+    assert "CinderAtomic_u64 *" in pointer_emitted.stdout
+    assert "std_atomic__Atomic" not in pointer_emitted.stdout
+    pointer_output = tmp_path / "atomic-pointer-only"
+    pointer_built = run_gen1(
+        compiler,
+        "build",
+        str(pointer_only),
+        "-o",
+        str(pointer_output),
+        "--build-dir",
+        str(tmp_path / "atomic-pointer-only-build"),
+    )
+    assert pointer_built.returncode == 0, pointer_built.stderr
+    pointer_executed = subprocess.run(
+        [str(pointer_output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert pointer_executed.returncode == 0, pointer_executed.stderr
 
     nested_only = tmp_path / "atomic_nested_specializations.ci"
     nested_only.write_text(
@@ -5060,6 +5085,19 @@ def assert_compiler_supports_atomic_scalars(
         ),
         (
             "from std.atomic import Atomic\n"
+            "\n"
+            "def load64(cell: *Atomic[u64]) -> u64:\n"
+            "    return cell.load()\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    pointer: *Atomic[u64] = &value\n"
+            "    load64(&pointer)\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
             "def main() -> i32:\n"
             "    value: Atomic[u64] = 0\n"
             "    pointer: *Atomic[u64] = &value\n"
@@ -5105,11 +5143,17 @@ def assert_compiler_supports_atomic_import_forms(
         "counter: A[u64] = 0\n",
         encoding="utf-8",
     )
+    (source_root / "api.ci").write_text(
+        "from std.atomic import Atomic\n",
+        encoding="utf-8",
+    )
     (source_root / "main.ci").write_text(
         "import std.atomic as atom\n"
+        "import api\n"
         "import state\n"
         "\n"
         "global_counter: atom.Atomic[u64] = 4\n"
+        "api_counter: api.Atomic[u64] = 5\n"
         "\n"
         "def main() -> i32:\n"
         "    local_counter: atom.Atomic[u64] = 2\n"
@@ -5119,6 +5163,8 @@ def assert_compiler_supports_atomic_import_forms(
         "        return 2\n"
         "    if state.counter.fetch_add(3) != 0 or state.counter.load() != 3:\n"
         "        return 3\n"
+        "    if api_counter.exchange(6) != 5 or api_counter.load() != 6:\n"
+        "        return 4\n"
         "    return 0\n",
         encoding="utf-8",
     )
@@ -5143,6 +5189,7 @@ def assert_compiler_supports_atomic_import_forms(
     assert "atomic_fetch_add_explicit" in generated_text
     assert "std_atomic__Atomic" not in generated_text
     assert "Atomic_u64_fetch_add" not in generated_text
+    assert "api__Atomic" not in generated_text
 
     output = tmp_path / "atomic-imports"
     built = run_gen1(
@@ -5216,3 +5263,10 @@ def test_gen2_supports_atomic_import_forms(
 ) -> None:
     gen2, _build_dir = gen2_compiler
     assert_compiler_supports_atomic_import_forms(gen2, tmp_path)
+
+
+def test_gen3_supports_atomic_import_forms(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_import_forms(gen3_compiler, tmp_path)
