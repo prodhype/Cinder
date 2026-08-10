@@ -82,7 +82,7 @@ def contains_type_parameter(
         return contains_type_parameter(table, record.inner, arena, declaration, source)
     if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
         return contains_type_parameter(table, record.inner, arena, declaration, source) or contains_type_parameter(table, record.second, arena, declaration, source)
-    if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or types.is_map_view_kind(record.kind):
+    if record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or record.kind == types.TypeKind.ATOMIC or types.is_map_view_kind(record.kind):
         return contains_type_parameter(table, record.inner, arena, declaration, source)
     if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
         if contains_type_parameter(table, record.inner, arena, declaration, source):
@@ -124,6 +124,9 @@ def substitute_type(
         return table.array_of(substitute_type(table, record.inner, arena, declaration, args, source), record.extra)
     if record.kind == types.TypeKind.DYN:
         return table.dyn_of(substitute_type(table, record.inner, arena, declaration, args, source))
+    if record.kind == types.TypeKind.ATOMIC:
+        inner = substitute_type(table, record.inner, arena, declaration, args, source)
+        return table.atomic_of(inner, types.atomic_element_kind(table, inner, source))
     if record.kind == types.TypeKind.MAP:
         return table.generic2(types.TypeKind.MAP, record.name_start, record.name_length, substitute_type(table, record.inner, arena, declaration, args, source), substitute_type(table, record.second, arena, declaration, args, source))
     if record.kind == types.TypeKind.RESULT:

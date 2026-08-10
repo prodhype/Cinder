@@ -1,0 +1,28 @@
+from std.atomic import Atomic
+
+enum Code:
+    Zero
+    One
+    Two
+    Three
+    Four
+    Five
+    Six
+    Seven
+
+
+counter: Atomic[u64] = cast[u64](Code.Seven)
+
+
+def pointer() -> *Atomic[u64]:
+    return &counter
+
+
+def read[T](cell: *Atomic[T]) -> T:
+    return cell.load()
+
+
+def atomic_specializations_work() -> bool:
+    small: Atomic[u32] = 7
+    wide: Atomic[u64] = 0x100000001
+    return read(&small) == 7 and read(&wide) == 0x100000001

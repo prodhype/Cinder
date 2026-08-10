@@ -1,4 +1,6 @@
+import backend_ir
 import codegen_access
+import codegen_atomics
 import codegen_calls
 import codegen_context
 import codegen_format
@@ -7,6 +9,7 @@ import codegen_names
 import codegen_specializations
 import codegen_type_names
 import project
+import semantic
 import syntax
 import token
 import types
@@ -66,6 +69,133 @@ def emit_module_expression(
     emit_module_expression_state(state, id)
 
 
+def emit_atomic_expression_state(state: &codegen_model.ModuleExpressionState, node: backend_ir.IRNode) -> void:
+    builder: &StringBuilder = state.builder
+    if node.kind == backend_ir.IRNodeKind.ATOMIC_RESULT_FIELD:
+        builder.append("(")
+        emit_module_expression_state(state, node.atomic_receiver)
+        builder.append(").")
+        if node.atomic_kind == semantic.AtomicIntrinsicKind.RESULT_EXCHANGED:
+            builder.append("exchanged")
+        else:
+            builder.append("observed")
+        return
+
+    builder.append("(")
+    append_atomic_temp_name(builder, "receiver", node.syntax.index)
+    builder.append(" = ")
+    if (node.flags & 16) == 0:
+        builder.append("&(")
+        emit_module_expression_state(state, node.atomic_receiver)
+        builder.append(")")
+    else:
+        emit_module_expression_state(state, node.atomic_receiver)
+    if node.atomic_first_evaluated.index >= 0:
+        builder.append(", ")
+        append_atomic_temp_name(builder, "first", node.syntax.index)
+        builder.append(" = ")
+        emit_module_expression_state(state, node.atomic_first_evaluated)
+    if node.atomic_second_evaluated.index >= 0:
+        builder.append(", ")
+        append_atomic_temp_name(builder, "second", node.syntax.index)
+        builder.append(" = ")
+        emit_module_expression_state(state, node.atomic_second_evaluated)
+    builder.append(", ")
+    if node.kind == backend_ir.IRNodeKind.ATOMIC_LOAD:
+        builder.append("atomic_load_explicit(&")
+        append_atomic_temp_name(builder, "receiver", node.syntax.index)
+        builder.append("->value, ")
+        append_atomic_order(builder, node.atomic_order)
+        builder.append(")")
+    elif node.kind == backend_ir.IRNodeKind.ATOMIC_STORE:
+        builder.append("atomic_store_explicit(&")
+        append_atomic_temp_name(builder, "receiver", node.syntax.index)
+        builder.append("->value, ")
+        append_atomic_temp_name(builder, "first", node.syntax.index)
+        builder.append(", ")
+        append_atomic_order(builder, node.atomic_order)
+        builder.append(")")
+    elif node.kind == backend_ir.IRNodeKind.ATOMIC_EXCHANGE:
+        builder.append("atomic_exchange_explicit(&")
+        append_atomic_temp_name(builder, "receiver", node.syntax.index)
+        builder.append("->value, ")
+        append_atomic_temp_name(builder, "first", node.syntax.index)
+        builder.append(", ")
+        append_atomic_order(builder, node.atomic_order)
+        builder.append(")")
+    elif node.kind == backend_ir.IRNodeKind.ATOMIC_FETCH:
+        append_atomic_fetch_name(builder, node.atomic_fetch_kind)
+        builder.append("(&")
+        append_atomic_temp_name(builder, "receiver", node.syntax.index)
+        builder.append("->value, ")
+        append_atomic_temp_name(builder, "first", node.syntax.index)
+        builder.append(", ")
+        append_atomic_order(builder, node.atomic_order)
+        builder.append(")")
+    elif node.kind == backend_ir.IRNodeKind.ATOMIC_COMPARE_EXCHANGE:
+        append_atomic_temp_name(builder, "expected", node.syntax.index)
+        builder.append(" = ")
+        append_atomic_role_temp_name(builder, node, semantic.AtomicArgumentRole.EXPECTED)
+        builder.append(", ")
+        append_atomic_temp_name(builder, "exchanged", node.syntax.index)
+        builder.append(" = atomic_compare_exchange_strong_explicit(&")
+        append_atomic_temp_name(builder, "receiver", node.syntax.index)
+        builder.append("->value, &")
+        append_atomic_temp_name(builder, "expected", node.syntax.index)
+        builder.append(", ")
+        append_atomic_role_temp_name(builder, node, semantic.AtomicArgumentRole.DESIRED)
+        builder.append(", ")
+        append_atomic_order(builder, node.atomic_order)
+        builder.append(", ")
+        append_atomic_order(builder, node.atomic_order)
+        builder.append("), (")
+        codegen_atomics.append_atomic_result_name(builder, node.atomic_element_kind)
+        builder.append("){ .exchanged = ")
+        append_atomic_temp_name(builder, "exchanged", node.syntax.index)
+        builder.append(", .observed = ")
+        append_atomic_temp_name(builder, "expected", node.syntax.index)
+        builder.append(" }")
+    else:
+        builder.append("0")
+    builder.append(")")
+
+
+def append_atomic_fetch_name(builder: &StringBuilder, kind: backend_ir.IRAtomicFetchKind) -> void:
+    if kind == backend_ir.IRAtomicFetchKind.ADD:
+        builder.append("atomic_fetch_add_explicit")
+    elif kind == backend_ir.IRAtomicFetchKind.SUB:
+        builder.append("atomic_fetch_sub_explicit")
+    elif kind == backend_ir.IRAtomicFetchKind.AND:
+        builder.append("atomic_fetch_and_explicit")
+    elif kind == backend_ir.IRAtomicFetchKind.OR:
+        builder.append("atomic_fetch_or_explicit")
+    else:
+        builder.append("atomic_fetch_xor_explicit")
+
+
+def append_atomic_order(builder: &StringBuilder, order: backend_ir.IRAtomicMemoryOrder) -> void:
+    if order == backend_ir.IRAtomicMemoryOrder.SEQ_CST:
+        builder.append("memory_order_seq_cst")
+    else:
+        builder.append("memory_order_seq_cst")
+
+
+def append_atomic_role_temp_name(builder: &StringBuilder, node: backend_ir.IRNode, role: semantic.AtomicArgumentRole) -> void:
+    if node.atomic_first_role == role:
+        append_atomic_temp_name(builder, "first", node.syntax.index)
+    elif node.atomic_second_role == role:
+        append_atomic_temp_name(builder, "second", node.syntax.index)
+    else:
+        builder.append("0")
+
+
+def append_atomic_temp_name(builder: &StringBuilder, label: String, syntax_index: i32) -> void:
+    builder.append("cinder_atomic_")
+    builder.append(label[0:len(label)])
+    builder.append("_")
+    codegen_atomics.append_decimal(builder, syntax_index)
+
+
 def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id: NodeId) -> void:
     arena: &const SyntaxArena = state.arena
     source: &const String = state.source
@@ -78,6 +208,12 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     if id.index < 0:
         builder.append("0")
         return
+    atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id, context.active_user_specialization)
+    if atomic_index >= 0:
+        atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
+        if atomic_node.kind != backend_ir.IRNodeKind.ATOMIC_INIT:
+            emit_atomic_expression_state(state, atomic_node)
+            return
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.EXPR_LITERAL:
         if node.flags == cast[i32](token.TokenKind.STRING):
@@ -255,6 +391,11 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
             return
     if node.kind == SyntaxKind.EXPR_NAME:
         name = source[node.value_start:node.value_start + node.value_length]
+        imported = codegen_names.find_import_member(imports, &name)
+        if len(imported.module_name) > 0 and len(imported.member) > 0 and not project.is_builtin_module(&imported.module_name):
+            builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
+            builder.append(imported.member)
+            return
         if codegen_context.context_name_is_global(context, &name) or (not codegen_context.context_has_name(context, source, node.value_start, node.value_length) and not codegen_context.context_name_is_extern(context, &name) and codegen_context.context_has_function_name(context.type_arena, context.root, context.type_source, &name)):
             builder.append(prefix[0:len(prefix)])
         codegen_names.append_source(builder, source, node.value_start, node.value_length)

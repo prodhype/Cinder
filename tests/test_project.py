@@ -17,10 +17,7 @@ def write_project(root: Path) -> tuple[Path, Path, Path]:
     source_root.mkdir(parents=True)
     manifest = root / "cinder.toml"
     manifest.write_text(
-        "[project]\n"
-        "name = \"module_demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n",
+        '[project]\nname = "module_demo"\nsource-root = "src"\nentry = "main.ci"\n',
         encoding="utf-8",
     )
     model = source_root / "model.ci"
@@ -64,15 +61,15 @@ def write_project(root: Path) -> tuple[Path, Path, Path]:
         "    result = consume(true)\n"
         "    match token:\n"
         "        case Token.Integer(value):\n"
-        "            stdio.printf(\"token=%d \", value)\n"
+        '            stdio.printf("token=%d ", value)\n'
         "        case Token.End:\n"
-        "            stdio.printf(\"end \")\n"
+        '            stdio.printf("end ")\n'
         "    match result:\n"
         "        case Ok(value):\n"
-        "            stdio.printf(\"result=%d \", value)\n"
+        '            stdio.printf("result=%d ", value)\n'
         "        case Err(error):\n"
-        "            stdio.printf(\"error=%d \", cast[i32](error))\n"
-        "    stdio.printf(\"global=%d\\n\", model.answer)\n"
+        '            stdio.printf("error=%d ", cast[i32](error))\n'
+        '    stdio.printf("global=%d\\n", model.answer)\n'
         "    return 0\n",
         encoding="utf-8",
     )
@@ -100,7 +97,7 @@ def test_project_cycle_has_a_source_diagnostic(tmp_path: Path) -> None:
     source_root = tmp_path / "src"
     source_root.mkdir()
     (tmp_path / "cinder.toml").write_text(
-        "[project]\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+        '[project]\nsource-root = "src"\nentry = "main.ci"\n',
         encoding="utf-8",
     )
     (source_root / "main.ci").write_text(
@@ -151,7 +148,9 @@ def test_multi_module_project_builds_runs_and_preserves_unchanged_generated_file
 ) -> None:
     manifest, _, _ = write_project(tmp_path)
     compiler = Compiler()
-    output = tmp_path / ("module_demo.exe" if shutil.which("cl") and not shutil.which("cc") else "module_demo")
+    output = tmp_path / (
+        "module_demo.exe" if shutil.which("cl") and not shutil.which("cc") else "module_demo"
+    )
     build_dir = tmp_path / "build"
 
     first = compiler.build(manifest, output=output, build_dir=build_dir)
@@ -181,10 +180,7 @@ def test_dotted_module_alias_resolves_dependency_first(tmp_path: Path) -> None:
     support = source_root / "support"
     support.mkdir(parents=True)
     (tmp_path / "cinder.toml").write_text(
-        "[project]\n"
-        "name = \"dotted_demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n",
+        '[project]\nname = "dotted_demo"\nsource-root = "src"\nentry = "main.ci"\n',
         encoding="utf-8",
     )
     (support / "math.ci").write_text(
@@ -251,9 +247,7 @@ def test_manifest_rejects_undocumented_keys(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (tmp_path / "cinder.toml").write_text(
-        "[project]\n"
-        "source_root = \"src\"\n"
-        "entry = \"main.ci\"\n",
+        '[project]\nsource_root = "src"\nentry = "main.ci"\n',
         encoding="utf-8",
     )
 
@@ -272,10 +266,7 @@ def test_manifest_rejects_project_names_that_escape_build_paths(
         encoding="utf-8",
     )
     (tmp_path / "cinder.toml").write_text(
-        "[project]\n"
-        "name = \"../outside\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n",
+        '[project]\nname = "../outside"\nsource-root = "src"\nentry = "main.ci"\n',
         encoding="utf-8",
     )
 
@@ -292,9 +283,7 @@ def test_generated_header_is_usable_from_cpp(tmp_path: Path) -> None:
     runtime_include = Path(__file__).resolve().parents[1] / "cinder" / "runtime"
     source = tmp_path / "library.ci"
     source.write_text(
-        "@export\n"
-        "def answer() -> i32:\n"
-        "    return 42\n",
+        "@export\ndef answer() -> i32:\n    return 42\n",
         encoding="utf-8",
     )
     generated = tmp_path / "generated"
@@ -326,8 +315,7 @@ def test_generated_header_is_usable_from_cpp(tmp_path: Path) -> None:
 
     consumer = tmp_path / "consumer.cpp"
     consumer.write_text(
-        '#include "cinder_gen/library.cinder.h"\n'
-        "int main() { return answer() - 42; }\n",
+        '#include "cinder_gen/library.cinder.h"\nint main() { return answer() - 42; }\n',
         encoding="utf-8",
     )
     executable = tmp_path / "consumer"
@@ -355,16 +343,194 @@ def test_generated_header_is_usable_from_cpp(tmp_path: Path) -> None:
     assert subprocess.run([str(executable)], check=False).returncode == 0
 
 
+@pytest.mark.skipif(
+    not shutil.which("cc") or not shutil.which("c++"),
+    reason="C and C++ compilers are required",
+)
+def test_atomic_header_is_opaque_and_usable_from_cpp(tmp_path: Path) -> None:
+    runtime_include = Path(__file__).resolve().parents[1] / "cinder" / "runtime"
+    source = tmp_path / "atomic_library.ci"
+    source.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "counter: Atomic[u64] = 0\n"
+        "\n"
+        "@export\n"
+        "def increment(value: *Atomic[u64]) -> u64:\n"
+        "    return value.fetch_add(1)\n",
+        encoding="utf-8",
+    )
+    generated = tmp_path / "generated"
+    emitted = Compiler().emit_project(source, generated)
+    unit = emitted.project.entry_unit
+    header = unit.c_header
+    assert header is not None
+    assert "#include <stdatomic.h>" in header
+    assert "#ifndef __cplusplus" in header
+    assert "_Atomic(uint64_t) value;" in header
+
+    counter_name = unit.semantic.globals["counter"].c_name
+    increment_name = unit.semantic.functions["increment"].c_name
+    assert counter_name is not None
+
+    object_file = tmp_path / "atomic_library.o"
+    compile_c = subprocess.run(
+        [
+            shutil.which("cc") or "cc",
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            f"-I{runtime_include}",
+            f"-I{generated}",
+            "-c",
+            str(emitted.sources[0]),
+            "-o",
+            str(object_file),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert compile_c.returncode == 0, compile_c.stderr
+
+    consumer = tmp_path / "atomic_consumer.cpp"
+    consumer.write_text(
+        '#include "cinder_gen/atomic_library.cinder.h"\n'
+        "int main() {\n"
+        f"    auto *cell = &{counter_name};\n"
+        f"    if ({increment_name}(cell) != 0) return 1;\n"
+        f"    return {increment_name}(cell) == 1 ? 0 : 2;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    executable = tmp_path / "atomic_consumer"
+    compile_cpp = subprocess.run(
+        [
+            shutil.which("c++") or "c++",
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            f"-I{runtime_include}",
+            f"-I{generated}",
+            str(consumer),
+            str(object_file),
+            "-o",
+            str(executable),
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert compile_cpp.returncode == 0, compile_cpp.stderr
+    assert subprocess.run([str(executable)], check=False).returncode == 0
+
+
+@pytestmark_native
+def test_cross_module_atomic_global_builds_and_runs(tmp_path: Path) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    manifest = tmp_path / "cinder.toml"
+    manifest.write_text(
+        '[project]\nname = "atomic_modules"\nsource-root = "src"\nentry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "state.ci").write_text(
+        "from std.atomic import Atomic\n\ncounter: Atomic[u64] = 0\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import state\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    if state.counter.fetch_add(2) != 0:\n"
+        "        return 1\n"
+        "    if state.counter.load() != 2:\n"
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    compiler = Compiler()
+    project = compiler.compile_project(manifest)
+    state_header = project.units_by_name["state"].c_header
+    assert state_header is not None
+    assert "extern CinderAtomic_u64" in state_header
+    assert "_Atomic(uint64_t) value;" in state_header
+
+    executable = tmp_path / "atomic_modules"
+    artifact = compiler.build(
+        manifest,
+        output=executable,
+        build_dir=tmp_path / "build",
+    )
+    result = subprocess.run(
+        [str(artifact.executable)],
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("imports", "declaration_type", "initializer"),
+    [
+        (
+            "from std.atomic import Atomic\nfrom values import INITIAL",
+            "Atomic[u64]",
+            "INITIAL",
+        ),
+        (
+            "from std.atomic import Atomic\nimport values",
+            "Atomic[u64]",
+            "values.INITIAL",
+        ),
+        ("from values import INITIAL", "u64", "INITIAL"),
+    ],
+    ids=("direct-atomic", "qualified-atomic", "plain-global"),
+)
+def test_imported_const_object_is_rejected_in_global_initializer(
+    tmp_path: Path,
+    imports: str,
+    declaration_type: str,
+    initializer: str,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    (tmp_path / "cinder.toml").write_text(
+        '[project]\nsource-root = "src"\nentry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "values.ci").write_text(
+        "const INITIAL: u64 = 7\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        f"{imports}\n"
+        "\n"
+        f"counter: {declaration_type} = {initializer}\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CompilationFailed) as captured:
+        Compiler().compile_project(tmp_path)
+    assert any(diagnostic.code == "C018" for diagnostic in captured.value.diagnostics)
+
+
 @pytestmark_native
 def test_cross_module_class_interface_and_reflection_abi(tmp_path: Path) -> None:
     source_root = tmp_path / "src"
     source_root.mkdir()
     manifest = tmp_path / "cinder.toml"
     manifest.write_text(
-        "[project]\n"
-        "name = \"class_abi\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n",
+        '[project]\nname = "class_abi"\nsource-root = "src"\nentry = "main.ci"\n',
         encoding="utf-8",
     )
     (source_root / "shapes.ci").write_text(
@@ -532,9 +698,9 @@ def test_manifest_rejects_unknown_top_level_table(tmp_path: Path) -> None:
     )
     (tmp_path / "cinder.toml").write_text(
         "[project]\n"
-        "name = \"demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n"
+        'name = "demo"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n'
         "\n"
         "[packaging]\n"
         "bundle = true\n",
@@ -556,12 +722,12 @@ def test_manifest_rejects_unknown_native_keys(tmp_path: Path) -> None:
     )
     (tmp_path / "cinder.toml").write_text(
         "[project]\n"
-        "name = \"demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n"
+        'name = "demo"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n'
         "\n"
         "[native]\n"
-        "libs = [\"SDL2\"]\n",
+        'libs = ["SDL2"]\n',
         encoding="utf-8",
     )
 
@@ -590,9 +756,9 @@ def test_manifest_rejects_invalid_native_libraries(
     )
     (tmp_path / "cinder.toml").write_text(
         "[project]\n"
-        "name = \"demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n"
+        'name = "demo"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n'
         "\n"
         "[native]\n"
         f"{libraries_line}",
@@ -617,17 +783,17 @@ def test_native_paths_resolve_relative_to_project_root(tmp_path: Path) -> None:
     (tmp_path / "vendor" / "lib").mkdir(parents=True)
     (tmp_path / "cinder.toml").write_text(
         "[project]\n"
-        "name = \"demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n"
+        'name = "demo"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n'
         "\n"
         "[native]\n"
-        "include-dirs = [\"vendor/include\"]\n"
-        "library-dirs = [\"vendor/lib\"]\n"
-        "link-files = [\"vendor/lib/libdemo.a\"]\n"
-        "libraries = [\"demo\"]\n"
-        "cflags = [\"-pthread\"]\n"
-        "ldflags = [\"-Wl,-dead_strip\"]\n",
+        'include-dirs = ["vendor/include"]\n'
+        'library-dirs = ["vendor/lib"]\n'
+        'link-files = ["vendor/lib/libdemo.a"]\n'
+        'libraries = ["demo"]\n'
+        'cflags = ["-pthread"]\n'
+        'ldflags = ["-Wl,-dead_strip"]\n',
         encoding="utf-8",
     )
 
@@ -650,12 +816,7 @@ def test_empty_native_table_is_allowed(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (tmp_path / "cinder.toml").write_text(
-        "[project]\n"
-        "name = \"demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n"
-        "\n"
-        "[native]\n",
+        '[project]\nname = "demo"\nsource-root = "src"\nentry = "main.ci"\n\n[native]\n',
         encoding="utf-8",
     )
 
@@ -699,7 +860,7 @@ def test_native_link_files_and_libraries_build(tmp_path: Path) -> None:
     assert archive_stub.returncode == 0, archive_stub.stderr
 
     (source_root / "main.ci").write_text(
-        "extern \"C\":\n"
+        'extern "C":\n'
         "    def native_answer() -> c_int\n"
         "\n"
         "def main() -> i32:\n"
@@ -708,15 +869,15 @@ def test_native_link_files_and_libraries_build(tmp_path: Path) -> None:
     )
     (tmp_path / "cinder.toml").write_text(
         "[project]\n"
-        "name = \"native_link_demo\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n"
+        'name = "native_link_demo"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n'
         "\n"
         "[native]\n"
-        "library-dirs = [\"vendor/lib\"]\n"
-        "libraries = [\"native_answer\"]\n"
-        "link-files = [\"vendor/lib/libnative_answer.a\"]\n"
-        "cflags = [\"-DCINDER_NATIVE_PRESENT\"]\n",
+        'library-dirs = ["vendor/lib"]\n'
+        'libraries = ["native_answer"]\n'
+        'link-files = ["vendor/lib/libnative_answer.a"]\n'
+        'cflags = ["-DCINDER_NATIVE_PRESENT"]\n',
         encoding="utf-8",
     )
 
@@ -746,7 +907,9 @@ def test_native_link_files_and_libraries_build(tmp_path: Path) -> None:
 def test_cli_cflags_and_ldflags_append_after_manifest(tmp_path: Path) -> None:
     from cinder.compiler import CompilerOptions
 
-    is_msvc = bool(shutil.which("cl") and not any(shutil.which(name) for name in ("cc", "clang", "gcc")))
+    is_msvc = bool(
+        shutil.which("cl") and not any(shutil.which(name) for name in ("cc", "clang", "gcc"))
+    )
     if is_msvc:
         manifest_cflag = "/DCINDER_NATIVE_FLAG"
         cli_cflag = "/DCINDER_CLI_FLAG"
@@ -771,13 +934,13 @@ def test_cli_cflags_and_ldflags_append_after_manifest(tmp_path: Path) -> None:
     )
     (tmp_path / "cinder.toml").write_text(
         "[project]\n"
-        "name = \"flag_order\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n"
+        'name = "flag_order"\n'
+        'source-root = "src"\n'
+        'entry = "main.ci"\n'
         "\n"
         "[native]\n"
-        f"cflags = [\"{manifest_cflag}\"]\n"
-        f"ldflags = [\"{manifest_ldflag}\"]\n",
+        f'cflags = ["{manifest_cflag}"]\n'
+        f'ldflags = ["{manifest_ldflag}"]\n',
         encoding="utf-8",
     )
 

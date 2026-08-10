@@ -1,0 +1,116 @@
+# An Atomic value is a value that more than one thread can read and write as one operation.
+# The operation is not split. Other threads do not see a change that is not complete.
+# This example uses Atomic[bool], Atomic[u32], and Atomic[u64].
+
+from std.atomic import Atomic
+
+# This Atomic counter is in the module. The value is 0 when the program starts.
+hits: Atomic[u64] = 0
+# A module-scope pointer uses the Atomic cell's semantic type in generated C.
+hits_pointer: *Atomic[u64]
+
+
+# Add 1 to the Atomic counter. Give the value that was there before the add.
+def increment(counter: &Atomic[u64]) -> u64:
+    return counter.fetch_add(1)
+
+
+def read[T](cell: *Atomic[T]) -> T:
+    return cell.load()
+
+
+def accept_nested_atomic_pointers(
+    optional: Option[*Atomic[u64]],
+    result: Result[*Atomic[u64], *Atomic[u32]],
+    pair: Tuple[*Atomic[u64], *Atomic[u32]],
+    values: List[*Atomic[u64]],
+    owned_values: Owned[List[*Atomic[u64]]],
+    mapping: Map[i32, *Atomic[u64]],
+    mapped_values: MapValues[i32, *Atomic[u64]],
+) -> i32:
+    return 0
+
+
+def main() -> i32:
+    # These Atomic values are local. counter starts at 1. ready starts as false.
+    counter: Atomic[u64] = 1
+    ready: Atomic[bool] = false
+    small: Atomic[u32] = 7
+    wide: Atomic[u64] = 0x100000001
+    converted_ready: Atomic[bool] = 1
+    converted_counter: Atomic[u64] = 2.0
+    indexed_cell: Atomic[u64] = 11
+    indexed_cells: List[*Atomic[u64]] = []
+    defer indexed_cells.clear()
+    indexed_cells.append(&indexed_cell)
+    hits_pointer = &hits
+    if hits_pointer.load() != 0:
+        return 4
+
+    # Atomic inputs accept the same scalar conversions as ordinary assignments.
+    if not converted_ready.load() or converted_counter.load() != 2:
+        return 2
+    converted_ready.store(0)
+    converted_counter.store(3.0)
+    if converted_ready.load() or converted_counter.load() != 3:
+        return 3
+
+    # Indexed Atomic receivers use the list element's semantic wrapper type.
+    indexed_cells[0].store(12)
+    if indexed_cells[0].load() != 12:
+        return 5
+
+    # Each generic specialization keeps its own element and receiver metadata.
+    small_read = read(&small)
+    wide_read = read(&wide)
+    if small_read != 7 or wide_read != 0x100000001:
+        return 1
+
+    # Bool Atomic values let you do load, store, exchange, and compare_exchange.
+    # They do not let you do fetch_add or other fetch arithmetic operations.
+    # exchange writes a new value and gives the old value as one operation.
+    was_ready = ready.exchange(true)
+    # compare_exchange writes desired only if the current value is equal to expected.
+    # If the write occurs, exchanged is true. observed is the old value.
+    # If the write does not occur, exchanged is false. observed is the current value.
+    ready_cas = ready.compare_exchange(expected=true, desired=false)
+    print(f"ready was {was_ready}, cas exchanged={ready_cas.exchanged} observed={ready_cas.observed}")
+
+    # Integer Atomic values let you do load, store, exchange, compare_exchange,
+    # and the fetch arithmetic operations below.
+    # load reads the current value.
+    loaded = counter.load()
+    print(f"load: {loaded}")
+    # A const pointer binding cannot point somewhere else, but its mutable cell can change.
+    const counter_pointer: *Atomic[u64] = &counter
+    # store writes a new value through that pointer.
+    counter_pointer.store(5)
+    # exchange writes 7 and gives the old value.
+    old = counter.exchange(7)
+    # fetch_add adds 3 and gives the value that was there before the add.
+    added = counter.fetch_add(3)
+    # fetch_sub subtracts 2 and gives the value that was there before the subtract.
+    subtracted = counter.fetch_sub(2)
+    # fetch_and, fetch_or, and fetch_xor do bitwise operations the same way.
+    # Each one gives the value that was there before the operation.
+    anded = counter.fetch_and(6)
+    ored = counter.fetch_or(9)
+    xored = counter.fetch_xor(3)
+    after_fetch = counter.load()
+    print(f"exchange returned {old}; after fetch ops: {after_fetch}")
+    print(f"fetch returns: add={added} sub={subtracted} and={anded} or={ored} xor={xored}")
+
+    # This compare_exchange write occurs. The current value is equal to expected (10).
+    success = counter.compare_exchange(expected=10, desired=20)
+    # This compare_exchange write does not occur. The current value is not 10.
+    failure = counter.compare_exchange(expected=10, desired=30)
+    print(f"cas success exchanged={success.exchanged} observed={success.observed}")
+    print(f"cas failure exchanged={failure.exchanged} observed={failure.observed}")
+
+    # Give a reference to an Atomic value. You cannot copy it. You cannot move it.
+    # The increment function changes the same hits counter.
+    first = increment(&hits)
+    second = increment(&hits)
+    hits_now = hits_pointer.load()
+    print(f"hits via &Atomic: first={first} second={second} now={hits_now}")
+    return 0

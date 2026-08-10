@@ -1,4 +1,6 @@
 import backend_ir
+import codegen_atomics
+import codegen_context
 import codegen_names
 import codegen_type_names
 import ownership
@@ -423,13 +425,14 @@ def emit_module_type_specializations(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
     late_phase: bool,
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
-        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, late_phase)
+        emit_module_type_specializations(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, context, late_phase)
     is_closure = node.kind == SyntaxKind.TYPE_CLOSURE
     is_list = false
     is_set = false
@@ -477,9 +480,9 @@ def emit_module_type_specializations(
             builder.append(name[0:len(name)])
             builder.append("\n")
             if is_map:
-                emit_module_map_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+                emit_module_map_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
             else:
-                emit_module_set_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+                emit_module_set_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
             builder.append("#endif\n")
         else:
             builder.append("#ifndef CINDER_SPECIALIZED_")
@@ -504,21 +507,33 @@ def emit_module_type_specializations(
     builder.append(name[0:len(name)])
     builder.append("\n")
     if is_closure:
-        emit_module_closure_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+        emit_module_closure_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
     elif is_result:
-        emit_module_result_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+        emit_module_result_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
     elif is_list:
-        emit_module_list_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+        emit_module_list_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
     elif is_option:
-        emit_module_option_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+        emit_module_option_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
     elif is_tuple:
-        emit_module_tuple_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+        emit_module_tuple_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
     elif is_map_view:
-        emit_module_map_view_specialization(arena, id, source, builder, &name)
+        emit_module_map_view_specialization(arena, id, source, builder, &name, context)
     else:
-        emit_module_owned_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry)
+        emit_module_owned_specialization(arena, id, source, builder, &name, prefix, project_name, imports, registry, context)
     builder.append("#endif\n")
     emitted.append(name)
+
+
+def semantic_atomic_specialization_type(
+    context: &codegen_context.ModuleCodegenContext,
+    syntax_type: NodeId,
+    kind: types.TypeKind,
+) -> types.TypeId:
+    table: &const types.TypeTable = context.type_table
+    semantic_type = codegen_context.context_semantic_type(context, syntax_type)
+    if codegen_atomics.semantic_type_contains_atomic(table, semantic_type) and codegen_type_names.semantic_type_is_kind(table, semantic_type, kind):
+        return semantic_type
+    return types.missing_type()
 
 
 def emit_module_closure_specialization(
@@ -531,8 +546,14 @@ def emit_module_closure_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
+    semantic_type = codegen_context.context_semantic_type(context, id)
+    table: &const types.TypeTable = context.type_table
+    if codegen_atomics.semantic_type_contains_atomic(table, semantic_type) and codegen_type_names.semantic_type_is_kind(table, semantic_type, types.TypeKind.CLOSURE):
+        emit_semantic_closure_specialization(table, semantic_type, source, builder, name, prefix, project_name, imports, registry)
+        return
     if node.child_count <= 0:
         builder.append("struct ")
         builder.append(name[0:len(name)])
@@ -550,19 +571,19 @@ def emit_module_closure_specialization(
     builder.append("struct ")
     builder.append(name[0:len(name)])
     builder.append(" {\n    ")
-    codegen_type_names.emit_module_c_type(arena, value_environment_type, source, builder, prefix, project_name, imports, registry)
+    codegen_context.emit_context_c_type(arena, value_environment_type, source, builder, prefix, project_name, imports, context)
     builder.append(" env;\n    ")
     if return_type.index >= 0:
-        codegen_type_names.emit_module_c_type(arena, return_type, source, builder, prefix, project_name, imports, registry)
+        codegen_context.emit_context_c_type(arena, return_type, source, builder, prefix, project_name, imports, context)
     else:
         builder.append("void")
     builder.append(" (*call)(")
-    codegen_type_names.emit_module_c_type(arena, environment_type, source, builder, prefix, project_name, imports, registry)
+    codegen_context.emit_context_c_type(arena, environment_type, source, builder, prefix, project_name, imports, context)
     builder.append(" *")
     offset: i32 = 1
     while offset < parameter_end:
         builder.append(", ")
-        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
+        codegen_context.emit_context_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context)
         offset += 1
     builder.append(");\n};\nstatic inline void ")
     builder.append(name[0:len(name)])
@@ -586,14 +607,26 @@ def emit_module_list_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
+    table: &const types.TypeTable = context.type_table
+    semantic_type = semantic_atomic_specialization_type(context, id, types.TypeKind.LIST)
+    semantic_element = types.missing_type()
+    if semantic_type.index >= 0:
+        semantic_element = table.types[semantic_type.index].inner
     builder.append("struct ")
     builder.append(name[0:len(name)])
     builder.append(" {\n    ")
     if node.child_count > 1:
         element = arena.children[node.first_child + 1]
-        if context_type_is_array(arena, element):
+        if semantic_element.index >= 0 and codegen_type_names.semantic_type_is_kind(table, semantic_element, types.TypeKind.ARRAY):
+            emit_semantic_array_pointer_data_declarator(table, semantic_element, source, builder, prefix, project_name, imports, registry)
+            builder.append(";\n")
+        elif semantic_element.index >= 0:
+            codegen_type_names.emit_semantic_c_type(table, semantic_element, source, builder, prefix, project_name, imports, registry)
+            builder.append(" *data;\n")
+        elif context_type_is_array(arena, element):
             emit_module_array_pointer_data_declarator(arena, element, source, builder, prefix, project_name, imports, registry)
             builder.append(";\n")
         elif specialization_type_has_simple_declarator(arena, element):
@@ -607,6 +640,8 @@ def emit_module_list_specialization(
     if node.child_count > 1:
         element = arena.children[node.first_child + 1]
         element_info = module_managed_type_info(arena, element, source, prefix, project_name, imports, registry)
+        if semantic_element.index >= 0:
+            element_info = semantic_managed_type_info(table, semantic_element, source, prefix, project_name, imports, registry)
         if element_info.is_complete:
             emit_list_helper_suite(builder, name, &element_info)
 
@@ -768,6 +803,7 @@ def emit_module_set_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
     if node.child_count <= 1:
@@ -777,6 +813,10 @@ def emit_module_set_specialization(
         return
     element = arena.children[node.first_child + 1]
     element_info = module_managed_type_info(arena, element, source, prefix, project_name, imports, registry)
+    table: &const types.TypeTable = context.type_table
+    semantic_type = semantic_atomic_specialization_type(context, id, types.TypeKind.SET)
+    if semantic_type.index >= 0:
+        element_info = semantic_managed_type_info(table, table.types[semantic_type.index].inner, source, prefix, project_name, imports, registry)
     emit_set_specialization_body(builder, name, &element_info)
 
 def emit_module_map_specialization(
@@ -789,6 +829,7 @@ def emit_module_map_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
     if node.child_count <= 2:
@@ -800,6 +841,12 @@ def emit_module_map_specialization(
     value = arena.children[node.first_child + 2]
     key_info = module_managed_type_info(arena, key, source, prefix, project_name, imports, registry)
     value_info = module_managed_type_info(arena, value, source, prefix, project_name, imports, registry)
+    table: &const types.TypeTable = context.type_table
+    semantic_type = semantic_atomic_specialization_type(context, id, types.TypeKind.MAP)
+    if semantic_type.index >= 0:
+        record = table.types[semantic_type.index]
+        key_info = semantic_managed_type_info(table, record.inner, source, prefix, project_name, imports, registry)
+        value_info = semantic_managed_type_info(table, record.second, source, prefix, project_name, imports, registry)
     emit_map_specialization_body(builder, name, &key_info, &value_info)
 
 def emit_module_option_specialization(
@@ -812,8 +859,14 @@ def emit_module_option_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
+    table: &const types.TypeTable = context.type_table
+    semantic_type = semantic_atomic_specialization_type(context, id, types.TypeKind.OPTION)
+    semantic_value_type = types.missing_type()
+    if semantic_type.index >= 0:
+        semantic_value_type = table.types[semantic_type.index].inner
     value_info = ManagedTypeInfo(
         c_type=String(),
         token=String(),
@@ -842,10 +895,16 @@ def emit_module_option_specialization(
     builder.append("_Tag tag;\n    union {\n        unsigned char _cinder_empty;\n")
     if node.child_count > 1:
         value_type = arena.children[node.first_child + 1]
-        value_info = module_managed_type_info(arena, value_type, source, prefix, project_name, imports, registry)
+        if semantic_value_type.index >= 0:
+            value_info = semantic_managed_type_info(table, semantic_value_type, source, prefix, project_name, imports, registry)
+        else:
+            value_info = module_managed_type_info(arena, value_type, source, prefix, project_name, imports, registry)
         if not codegen_type_names.context_type_name_equals(arena, value_type, source, "void"):
             builder.append("        ")
-            codegen_type_names.emit_module_c_type(arena, value_type, source, builder, prefix, project_name, imports, registry)
+            if semantic_value_type.index >= 0:
+                codegen_type_names.emit_semantic_c_type(table, semantic_value_type, source, builder, prefix, project_name, imports, registry)
+            else:
+                codegen_type_names.emit_module_c_type(arena, value_type, source, builder, prefix, project_name, imports, registry)
             builder.append(" value;\n")
     builder.append("    } data;\n};\n")
     if node.child_count > 1:
@@ -861,8 +920,11 @@ def emit_module_tuple_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
+    table: &const types.TypeTable = context.type_table
+    semantic_tuple_type = semantic_atomic_specialization_type(context, id, types.TypeKind.TUPLE)
     builder.append("struct ")
     builder.append(name[0:len(name)])
     builder.append(" {\n")
@@ -871,7 +933,12 @@ def emit_module_tuple_specialization(
     offset: i32 = 1
     while offset < node.child_count:
         builder.append("    ")
-        codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
+        if semantic_tuple_type.index >= 0 and offset <= table.types[semantic_tuple_type.index].flags:
+            emit_record = table.types[semantic_tuple_type.index]
+            item_type = table.type_args[cast[usize](emit_record.extra + offset - 1)]
+            codegen_type_names.emit_semantic_c_type(table, item_type, source, builder, prefix, project_name, imports, registry)
+        else:
+            codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, registry)
         builder.append(" item_")
         codegen_type_names.append_specialization_decimal(builder, cast[usize](offset - 1))
         builder.append(";\n")
@@ -887,6 +954,10 @@ def emit_module_tuple_specialization(
         while item_index > 0:
             item_type = arena.children[node.first_child + item_index]
             item_info = module_managed_type_info(arena, item_type, source, prefix, project_name, imports, registry)
+            if semantic_tuple_type.index >= 0 and item_index <= table.types[semantic_tuple_type.index].flags:
+                drop_record = table.types[semantic_tuple_type.index]
+                semantic_item_type = table.type_args[cast[usize](drop_record.extra + item_index - 1)]
+                item_info = semantic_managed_type_info(table, semantic_item_type, source, prefix, project_name, imports, registry)
             expression_builder = StringBuilder()
             expression_builder.append("self->item_")
             codegen_type_names.append_specialization_decimal(&expression_builder, cast[usize](item_index - 1))
@@ -905,12 +976,20 @@ def emit_module_owned_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
+    table: &const types.TypeTable = context.type_table
+    semantic_type = semantic_atomic_specialization_type(context, id, types.TypeKind.OWNED)
+    semantic_payload = types.missing_type()
+    if semantic_type.index >= 0:
+        semantic_payload = table.types[semantic_type.index].inner
     builder.append("struct ")
     builder.append(name[0:len(name)])
     builder.append(" {\n    ")
-    if node.child_count > 1:
+    if semantic_payload.index >= 0:
+        codegen_type_names.emit_semantic_c_type(table, semantic_payload, source, builder, prefix, project_name, imports, registry)
+    elif node.child_count > 1:
         codegen_type_names.emit_module_c_type(arena, arena.children[node.first_child + 1], source, builder, prefix, project_name, imports, registry)
     else:
         builder.append("void")
@@ -927,12 +1006,13 @@ def emit_module_owned_helpers(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
-        emit_module_owned_helpers(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry)
+        emit_module_owned_helpers(arena, arena.children[node.first_child + offset], source, builder, emitted, prefix, project_name, imports, registry, context)
     if node.kind != SyntaxKind.TYPE_GENERIC or node.child_count <= 1:
         return
     base = codegen_names.first_child(arena, id)
@@ -946,7 +1026,11 @@ def emit_module_owned_helpers(
     emitted.append(name[0:len(name)])
     payload = arena.children[node.first_child + 1]
     payload_info = module_managed_type_info(arena, payload, source, prefix, project_name, imports, registry)
-    if len(payload_info.drop_helper) == 0 and payload_info.hash_kind != ManagedHashKind.SCALAR and codegen_type_names.type_node_kind(arena, payload) == SyntaxKind.TYPE_NAME and not codegen_type_names.is_specialization_builtin_name(source, &arena.nodes[payload.index]):
+    table: &const types.TypeTable = context.type_table
+    semantic_type = semantic_atomic_specialization_type(context, id, types.TypeKind.OWNED)
+    if semantic_type.index >= 0:
+        payload_info = semantic_managed_type_info(table, table.types[semantic_type.index].inner, source, prefix, project_name, imports, registry)
+    elif len(payload_info.drop_helper) == 0 and payload_info.hash_kind != ManagedHashKind.SCALAR and codegen_type_names.type_node_kind(arena, payload) == SyntaxKind.TYPE_NAME and not codegen_type_names.is_specialization_builtin_name(source, &arena.nodes[payload.index]):
         payload_drop_builder = StringBuilder()
         payload_drop_builder.append(payload_info.c_type[0:len(payload_info.c_type)])
         payload_drop_builder.append("__drop")
@@ -1006,6 +1090,7 @@ def emit_module_result_specialization(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
     if node.child_count < 3:
@@ -1015,8 +1100,18 @@ def emit_module_result_specialization(
         return
     ok_type = arena.children[node.first_child + 1]
     error_type = arena.children[node.first_child + 2]
+    table: &const types.TypeTable = context.type_table
+    semantic_type = semantic_atomic_specialization_type(context, id, types.TypeKind.RESULT)
+    semantic_ok_type = types.missing_type()
+    semantic_error_type = types.missing_type()
     ok_info = module_managed_type_info(arena, ok_type, source, prefix, project_name, imports, registry)
     error_info = module_managed_type_info(arena, error_type, source, prefix, project_name, imports, registry)
+    if semantic_type.index >= 0:
+        semantic_ok_type = table.types[semantic_type.index].inner
+        semantic_error_type = table.types[semantic_type.index].second
+    if semantic_ok_type.index >= 0:
+        ok_info = semantic_managed_type_info(table, semantic_ok_type, source, prefix, project_name, imports, registry)
+        error_info = semantic_managed_type_info(table, semantic_error_type, source, prefix, project_name, imports, registry)
     builder.append("typedef enum ")
     builder.append(name[0:len(name)])
     builder.append("_Tag {\n")
@@ -1036,11 +1131,17 @@ def emit_module_result_specialization(
     builder.append("_Tag tag;\n    union {\n        unsigned char _cinder_empty;\n")
     if not codegen_type_names.context_type_name_equals(arena, ok_type, source, "void"):
         builder.append("        ")
-        codegen_type_names.emit_module_c_type(arena, ok_type, source, builder, prefix, project_name, imports, registry)
+        if semantic_ok_type.index >= 0:
+            codegen_type_names.emit_semantic_c_type(table, semantic_ok_type, source, builder, prefix, project_name, imports, registry)
+        else:
+            codegen_type_names.emit_module_c_type(arena, ok_type, source, builder, prefix, project_name, imports, registry)
         builder.append(" ok;\n")
     if not codegen_type_names.context_type_name_equals(arena, error_type, source, "void"):
         builder.append("        ")
-        codegen_type_names.emit_module_c_type(arena, error_type, source, builder, prefix, project_name, imports, registry)
+        if semantic_error_type.index >= 0:
+            codegen_type_names.emit_semantic_c_type(table, semantic_error_type, source, builder, prefix, project_name, imports, registry)
+        else:
+            codegen_type_names.emit_module_c_type(arena, error_type, source, builder, prefix, project_name, imports, registry)
         builder.append(" err;\n")
     builder.append("    } data;\n};\n")
     emit_result_drop_helper(builder, name, &ok_info, &error_info)
@@ -1978,8 +2079,14 @@ def emit_module_map_view_specialization(
     source: &const String,
     builder: &StringBuilder,
     name: &const String,
+    context: &codegen_context.ModuleCodegenContext,
 ) -> void:
     node = arena.nodes[id.index]
+    table: &const types.TypeTable = context.type_table
+    semantic_type = codegen_context.context_semantic_type(context, id)
+    if codegen_atomics.semantic_type_contains_atomic(table, semantic_type) and semantic_type.index >= 0 and types.is_map_view_kind(table.types[semantic_type.index].kind):
+        emit_semantic_map_view_specialization(table, table.types[semantic_type.index].inner, source, builder, name, context.specialization_names)
+        return
     map_name_builder = StringBuilder()
     map_name_builder.append("CinderMap_")
     if node.child_count > 2:

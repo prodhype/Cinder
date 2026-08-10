@@ -5,7 +5,18 @@ from dataclasses import field as dataclass_field
 from textwrap import dedent
 
 from cinder import ast
-from cinder.ir import IRModule
+from cinder.ir import (
+    AtomicFetchKind,
+    IRAtomicCompareExchange,
+    IRAtomicExchange,
+    IRAtomicFetch,
+    IRAtomicInit,
+    IRAtomicLoad,
+    IRAtomicOperation,
+    IRAtomicStore,
+    IRFunction,
+    IRModule,
+)
 from cinder.ownership import (
     class_needs_drop as ownership_class_needs_drop,
 )
@@ -54,6 +65,8 @@ from cinder.types import (
     U64,
     USIZE,
     ArrayType,
+    AtomicCompareExchangeResultType,
+    AtomicType,
     ClassType,
     ClosureType,
     ComptimeCollectionType,
@@ -87,6 +100,8 @@ from cinder.types import (
     TypeValueType,
     UnionType,
     VariantType,
+    atomic_c_name,
+    atomic_compare_exchange_result_c_name,
     closure_c_name,
     dyn_c_name,
     file_c_name,
@@ -213,10 +228,7 @@ class CWriter:
         return "\n".join(self.lines).rstrip() + "\n"
 
     def raw(self, text: str) -> None:
-        self.lines.extend(
-            line.rstrip()
-            for line in dedent(text).strip("\n").splitlines()
-        )
+        self.lines.extend(line.rstrip() for line in dedent(text).strip("\n").splitlines())
 
 
 @dataclass(slots=True)
@@ -244,10 +256,20 @@ class CGenerator:
         self.scope_frames: list[_ScopeFrame] = []
         self.temp_counter = 0
         self.current_function: FunctionSymbol | None = None
-        self.comptime_members: dict[int, object] = {}
-        self._classes_by_type = {
-            class_.type: class_ for class_ in self.semantic.classes.values()
+        self.current_ir_function: IRFunction | None = None
+        self.atomic_calls: dict[int, IRAtomicOperation] = {
+            id(operation.call): operation
+            for operation in module.atomic_operations
+            if not isinstance(operation, IRAtomicInit)
         }
+        self.atomic_initializers: dict[int, IRAtomicInit] = {
+            id(operation.declaration): operation
+            for operation in module.atomic_operations
+            if isinstance(operation, IRAtomicInit)
+        }
+        self.atomic_temp_indices: dict[int, int] = {}
+        self.comptime_members: dict[int, object] = {}
+        self._classes_by_type = {class_.type: class_ for class_ in self.semantic.classes.values()}
         self._structs_by_type = {
             type_: struct
             for type_, struct in self.semantic.nominal_symbols.items()
@@ -265,6 +287,7 @@ class CGenerator:
 
     def generate(self) -> str:
         self._emit_preamble()
+        self._emit_atomic_type_definitions(header_mode=False)
         self._emit_forward_declarations()
         self._emit_enum_definitions()
         self._emit_slice_types()
@@ -314,7 +337,12 @@ class CGenerator:
             self.writer.line(f'#include "{dependency_header}"')
         for include in self.semantic.includes:
             self.writer.line(f"#include {include}")
+        if self.ir.atomic_types:
+            self.writer.line("#ifndef __cplusplus")
+            self.writer.line("#include <stdatomic.h>")
+            self.writer.line("#endif")
         self.writer.line()
+        self._emit_atomic_type_definitions(header_mode=True)
         self._emit_forward_declarations()
         self._emit_enum_definitions()
         self._emit_slice_types()
@@ -378,7 +406,48 @@ class CGenerator:
                 self.writer.line(f'#include "{module.generated_header}"')
         for include in self.semantic.includes:
             self.writer.line(f"#include {include}")
+        if self.ir.atomic_types:
+            self.writer.line("#include <stdatomic.h>")
         self.writer.line()
+
+    def _emit_atomic_type_definitions(self, *, header_mode: bool) -> None:
+        emitted = False
+        for atomic_type in self.ir.atomic_types:
+            name = c_identifier(atomic_c_name(atomic_type))
+            guard = f"CINDER_DECLARED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name} {name};")
+            if header_mode:
+                self.writer.line("#ifndef __cplusplus")
+            self.writer.line(f"struct {name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(f"_Atomic({c_type_expression(atomic_type.inner)}) value;")
+            self.writer.indent -= 1
+            self.writer.line("};")
+            if header_mode:
+                self.writer.line("#endif")
+            self.writer.line("#endif")
+            emitted = True
+
+        for result_type in self.ir.atomic_result_types:
+            name = c_identifier(atomic_compare_exchange_result_c_name(result_type))
+            guard = f"CINDER_DEFINED_{name.upper()}"
+            self.writer.line(f"#ifndef {guard}")
+            self.writer.line(f"#define {guard}")
+            self.writer.line(f"typedef struct {name}")
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line("bool exchanged;")
+            self.writer.line(c_decl(result_type.inner, "observed") + ";")
+            self.writer.indent -= 1
+            self.writer.line(f"}} {name};")
+            self.writer.line("#endif")
+            emitted = True
+
+        if emitted:
+            self.writer.line()
 
     def _emit_forward_declarations(self) -> None:
         emitted = False
@@ -536,9 +605,7 @@ class CGenerator:
             self.writer.indent += 1
             for index, member in enumerate(enum.symbol.members.values()):
                 suffix = "," if index + 1 < len(enum.symbol.members) else ""
-                self.writer.line(
-                    f"{c_identifier(member.c_name)} = {member.value}{suffix}"
-                )
+                self.writer.line(f"{c_identifier(member.c_name)} = {member.value}{suffix}")
             self.writer.indent -= 1
             self.writer.line(f"}} {name};")
             if specialized:
@@ -607,9 +674,7 @@ class CGenerator:
             )
             self.writer.line("{")
             self.writer.indent += 1
-            self.writer.line(
-                f"return ({name}){{ .data = value.data, .length = value.length }};"
-            )
+            self.writer.line(f"return ({name}){{ .data = value.data, .length = value.length }};")
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line(f"#endif /* {guard} */")
@@ -750,23 +815,19 @@ class CGenerator:
             self.writer.line(f"#ifndef {guard}")
             self.writer.line(f"#define {guard}")
             self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED {name} {name}_new("
-                f"{c_decl(inner, 'value')})"
+                f"static inline CINDER_MAYBE_UNUSED {name} {name}_new({c_decl(inner, 'value')})"
             )
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line(
-                f"{pointer_c_type} ptr = ({pointer_c_type})"
-                f"cinder_alloc(1, sizeof({inner_c_type}));"
+                f"{pointer_c_type} ptr = ({pointer_c_type})cinder_alloc(1, sizeof({inner_c_type}));"
             )
             self.writer.line("*ptr = value;")
             self.writer.line(f"return ({name}){{ .ptr = ptr }};")
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line()
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *owned)"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *owned)")
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line("if (owned == NULL || owned->ptr == NULL)")
@@ -839,9 +900,7 @@ class CGenerator:
                 f"result.data = ({c_type_expression(element_pointer)})"
                 f"cinder_alloc(length, sizeof({element_c_type}));"
             )
-            self.writer.line(
-                "memcpy(result.data, values, length * sizeof(*result.data));"
-            )
+            self.writer.line("memcpy(result.data, values, length * sizeof(*result.data));")
             self.writer.line("result.length = length;")
             self.writer.line("result.capacity = length;")
             self.writer.line("return result;")
@@ -849,9 +908,7 @@ class CGenerator:
             self.writer.line("}")
             self.writer.line()
 
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)")
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line("if (value == NULL)")
@@ -888,8 +945,7 @@ class CGenerator:
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line(
-                f"value->data = ({c_type_expression(element_pointer)})"
-                "cinder_grow_array("
+                f"value->data = ({c_type_expression(element_pointer)})cinder_grow_array("
             )
             self.writer.indent += 1
             self.writer.line("value->data,")
@@ -905,8 +961,7 @@ class CGenerator:
             self.writer.line()
 
             self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED {c_decl(element, f'{name}_pop')}("
-                f"{name} *value)"
+                f"static inline CINDER_MAYBE_UNUSED {c_decl(element, f'{name}_pop')}({name} *value)"
             )
             self.writer.line("{")
             self.writer.indent += 1
@@ -917,23 +972,17 @@ class CGenerator:
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line("value->length -= 1;")
-            self.writer.line(
-                f"{c_decl(element, 'result')} = value->data[value->length];"
-            )
+            self.writer.line(f"{c_decl(element, 'result')} = value->data[value->length];")
             if self._type_needs_drop(element):
                 # Move out: invalidate the capacity slot so it is not a second
                 # owner. Append may reuse the slot without drop glue.
-                self.writer.line(
-                    "memset(&value->data[value->length], 0, sizeof(*value->data));"
-                )
+                self.writer.line("memset(&value->data[value->length], 0, sizeof(*value->data));")
             self.writer.line("return result;")
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line()
 
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_clear({name} *value)"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_clear({name} *value)")
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line("if (value == NULL)")
@@ -984,9 +1033,7 @@ class CGenerator:
         self.writer.line("}")
         self.writer.line()
 
-        self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
-        )
+        self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line("if (value->handle != NULL)")
@@ -1029,9 +1076,7 @@ class CGenerator:
         self.writer.line('cinder_panic("write on closed File");')
         self.writer.indent -= 1
         self.writer.line("}")
-        self.writer.line(
-            "return fwrite(cinder_string_cstr(data), 1, data->length, value->handle);"
-        )
+        self.writer.line("return fwrite(cinder_string_cstr(data), 1, data->length, value->handle);")
         self.writer.indent -= 1
         self.writer.line("}")
         self.writer.line()
@@ -1049,9 +1094,7 @@ class CGenerator:
         self.writer.line('cinder_panic("read on closed File");')
         self.writer.indent -= 1
         self.writer.line("}")
-        self.writer.line(
-            "size_t counted = fread(buffer.data, 1, buffer.length, value->handle);"
-        )
+        self.writer.line("size_t counted = fread(buffer.data, 1, buffer.length, value->handle);")
         self.writer.line("if (counted < buffer.length && ferror(value->handle))")
         self.writer.line("{")
         self.writer.indent += 1
@@ -1064,8 +1107,7 @@ class CGenerator:
         self.writer.line()
 
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED {line_option_name} "
-            f"{name}_read_line({name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED {line_option_name} {name}_read_line({name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -1075,10 +1117,7 @@ class CGenerator:
         self.writer.line('cinder_panic("read_line on closed File");')
         self.writer.indent -= 1
         self.writer.line("}")
-        self.writer.line(
-            f"{line_option_name} result = "
-            f"{{ {line_option_name}_Tag_None, {{ 0 }} }};"
-        )
+        self.writer.line(f"{line_option_name} result = {{ {line_option_name}_Tag_None, {{ 0 }} }};")
         self.writer.line(f"{string_c_name()} line = {{ 0 }};")
         self.writer.line("if (!cinder_read_line(value->handle, &line))")
         self.writer.line("{")
@@ -1094,8 +1133,7 @@ class CGenerator:
         self.writer.line()
 
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED {string_c_name()} "
-            f"{name}_read_text({name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED {string_c_name()} {name}_read_text({name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -1113,8 +1151,7 @@ class CGenerator:
         list_u8 = ListType(U8)
         list_name = c_identifier(list_c_name(list_u8))
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED {list_name} {name}_read_all("
-            f"{name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED {list_name} {name}_read_all({name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -1135,9 +1172,7 @@ class CGenerator:
         self.writer.line('cinder_panic("File.read_all length overflow");')
         self.writer.indent -= 1
         self.writer.line("}")
-        self.writer.line(
-            "result.data = (uint8_t *)cinder_grow_array("
-        )
+        self.writer.line("result.data = (uint8_t *)cinder_grow_array(")
         self.writer.indent += 1
         self.writer.line("result.data,")
         self.writer.line("&result.capacity,")
@@ -1147,8 +1182,7 @@ class CGenerator:
         self.writer.line(");")
         self.writer.line("size_t available = result.capacity - result.length;")
         self.writer.line(
-            "size_t counted = fread("
-            "result.data + result.length, 1, available, value->handle);"
+            "size_t counted = fread(result.data + result.length, 1, available, value->handle);"
         )
         self.writer.line("result.length += counted;")
         self.writer.line("if (counted < available)")
@@ -1171,9 +1205,7 @@ class CGenerator:
         self.writer.line("}")
         self.writer.line()
 
-        self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_flush({name} *value)"
-        )
+        self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_flush({name} *value)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line("if (value->handle == NULL)")
@@ -1187,9 +1219,7 @@ class CGenerator:
         self.writer.line("}")
         self.writer.line()
 
-        self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_close({name} *value)"
-        )
+        self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_close({name} *value)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line(f"{name}_drop(value);")
@@ -1236,15 +1266,9 @@ class CGenerator:
             map_type.value,
             "value->entries[value->buckets[bucket]].value",
         )
-        keys_view = c_identifier(
-            map_view_c_name(MapViewType(map_type, "keys"))
-        )
-        values_view = c_identifier(
-            map_view_c_name(MapViewType(map_type, "values"))
-        )
-        items_view = c_identifier(
-            map_view_c_name(MapViewType(map_type, "items"))
-        )
+        keys_view = c_identifier(map_view_c_name(MapViewType(map_type, "keys")))
+        values_view = c_identifier(map_view_c_name(MapViewType(map_type, "values")))
+        items_view = c_identifier(map_view_c_name(MapViewType(map_type, "items")))
         item_tuple = TupleType((map_type.key, map_type.value))
         item_tuple_name = c_identifier(tuple_c_name(item_tuple))
         view_membership_helpers = ""
@@ -1470,7 +1494,7 @@ class CGenerator:
                 return result;
             }}
 
-            static inline CINDER_MAYBE_UNUSED {c_decl(map_type.value, f'{name}_lookup_or_panic')}(
+            static inline CINDER_MAYBE_UNUSED {c_decl(map_type.value, f"{name}_lookup_or_panic")}(
                 const {name} *value,
                 {key_decl}
             )
@@ -1488,7 +1512,7 @@ class CGenerator:
                 return {get_value};
             }}
 
-            static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(ConstType(map_type.value)), f'{name}_lookup_ptr_or_panic')}(
+            static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(ConstType(map_type.value)), f"{name}_lookup_ptr_or_panic")}(
                 const {name} *value,
                 {key_decl}
             )
@@ -1506,7 +1530,7 @@ class CGenerator:
                 return &value->entries[value->buckets[bucket]].value;
             }}
 
-            static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(map_type.value), f'{name}_lookup_mut_or_panic')}(
+            static inline CINDER_MAYBE_UNUSED {c_decl(PointerType(map_type.value), f"{name}_lookup_mut_or_panic")}(
                 {name} *value,
                 {key_decl}
             )
@@ -2323,9 +2347,7 @@ class CGenerator:
         name = c_identifier(closure_c_name(closure_type))
         guard = f"CINDER_DEFINED_{name.upper()}"
         env_parameter: Type = PointerType(
-            ConstType(closure_type.env_type)
-            if closure_type.env_is_const
-            else closure_type.env_type
+            ConstType(closure_type.env_type) if closure_type.env_is_const else closure_type.env_type
         )
         adapter_type = FunctionPointerType(
             (env_parameter, *closure_type.param_types),
@@ -2355,14 +2377,10 @@ class CGenerator:
             if self._is_printable_runtime_type(list_type)
         ]
         printable_maps = [
-            map_type
-            for map_type in self.ir.map_types
-            if self._is_printable_runtime_type(map_type)
+            map_type for map_type in self.ir.map_types if self._is_printable_runtime_type(map_type)
         ]
         printable_sets = [
-            set_type
-            for set_type in self.ir.set_types
-            if self._is_printable_runtime_type(set_type)
+            set_type for set_type in self.ir.set_types if self._is_printable_runtime_type(set_type)
         ]
         if not (printable_tuples or printable_lists or printable_maps or printable_sets):
             return
@@ -2373,26 +2391,22 @@ class CGenerator:
         for tuple_type in printable_tuples:
             name = c_identifier(tuple_c_name(tuple_type))
             self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-                f"const {name} *value);"
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value);"
             )
         for list_type in printable_lists:
             name = c_identifier(list_c_name(list_type))
             self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-                f"const {name} *value);"
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value);"
             )
         for map_type in printable_maps:
             name = c_identifier(map_c_name(map_type))
             self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-                f"const {name} *value);"
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value);"
             )
         for set_type in printable_sets:
             name = c_identifier(set_c_name(set_type))
             self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-                f"const {name} *value);"
+                f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value);"
             )
         self.writer.line()
 
@@ -2417,17 +2431,13 @@ class CGenerator:
         if isinstance(raw, PrimitiveType) and raw.category in {"float", "integer"}:
             return True
         if isinstance(raw, TupleType):
-            return all(
-                CGenerator._is_printable_runtime_type(element)
-                for element in raw.elements
-            )
+            return all(CGenerator._is_printable_runtime_type(element) for element in raw.elements)
         if isinstance(raw, ListType):
             return CGenerator._is_printable_runtime_type(raw.inner)
         if isinstance(raw, MapType):
-            return (
-                CGenerator._is_printable_runtime_type(raw.key)
-                and CGenerator._is_printable_runtime_type(raw.value)
-            )
+            return CGenerator._is_printable_runtime_type(
+                raw.key
+            ) and CGenerator._is_printable_runtime_type(raw.value)
         if isinstance(raw, SetType):
             return CGenerator._is_printable_runtime_type(raw.inner)
         return False
@@ -2441,9 +2451,7 @@ class CGenerator:
             self.writer.line(f"cinder_print_repr_char({c_value});")
             return
         if isinstance(raw, StringType):
-            self.writer.line(
-                f"cinder_print_repr_string(cinder_string_cstr(&({c_value})));"
-            )
+            self.writer.line(f"cinder_print_repr_string(cinder_string_cstr(&({c_value})));")
             return
         if _is_printf_string_type(raw):
             self.writer.line(f"cinder_print_repr_string({c_value});")
@@ -2454,9 +2462,7 @@ class CGenerator:
             return
         if isinstance(raw, PrimitiveType) and raw.category == "integer":
             if raw.signed is False:
-                self.writer.line(
-                    f'printf("%llu", (unsigned long long)({c_value}));'
-                )
+                self.writer.line(f'printf("%llu", (unsigned long long)({c_value}));')
             else:
                 self.writer.line(f'printf("%lld", (long long)({c_value}));')
             return
@@ -2484,8 +2490,7 @@ class CGenerator:
         self.writer.line(f"#ifndef {guard}")
         self.writer.line(f"#define {guard}")
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-            f"const {name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -2510,8 +2515,7 @@ class CGenerator:
         self.writer.line(f"#ifndef {guard}")
         self.writer.line(f"#define {guard}")
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-            f"const {name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -2536,16 +2540,13 @@ class CGenerator:
         self.writer.line(f"#ifndef {guard}")
         self.writer.line(f"#define {guard}")
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-            f"const {name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line('printf("{");')
         self.writer.line("bool first = true;")
-        self.writer.line(
-            "for (size_t index = 0; index < value->entries_length; ++index)"
-        )
+        self.writer.line("for (size_t index = 0; index < value->entries_length; ++index)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line(f"const {entry_name} *entry = &value->entries[index];")
@@ -2580,8 +2581,7 @@ class CGenerator:
         self.writer.line(f"#ifndef {guard}")
         self.writer.line(f"#define {guard}")
         self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_print("
-            f"const {name} *value)"
+            f"static inline CINDER_MAYBE_UNUSED void {name}_print(const {name} *value)"
         )
         self.writer.line("{")
         self.writer.indent += 1
@@ -2632,12 +2632,8 @@ class CGenerator:
             )
             self.writer.line("{")
             self.writer.indent += 1
-            self.writer.line(
-                f"{c_decl(pointer_type, 'left')} = ({pointer_c_type})left_value;"
-            )
-            self.writer.line(
-                f"{c_decl(pointer_type, 'right')} = ({pointer_c_type})right_value;"
-            )
+            self.writer.line(f"{c_decl(pointer_type, 'left')} = ({pointer_c_type})left_value;")
+            self.writer.line(f"{c_decl(pointer_type, 'right')} = ({pointer_c_type})right_value;")
             raw = strip_const(element_type)
             if isinstance(raw, StringType):
                 self.writer.line("return cinder_string_compare_value(left, right);")
@@ -2840,9 +2836,7 @@ class CGenerator:
         )
         self.writer.line("{")
         self.writer.indent += 1
-        self.writer.line(
-            f"if (option == NULL || option->tag != {name}_Tag_Some)"
-        )
+        self.writer.line(f"if (option == NULL || option->tag != {name}_Tag_Some)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line('cinder_panic("attempted to read None.value");')
@@ -2860,9 +2854,7 @@ class CGenerator:
             )
             self.writer.line("{")
             self.writer.indent += 1
-            self.writer.line(
-                f"if (option == NULL || option->tag != {name}_Tag_Some)"
-            )
+            self.writer.line(f"if (option == NULL || option->tag != {name}_Tag_Some)")
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line('cinder_panic("attempted to read None.value");')
@@ -2879,9 +2871,7 @@ class CGenerator:
             )
             self.writer.line("{")
             self.writer.indent += 1
-            self.writer.line(
-                f"if (option == NULL || option->tag != {name}_Tag_Some)"
-            )
+            self.writer.line(f"if (option == NULL || option->tag != {name}_Tag_Some)")
             self.writer.line("{")
             self.writer.indent += 1
             self.writer.line('cinder_panic("attempted to read None.value");')
@@ -2926,14 +2916,8 @@ class CGenerator:
     def _emit_reflection_declarations(self) -> None:
         reflected = [nominal for nominal in self._local_nominals() if nominal.reflected]
         for nominal in reflected:
-            linkage = (
-                "static "
-                if nominal.type_args or nominal.template_name
-                else "extern "
-            )
-            self.writer.line(
-                f"{linkage}const CinderTypeInfo {self._type_info_name(nominal)};"
-            )
+            linkage = "static " if nominal.type_args or nominal.template_name else "extern "
+            self.writer.line(f"{linkage}const CinderTypeInfo {self._type_info_name(nominal)};")
         if reflected:
             self.writer.line()
 
@@ -2948,11 +2932,7 @@ class CGenerator:
             if class_.is_abstract:
                 continue
             for interface in self._implemented_interfaces(class_):
-                linkage = (
-                    "static "
-                    if class_.type_args or class_.template_name
-                    else "extern "
-                )
+                linkage = "static " if class_.type_args or class_.template_name else "extern "
                 self.writer.line(
                     f"{linkage}const {c_identifier(interface_vtable_c_name(interface.type))} "
                     f"{self._vtable_instance_name(class_, interface)};"
@@ -2968,27 +2948,19 @@ class CGenerator:
         emitted = False
         for list_type in self.ir.list_types:
             name = c_identifier(list_c_name(list_type))
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);")
             emitted = True
         if self.ir.uses_file:
             name = file_c_name()
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);")
             emitted = True
         for map_type in self.ir.map_types:
             name = c_identifier(map_c_name(map_type))
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);")
             emitted = True
         for set_type in self.ir.set_types:
             name = c_identifier(set_c_name(set_type))
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);")
             emitted = True
         for option_type in self._generated_option_types():
             if self._type_needs_drop(option_type):
@@ -2999,9 +2971,7 @@ class CGenerator:
                 emitted = True
         for owned_type in self.ir.owned_types:
             name = c_identifier(owned_c_name(owned_type))
-            self.writer.line(
-                f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);"
-            )
+            self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value);")
             emitted = True
         for result_type in self.ir.result_types:
             if self._type_needs_drop(result_type):
@@ -3046,9 +3016,7 @@ class CGenerator:
         guard = f"CINDER_DROP_{name.upper()}"
         self.writer.line(f"#ifndef {guard}")
         self.writer.line(f"#define {guard}")
-        self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
-        )
+        self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line("if (value == NULL)")
@@ -3071,9 +3039,7 @@ class CGenerator:
 
     def _emit_result_drop(self, type_: ResultType) -> None:
         name = c_identifier(result_c_name(type_))
-        self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
-        )
+        self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line("if (value == NULL)")
@@ -3102,9 +3068,7 @@ class CGenerator:
 
     def _emit_tuple_drop(self, tuple_type: TupleType) -> None:
         name = c_identifier(tuple_c_name(tuple_type))
-        self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
-        )
+        self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line("if (value == NULL)")
@@ -3123,9 +3087,7 @@ class CGenerator:
 
     def _emit_closure_drop(self, closure_type: ClosureType) -> None:
         name = c_identifier(closure_c_name(closure_type))
-        self.writer.line(
-            f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)"
-        )
+        self.writer.line(f"static inline CINDER_MAYBE_UNUSED void {name}_drop({name} *value)")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line("if (value == NULL)")
@@ -3204,11 +3166,7 @@ class CGenerator:
                 self.writer.line()
 
             type_expression = c_type_expression(nominal.type)
-            type_info_linkage = (
-                "static "
-                if nominal.type_args or nominal.template_name
-                else ""
-            )
+            type_info_linkage = "static " if nominal.type_args or nominal.template_name else ""
             self.writer.line(
                 f"{type_info_linkage}const CinderTypeInfo {self._type_info_name(nominal)} ="
             )
@@ -3248,9 +3206,7 @@ class CGenerator:
         parameter_names = {
             c_identifier(parameter.name)
             for parameter in (
-                class_.constructor.parameters[1:]
-                if class_.constructor is not None
-                else ()
+                class_.constructor.parameters[1:] if class_.constructor is not None else ()
             )
         }
         instance_name = "cinder_instance"
@@ -3262,12 +3218,9 @@ class CGenerator:
         if class_.constructor is not None:
             arguments = [f"&{instance_name}"]
             arguments.extend(
-                c_identifier(parameter.name)
-                for parameter in class_.constructor.parameters[1:]
+                c_identifier(parameter.name) for parameter in class_.constructor.parameters[1:]
             )
-            self.writer.line(
-                f"{c_identifier(class_.constructor.c_name)}({', '.join(arguments)});"
-            )
+            self.writer.line(f"{c_identifier(class_.constructor.c_name)}({', '.join(arguments)});")
         elif class_.primary_base is not None:
             self.writer.line(
                 f"{instance_name}._base = {self._class_new_name(class_.primary_base)}();"
@@ -3297,9 +3250,7 @@ class CGenerator:
                     )
                 )
         if class_.primary_base is not None and self._class_needs_drop(class_.primary_base):
-            self.writer.line(
-                f"{self._class_drop_name(class_.primary_base)}(&self->_base);"
-            )
+            self.writer.line(f"{self._class_drop_name(class_.primary_base)}(&self->_base);")
         self.writer.indent -= 1
         self.writer.line("}")
         self.writer.line()
@@ -3359,9 +3310,7 @@ class CGenerator:
             self.writer.indent += 1
             self.writer.line("(void)vtable;")
             arguments = [self._thunk_self_argument(class_, implementation)]
-            arguments.extend(
-                c_identifier(parameter.name) for parameter in method.parameters[1:]
-            )
+            arguments.extend(c_identifier(parameter.name) for parameter in method.parameters[1:])
             call = f"{c_identifier(implementation.c_name)}({', '.join(arguments)})"
             if is_void(implementation.return_type):
                 self.writer.line(call + ";")
@@ -3371,11 +3320,7 @@ class CGenerator:
             self.writer.line("}")
             self.writer.line()
 
-        vtable_linkage = (
-            "static "
-            if class_.type_args or class_.template_name
-            else ""
-        )
+        vtable_linkage = "static " if class_.type_args or class_.template_name else ""
         self.writer.line(
             f"{vtable_linkage}const {vtable_type} {self._vtable_instance_name(class_, interface)} ="
         )
@@ -3416,7 +3361,15 @@ class CGenerator:
             storage = "" if symbol.is_module_public else "static CINDER_MAYBE_UNUSED "
             declaration_type = ConstType(symbol.type) if symbol.is_const else symbol.type
             declaration = c_decl(declaration_type, c_identifier(symbol.c_name or symbol.name))
-            if global_.declaration.initializer is None:
+            if global_.atomic_init is not None:
+                initializer = self._emit_initializer(
+                    global_.atomic_init.initializer,
+                    global_.atomic_init.atomic_type.inner,
+                )
+                self.writer.line(
+                    f"{storage}{declaration} = {{ .value = ATOMIC_VAR_INIT({initializer}) }};"
+                )
+            elif global_.declaration.initializer is None:
                 self.writer.line(f"{storage}{declaration};")
             else:
                 initializer = self._emit_initializer(global_.declaration.initializer, symbol.type)
@@ -3429,15 +3382,82 @@ class CGenerator:
             if function.symbol.is_extern or function.declaration.body is None:
                 continue
             self.current_function = function.symbol
+            self.current_ir_function = function
+            call_operations = tuple(
+                operation
+                for operation in function.atomic_operations
+                if not isinstance(operation, IRAtomicInit)
+            )
+            self.atomic_temp_indices = {
+                id(operation.call): index
+                for index, operation in enumerate(call_operations, start=1)
+            }
             self.writer.line(self._function_signature(function.symbol, definition=True))
             self.writer.line("{")
             self.writer.indent += 1
             self._emit_unused_parameters(function.symbol)
+            self._emit_atomic_temporaries(call_operations)
             self._emit_block_contents(function.declaration.body, loop_body=False)
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line()
             self.current_function = None
+            self.current_ir_function = None
+            self.atomic_temp_indices = {}
+
+    def _emit_atomic_temporaries(
+        self,
+        operations: tuple[IRAtomicOperation, ...],
+    ) -> None:
+        if not operations:
+            return
+        for operation in operations:
+            if isinstance(operation, IRAtomicInit):
+                continue
+            index = self.atomic_temp_indices[id(operation.call)]
+            receiver_type: Type = operation.atomic_type
+            if isinstance(operation, IRAtomicLoad):
+                receiver_type = ConstType(receiver_type)
+            self.writer.line(
+                c_decl(
+                    PointerType(receiver_type),
+                    f"__cinder_atomic_receiver_{index}",
+                )
+                + ";"
+            )
+            if isinstance(
+                operation,
+                (IRAtomicStore, IRAtomicExchange, IRAtomicFetch),
+            ):
+                self.writer.line(
+                    c_decl(
+                        operation.atomic_type.inner,
+                        f"__cinder_atomic_value_{index}",
+                    )
+                    + ";"
+                )
+            elif isinstance(operation, IRAtomicCompareExchange):
+                self.writer.line(
+                    c_decl(
+                        operation.atomic_type.inner,
+                        f"__cinder_atomic_expected_{index}",
+                    )
+                    + ";"
+                )
+                self.writer.line(
+                    c_decl(
+                        operation.atomic_type.inner,
+                        f"__cinder_atomic_desired_{index}",
+                    )
+                    + ";"
+                )
+                self.writer.line(
+                    c_decl(
+                        operation.result_type,
+                        f"__cinder_atomic_result_{index}",
+                    )
+                    + ";"
+                )
 
     def _emit_unused_parameters(self, function: FunctionSymbol) -> None:
         if function.name == "main" and function.owner is None and not function.is_extern:
@@ -3474,11 +3494,7 @@ class CGenerator:
     def _emit_block_contents(self, block: ast.Block, *, loop_body: bool) -> None:
         frame = _ScopeFrame(loop_body=loop_body)
         self.scope_frames.append(frame)
-        if (
-            not loop_body
-            and self.current_function is not None
-            and len(self.scope_frames) == 1
-        ):
+        if not loop_body and self.current_function is not None and len(self.scope_frames) == 1:
             for parameter in self.current_function.parameters:
                 if self._type_needs_drop(parameter.type):
                     symbol = VariableSymbol(
@@ -3504,17 +3520,16 @@ class CGenerator:
             if (
                 isinstance(statement, ast.IfStmt)
                 and statement.else_body is not None
-                and all(
-                    self._block_always_exits(branch.body)
-                    for branch in statement.branches
-                )
+                and all(self._block_always_exits(branch.body) for branch in statement.branches)
                 and self._block_always_exits(statement.else_body)
             ):
                 return True
             if isinstance(statement, ast.MatchStmt):
                 resolution = self.semantic.match_resolutions.get(id(statement))
-                if resolution is not None and resolution.exhaustive and all(
-                    self._block_always_exits(case.body) for case in statement.cases
+                if (
+                    resolution is not None
+                    and resolution.exhaustive
+                    and all(self._block_always_exits(case.body) for case in statement.cases)
                 ):
                     return True
             if isinstance(statement, ast.UnsafeStmt) and self._block_always_exits(statement.body):
@@ -3603,6 +3618,15 @@ class CGenerator:
         if statement.initializer is None:
             self.writer.line(declaration + ";")
             return
+        atomic_init = self.atomic_initializers.get(id(statement))
+        if atomic_init is not None:
+            initializer = self._emit_with_expected(
+                atomic_init.initializer,
+                atomic_init.atomic_type.inner,
+            )
+            self.writer.line(declaration + ";")
+            self.writer.line(f"atomic_init(&{c_identifier(symbol.name)}.value, {initializer});")
+            return
         initializer = self._emit_initializer(statement.initializer, symbol.type)
         self.writer.line(f"{declaration} = {initializer};")
         self._register_owned_cleanup(symbol)
@@ -3619,9 +3643,7 @@ class CGenerator:
             return
         expected = strip_reference(self.semantic.expression_type(statement.target))
         if isinstance(statement.target, ast.IndexExpr):
-            base_type = value_type(
-                self.semantic.expression_type(statement.target.value)
-            )
+            base_type = value_type(self.semantic.expression_type(statement.target.value))
             if isinstance(base_type, MapType):
                 self._emit_map_index_assignment(statement, base_type)
                 return
@@ -3645,16 +3667,14 @@ class CGenerator:
             result = self._new_temp("set_result")
             target_pointer = self._new_temp("set_target")
             self.writer.line(
-                f"{c_decl(PointerType(container_type), target_pointer)} = "
-                f"&({target});"
+                f"{c_decl(PointerType(container_type), target_pointer)} = &({target});"
             )
             right, right_temp = self._materialize_container_operand(
                 statement.value,
                 container_type,
             )
             self.writer.line(
-                f"{c_decl(container_type, result)} = "
-                f"{name}_{operation}({target_pointer}, {right});"
+                f"{c_decl(container_type, result)} = {name}_{operation}({target_pointer}, {right});"
             )
             if right_temp is not None:
                 self.writer.line(f"{name}_drop(&{right_temp});")
@@ -3667,9 +3687,7 @@ class CGenerator:
             and isinstance(statement.target, (ast.NameExpr, ast.AttributeExpr))
         ):
             temporary = self._new_temp("move")
-            self.writer.line(
-                f"{c_decl(strip_const(expected), temporary)} = {value};"
-            )
+            self.writer.line(f"{c_decl(strip_const(expected), temporary)} = {value};")
             self._emit_drop_glue(strip_const(expected), f"&({target})")
             self.writer.line(f"{target} = {temporary};")
             self._exclude_moved_from_expression(statement.value)
@@ -3690,12 +3708,8 @@ class CGenerator:
             return
 
         temporary = self._new_temp("return")
-        self.writer.line(
-            f"{c_decl(self.current_function.return_type, temporary)} = {value};"
-        )
-        self._emit_all_deferred(
-            exclude_variable=self._returned_local_symbol(statement.value)
-        )
+        self.writer.line(f"{c_decl(self.current_function.return_type, temporary)} = {value};")
+        self._emit_all_deferred(exclude_variable=self._returned_local_symbol(statement.value))
         self.writer.line(f"return {temporary};")
 
     def _emit_if(self, statement: ast.IfStmt) -> None:
@@ -3728,7 +3742,9 @@ class CGenerator:
         self.writer.line(f"bool {matched_name} = false;")
 
         for case, case_resolution in zip(statement.cases, resolution.cases, strict=True):
-            patterns = [pattern for pattern in case_resolution.patterns if pattern.kind != "invalid"]
+            patterns = [
+                pattern for pattern in case_resolution.patterns if pattern.kind != "invalid"
+            ]
             if not patterns:
                 continue
             case_matched_name = self._new_temp("case_match")
@@ -3817,7 +3833,9 @@ class CGenerator:
             name = c_identifier(option_c_name(pattern.type))
             parts = [f"{source}.tag == {name}_Tag_{suffix}"]
             if pattern.arguments:
-                parts.append(self._match_pattern_condition(f"{source}.data.value", pattern.arguments[0]))
+                parts.append(
+                    self._match_pattern_condition(f"{source}.data.value", pattern.arguments[0])
+                )
             return "(" + " && ".join(parts) + ")"
         raise AssertionError(f"invalid match pattern resolution {pattern.kind!r}")
 
@@ -3859,8 +3877,7 @@ class CGenerator:
             if step.kind == "variant_field":
                 assert step.case_name is not None and step.field_name is not None
                 source = (
-                    f"{source}.data.{c_identifier(step.case_name)}."
-                    f"{c_identifier(step.field_name)}"
+                    f"{source}.data.{c_identifier(step.case_name)}.{c_identifier(step.field_name)}"
                 )
             elif step.kind == "result_ok":
                 source = f"{source}.data.ok"
@@ -3871,6 +3888,7 @@ class CGenerator:
             else:
                 raise AssertionError(f"unknown pattern access step {step.kind!r}")
         return source
+
     def _emit_for_each(self, statement: ast.ForEachStmt) -> None:
         if statement.is_comptime:
             self._emit_comptime_for_each(statement)
@@ -3900,9 +3918,7 @@ class CGenerator:
                 f"{c_decl(PointerType(ConstType(iterable_type)), iterator_name)} = "
                 f"{iterator_value};"
             )
-            self.writer.line(
-                f"size_t {length_name} = {iterator_name}->length;"
-            )
+            self.writer.line(f"size_t {length_name} = {iterator_name}->length;")
             length = length_name
             value = f"{iterator_name}->data[{index_name}]"
         elif isinstance(iterable_type, MapType):
@@ -3914,15 +3930,11 @@ class CGenerator:
             )
             helper = c_identifier(map_c_name(iterable_type))
             self.writer.line(f"{helper}_begin_iteration({iterator_name});")
-            iterator_cleanup = _Cleanup(
-                iterator_end=(f"{helper}_end_iteration", iterator_name)
-            )
+            iterator_cleanup = _Cleanup(iterator_end=(f"{helper}_end_iteration", iterator_name))
             if self.scope_frames:
                 self.scope_frames[-1].cleanups.append(iterator_cleanup)
             length = f"{iterator_name}->entries_length"
-            skip_condition = (
-                f"!{iterator_name}->entries[{index_name}].occupied"
-            )
+            skip_condition = f"!{iterator_name}->entries[{index_name}].occupied"
             value = f"{iterator_name}->entries[{index_name}].key"
         elif isinstance(iterable_type, SetType):
             iterator_name = self._new_temp("set")
@@ -3933,39 +3945,29 @@ class CGenerator:
             )
             helper = c_identifier(set_c_name(iterable_type))
             self.writer.line(f"{helper}_begin_iteration({iterator_name});")
-            iterator_cleanup = _Cleanup(
-                iterator_end=(f"{helper}_end_iteration", iterator_name)
-            )
+            iterator_cleanup = _Cleanup(iterator_end=(f"{helper}_end_iteration", iterator_name))
             if self.scope_frames:
                 self.scope_frames[-1].cleanups.append(iterator_cleanup)
             length = f"{iterator_name}->capacity"
-            skip_condition = (
-                f"{iterator_name}->entries[{index_name}].state != 1"
-            )
+            skip_condition = f"{iterator_name}->entries[{index_name}].state != 1"
             value = f"{iterator_name}->entries[{index_name}].value"
         elif isinstance(iterable_type, MapViewType):
             view_name = self._new_temp("map_view")
             self.writer.line(
-                f"{c_decl(iterable_type, view_name)} = "
-                f"{self._emit_expr(statement.iterable)};"
+                f"{c_decl(iterable_type, view_name)} = {self._emit_expr(statement.iterable)};"
             )
             iterator_name = self._new_temp("map")
             map_type = iterable_type.map_type
             self.writer.line(
-                f"{c_decl(PointerType(ConstType(map_type)), iterator_name)} = "
-                f"{view_name}.map;"
+                f"{c_decl(PointerType(ConstType(map_type)), iterator_name)} = {view_name}.map;"
             )
             helper = c_identifier(map_c_name(map_type))
             self.writer.line(f"{helper}_begin_iteration({iterator_name});")
-            iterator_cleanup = _Cleanup(
-                iterator_end=(f"{helper}_end_iteration", iterator_name)
-            )
+            iterator_cleanup = _Cleanup(iterator_end=(f"{helper}_end_iteration", iterator_name))
             if self.scope_frames:
                 self.scope_frames[-1].cleanups.append(iterator_cleanup)
             length = f"{iterator_name}->entries_length"
-            skip_condition = (
-                f"!{iterator_name}->entries[{index_name}].occupied"
-            )
+            skip_condition = f"!{iterator_name}->entries[{index_name}].occupied"
             if iterable_type.kind == "keys":
                 value = f"{iterator_name}->entries[{index_name}].key"
             elif iterable_type.kind == "values":
@@ -3984,9 +3986,7 @@ class CGenerator:
         else:
             raise AssertionError(f"invalid iterable type: {iterable_type!r}")
 
-        self.writer.line(
-            f"for (size_t {index_name} = 0; {index_name} < {length}; ++{index_name})"
-        )
+        self.writer.line(f"for (size_t {index_name} = 0; {index_name} < {length}; ++{index_name})")
         self.writer.line("{")
         self.writer.indent += 1
         if skip_condition is not None:
@@ -3996,9 +3996,7 @@ class CGenerator:
             self.writer.line("continue;")
             self.writer.indent -= 1
             self.writer.line("}")
-        self.writer.line(
-            f"{c_decl(symbol.type, c_identifier(symbol.name))} = {value};"
-        )
+        self.writer.line(f"{c_decl(symbol.type, c_identifier(symbol.name))} = {value};")
         self._emit_block_contents(statement.body, loop_body=True)
         self.writer.indent -= 1
         self.writer.line("}")
@@ -4020,22 +4018,18 @@ class CGenerator:
         elif symbol.collection_kind == "methods":
             members = list(self._nominal_methods(symbol.owner))
         else:
-            raise AssertionError(
-                f"unknown compile-time collection {symbol.collection_kind!r}"
-            )
+            raise AssertionError(f"unknown compile-time collection {symbol.collection_kind!r}")
 
         if not members:
             self.writer.line(
-                f"/* comptime {symbol.collection_kind} loop for "
-                f"{symbol.owner.name}: empty */"
+                f"/* comptime {symbol.collection_kind} loop for {symbol.owner.name}: empty */"
             )
             return
 
         for index, member in enumerate(members):
             self.comptime_members[symbol.statement_id] = member
             self.writer.line(
-                f"/* comptime {symbol.collection_kind} iteration {index} for "
-                f"{symbol.owner.name} */"
+                f"/* comptime {symbol.collection_kind} iteration {index} for {symbol.owner.name} */"
             )
             self.writer.line("{")
             self.writer.indent += 1
@@ -4085,10 +4079,7 @@ class CGenerator:
         self.writer.line('cinder_panic("range step cannot be zero");')
         self.writer.indent -= 1
         self.writer.line("}")
-        condition = (
-            f"({step_name} > 0 ? {loop_name} < {stop_name} : "
-            f"{loop_name} > {stop_name})"
-        )
+        condition = f"({step_name} > 0 ? {loop_name} < {stop_name} : {loop_name} > {stop_name})"
         self.writer.line(
             f"for ({c_decl(symbol.type, loop_name)} = {start_name}; "
             f"{condition}; {loop_name} += {step_name})"
@@ -4176,9 +4167,7 @@ class CGenerator:
             elif cleanup.class_ is not None:
                 self.writer.line(f"{self._class_drop_name(cleanup.class_)}(&{name});")
             elif cleanup.container is not None:
-                self.writer.line(
-                    f"{self._container_drop_name(cleanup.container)}(&{name});"
-                )
+                self.writer.line(f"{self._container_drop_name(cleanup.container)}(&{name});")
             else:
                 raise AssertionError("invalid cleanup entry")
 
@@ -4198,9 +4187,7 @@ class CGenerator:
         if not moved_variables:
             return
         moved_ids = {id(symbol) for symbol in moved_variables}
-        moved_param_names = {
-            symbol.name for symbol in moved_variables if symbol.is_parameter
-        }
+        moved_param_names = {symbol.name for symbol in moved_variables if symbol.is_parameter}
 
         def keep(cleanup: _Cleanup) -> bool:
             if cleanup.variable is None:
@@ -4208,8 +4195,7 @@ class CGenerator:
             if id(cleanup.variable) in moved_ids:
                 return False
             return not (
-                cleanup.variable.is_parameter
-                and cleanup.variable.name in moved_param_names
+                cleanup.variable.is_parameter and cleanup.variable.name in moved_param_names
             )
 
         for frame in self.scope_frames:
@@ -4384,17 +4370,14 @@ class CGenerator:
                 and expected_raw.inner.inner == actual_value.inner
             ):
                 return (
-                    f"{self._slice_name(expected_raw)}_from_mutable("
-                    f"{self._emit_expr(expression)})"
+                    f"{self._slice_name(expected_raw)}_from_mutable({self._emit_expr(expression)})"
                 )
 
         return self._emit_expr(expression)
 
     def _emit_condition(self, expression: ast.Expression) -> str:
         text = self._emit_expr(expression)
-        condition_type = value_type(
-            self.semantic.expression_type(expression)
-        )
+        condition_type = value_type(self.semantic.expression_type(expression))
         if isinstance(condition_type, (SliceType, ListType)):
             return f"(({text}).length != 0)"
         if text.startswith("(") and text.endswith(")"):
@@ -4406,9 +4389,7 @@ class CGenerator:
             case ast.LiteralExpr():
                 return self._emit_literal(expression)
             case ast.NoneExpr():
-                option_type = value_type(
-                    self.semantic.expression_type(expression)
-                )
+                option_type = value_type(self.semantic.expression_type(expression))
                 assert isinstance(option_type, OptionType)
                 return f"(({c_type_expression(option_type)}){{ 0 }})"
             case ast.FStringExpr():
@@ -4421,9 +4402,7 @@ class CGenerator:
                 if operator == "not":
                     return f"(!{self._emit_condition(operand)})"
                 if operator == "*":
-                    operand_type = strip_const(
-                        self.semantic.expression_type(operand)
-                    )
+                    operand_type = strip_const(self.semantic.expression_type(operand))
                     if isinstance(operand_type, OwnedType):
                         return f"(*({self._emit_expr(operand)}).ptr)"
                 c_operator = "!" if operator == "not" else operator
@@ -4439,8 +4418,7 @@ class CGenerator:
                 c_operator = {"and": "&&", "or": "||"}.get(operator, operator)
                 if operator in {"and", "or"}:
                     return (
-                        f"({self._emit_condition(left)} {c_operator} "
-                        f"{self._emit_condition(right)})"
+                        f"({self._emit_condition(left)} {c_operator} {self._emit_condition(right)})"
                     )
                 return f"({self._emit_expr(left)} {c_operator} {self._emit_expr(right)})"
             case ast.AttributeExpr():
@@ -4457,10 +4435,7 @@ class CGenerator:
                 literal_type = value_type(self.semantic.expression_type(expression))
                 if isinstance(literal_type, ListType):
                     if not expression.elements:
-                        return (
-                            f"{c_identifier(list_c_name(literal_type))}_from_values"
-                            "(NULL, 0)"
-                        )
+                        return f"{c_identifier(list_c_name(literal_type))}_from_values(NULL, 0)"
                     array_type = ArrayType(
                         literal_type.inner,
                         len(expression.elements),
@@ -4506,7 +4481,7 @@ class CGenerator:
                 count_text = "1" if count is None else self._emit_expr(count)
                 pointer = PointerType(element)
                 return (
-                    f"(({c_type_expression(pointer)})cinder_alloc(" 
+                    f"(({c_type_expression(pointer)})cinder_alloc("
                     f"{count_text}, sizeof({c_type_expression(element)})))"
                 )
             case _:
@@ -4534,9 +4509,7 @@ class CGenerator:
                 f"{c_decl(map_type.value, value_name)} = "
                 f"{self._emit_with_expected(entry.value, map_type.value)};"
             )
-            self.writer.line(
-                f"{name}_set(&{temporary}, {key_name}, {value_name});"
-            )
+            self.writer.line(f"{name}_set(&{temporary}, {key_name}, {value_name});")
         if self.scope_frames:
             frame = self.scope_frames[-1]
             if cleanup not in frame.cleanups:
@@ -4575,9 +4548,7 @@ class CGenerator:
         kind: str,
         owner_type: Type | None,
     ) -> str:
-        if kind == "string_equal" and owner_type is not None and is_c_string(
-            owner_type
-        ):
+        if kind == "string_equal" and owner_type is not None and is_c_string(owner_type):
             value = (
                 f"cinder_string_equal({self._emit_expr(expression.left)}, "
                 f"{self._emit_expr(expression.right)})"
@@ -4688,9 +4659,7 @@ class CGenerator:
                 )
                 value = f"{name}_values_contains(({view}).map, {item})"
             else:
-                item_type = TupleType(
-                    (owner_type.map_type.key, owner_type.map_type.value)
-                )
+                item_type = TupleType((owner_type.map_type.key, owner_type.map_type.value))
                 item = self._emit_with_expected(expression.left, item_type)
                 value = f"{name}_items_contains(({view}).map, {item})"
             return f"(!{value})" if expression.operator == "not in" else value
@@ -4708,10 +4677,7 @@ class CGenerator:
                 owner_type,
             )
             result = self._new_temp("set_expression")
-            self.writer.line(
-                f"{c_decl(owner_type, result)} = "
-                f"{name}_{method}({left}, {right});"
-            )
+            self.writer.line(f"{c_decl(owner_type, result)} = {name}_{method}({left}, {right});")
             for temporary in (left_temp, right_temp):
                 if temporary is not None:
                     self.writer.line(f"{name}_drop(&{temporary});")
@@ -4739,13 +4705,11 @@ class CGenerator:
                 value = f"{name}_is_subset({right}, {left})"
             elif operator == "<":
                 value = (
-                    f"(({left})->length < ({right})->length && "
-                    f"{name}_is_subset({left}, {right}))"
+                    f"(({left})->length < ({right})->length && {name}_is_subset({left}, {right}))"
                 )
             elif operator == ">":
                 value = (
-                    f"(({left})->length > ({right})->length && "
-                    f"{name}_is_subset({right}, {left}))"
+                    f"(({left})->length > ({right})->length && {name}_is_subset({right}, {left}))"
                 )
             else:
                 raise AssertionError(f"invalid Set comparison {operator!r}")
@@ -4768,15 +4732,10 @@ class CGenerator:
         if isinstance(
             expression,
             (ast.NameExpr, ast.AttributeExpr),
-        ) or (
-            isinstance(expression, ast.UnaryExpr)
-            and expression.operator == "*"
-        ):
+        ) or (isinstance(expression, ast.UnaryExpr) and expression.operator == "*"):
             return self._container_pointer(expression), None
         temporary = self._new_temp("collection_operand")
-        self.writer.line(
-            f"{c_decl(type_, temporary)} = {self._emit_expr(expression)};"
-        )
+        self.writer.line(f"{c_decl(type_, temporary)} = {self._emit_expr(expression)};")
         return f"&{temporary}", temporary
 
     def _emit_inline_map_literal(
@@ -4788,12 +4747,10 @@ class CGenerator:
         if not entries:
             return f"{name}_from_values(NULL, NULL, 0)"
         keys = ", ".join(
-            self._emit_borrowed_value(entry.key, map_type.key, "map_key")
-            for entry in entries
+            self._emit_borrowed_value(entry.key, map_type.key, "map_key") for entry in entries
         )
         values = ", ".join(
-            self._emit_with_expected(entry.value, map_type.value)
-            for entry in entries
+            self._emit_with_expected(entry.value, map_type.value) for entry in entries
         )
         key_array = c_type_expression(ArrayType(map_type.key, len(entries)))
         value_array = c_type_expression(ArrayType(map_type.value, len(entries)))
@@ -4809,8 +4766,7 @@ class CGenerator:
     ) -> str:
         name = c_identifier(set_c_name(set_type))
         values = ", ".join(
-            self._emit_borrowed_value(element, set_type.inner, "set_item")
-            for element in elements
+            self._emit_borrowed_value(element, set_type.inner, "set_item") for element in elements
         )
         array = c_type_expression(ArrayType(set_type.inner, len(elements)))
         return f"{name}_from_values(({array}){{ {values} }}, {len(elements)})"
@@ -4900,6 +4856,17 @@ class CGenerator:
             )
             operator = "->" if pointer else "."
             return f"({base}){operator}{c_identifier(expression.name)}"
+        if resolution.kind == "atomic_result_field":
+            base_type = strip_const(self.semantic.expression_type(expression.value))
+            pointer = isinstance(base_type, (PointerType, ReferenceType))
+            base = self._emit_expr(
+                expression.value,
+                mode="raw" if isinstance(base_type, ReferenceType) else "value",
+            )
+            operator = "->" if pointer else "."
+            return f"({base}){operator}{c_identifier(expression.name)}"
+        if resolution.kind == "atomic_method":
+            raise AssertionError("atomic method attributes must be emitted through typed atomic IR")
         if resolution.kind == "class_field":
             assert resolution.field is not None
             return self._emit_class_member_access(
@@ -4938,19 +4905,13 @@ class CGenerator:
             "option_is_none",
             "option_value",
         }:
-            base_type = strip_const(
-                self.semantic.expression_type(expression.value)
-            )
+            base_type = strip_const(self.semantic.expression_type(expression.value))
             pointer = isinstance(base_type, (PointerType, ReferenceType))
             base = self._emit_expr(
                 expression.value,
                 mode="raw" if isinstance(base_type, ReferenceType) else "value",
             )
-            raw = (
-                strip_const(base_type.inner)
-                if pointer
-                else value_type(base_type)
-            )
+            raw = strip_const(base_type.inner) if pointer else value_type(base_type)
             assert isinstance(raw, OptionType)
             name = c_identifier(option_c_name(raw))
             if resolution.kind == "option_is_some":
@@ -4975,23 +4936,17 @@ class CGenerator:
             method = str(resolution.compile_value)
             return f"cinder_string_builder_{c_identifier(method)}"
         if resolution.kind == "list_method":
-            list_type = value_type(
-                self.semantic.expression_type(expression.value)
-            )
+            list_type = value_type(self.semantic.expression_type(expression.value))
             assert isinstance(list_type, ListType)
             method = str(resolution.compile_value)
             return f"{c_identifier(list_c_name(list_type))}_{c_identifier(method)}"
         if resolution.kind == "map_method":
-            map_type = value_type(
-                self.semantic.expression_type(expression.value)
-            )
+            map_type = value_type(self.semantic.expression_type(expression.value))
             assert isinstance(map_type, MapType)
             method = str(resolution.compile_value)
             return f"{c_identifier(map_c_name(map_type))}_{c_identifier(method)}"
         if resolution.kind == "set_method":
-            set_type = value_type(
-                self.semantic.expression_type(expression.value)
-            )
+            set_type = value_type(self.semantic.expression_type(expression.value))
             assert isinstance(set_type, SetType)
             method = str(resolution.compile_value)
             return f"{c_identifier(set_c_name(set_type))}_{c_identifier(method)}"
@@ -5121,11 +5076,7 @@ class CGenerator:
         value: str,
     ) -> str:
         result_type = value_type(self.semantic.expression_type(expression))
-        return (
-            c_static_string(value)
-            if isinstance(result_type, StringType)
-            else c_string(value)
-        )
+        return c_static_string(value) if isinstance(result_type, StringType) else c_string(value)
 
     def _underlying_result_type(self, expression: ast.Expression) -> ResultType:
         type_ = strip_const(self.semantic.expression_type(expression))
@@ -5157,9 +5108,7 @@ class CGenerator:
             f"{self._emit_with_expected(statement.value, map_type.value)};"
         )
         if statement.operator == "=":
-            self.writer.line(
-                f"{name}_set({map_pointer}, {key_name}, {value_name});"
-            )
+            self.writer.line(f"{name}_set({map_pointer}, {key_name}, {value_name});")
             if self._type_needs_drop(map_type.value):
                 self._exclude_moved_from_expression(statement.value)
             return
@@ -5168,9 +5117,7 @@ class CGenerator:
             f"{c_decl(PointerType(map_type.value), target_pointer)} = "
             f"{name}_lookup_mut_or_panic({map_pointer}, {key_name});"
         )
-        self.writer.line(
-            f"(*{target_pointer}) {statement.operator} {value_name};"
-        )
+        self.writer.line(f"(*{target_pointer}) {statement.operator} {value_name};")
 
     def _emit_index(self, expression: ast.IndexExpr) -> str:
         base_type = value_type(self.semantic.expression_type(expression.value))
@@ -5214,9 +5161,7 @@ class CGenerator:
             )
             start = "0" if expression.start is None else self._emit_expr(expression.start)
             stop = (
-                f"({base})->length"
-                if expression.stop is None
-                else self._emit_expr(expression.stop)
+                f"({base})->length" if expression.stop is None else self._emit_expr(expression.stop)
             )
             return f"cinder_string_slice({base}, {start}, {stop})"
         assert isinstance(result_type, SliceType)
@@ -5231,7 +5176,96 @@ class CGenerator:
         stop = self._emit_expr(expression.stop)
         return f"{slice_name}_sub({base}, {start}, {stop})"
 
+    def _emit_atomic_receiver_address(
+        self,
+        receiver: ast.Expression,
+    ) -> str:
+        receiver_type = strip_const(self.semantic.expression_type(receiver))
+        if isinstance(receiver_type, ReferenceType):
+            return self._emit_expr(receiver, mode="raw")
+        if isinstance(receiver_type, PointerType):
+            return self._emit_expr(receiver)
+        return self._emit_address(receiver)
+
+    def _emit_atomic_call(self, operation: IRAtomicOperation) -> str:
+        if isinstance(operation, IRAtomicInit):
+            raise AssertionError("atomic initialization cannot be emitted as a call")
+        index = self.atomic_temp_indices.get(id(operation.call))
+        if index is None:
+            raise AssertionError("atomic call has no deterministic temporary index")
+
+        receiver_name = f"__cinder_atomic_receiver_{index}"
+        sequence = [f"({receiver_name} = {self._emit_atomic_receiver_address(operation.receiver)})"]
+
+        if isinstance(operation, IRAtomicLoad):
+            sequence.append(f"atomic_load_explicit(&{receiver_name}->value, memory_order_seq_cst)")
+            return "(" + ", ".join(sequence) + ")"
+
+        if isinstance(
+            operation,
+            (IRAtomicStore, IRAtomicExchange, IRAtomicFetch),
+        ):
+            value_name = f"__cinder_atomic_value_{index}"
+            for source_index, operand_index in enumerate(operation.source_order):
+                if operand_index != 0:
+                    raise AssertionError("malformed atomic operand order")
+                source = operation.call.arguments[source_index].value
+                sequence.append(
+                    f"({value_name} = "
+                    f"{self._emit_with_expected(source, operation.atomic_type.inner)})"
+                )
+            if isinstance(operation, IRAtomicStore):
+                sequence.append(
+                    f"atomic_store_explicit(&{receiver_name}->value, "
+                    f"{value_name}, memory_order_seq_cst)"
+                )
+            elif isinstance(operation, IRAtomicExchange):
+                sequence.append(
+                    f"atomic_exchange_explicit(&{receiver_name}->value, "
+                    f"{value_name}, memory_order_seq_cst)"
+                )
+            else:
+                fetch_function = {
+                    AtomicFetchKind.ADD: "atomic_fetch_add_explicit",
+                    AtomicFetchKind.SUB: "atomic_fetch_sub_explicit",
+                    AtomicFetchKind.AND: "atomic_fetch_and_explicit",
+                    AtomicFetchKind.OR: "atomic_fetch_or_explicit",
+                    AtomicFetchKind.XOR: "atomic_fetch_xor_explicit",
+                }[operation.fetch_kind]
+                sequence.append(
+                    f"{fetch_function}(&{receiver_name}->value, {value_name}, memory_order_seq_cst)"
+                )
+            return "(" + ", ".join(sequence) + ")"
+
+        if isinstance(operation, IRAtomicCompareExchange):
+            operand_names = (
+                f"__cinder_atomic_expected_{index}",
+                f"__cinder_atomic_desired_{index}",
+            )
+            for source_index, operand_index in enumerate(operation.source_order):
+                source = operation.call.arguments[source_index].value
+                sequence.append(
+                    f"({operand_names[operand_index]} = "
+                    f"{self._emit_with_expected(source, operation.atomic_type.inner)})"
+                )
+            result_name = f"__cinder_atomic_result_{index}"
+            expected_name, desired_name = operand_names
+            sequence.append(
+                f"({result_name}.exchanged = "
+                "atomic_compare_exchange_strong_explicit("
+                f"&{receiver_name}->value, &{expected_name}, {desired_name}, "
+                "memory_order_seq_cst, memory_order_seq_cst))"
+            )
+            sequence.append(f"({result_name}.observed = {expected_name})")
+            sequence.append(result_name)
+            return "(" + ", ".join(sequence) + ")"
+
+        raise AssertionError(f"unhandled atomic operation {operation!r}")
+
     def _emit_call(self, expression: ast.CallExpr) -> str:
+        atomic_operation = self.atomic_calls.get(id(expression))
+        if atomic_operation is not None:
+            return self._emit_atomic_call(atomic_operation)
         resolution = self.semantic.call_resolutions[id(expression)]
         self._exclude_moved_variables(resolution.moved_variables)
         if resolution.kind == "closure_new":
@@ -5393,9 +5427,7 @@ class CGenerator:
                     self.writer.line(f"{name}_drop(&{temporary});")
                     return "((void)0)"
                 result = self._new_temp("set_method")
-                self.writer.line(
-                    f"{c_decl(set_type, result)} = {value};"
-                )
+                self.writer.line(f"{c_decl(set_type, result)} = {value};")
                 self.writer.line(f"{name}_drop(&{temporary});")
                 return result
             return f"{name}_{method}({receiver})"
@@ -5411,10 +5443,7 @@ class CGenerator:
             if isinstance(argument_type, MapViewType):
                 return f"({self._emit_expr(argument)}).map->length"
             if isinstance(argument_type, TupleType):
-                return (
-                    f"((void)({self._emit_expr(argument)}), "
-                    f"{len(argument_type.elements)})"
-                )
+                return f"((void)({self._emit_expr(argument)}), {len(argument_type.elements)})"
             if isinstance(argument_type, StringType):
                 pointer = self._borrow_string_pointer(argument, "len_string")
                 return f"({pointer})->length"
@@ -5453,9 +5482,7 @@ class CGenerator:
                 raise AssertionError("dynamic method has incomplete resolution")
             if not isinstance(expression.callee, ast.AttributeExpr):
                 raise AssertionError("dynamic method callee is not an attribute")
-            receiver_type = strip_const(
-                self.semantic.expression_type(expression.callee.value)
-            )
+            receiver_type = strip_const(self.semantic.expression_type(expression.callee.value))
             if not isinstance(receiver_type, DynType):
                 raise AssertionError("dynamic method receiver is not dyn")
             receiver = self._materialize_dynamic(
@@ -5467,10 +5494,7 @@ class CGenerator:
             arguments = [f"{receiver}.object", f"{receiver}.vtable"]
             arguments.extend(self._emit_ordered_call_arguments(expression, resolution))
             method_name = c_identifier(resolution.function.name)
-            return (
-                f"{receiver}.vtable->{method_name}"
-                f"({', '.join(arguments)})"
-            )
+            return f"{receiver}.vtable->{method_name}({', '.join(arguments)})"
 
         if resolution.kind in {"super_init", "super_method"}:
             return self._emit_super_call(expression, resolution)
@@ -5566,10 +5590,7 @@ class CGenerator:
                 "string_byte_at",
             )
             index = self._emit_expr(expression.arguments[0].value)
-            return (
-                f"((uint8_t)(unsigned char)"
-                f"cinder_string_byte_at({receiver}, {index}))"
-            )
+            return f"((uint8_t)(unsigned char)cinder_string_byte_at({receiver}, {index}))"
 
         builder = kind.startswith("string_builder_") or kind == "builder_finish"
         pointer_type: Type = (
@@ -5581,9 +5602,7 @@ class CGenerator:
             else self._mutable_string_pointer(receiver_expression)
         )
         receiver = self._new_temp("string_receiver")
-        self.writer.line(
-            f"{c_decl(pointer_type, receiver)} = {raw_receiver};"
-        )
+        self.writer.line(f"{c_decl(pointer_type, receiver)} = {raw_receiver};")
 
         if kind in {"string_builder_finish", "builder_finish"}:
             return f"cinder_string_builder_finish({receiver})"
@@ -5601,36 +5620,27 @@ class CGenerator:
                 expression.arguments[0].value,
                 "string_suffix",
             )
-            runtime = (
-                "cinder_string_builder_append" if builder else "cinder_string_append"
-            )
+            runtime = "cinder_string_builder_append" if builder else "cinder_string_append"
             return f"{runtime}({receiver}, {suffix})"
         if kind in {"string_append_char", "string_builder_append_char"}:
             if not expression.arguments:
                 raise AssertionError("append_char requires a char argument")
             value = self._emit_expr(expression.arguments[0].value)
             runtime = (
-                "cinder_string_builder_append_char"
-                if builder
-                else "cinder_string_append_char"
+                "cinder_string_builder_append_char" if builder else "cinder_string_append_char"
             )
             return f"{runtime}({receiver}, {value})"
         if kind in {"string_reserve", "string_builder_reserve"}:
             if not expression.arguments:
                 raise AssertionError("reserve requires a capacity argument")
             capacity = self._emit_expr(expression.arguments[0].value)
-            runtime = (
-                "cinder_string_builder_reserve"
-                if builder
-                else "cinder_string_reserve"
-            )
+            runtime = "cinder_string_builder_reserve" if builder else "cinder_string_reserve"
             return f"{runtime}({receiver}, {capacity})"
         raise AssertionError(f"unhandled String call resolution {kind!r}")
 
     def _emit_print_call(self, expression: ast.CallExpr) -> str:
         if not any(
-            self._print_argument_needs_helpers(argument.value)
-            for argument in expression.arguments
+            self._print_argument_needs_helpers(argument.value) for argument in expression.arguments
         ):
             format_parts: list[str] = []
             arguments: list[str] = []
@@ -5717,9 +5727,7 @@ class CGenerator:
         if not arguments:
             self.writer.line(f"printf({c_string(format_string)});")
             return
-        self.writer.line(
-            f"printf({c_string(format_string)}, {', '.join(arguments)});"
-        )
+        self.writer.line(f"printf({c_string(format_string)}, {', '.join(arguments)});")
 
     def _emit_collection_print_call(
         self,
@@ -5747,15 +5755,10 @@ class CGenerator:
         if isinstance(
             expression,
             (ast.NameExpr, ast.AttributeExpr),
-        ) or (
-            isinstance(expression, ast.UnaryExpr)
-            and expression.operator == "*"
-        ):
+        ) or (isinstance(expression, ast.UnaryExpr) and expression.operator == "*"):
             return self._emit_address(expression)
         temporary = self._new_temp("print_tuple")
-        self.writer.line(
-            f"{c_decl(tuple_type, temporary)} = {self._emit_expr(expression)};"
-        )
+        self.writer.line(f"{c_decl(tuple_type, temporary)} = {self._emit_expr(expression)};")
         return f"&{temporary}"
 
     def _emit_input_call(self, expression: ast.CallExpr) -> str:
@@ -5791,12 +5794,9 @@ class CGenerator:
         self.writer.line(f"{c_decl(result_type.ok, out_temp)} = {{ 0 }};")
         self.writer.line(f"CinderParseError {err_temp} = CinderParseError_invalid;")
         self.writer.line(
-            f"{c_decl(result_type, result_temp)} = "
-            f"{{ {result_name}_Tag_Err, {{ 0 }} }};"
+            f"{c_decl(result_type, result_temp)} = {{ {result_name}_Tag_Err, {{ 0 }} }};"
         )
-        self.writer.line(
-            f"if ({runtime}({argument}, &{out_temp}, &{err_temp}))"
-        )
+        self.writer.line(f"if ({runtime}({argument}, &{out_temp}, &{err_temp}))")
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line(f"{result_temp}.tag = {result_name}_Tag_Ok;")
@@ -5866,14 +5866,12 @@ class CGenerator:
         self.writer.indent -= 1
         self.writer.line("}")
         self.writer.line(
-            f"for (size_t {index_name} = 0; "
-            f"{index_name} < {command_name}.length; ++{index_name})"
+            f"for (size_t {index_name} = 0; {index_name} < {command_name}.length; ++{index_name})"
         )
         self.writer.line("{")
         self.writer.indent += 1
         self.writer.line(
-            f"{argv_name}[{index_name}] = "
-            f"cinder_string_cstr(&({command_name}.data[{index_name}]));"
+            f"{argv_name}[{index_name}] = cinder_string_cstr(&({command_name}.data[{index_name}]));"
         )
         self.writer.indent -= 1
         self.writer.line("}")
@@ -5894,14 +5892,9 @@ class CGenerator:
         receiver = self._container_pointer(expression.callee.value)
         name = file_c_name()
         if resolution.kind in {"file_write", "file_write_string"}:
-            if (
-                expression.arguments
-                and isinstance(
-                    value_type(
-                        self.semantic.expression_type(expression.arguments[0].value)
-                    ),
-                    StringType,
-                )
+            if expression.arguments and isinstance(
+                value_type(self.semantic.expression_type(expression.arguments[0].value)),
+                StringType,
             ):
                 data = self._borrow_string_pointer(
                     expression.arguments[0].value,
@@ -5954,7 +5947,7 @@ class CGenerator:
 
         value = self._emit_expr(expression)
         if type_ == BOOL:
-            return "%s", (f"(({value}) ? \"true\" : \"false\")",)
+            return "%s", (f'(({value}) ? "true" : "false")',)
         if type_ == CHAR:
             return "%c", (f"((int)({value}))",)
         if _is_printf_string_type(type_):
@@ -5983,9 +5976,7 @@ class CGenerator:
             argument = expression.arguments[argument_index].value
             expected = resolution.expected_types[output_index]
             if argument_index in resolution.ffi_borrow_indices:
-                arguments.append(
-                    self._borrow_string_cstr(argument, "ffi_string")
-                )
+                arguments.append(self._borrow_string_cstr(argument, "ffi_string"))
             elif expected is None:
                 arguments.append(self._emit_vararg(argument))
             else:
@@ -6085,18 +6076,14 @@ class CGenerator:
                 "reflect_string",
             )
             return f"((void)({pointer}), {value})"
-        if (
-            isinstance(subject_value, StringBuilderType)
-            and not self._is_addressable_string_expression(subject)
-        ):
+        if isinstance(
+            subject_value, StringBuilderType
+        ) and not self._is_addressable_string_expression(subject):
             if not self.scope_frames:
-                raise AssertionError(
-                    "temporary StringBuilder reflection outside a scope"
-                )
+                raise AssertionError("temporary StringBuilder reflection outside a scope")
             temporary = self._new_temp("reflect_string_builder")
             self.writer.line(
-                f"{c_decl(StringBuilderType(), temporary)} = "
-                f"{self._emit_expr(subject)};"
+                f"{c_decl(StringBuilderType(), temporary)} = {self._emit_expr(subject)};"
             )
             self.scope_frames[-1].cleanups.append(
                 _Cleanup(
@@ -6156,35 +6143,23 @@ class CGenerator:
             concrete_owner=owner,
             concrete_pointer=self_name,
         )
-        return (
-            f"{c_identifier(function.c_name)}"
-            f"({', '.join([self_argument, *arguments])})"
-        )
+        return f"{c_identifier(function.c_name)}({', '.join([self_argument, *arguments])})"
 
     def _emit_propagate(self, expression: ast.PropagateExpr) -> str:
         resolution = self.semantic.propagate_resolutions[id(expression)]
         source_name = self._new_temp("result")
         source_value = self._emit_with_expected(expression.value, resolution.source)
-        self.writer.line(
-            f"{c_decl(resolution.source, source_name)} = {source_value};"
-        )
-        self.writer.line(
-            f"if ({source_name}.tag == {self._result_tag(resolution.source, 'Err')})"
-        )
+        self.writer.line(f"{c_decl(resolution.source, source_name)} = {source_value};")
+        self.writer.line(f"if ({source_name}.tag == {self._result_tag(resolution.source, 'Err')})")
         self.writer.line("{")
         self.writer.indent += 1
         fields = [f".tag = {self._result_tag(resolution.enclosing, 'Err')}"]
         if not is_void(resolution.source.error):
             fields.append(f".data.err = {source_name}.data.err")
-        error_value = (
-            f"(({c_type_expression(resolution.enclosing)})"
-            f"{{ {', '.join(fields)} }})"
-        )
+        error_value = f"(({c_type_expression(resolution.enclosing)}){{ {', '.join(fields)} }})"
         if any(frame.cleanups for frame in self.scope_frames):
             return_name = self._new_temp("propagate")
-            self.writer.line(
-                f"{c_decl(resolution.enclosing, return_name)} = {error_value};"
-            )
+            self.writer.line(f"{c_decl(resolution.enclosing, return_name)} = {error_value};")
             self._emit_all_deferred()
             self.writer.line(f"return {return_name};")
         else:
@@ -6241,17 +6216,13 @@ class CGenerator:
         if isinstance(actual, PointerType):
             return self._emit_expr(expression)
         if not isinstance(value_type(actual), StringType):
-            raise AssertionError(
-                f"cannot borrow non-String value as String: {type_name(actual)}"
-            )
+            raise AssertionError(f"cannot borrow non-String value as String: {type_name(actual)}")
         if self._is_addressable_string_expression(expression):
             return self._emit_address(expression)
         if not self.scope_frames:
             raise AssertionError("temporary String borrow emitted outside a scope")
         temporary = self._new_temp(purpose)
-        self.writer.line(
-            f"{c_decl(StringType(), temporary)} = {self._emit_expr(expression)};"
-        )
+        self.writer.line(f"{c_decl(StringType(), temporary)} = {self._emit_expr(expression)};")
         self.scope_frames[-1].cleanups.append(
             _Cleanup(iterator_end=("cinder_string_drop", f"&{temporary}"))
         )
@@ -6346,8 +6317,7 @@ class CGenerator:
             raise AssertionError("temporary String owner emitted outside a scope")
         temporary = self._new_temp(purpose)
         self.writer.line(
-            f"{c_decl(owner_type, temporary)} = "
-            f"{self._emit_with_expected(expression, owner_type)};"
+            f"{c_decl(owner_type, temporary)} = {self._emit_with_expected(expression, owner_type)};"
         )
         if self._type_needs_drop(owner_type):
             self.scope_frames[-1].cleanups.append(
@@ -6387,9 +6357,7 @@ class CGenerator:
             if not self.scope_frames:
                 raise AssertionError("temporary Option[String] borrow outside a scope")
             temporary = self._new_temp(f"{purpose}_option")
-            self.writer.line(
-                f"{c_decl(option_type, temporary)} = {self._emit_expr(expression)};"
-            )
+            self.writer.line(f"{c_decl(option_type, temporary)} = {self._emit_expr(expression)};")
             self.scope_frames[-1].cleanups.append(
                 _Cleanup(iterator_end=(f"{name}_drop", f"&{temporary}"))
             )
@@ -6421,12 +6389,9 @@ class CGenerator:
             if resolution is not None and resolution.kind == "option_value":
                 return self._mutable_option_string_value_pointer(expression.value)
         if isinstance(expression, ast.IndexExpr):
-            base_type = value_type(
-                self.semantic.expression_type(expression.value)
-            )
-            if (
-                isinstance(base_type, MapType)
-                and isinstance(value_type(base_type.value), StringType)
+            base_type = value_type(self.semantic.expression_type(expression.value))
+            if isinstance(base_type, MapType) and isinstance(
+                value_type(base_type.value), StringType
             ):
                 name = c_identifier(map_c_name(base_type))
                 base = self._container_pointer(expression.value)
@@ -6457,9 +6422,7 @@ class CGenerator:
             isinstance(option_type, OptionType)
             and isinstance(value_type(option_type.inner), StringType)
         ):
-            raise AssertionError(
-                "mutable Option.value String access has a non-String payload"
-            )
+            raise AssertionError("mutable Option.value String access has a non-String payload")
         name = c_identifier(option_c_name(option_type))
         if isinstance(storage, ReferenceType):
             pointer = self._emit_expr(expression, mode="raw")
@@ -6489,9 +6452,7 @@ class CGenerator:
                 "result_error",
             }:
                 return False
-            base_type = strip_const(
-                self.semantic.expression_type(expression.value)
-            )
+            base_type = strip_const(self.semantic.expression_type(expression.value))
             return isinstance(base_type, (PointerType, ReferenceType)) or (
                 self._is_addressable_string_expression(expression.value)
             )
@@ -6522,7 +6483,9 @@ class CGenerator:
     def _emit_lvalue(self, expression: ast.Expression) -> str:
         if isinstance(expression, ast.NameExpr):
             symbol = self.semantic.name_symbols.get(id(expression))
-            if isinstance(symbol, VariableSymbol) and isinstance(strip_const(symbol.type), ReferenceType):
+            if isinstance(symbol, VariableSymbol) and isinstance(
+                strip_const(symbol.type), ReferenceType
+            ):
                 return f"(*{c_identifier(symbol.c_name or symbol.name)})"
         return self._emit_expr(expression)
 
@@ -6531,9 +6494,7 @@ class CGenerator:
         if isinstance(actual, ReferenceType):
             return self._emit_expr(expression, mode="raw")
         if isinstance(expression, ast.UnaryExpr) and expression.operator == "*":
-            operand_type = strip_const(
-                self.semantic.expression_type(expression.operand)
-            )
+            operand_type = strip_const(self.semantic.expression_type(expression.operand))
             if isinstance(operand_type, OwnedType):
                 return f"(({self._emit_expr(expression.operand)}).ptr)"
             return self._emit_expr(expression.operand)
@@ -6555,10 +6516,7 @@ class CGenerator:
         assert isinstance(list_type, ListType)
         name = self._slice_name(slice_type)
         value = self._emit_expr(expression)
-        return (
-            f"(({name}){{ .data = ({value}).data, "
-            f".length = ({value}).length }})"
-        )
+        return f"(({name}){{ .data = ({value}).data, .length = ({value}).length }})"
 
     def _list_pointer(self, expression: ast.Expression) -> str:
         return self._container_pointer(expression)
@@ -6659,9 +6617,7 @@ class CGenerator:
 
     @staticmethod
     def _method_signature_text(method: FunctionSymbol) -> str:
-        parameters = ", ".join(
-            type_name(parameter.type) for parameter in method.parameters[1:]
-        )
+        parameters = ", ".join(type_name(parameter.type) for parameter in method.parameters[1:])
         return f"{method.name}({parameters}) -> {type_name(method.return_type)}"
 
     def _field_offset_expression(
@@ -6674,16 +6630,12 @@ class CGenerator:
         terms: list[str] = []
         current = root
         for component in path:
-            terms.append(
-                f"offsetof({c_identifier(current.c_name)}, {c_identifier(component)})"
-            )
+            terms.append(f"offsetof({c_identifier(current.c_name)}, {c_identifier(component)})")
             if component == "_base" and isinstance(current, ClassSymbol):
                 if current.primary_base is None:
                     raise AssertionError("invalid reflected base path")
                 current = current.primary_base
-        terms.append(
-            f"offsetof({c_identifier(owner.c_name)}, {c_identifier(field_name)})"
-        )
+        terms.append(f"offsetof({c_identifier(owner.c_name)}, {c_identifier(field_name)})")
         return " + ".join(terms)
 
     @staticmethod
@@ -6762,9 +6714,7 @@ class CGenerator:
         interface: ClassSymbol,
         method_name: str,
     ) -> str:
-        return c_identifier(
-            f"{class_.c_name}__as__{interface.c_name}__{method_name}__thunk"
-        )
+        return c_identifier(f"{class_.c_name}__as__{interface.c_name}__{method_name}__thunk")
 
     def _thunk_self_argument(
         self,
@@ -6823,9 +6773,7 @@ class CGenerator:
             source_type = actual
             pointer = self._emit_address(expression)
         if not isinstance(source_type, ClassType):
-            raise AssertionError(
-                f"cannot derive a class pointer from {type_name(actual)}"
-            )
+            raise AssertionError(f"cannot derive a class pointer from {type_name(actual)}")
         source = self.semantic.nominal_symbols.get(source_type)
         if not isinstance(source, ClassSymbol):
             raise AssertionError("class expression has no class symbol")
@@ -6841,15 +6789,11 @@ class CGenerator:
         current: ClassSymbol | None = source
         while current is not None and current.type != target.type:
             if current.primary_base is None:
-                raise AssertionError(
-                    f"{source.name} is not layout-derived from {target.name}"
-                )
+                raise AssertionError(f"{source.name} is not layout-derived from {target.name}")
             expression = f"(&(({expression})->_base))"
             current = current.primary_base
         if current is None:
-            raise AssertionError(
-                f"missing base path from {source.name} to {target.name}"
-            )
+            raise AssertionError(f"missing base path from {source.name} to {target.name}")
         return expression
 
     def _emit_dyn_conversion(
@@ -6857,9 +6801,7 @@ class CGenerator:
         expression: ast.Expression,
         target: DynType,
     ) -> str:
-        source = self._class_symbol_from_storage_type(
-            self.semantic.expression_type(expression)
-        )
+        source = self._class_symbol_from_storage_type(self.semantic.expression_type(expression))
         interface = self.semantic.nominal_symbols.get(target.interface)
         if source is None or not isinstance(interface, ClassSymbol):
             raise AssertionError("invalid concrete-to-dyn conversion")
@@ -6877,10 +6819,7 @@ class CGenerator:
             pointer = self._emit_address(expression)
         dyn_name = c_identifier(dyn_c_name(target))
         vtable = self._vtable_instance_name(source, interface)
-        return (
-            f"(({dyn_name}){{ .object = (void *)({pointer}), "
-            f".vtable = &{vtable} }})"
-        )
+        return f"(({dyn_name}){{ .object = (void *)({pointer}), .vtable = &{vtable} }})"
 
     def _materialize_dynamic(
         self,
@@ -6914,8 +6853,7 @@ class CGenerator:
             dyn_name = c_identifier(dyn_c_name(expected_raw))
             vtable = self._vtable_instance_name(concrete_owner, interface)
             return (
-                f"(({dyn_name}){{ .object = (void *)({concrete_pointer}), "
-                f".vtable = &{vtable} }})"
+                f"(({dyn_name}){{ .object = (void *)({concrete_pointer}), .vtable = &{vtable} }})"
             )
         if isinstance(expected_raw, (ReferenceType, PointerType)):
             target_type = strip_const(expected_raw.inner)
@@ -6942,9 +6880,7 @@ class CGenerator:
         current: ClassSymbol | None = class_
         while current is not None and current.type != target.type:
             if current.primary_base is None:
-                raise AssertionError(
-                    f"{class_.name} is not layout-derived from {target.name}"
-                )
+                raise AssertionError(f"{class_.name} is not layout-derived from {target.name}")
             expression = f"(&({expression}->_base))"
             current = current.primary_base
         if current is None:
@@ -7011,9 +6947,7 @@ def _is_printf_string_type(type_: Type) -> bool:
 
 def c_identifier(name: str) -> str:
     cleaned = "".join(
-        character
-        if character.isascii() and (character.isalnum() or character == "_")
-        else "_"
+        character if character.isascii() and (character.isalnum() or character == "_") else "_"
         for character in name
     )
     if not cleaned:
@@ -7039,15 +6973,10 @@ def c_decl(type_: Type, name: str) -> str:
         if isinstance(inner, ReferenceType):
             return c_decl(inner.inner, f"* const {name}".strip())
         if isinstance(inner, FunctionPointerType):
-            parameters = [
-                c_type_expression(parameter) for parameter in inner.param_types
-            ]
+            parameters = [c_type_expression(parameter) for parameter in inner.param_types]
             if not parameters:
                 parameters.append("void")
-            return (
-                f"{c_decl(inner.return_type, f'(* const {name})')}"
-                f"({', '.join(parameters)})"
-            )
+            return f"{c_decl(inner.return_type, f'(* const {name})')}({', '.join(parameters)})"
         if isinstance(inner, ArrayType):
             return c_decl(ConstType(inner.inner), f"{name}[{inner.length}]")
         if isinstance(inner, SliceType):
@@ -7100,12 +7029,14 @@ def c_decl(type_: Type, name: str) -> str:
         return f"{c_identifier(option_c_name(type_))} {name}".strip()
     if isinstance(type_, OwnedType):
         return f"{c_identifier(owned_c_name(type_))} {name}".strip()
+    if isinstance(type_, AtomicType):
+        return f"{c_identifier(atomic_c_name(type_))} {name}".strip()
+    if isinstance(type_, AtomicCompareExchangeResultType):
+        return (f"{c_identifier(atomic_compare_exchange_result_c_name(type_))} {name}").strip()
     if isinstance(type_, OpaqueType):
         return f"{type_.c_name} {name}".strip()
     if isinstance(type_, FunctionPointerType):
-        parameters = [
-            c_type_expression(parameter) for parameter in type_.param_types
-        ]
+        parameters = [c_type_expression(parameter) for parameter in type_.param_types]
         if not parameters:
             parameters.append("void")
         declarator = f"(*{name})" if name else "(*)"

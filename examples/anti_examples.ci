@@ -5,6 +5,9 @@
 #
 #     cinder check examples/anti_examples.ci
 
+from std.atomic import Atomic
+
+
 # -----------------------------------------------------------------------------
 # Layout, declarations, and calls
 
@@ -456,12 +459,90 @@ def print_compile_time_fields() -> void:
 static_assert(field_count(ReflectedRecord) == 1)
 
 
+# WRONG: atomic operations are methods and cannot be used as values.
+# def uncalled_atomic_load() -> void:
+#     cell: Atomic[u64] = 7
+#     cell.load
+
+# CORRECT: call the method to perform the operation.
+def atomic_load_example() -> u64:
+    cell: Atomic[u64] = 7
+    return cell.load()
+
+
+# WRONG: Atomic operations accept scalar values, not aggregate containers.
+# def invalid_atomic_aggregate_store() -> void:
+#     cell: Atomic[u64] = 0
+#     cell.store([1])
+
+# CORRECT: store a scalar compatible with the Atomic element type.
+def atomic_scalar_store_example() -> u64:
+    cell: Atomic[u64] = 0
+    cell.store(1)
+    return cell.load()
+
+
+def load_atomic_pointer(cell: *Atomic[u64]) -> u64:
+    return cell.load()
+
+
+# WRONG: taking the address of an Atomic pointer adds an indirection level.
+# def invalid_atomic_pointer_call() -> u64:
+#     cell: Atomic[u64] = 9
+#     pointer: *Atomic[u64] = &cell
+#     return load_atomic_pointer(&pointer)
+
+# CORRECT: pass the pointer at the depth required by the parameter.
+def atomic_pointer_call_example() -> u64:
+    cell: Atomic[u64] = 9
+    pointer: *Atomic[u64] = &cell
+    return load_atomic_pointer(pointer)
+
+
+# WRONG: Atomic storage cannot be const-qualified at global scope.
+# const_atomic_global: const Atomic[u64] = 1
+
+
+# WRONG: Atomic storage cannot be const-qualified in a local annotation either.
+# def invalid_const_atomic_local() -> void:
+#     cell: const Atomic[u64] = 1
+
+
+def store_atomic_pointer(cell: *Atomic[u64], value: u64) -> void:
+    cell.store(value)
+
+
+def load_const_atomic_pointer(cell: *const Atomic[u64]) -> u64:
+    return cell.load()
+
+
+# WRONG: a pointer to a const Atomic cell cannot flow to a mutable parameter.
+# def invalid_const_atomic_pointer_call() -> void:
+#     cell: Atomic[u64] = 9
+#     readonly: *const Atomic[u64] = &cell
+#     store_atomic_pointer(readonly, 10)
+
+# CORRECT: a mutable Atomic pointer can flow to a const parameter for reading.
+def const_atomic_pointer_call_example() -> u64:
+    cell: Atomic[u64] = 10
+    mutable: *Atomic[u64] = &cell
+    return load_const_atomic_pointer(mutable)
+
+
 # WRONG: a generic type requires type arguments at use sites.
 # value: Box
 
 # CORRECT: apply type arguments; the compiler monomorphizes to readable C.
 struct Box[T]:
     value: T
+
+
+# WRONG: specializing a generic field with Atomic stores the immobile cell by value.
+# def invalid_atomic_box() -> void:
+#     boxed: Box[Atomic[u64]]
+
+# CORRECT: generic aggregates may store a pointer or reference to an Atomic cell.
+# boxed: Box[*Atomic[u64]]
 
 
 def main() -> i32:
@@ -501,6 +582,12 @@ def main() -> i32:
         return 13
     if boxed.value != 42:
         return 14
+    if atomic_load_example() != 7:
+        return 17
+    if atomic_pointer_call_example() != 9:
+        return 18
+    if const_atomic_pointer_call_example() != 10:
+        return 19
 
     print_compile_time_fields()
     return 0

@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from cinder import ast
 from cinder.diagnostics import Span
-from cinder.types import ClassType, ResultType, Type
+from cinder.types import AtomicType, ClassType, ResultType, Type
 
 
 class SymbolKind(StrEnum):
@@ -22,6 +22,21 @@ class SymbolKind(StrEnum):
     CONSTANT = "constant"
     TYPE_TEMPLATE = "type_template"
     FUNCTION_TEMPLATE = "function_template"
+
+
+class AtomicIntrinsicKind(StrEnum):
+    INIT = "atomic_init"
+    LOAD = "atomic_load"
+    STORE = "atomic_store"
+    EXCHANGE = "atomic_exchange"
+    COMPARE_EXCHANGE = "atomic_compare_exchange"
+    FETCH_ADD = "atomic_fetch_add"
+    FETCH_SUB = "atomic_fetch_sub"
+    FETCH_AND = "atomic_fetch_and"
+    FETCH_OR = "atomic_fetch_or"
+    FETCH_XOR = "atomic_fetch_xor"
+    RESULT_EXCHANGED = "atomic_result_exchanged"
+    RESULT_OBSERVED = "atomic_result_observed"
 
 
 @dataclass(slots=True)
@@ -182,7 +197,7 @@ class VariantSymbol(Symbol):
 class TypeTemplateSymbol(Symbol):
     type_params: tuple[str, ...]
     declaration: (
-        ast.StructDecl | ast.ClassDecl | ast.EnumDecl | ast.UnionDecl | ast.VariantDecl
+        ast.StructDecl | ast.ClassDecl | ast.EnumDecl | ast.UnionDecl | ast.VariantDecl | None
     )
     template_kind: str
     defining_module: str | None = None
@@ -284,6 +299,22 @@ class CallResolution:
     compile_value: object | None = None
     moved_variables: tuple[VariableSymbol, ...] = ()
     ffi_borrow_indices: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicInitResolution:
+    atomic_type: AtomicType
+    initializer: ast.Expression
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicCallResolution:
+    intrinsic: AtomicIntrinsicKind
+    receiver: ast.Expression
+    atomic_type: AtomicType
+    result_type: Type
+    operands: tuple[ast.Expression, ...] = ()
+    source_order: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

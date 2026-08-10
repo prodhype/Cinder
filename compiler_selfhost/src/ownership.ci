@@ -7,6 +7,7 @@ enum OwnershipKind:
     COPYABLE
     MOVE_ONLY
     BORROWED
+    IMMOBILE
 
 
 struct CleanupRecord:
@@ -47,6 +48,8 @@ def ownership_kind(table: &const types.TypeTable, type_id: TypeId) -> OwnershipK
     record = table.types[type_id.index]
     if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.DYN or types.is_map_view_kind(record.kind):
         return OwnershipKind.BORROWED
+    if type_contains_atomic_storage(table, type_id):
+        return OwnershipKind.IMMOBILE
     if type_needs_drop_record(table, record):
         return OwnershipKind.MOVE_ONLY
     return OwnershipKind.COPYABLE
@@ -92,5 +95,32 @@ def is_move_only(table: &const types.TypeTable, type_id: TypeId) -> bool:
     return ownership_kind(table, type_id) == OwnershipKind.MOVE_ONLY
 
 
+def type_contains_atomic_storage(table: &const types.TypeTable, type_id: TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.DYN or types.is_map_view_kind(record.kind):
+        return false
+    if record.kind == types.TypeKind.ATOMIC:
+        return true
+    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET:
+        return type_contains_atomic_storage(table, record.inner)
+    if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
+        return type_contains_atomic_storage(table, record.inner) or type_contains_atomic_storage(table, record.second)
+    if record.kind == types.TypeKind.CLOSURE:
+        return type_contains_atomic_storage(table, record.second)
+    if record.kind == types.TypeKind.TUPLE:
+        offset: i32 = 0
+        while offset < record.flags:
+            if type_contains_atomic_storage(table, table.type_args[cast[usize](record.extra + offset)]):
+                return true
+            offset += 1
+    return false
+
+
+def can_relocate(table: &const types.TypeTable, type_id: TypeId) -> bool:
+    return not type_contains_atomic_storage(table, type_id)
+
+
 def can_copy(table: &const types.TypeTable, type_id: TypeId) -> bool:
-    return ownership_kind(table, type_id) == OwnershipKind.COPYABLE or ownership_kind(table, type_id) == OwnershipKind.BORROWED
+    return can_relocate(table, type_id) and (ownership_kind(table, type_id) == OwnershipKind.COPYABLE or ownership_kind(table, type_id) == OwnershipKind.BORROWED)

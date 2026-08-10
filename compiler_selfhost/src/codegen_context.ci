@@ -1,5 +1,6 @@
 import backend_ir
 import classes
+import codegen_atomics
 import codegen_names
 import codegen_reflection
 import codegen_type_names
@@ -1037,8 +1038,12 @@ def context_field_type_for_receiver(
 def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.TypeId:
     semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
     for node in semantic_nodes:
-        if node.syntax.index == id.index:
+        if node.syntax.index == id.index and node.specialization == context.active_user_specialization:
             return node.type_id
+    if context.active_user_specialization >= 0:
+        for node in semantic_nodes:
+            if node.syntax.index == id.index and node.specialization < 0:
+                return node.type_id
     return types.missing_type()
 
 
@@ -1062,6 +1067,10 @@ def emit_context_c_type(
     imports: &const List[project.ImportBinding],
     context: &ModuleCodegenContext,
 ) -> void:
+    semantic_type = context_semantic_type(context, id)
+    if codegen_atomics.semantic_type_contains_atomic(context.type_table, semantic_type):
+        codegen_type_names.emit_semantic_c_type(context.type_table, semantic_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        return
     user_specializations: &const List[semantic.UserSpecialization] = context.user_specializations
     specialization_args: &const List[types.TypeId] = context.specialization_args
     if id.index < 0 or context.active_user_specialization < 0 or context.active_user_specialization >= cast[i32](len(user_specializations)):

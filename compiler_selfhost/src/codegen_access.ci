@@ -965,8 +965,12 @@ def emit_module_index(
     element_type = codegen_context.context_expression_list_element_type(arena, context, receiver, source)
     if element_type.index >= 0:
         receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+        semantic_element_type = codegen_context.context_semantic_type(context, id)
         builder.append("((")
-        codegen_context.emit_context_c_type(arena, element_type, source, builder, prefix, project_name, imports, context)
+        if codegen_context.context_semantic_type_is_kind(context, semantic_element_type, types.TypeKind.ATOMIC):
+            codegen_type_names.emit_semantic_c_type(table, semantic_element_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        else:
+            codegen_context.emit_context_c_type(arena, element_type, source, builder, prefix, project_name, imports, context)
         builder.append(" *)")
         emit_nested(state, receiver)
         if codegen_context.context_type_is_pointer_like(arena, receiver_type):

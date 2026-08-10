@@ -1,4 +1,5 @@
 import codegen_names
+import codegen_atomics
 import project
 import syntax
 import token
@@ -455,6 +456,10 @@ def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: typ
         builder.append("n_CinderParseError")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE")
+    elif record.kind == types.TypeKind.ATOMIC:
+        codegen_atomics.append_atomic_wrapper_name(builder, types.atomic_type_element_kind(table, type_id))
+    elif record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
+        codegen_atomics.append_atomic_result_name(builder, types.atomic_type_element_kind(table, type_id))
     elif record.kind == types.TypeKind.POINTER:
         emit_semantic_readable_type_name(table, record.inner, source, builder)
         builder.append("_ptr")
@@ -579,6 +584,10 @@ def emit_semantic_c_type(
         builder.append("CinderParseError")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE *")
+    elif record.kind == types.TypeKind.ATOMIC:
+        codegen_atomics.append_atomic_wrapper_name(builder, types.atomic_type_element_kind(table, type_id))
+    elif record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
+        codegen_atomics.append_atomic_result_name(builder, types.atomic_type_element_kind(table, type_id))
     elif record.kind == types.TypeKind.POINTER:
         emit_semantic_c_type(table, record.inner, source, builder, prefix, project_name, imports, registry)
         builder.append(" *")

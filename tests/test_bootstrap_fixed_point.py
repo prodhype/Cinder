@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -52,6 +53,31 @@ def gen2_compiler(gen1_compiler: Path, tmp_path_factory: pytest.TempPathFactory)
     assert built.stdout.strip() == str(gen2.resolve())
     assert gen2.is_file()
     return gen2, build_dir
+
+
+@pytest.fixture(scope="module")
+def gen3_compiler(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
+    gen2, _gen2_build_dir = gen2_compiler
+    build_root = tmp_path_factory.mktemp("bootstrap_gen3_build")
+    gen3 = build_root / (
+        "cinder-gen3.exe" if shutil.which("cl") and not shutil.which("cc") else "cinder-gen3"
+    )
+    built = run_gen1(
+        gen2,
+        "build",
+        str(ROOT / "compiler_selfhost"),
+        "-o",
+        str(gen3),
+        "--build-dir",
+        str(build_root / "build"),
+    )
+    assert built.returncode == 0, built.stderr
+    assert built.stdout.strip() == str(gen3.resolve())
+    assert gen3.is_file()
+    return gen3
 
 
 def run_gen1(gen1: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -4739,3 +4765,610 @@ def test_gen1_map_views_cross_module_boundaries(
     assert built.returncode == 0, built.stderr
     executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
     assert executed.returncode == 0, executed.stderr
+
+
+def assert_compiler_preserves_atomic_generic_specializations(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "atomic_generic_specializations.ci"
+    source.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def read[T](cell: *Atomic[T]) -> T:\n"
+        "    return cell.load()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    small: Atomic[u32] = 7\n"
+        "    wide: Atomic[u64] = 0x100000001\n"
+        "    if read[u32](&small) != 7:\n"
+        "        return 1\n"
+        "    if read[u64](&wide) != 0x100000001:\n"
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(compiler, "check", str(source))
+    assert checked.returncode == 0, checked.stderr
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    u32_function = re.search(
+        r"uint32_t [^(]*__read_u32\(CinderAtomic_u32 \* cell\) \{(?P<body>.*?)\n\}",
+        emitted.stdout,
+        re.DOTALL,
+    )
+    u64_function = re.search(
+        r"uint64_t [^(]*__read_u64\(CinderAtomic_u64 \* cell\) \{(?P<body>.*?)\n\}",
+        emitted.stdout,
+        re.DOTALL,
+    )
+    assert u32_function is not None
+    assert u64_function is not None
+    u32_body = u32_function.group("body")
+    u64_body = u64_function.group("body")
+    assert "CinderAtomic_u32 *cinder_atomic_receiver_" in u32_body
+    assert "CinderAtomic_u64 *cinder_atomic_receiver_" not in u32_body
+    assert "CinderAtomic_u64 *cinder_atomic_receiver_" in u64_body
+    assert "CinderAtomic_u32 *cinder_atomic_receiver_" not in u64_body
+    assert "atomic_load_explicit" in u32_body
+    assert "atomic_load_explicit" in u64_body
+
+    output = tmp_path / "atomic-generic-specializations"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(source),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "atomic-generic-specializations-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr
+
+
+def assert_compiler_supports_atomic_scalars(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "atomic_scalars.ci"
+    source.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "global_counter: Atomic[u64] = 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    ready: Atomic[bool] = false\n"
+        "    counter: Atomic[u64] = 1\n"
+        "    small: Atomic[u32] = 4\n"
+        "    index: Atomic[usize] = 6\n"
+        "    converted_ready: Atomic[bool] = 1\n"
+        "    converted_counter: Atomic[u64] = 2.0\n"
+        "    if not converted_ready.load() or converted_counter.load() != 2:\n"
+        "        return 17\n"
+        "    converted_ready.store(0)\n"
+        "    converted_counter.store(3.0)\n"
+        "    if converted_ready.load() or converted_counter.load() != 3:\n"
+        "        return 18\n"
+        "    if ready.exchange(true):\n"
+        "        return 1\n"
+        "    ready_result = ready.compare_exchange(expected=true, desired=false)\n"
+        "    if not ready_result.exchanged or not ready_result.observed:\n"
+        "        return 2\n"
+        "    if ready.load():\n"
+        "        return 3\n"
+        "    ready_ref: &const Atomic[bool] = &ready\n"
+        "    if ready_ref.load():\n"
+        "        return 4\n"
+        "    if small.fetch_add(2) != 4 or small.load() != 6:\n"
+        "        return 13\n"
+        "    if index.fetch_sub(1) != 6 or index.load() != 5:\n"
+        "        return 14\n"
+        "    const counter_ref: *Atomic[u64] = &counter\n"
+        "    if counter_ref.load() != 1:\n"
+        "        return 15\n"
+        "    if global_counter.fetch_add(1) != 0 or global_counter.load() != 1:\n"
+        "        return 16\n"
+        "    counter_ref.store(2)\n"
+        "    if counter.exchange(3) != 2:\n"
+        "        return 5\n"
+        "    if counter.fetch_add(4) != 3:\n"
+        "        return 6\n"
+        "    if counter.fetch_sub(2) != 7:\n"
+        "        return 7\n"
+        "    if counter.fetch_and(6) != 5:\n"
+        "        return 8\n"
+        "    if counter.fetch_or(1) != 4:\n"
+        "        return 9\n"
+        "    if counter.fetch_xor(7) != 5:\n"
+        "        return 10\n"
+        "    exchanged = counter.compare_exchange(expected=2, desired=9)\n"
+        "    if not exchanged.exchanged or exchanged.observed != 2:\n"
+        "        return 11\n"
+        "    observed = counter.compare_exchange(desired=10, expected=0)\n"
+        "    if observed.exchanged or observed.observed != 9:\n"
+        "        return 12\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(compiler, "check", str(source))
+    assert checked.returncode == 0, checked.stderr
+
+    emitted = run_gen1(compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    for snippet in (
+        "#include <stdatomic.h>",
+        "_Atomic(uint32_t) value;",
+        "_Atomic(uint64_t) value;",
+        "_Atomic(size_t) value;",
+        "ATOMIC_VAR_INIT(",
+        "atomic_init(",
+        "atomic_load_explicit(",
+        "atomic_store_explicit(",
+        "atomic_exchange_explicit(",
+        "atomic_compare_exchange_strong_explicit(",
+        "atomic_fetch_add_explicit(",
+        "atomic_fetch_sub_explicit(",
+        "atomic_fetch_and_explicit(",
+        "atomic_fetch_or_explicit(",
+        "atomic_fetch_xor_explicit(",
+        "memory_order_seq_cst",
+    ):
+        assert snippet in emitted.stdout
+
+    generated = tmp_path / "atomic-generated"
+    emitted_project = run_gen1(
+        compiler,
+        "emit-project",
+        str(source),
+        "-o",
+        str(generated),
+    )
+    assert emitted_project.returncode == 0, emitted_project.stderr
+    header = generated / "cinder_gen" / "atomic_scalars.cinder.h"
+    header_text = header.read_text(encoding="utf-8")
+    assert "typedef struct CinderAtomic_u64 CinderAtomic_u64;" in header_text
+    assert "#ifndef __cplusplus" in header_text
+    assert (
+        "#ifndef __cplusplus\n"
+        "struct CinderAtomic_u64 { _Atomic(uint64_t) value; };\n"
+        "#endif"
+    ) in header_text
+
+    output = tmp_path / "atomic-scalars"
+    built = run_gen1(compiler, "build", str(source), "-o", str(output))
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr
+
+    pointer_only = tmp_path / "atomic_pointer_only.ci"
+    pointer_only.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "cell: Atomic[u64] = 13\n"
+        "pointer: *Atomic[u64] = &cell\n"
+        "\n"
+        "def identity(cell: *Atomic[u64]) -> *Atomic[u64]:\n"
+        "    return cell\n"
+        "\n"
+        "def read_const(cell: *const Atomic[u64]) -> u64:\n"
+        "    return cell.load()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    if identity(pointer).load() != 13:\n"
+        "        return 1\n"
+        "    if read_const(pointer) != 13:\n"
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    pointer_emitted = run_gen1(compiler, "emit-c", str(pointer_only))
+    assert pointer_emitted.returncode == 0, pointer_emitted.stderr
+    assert "#include <stdatomic.h>" in pointer_emitted.stdout
+    assert "_Atomic(uint64_t) value;" in pointer_emitted.stdout
+    assert "CinderAtomic_u64 *" in pointer_emitted.stdout
+    assert "const CinderAtomic_u64 *" in pointer_emitted.stdout
+    assert "std_atomic__Atomic" not in pointer_emitted.stdout
+    pointer_output = tmp_path / "atomic-pointer-only"
+    pointer_built = run_gen1(
+        compiler,
+        "build",
+        str(pointer_only),
+        "-o",
+        str(pointer_output),
+        "--build-dir",
+        str(tmp_path / "atomic-pointer-only-build"),
+    )
+    assert pointer_built.returncode == 0, pointer_built.stderr
+    pointer_executed = subprocess.run(
+        [str(pointer_output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert pointer_executed.returncode == 0, pointer_executed.stderr
+
+    nested_only = tmp_path / "atomic_nested_specializations.ci"
+    nested_only.write_text(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def accept_nested_atomic_pointers(\n"
+        "    optional: Option[*Atomic[u64]],\n"
+        "    result: Result[*Atomic[u64], *Atomic[u32]],\n"
+        "    pair: Tuple[*Atomic[u64], *Atomic[u32]],\n"
+        "    values: List[*Atomic[u64]],\n"
+        "    owned: Owned[*Atomic[u64]],\n"
+        "    mapping: Map[i32, *Atomic[u64]],\n"
+        "    view: MapValues[i32, *Atomic[u64]],\n"
+        ") -> i32:\n"
+        "    return 0\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 1\n"
+        "    values: List[*Atomic[u64]] = []\n"
+        "    defer values.clear()\n"
+        "    values.append(&cell)\n"
+        "    values[0].store(4)\n"
+        "    if values[0].load() != 4:\n"
+        "        return 1\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    nested_checked = run_gen1(compiler, "check", str(nested_only))
+    assert nested_checked.returncode == 0, nested_checked.stderr
+    nested_emitted = run_gen1(compiler, "emit-c", str(nested_only))
+    assert nested_emitted.returncode == 0, nested_emitted.stderr
+    for snippet in (
+        "#include <stdatomic.h>",
+        "typedef struct CinderAtomic_u64 CinderAtomic_u64;",
+        "CinderAtomic_u64 * value;",
+        "CinderAtomic_u64 * ok;",
+        "CinderAtomic_u32 * err;",
+        "CinderAtomic_u64 * item_0;",
+        "CinderAtomic_u32 * item_1;",
+        "((CinderAtomic_u64 * *)",
+    ):
+        assert snippet in nested_emitted.stdout
+    assert "std_atomic__Atomic" not in nested_emitted.stdout
+    nested_output = tmp_path / "atomic-nested-specializations"
+    nested_built = run_gen1(
+        compiler,
+        "build",
+        str(nested_only),
+        "-o",
+        str(nested_output),
+        "--build-dir",
+        str(tmp_path / "atomic-nested-specializations-build"),
+    )
+    assert nested_built.returncode == 0, nested_built.stderr
+    nested_executed = subprocess.run(
+        [str(nested_output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert nested_executed.returncode == 0, nested_executed.stderr
+
+    invalid_cases = (
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[String] = \"bad\"\n"
+            "    return 0\n",
+            394,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "value: const Atomic[u64] = 1\n"
+            "def main() -> i32:\n"
+            "    return 0\n",
+            398,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: const Atomic[u64] = 1\n"
+            "    return 0\n",
+            398,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    loaded: u64 = value\n"
+            "    return 0\n",
+            400,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    value = 1\n"
+            "    return 0\n",
+            401,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[bool] = false\n"
+            "    value.fetch_add(true)\n"
+            "    return 0\n",
+            403,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = [1]\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    value.store([1])\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    value.compare_exchange(expected=0, desired=[1])\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "\n"
+            "def load64(cell: *Atomic[u64]) -> u64:\n"
+            "    return cell.load()\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    narrow: Atomic[u32] = 0\n"
+            "    load64(&narrow)\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "\n"
+            "def store64(cell: *Atomic[u64]) -> void:\n"
+            "    cell.store(1)\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    readonly: *const Atomic[u64] = &value\n"
+            "    store64(readonly)\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "\n"
+            "def load64(cell: *Atomic[u64]) -> u64:\n"
+            "    return cell.load()\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    pointer: *Atomic[u64] = &value\n"
+            "    load64(&pointer)\n"
+            "    return 0\n",
+            107,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "def main() -> i32:\n"
+            "    value: Atomic[u64] = 0\n"
+            "    pointer: *Atomic[u64] = &value\n"
+            "    indirect: **Atomic[u64] = &pointer\n"
+            "    indirect.load()\n"
+            "    return 0\n",
+            403,
+        ),
+        (
+            "from std.atomic import Atomic\n"
+            "\n"
+            "struct Box[T]:\n"
+            "    value: T\n"
+            "\n"
+            "def main() -> i32:\n"
+            "    boxed: Box[Atomic[u64]]\n"
+            "    return 0\n",
+            395,
+        ),
+    )
+    for index, (invalid_source, code) in enumerate(invalid_cases):
+        invalid = tmp_path / f"invalid_atomic_{index}.ci"
+        invalid.write_text(invalid_source, encoding="utf-8")
+        rejected = run_gen1(compiler, "check", str(invalid))
+        assert rejected.returncode == 1
+        assert rejected.stdout.startswith(f"E {code} ")
+
+
+def assert_compiler_supports_atomic_import_forms(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "src"
+    source_root.mkdir()
+    manifest = tmp_path / "cinder.toml"
+    manifest.write_text(
+        '[project]\nname = "atomic_imports"\nsource-root = "src"\nentry = "main.ci"\n',
+        encoding="utf-8",
+    )
+    (source_root / "state.ci").write_text(
+        "from std.atomic import Atomic as A\n"
+        "\n"
+        "counter: A[u64] = 0\n"
+        "\n"
+        "def pointer() -> *A[u64]:\n"
+        "    return &counter\n",
+        encoding="utf-8",
+    )
+    (source_root / "bridge.ci").write_text(
+        "from std.atomic import Atomic as Storage\n",
+        encoding="utf-8",
+    )
+    (source_root / "api.ci").write_text(
+        "import bridge\n"
+        "from std.atomic import Atomic\n"
+        "from std.atomic import Atomic as Cell\n"
+        "from bridge import Storage as Slot\n"
+        "\n"
+        "qualified_counter: bridge.Storage[u64] = 8\n"
+        "\n"
+        "def qualified_pointer() -> *bridge.Storage[u64]:\n"
+        "    return &qualified_counter\n",
+        encoding="utf-8",
+    )
+    (source_root / "main.ci").write_text(
+        "import std.atomic as atom\n"
+        "import api\n"
+        "import state\n"
+        "\n"
+        "global_counter: atom.Atomic[u64] = 4\n"
+        "api_counter: api.Atomic[u64] = 5\n"
+        "aliased_api_counter: api.Cell[u64] = 6\n"
+        "transitive_api_counter: api.Slot[u64] = 7\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    local_counter: atom.Atomic[u64] = 2\n"
+        "    if local_counter.fetch_add(1) != 2 or local_counter.load() != 3:\n"
+        "        return 1\n"
+        "    if global_counter.load() != 4:\n"
+        "        return 2\n"
+        "    if state.counter.fetch_add(3) != 0 or state.counter.load() != 3:\n"
+        "        return 3\n"
+        "    if api_counter.exchange(6) != 5 or api_counter.load() != 6:\n"
+        "        return 4\n"
+        "    if state.pointer().fetch_add(2) != 3 or state.counter.load() != 5:\n"
+        "        return 5\n"
+        "    if aliased_api_counter.fetch_add(1) != 6 or aliased_api_counter.load() != 7:\n"
+        "        return 6\n"
+        "    if transitive_api_counter.exchange(9) != 7 or transitive_api_counter.load() != 9:\n"
+        "        return 7\n"
+        "    if api.qualified_counter.exchange(10) != 8 or api.qualified_counter.load() != 10:\n"
+        "        return 8\n"
+        "    if api.qualified_pointer().fetch_add(2) != 10 or api.qualified_counter.load() != 12:\n"
+        "        return 9\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+
+    checked = run_gen1(compiler, "check", str(manifest))
+    assert checked.returncode == 0, checked.stderr
+
+    generated = tmp_path / "atomic-import-generated"
+    emitted = run_gen1(
+        compiler,
+        "emit-project",
+        str(manifest),
+        "-o",
+        str(generated),
+    )
+    assert emitted.returncode == 0, emitted.stderr
+    generated_text = (
+        (generated / "cinder_gen" / "main.c").read_text(encoding="utf-8")
+        + (generated / "cinder_gen" / "state.c").read_text(encoding="utf-8")
+        + (generated / "cinder_gen" / "api.c").read_text(encoding="utf-8")
+    )
+    imported_pointer_call = "cinder_atomic_imports_state__pointer()"
+    assert "CinderAtomic_u64" in generated_text
+    assert "atomic_fetch_add_explicit" in generated_text
+    assert re.search(
+        rf"cinder_atomic_receiver_\d+ = {re.escape(imported_pointer_call)}",
+        generated_text,
+    )
+    assert f"fetch_add(&{imported_pointer_call}" not in generated_text
+    assert f"= &({imported_pointer_call})" not in generated_text
+    assert "std_atomic__Atomic" not in generated_text
+    assert "Atomic_u64_fetch_add" not in generated_text
+    assert "api__Atomic" not in generated_text
+    assert "api__Cell" not in generated_text
+    assert "api__Slot" not in generated_text
+    assert "bridge__Storage" not in generated_text
+
+    output = tmp_path / "atomic-imports"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(manifest),
+        "-o",
+        str(output),
+        "--build-dir",
+        str(tmp_path / "atomic-import-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    executed = subprocess.run([str(output)], check=False, capture_output=True, text=True)
+    assert executed.returncode == 0, executed.stderr
+
+
+def test_gen1_preserves_atomic_generic_specializations(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_preserves_atomic_generic_specializations(gen1_compiler, tmp_path)
+
+
+def test_gen2_preserves_atomic_generic_specializations(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_preserves_atomic_generic_specializations(gen2, tmp_path)
+
+
+def test_gen3_preserves_atomic_generic_specializations(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_preserves_atomic_generic_specializations(gen3_compiler, tmp_path)
+
+
+def test_gen1_supports_atomic_scalars(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_scalars(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_atomic_scalars(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_atomic_scalars(gen2, tmp_path)
+
+
+def test_gen3_supports_atomic_scalars(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_scalars(gen3_compiler, tmp_path)
+
+
+def test_gen1_supports_atomic_import_forms(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_import_forms(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_atomic_import_forms(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_atomic_import_forms(gen2, tmp_path)
+
+
+def test_gen3_supports_atomic_import_forms(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_atomic_import_forms(gen3_compiler, tmp_path)

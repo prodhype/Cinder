@@ -30,9 +30,7 @@ def iter_nodes(node: object) -> Iterator[object]:
 
 def name_exprs(module: ast.Module, name: str) -> list[ast.NameExpr]:
     return [
-        node
-        for node in iter_nodes(module)
-        if isinstance(node, ast.NameExpr) and node.name == name
+        node for node in iter_nodes(module) if isinstance(node, ast.NameExpr) and node.name == name
     ]
 
 
@@ -44,11 +42,7 @@ def function_decl(module: ast.Module, name: str) -> ast.FunctionDecl:
 
 
 def test_copy_local_read() -> None:
-    semantic = compile_semantic(
-        "def main() -> i32:\n"
-        "    value: i32 = 41\n"
-        "    return value + 1\n"
-    )
+    semantic = compile_semantic("def main() -> i32:\n    value: i32 = 41\n    return value + 1\n")
     [expr] = name_exprs(semantic.module, "value")
     # initializer target is lvalue; only the return read remains
     resolution = semantic.value_use(expr)
@@ -188,10 +182,7 @@ def test_borrow_reference_parameter() -> None:
 
 def test_address_operand() -> None:
     semantic = compile_semantic(
-        "def main() -> i32:\n"
-        "    value: i32 = 3\n"
-        "    pointer: *i32 = &value\n"
-        "    return *pointer\n"
+        "def main() -> i32:\n    value: i32 = 3\n    pointer: *i32 = &value\n    return *pointer\n"
     )
     unary = next(
         node
@@ -203,6 +194,43 @@ def test_address_operand() -> None:
     assert resolution is not None
     assert resolution.kind is ValueUseKind.ADDRESS
     assert semantic.value_use(unary) is None
+
+
+def test_generic_atomic_inference_preserves_address_operand() -> None:
+    semantic = compile_semantic(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def read[T](cell: *Atomic[T]) -> T:\n"
+        "    return cell.load()\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    cell: Atomic[u64] = 7\n"
+        "    return cast[i32](read(&cell))\n"
+    )
+    unary = next(
+        node
+        for node in iter_nodes(function_decl(semantic.module, "main"))
+        if isinstance(node, ast.UnaryExpr) and node.operator == "&"
+    )
+    assert isinstance(unary.operand, ast.NameExpr)
+    resolution = semantic.value_use(unary.operand)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.ADDRESS
+
+
+def test_atomic_method_receiver_is_address_use() -> None:
+    semantic = compile_semantic(
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    counter: Atomic[u64] = 0\n"
+        "    return cast[i32](counter.fetch_add(1))\n"
+    )
+    receiver = next(resolution.receiver for resolution in semantic.atomic_call_resolutions.values())
+    assert isinstance(receiver, ast.NameExpr)
+    resolution = semantic.value_use(receiver)
+    assert resolution is not None
+    assert resolution.kind is ValueUseKind.ADDRESS
 
 
 def test_assignment_target_has_no_value_use() -> None:
@@ -268,12 +296,7 @@ def test_deferred_reference_call_records_borrow() -> None:
 
 
 def test_module_local_global_has_no_value_use() -> None:
-    semantic = compile_semantic(
-        "counter: i32 = 1\n"
-        "\n"
-        "def main() -> i32:\n"
-        "    return counter\n"
-    )
+    semantic = compile_semantic("counter: i32 = 1\n\ndef main() -> i32:\n    return counter\n")
     [expr] = name_exprs(semantic.module, "counter")
     assert semantic.value_use(expr) is None
 
@@ -282,10 +305,7 @@ def test_imported_global_has_no_value_use(tmp_path: Path) -> None:
     source_root = tmp_path / "src"
     source_root.mkdir()
     (tmp_path / "cinder.toml").write_text(
-        "[project]\n"
-        "name = \"value_use_import\"\n"
-        "source-root = \"src\"\n"
-        "entry = \"main.ci\"\n",
+        '[project]\nname = "value_use_import"\nsource-root = "src"\nentry = "main.ci"\n',
         encoding="utf-8",
     )
     (source_root / "util.ci").write_text(
@@ -293,10 +313,7 @@ def test_imported_global_has_no_value_use(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (source_root / "main.ci").write_text(
-        "from util import counter\n"
-        "\n"
-        "def main() -> i32:\n"
-        "    return counter\n",
+        "from util import counter\n\ndef main() -> i32:\n    return counter\n",
         encoding="utf-8",
     )
     project = Compiler().compile_project(tmp_path)

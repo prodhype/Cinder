@@ -29,10 +29,16 @@ from cinder.ownership import (
     struct_needs_drop as ownership_struct_needs_drop,
 )
 from cinder.ownership import (
+    type_contains_atomic_storage as ownership_type_contains_atomic_storage,
+)
+from cinder.ownership import (
     type_needs_drop as ownership_type_needs_drop,
 )
 from cinder.stdlib import builtin_global_functions, builtin_modules
 from cinder.symbols import (
+    AtomicCallResolution,
+    AtomicInitResolution,
+    AtomicIntrinsicKind,
     AttributeResolution,
     BinaryResolution,
     CallResolution,
@@ -88,6 +94,8 @@ from cinder.types import (
     USIZE,
     VOID,
     ArrayType,
+    AtomicCompareExchangeResultType,
+    AtomicType,
     ClassType,
     ClosureType,
     ComptimeCollectionType,
@@ -124,6 +132,7 @@ from cinder.types import (
     can_assign,
     can_borrow_elements,
     common_type,
+    is_atomic_element_type,
     is_c_string,
     is_condition_type,
     is_equatable,
@@ -229,6 +238,8 @@ class SemanticModel:
     name_symbols: dict[int, Symbol] = dataclass_field(default_factory=dict)
     attribute_resolutions: dict[int, AttributeResolution] = dataclass_field(default_factory=dict)
     call_resolutions: dict[int, CallResolution] = dataclass_field(default_factory=dict)
+    atomic_init_resolutions: dict[int, AtomicInitResolution] = dataclass_field(default_factory=dict)
+    atomic_call_resolutions: dict[int, AtomicCallResolution] = dataclass_field(default_factory=dict)
     index_resolutions: dict[int, IndexResolution] = dataclass_field(default_factory=dict)
     binary_resolutions: dict[int, BinaryResolution] = dataclass_field(default_factory=dict)
     range_resolutions: dict[int, RangeResolution] = dataclass_field(default_factory=dict)
@@ -238,7 +249,9 @@ class SemanticModel:
     declaration_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
     foreach_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
     with_symbols: dict[int, VariableSymbol] = dataclass_field(default_factory=dict)
-    comptime_foreach_symbols: dict[int, ComptimeVariableSymbol] = dataclass_field(default_factory=dict)
+    comptime_foreach_symbols: dict[int, ComptimeVariableSymbol] = dataclass_field(
+        default_factory=dict
+    )
     function_symbols: dict[int, FunctionSymbol] = dataclass_field(default_factory=dict)
     struct_symbols: dict[int, StructSymbol] = dataclass_field(default_factory=dict)
     class_symbols: dict[int, ClassSymbol] = dataclass_field(default_factory=dict)
@@ -258,18 +271,9 @@ class SemanticModel:
 
     def module_symbol(self) -> ModuleSymbol:
         constants: dict[str, ConstantSymbol] = {}
-        public_globals: dict[str, VariableSymbol] = {}
-        for name, symbol in self.globals.items():
-            if symbol.is_const:
-                constants[name] = ConstantSymbol(
-                    name,
-                    symbol.span,
-                    SymbolKind.CONSTANT,
-                    symbol.type,
-                    symbol.c_name or name,
-                )
-            else:
-                public_globals[name] = symbol
+        # Source-level const globals are addressable C objects, not
+        # substitutional constants such as macros or enum members.
+        public_globals: dict[str, VariableSymbol] = dict(self.globals)
         type_symbols: dict[str, NominalSymbol] = {}
         type_symbols.update(self.structs)
         type_symbols.update(self.classes)
@@ -370,6 +374,8 @@ class Checker:
         self.name_symbols: dict[int, Symbol] = {}
         self.attribute_resolutions: dict[int, AttributeResolution] = {}
         self.call_resolutions: dict[int, CallResolution] = {}
+        self.atomic_init_resolutions: dict[int, AtomicInitResolution] = {}
+        self.atomic_call_resolutions: dict[int, AtomicCallResolution] = {}
         self.index_resolutions: dict[int, IndexResolution] = {}
         self.binary_resolutions: dict[int, BinaryResolution] = {}
         self.range_resolutions: dict[int, RangeResolution] = {}
@@ -398,6 +404,8 @@ class Checker:
         self.active_collection_iterators: list[_CollectionStorage] = []
         self.map_view_storages: dict[int, _CollectionStorage] = {}
         self.moved_variables: set[int] = set()
+        self._validated_lifetime_nominals: set[int] = set()
+        self._validated_lifetime_functions: set[int] = set()
 
     def check(self) -> SemanticModel:
         self._install_builtins()
@@ -442,6 +450,8 @@ class Checker:
             name_symbols=self.name_symbols,
             attribute_resolutions=self.attribute_resolutions,
             call_resolutions=self.call_resolutions,
+            atomic_init_resolutions=self.atomic_init_resolutions,
+            atomic_call_resolutions=self.atomic_call_resolutions,
             index_resolutions=self.index_resolutions,
             binary_resolutions=self.binary_resolutions,
             range_resolutions=self.range_resolutions,
@@ -745,7 +755,9 @@ class Checker:
                             self.opaques[public_name] = imported_type
                         original_nominal = module.type_symbols.get(imported_name)
                         if original_nominal is not None:
-                            alias_symbol = self._alias_nominal(original_nominal, public_name, item.span)
+                            alias_symbol = self._alias_nominal(
+                                original_nominal, public_name, item.span
+                            )
                             self._declare_global(alias_symbol)
                             self._register_nominal(imported_type, original_nominal)
                     else:
@@ -1102,9 +1114,14 @@ class Checker:
             for field_declaration in declaration.fields:
                 field_type = self._resolve_type(field_declaration.annotation)
                 if is_void(field_type):
-                    self._error("struct fields cannot have type void", field_declaration.span, code="C006")
+                    self._error(
+                        "struct fields cannot have type void", field_declaration.span, code="C006"
+                    )
                     field_type = ERROR
-                if field_declaration.name in struct.fields or field_declaration.name in struct.methods:
+                if (
+                    field_declaration.name in struct.fields
+                    or field_declaration.name in struct.methods
+                ):
                     self._error(
                         f"duplicate member {field_declaration.name!r} in struct {struct.name}",
                         field_declaration.span,
@@ -1121,8 +1138,13 @@ class Checker:
                 )
 
             for method_declaration in declaration.methods:
-                self._validate_decorators(method_declaration.decorators, method_declaration.span, allowed=())
-                if method_declaration.name in struct.methods or method_declaration.name in struct.fields:
+                self._validate_decorators(
+                    method_declaration.decorators, method_declaration.span, allowed=()
+                )
+                if (
+                    method_declaration.name in struct.methods
+                    or method_declaration.name in struct.fields
+                ):
                     self._error(
                         f"duplicate member {method_declaration.name!r} in struct {struct.name}",
                         method_declaration.span,
@@ -1148,7 +1170,10 @@ class Checker:
                         code="C164",
                     )
                     field_type = ERROR
-                if field_declaration.name in class_.fields or field_declaration.name in class_.methods:
+                if (
+                    field_declaration.name in class_.fields
+                    or field_declaration.name in class_.methods
+                ):
                     self._error(
                         f"duplicate member {field_declaration.name!r} in class {class_.name}",
                         field_declaration.span,
@@ -1171,7 +1196,10 @@ class Checker:
                     method_declaration.span,
                     allowed=allowed,
                 )
-                if method_declaration.name in class_.methods or method_declaration.name in class_.fields:
+                if (
+                    method_declaration.name in class_.methods
+                    or method_declaration.name in class_.fields
+                ):
                     self._error(
                         f"duplicate member {method_declaration.name!r} in class {class_.name}",
                         method_declaration.span,
@@ -1380,9 +1408,7 @@ class Checker:
 
             class_.interface_methods = effective_methods
             class_.abstract_methods = OrderedDict(
-                (name, method)
-                for name, method in effective_methods.items()
-                if method.is_abstract
+                (name, method) for name, method in effective_methods.items() if method.is_abstract
             )
             if not class_.is_abstract and class_.abstract_methods:
                 missing = ", ".join(class_.abstract_methods)
@@ -1422,9 +1448,7 @@ class Checker:
                 return
             if class_.type in visiting_types:
                 start = next(
-                    index
-                    for index, item in enumerate(visiting)
-                    if item.type == class_.type
+                    index for index, item in enumerate(visiting) if item.type == class_.type
                 )
                 cycle = " -> ".join(item.name for item in [*visiting[start:], class_])
                 self._error(
@@ -1503,7 +1527,11 @@ class Checker:
                 )
             return
         body = class_.constructor.declaration.body if class_.constructor.declaration else None
-        if body is None or not body.statements or not self._is_super_init_statement(body.statements[0]):
+        if (
+            body is None
+            or not body.statements
+            or not self._is_super_init_statement(body.statements[0])
+        ):
             self._error(
                 f"constructor {class_.name}.__init__ must call super().__init__ first",
                 class_.constructor.span,
@@ -1693,7 +1721,23 @@ class Checker:
                 self._error("global variables cannot have type void", declaration.span, code="C010")
                 global_type = ERROR
             if declaration.is_const and declaration.initializer is None:
-                self._error("constant globals require an initializer", declaration.span, code="C011")
+                self._error(
+                    "constant globals require an initializer", declaration.span, code="C011"
+                )
+            if isinstance(strip_const(global_type), AtomicType):
+                if declaration.initializer is None:
+                    self._error(
+                        f"atomic global {declaration.name!r} requires an initializer",
+                        declaration.span,
+                        code="C397",
+                    )
+                if declaration.is_const or isinstance(global_type, ConstType):
+                    self._error(
+                        "Atomic globals cannot be const",
+                        declaration.span,
+                        code="C398",
+                        note="use a const reference when only load access is needed",
+                    )
             c_name = self._c_value_name(declaration.name)
             symbol = VariableSymbol(
                 declaration.name,
@@ -1713,47 +1757,16 @@ class Checker:
 
     def _validate_lifetime_types(self) -> None:
         for struct in self.structs.values():
-            for field in struct.fields.values():
-                self._validate_list_elements(field.type, field.span)
+            self._validate_nominal_lifetime_type(struct)
 
         for class_ in self.classes.values():
-            for field in class_.fields.values():
-                self._validate_list_elements(field.type, field.span)
+            self._validate_nominal_lifetime_type(class_)
 
         for union in self.unions.values():
-            for field in union.fields.values():
-                self._validate_list_elements(field.type, field.span)
-                if self._contains_owning_container_value(field.type):
-                    self._error(
-                        f"union field {union.name}.{field.name} cannot own a collection",
-                        field.span,
-                        code="C247",
-                    )
-                if self._contains_destructible_value(field.type):
-                    self._error(
-                        f"union field {union.name}.{field.name} contains a class with a destructor",
-                        field.span,
-                        code="C222",
-                    )
+            self._validate_nominal_lifetime_type(union)
 
         for variant in self.variants.values():
-            for case in variant.cases.values():
-                for field in case.fields.values():
-                    self._validate_list_elements(field.type, field.span)
-                    if self._contains_owning_container_value(field.type):
-                        self._error(
-                            f"variant payload {variant.name}.{case.name}.{field.name} "
-                            "cannot own a collection",
-                            field.span,
-                            code="C247",
-                        )
-                    if self._contains_destructible_value(field.type):
-                        self._error(
-                            f"variant payload {variant.name}.{case.name}.{field.name} "
-                            "contains a class with a destructor",
-                            field.span,
-                            code="C223",
-                        )
+            self._validate_nominal_lifetime_type(variant)
 
         for global_ in self.globals.values():
             self._validate_list_elements(global_.type, global_.span)
@@ -1790,9 +1803,114 @@ class Checker:
             functions.extend(class_.methods.values())
 
         for function in functions:
-            for parameter in function.parameters:
-                self._validate_list_elements(parameter.type, parameter.span)
-            self._validate_list_elements(function.return_type, function.span)
+            self._validate_function_lifetime_type(function)
+
+    def _validate_nominal_lifetime_type(self, symbol: NominalSymbol) -> None:
+        identity = id(symbol)
+        if identity in self._validated_lifetime_nominals:
+            return
+        self._validated_lifetime_nominals.add(identity)
+
+        if isinstance(symbol, StructSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+                if self.type_contains_atomic_storage(field.type):
+                    self._error(
+                        f"struct field {symbol.name}.{field.name} cannot contain atomic storage",
+                        field.span,
+                        code="C395",
+                        note="store a pointer or reference to an Atomic cell instead",
+                    )
+            for method in symbol.methods.values():
+                self._validate_function_lifetime_type(method)
+            return
+
+        if isinstance(symbol, ClassSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+                if self.type_contains_atomic_storage(field.type):
+                    self._error(
+                        f"class field {symbol.name}.{field.name} cannot contain atomic storage",
+                        field.span,
+                        code="C395",
+                        note="store a pointer or reference to an Atomic cell instead",
+                    )
+            for method in symbol.methods.values():
+                self._validate_function_lifetime_type(method)
+            return
+
+        if isinstance(symbol, UnionSymbol):
+            for field in symbol.fields.values():
+                self._validate_list_elements(field.type, field.span)
+                if self.type_contains_atomic_storage(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} cannot contain atomic storage",
+                        field.span,
+                        code="C395",
+                    )
+                if self._contains_owning_container_value(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} cannot own a collection",
+                        field.span,
+                        code="C247",
+                    )
+                if self._contains_destructible_value(field.type):
+                    self._error(
+                        f"union field {symbol.name}.{field.name} contains a class with a destructor",
+                        field.span,
+                        code="C222",
+                    )
+            return
+
+        if isinstance(symbol, VariantSymbol):
+            for case in symbol.cases.values():
+                for field in case.fields.values():
+                    self._validate_list_elements(field.type, field.span)
+                    if self.type_contains_atomic_storage(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "cannot contain atomic storage",
+                            field.span,
+                            code="C395",
+                        )
+                    if self._contains_owning_container_value(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "cannot own a collection",
+                            field.span,
+                            code="C247",
+                        )
+                    if self._contains_destructible_value(field.type):
+                        self._error(
+                            f"variant payload {symbol.name}.{case.name}.{field.name} "
+                            "contains a class with a destructor",
+                            field.span,
+                            code="C223",
+                        )
+
+    def _validate_function_lifetime_type(self, function: FunctionSymbol) -> None:
+        identity = id(function)
+        if identity in self._validated_lifetime_functions:
+            return
+        self._validated_lifetime_functions.add(identity)
+
+        for parameter in function.parameters:
+            self._validate_list_elements(parameter.type, parameter.span)
+            if self.type_contains_atomic_storage(parameter.type):
+                self._error(
+                    f"parameter {parameter.name!r} cannot pass atomic storage by value",
+                    parameter.span,
+                    code="C396",
+                    note="accept a pointer or reference to Atomic instead",
+                )
+        self._validate_list_elements(function.return_type, function.span)
+        if self.type_contains_atomic_storage(function.return_type):
+            self._error(
+                f"function {function.name!r} cannot return atomic storage by value",
+                function.span,
+                code="C396",
+                note="return a pointer or operate on an Atomic reference instead",
+            )
 
     def _validate_list_elements(self, type_: Type, span: Span) -> None:
         raw = strip_const(type_)
@@ -1834,7 +1952,20 @@ class Checker:
         return not (
             is_void(raw)
             or isinstance(raw, (ConstType, ReferenceType, ArrayType))
+            or self.type_contains_atomic_storage(raw)
             or not self._is_collection_runtime_type(raw)
+        )
+
+    def type_contains_atomic_storage(
+        self,
+        type_: Type,
+        seen: frozenset[Type] | None = None,
+    ) -> bool:
+        return ownership_type_contains_atomic_storage(
+            type_,
+            classes=self.classes_by_type,
+            structs=self.structs_by_type,
+            seen=seen,
         )
 
     def type_needs_drop(self, type_: Type, seen: frozenset[Type] | None = None) -> bool:
@@ -1932,10 +2063,7 @@ class Checker:
         if isinstance(raw, OwnedType):
             return self._contains_destructible_value(raw.inner, seen)
         if isinstance(raw, TupleType):
-            return any(
-                self._contains_destructible_value(element, seen)
-                for element in raw.elements
-            )
+            return any(self._contains_destructible_value(element, seen) for element in raw.elements)
         if isinstance(raw, ResultType):
             return self._contains_destructible_value(
                 raw.ok,
@@ -1988,8 +2116,7 @@ class Checker:
             return self._contains_owning_container_value(raw.env_type, seen)
         if isinstance(raw, TupleType):
             return any(
-                self._contains_owning_container_value(element, seen)
-                for element in raw.elements
+                self._contains_owning_container_value(element, seen) for element in raw.elements
             )
         if isinstance(raw, ResultType):
             return self._contains_owning_container_value(
@@ -2037,9 +2164,7 @@ class Checker:
         if isinstance(raw, TupleType):
             return any(self._contains_list_value(element) for element in raw.elements)
         if isinstance(raw, ResultType):
-            return self._contains_list_value(raw.ok) or self._contains_list_value(
-                raw.error
-            )
+            return self._contains_list_value(raw.ok) or self._contains_list_value(raw.error)
         if isinstance(raw, OptionType):
             return self._contains_list_value(raw.inner)
         return False
@@ -2316,19 +2441,15 @@ class Checker:
                 code="C291",
                 note="bind the List to a local before passing it to a slice parameter",
             )
-        if (
-            not isinstance(target_raw.inner, ConstType)
-            and self._lvalue_is_const(expression)
-        ):
+        if not isinstance(target_raw.inner, ConstType) and self._lvalue_is_const(expression):
             self._error(
                 "cannot borrow a const List as a mutable slice",
                 expression.span,
                 code="C292",
                 note="use a []const T parameter for read-only access",
             )
-        elif (
-            not isinstance(target_raw.inner, ConstType)
-            and self._list_storage_is_active(expression)
+        elif not isinstance(target_raw.inner, ConstType) and self._list_storage_is_active(
+            expression
         ):
             self._error(
                 "cannot borrow an actively iterated List as a mutable slice",
@@ -2387,7 +2508,9 @@ class Checker:
                     note="declare the C ABI parameter as *const char instead",
                 )
                 parameter_type = ERROR
-            parameters.append(ParameterSymbol(parameter.name, parameter_type, parameter.span, False))
+            parameters.append(
+                ParameterSymbol(parameter.name, parameter_type, parameter.span, False)
+            )
 
         if owner is not None:
             if not parameters or parameters[0].name != "self":
@@ -2472,24 +2595,24 @@ class Checker:
         ):
             return self._contains_owned_string_type(raw.inner)
         if isinstance(raw, MapType):
-            return self._contains_owned_string_type(raw.key) or self._contains_owned_string_type(raw.value)
+            return self._contains_owned_string_type(raw.key) or self._contains_owned_string_type(
+                raw.value
+            )
         if isinstance(raw, TupleType):
             return any(self._contains_owned_string_type(element) for element in raw.elements)
         if isinstance(raw, ResultType):
-            return self._contains_owned_string_type(raw.ok) or self._contains_owned_string_type(raw.error)
+            return self._contains_owned_string_type(raw.ok) or self._contains_owned_string_type(
+                raw.error
+            )
         if isinstance(raw, FunctionPointerType):
             return self._contains_owned_string_type(raw.return_type) or any(
-                self._contains_owned_string_type(parameter)
-                for parameter in raw.param_types
+                self._contains_owned_string_type(parameter) for parameter in raw.param_types
             )
         if isinstance(raw, ClosureType):
             return (
                 self._contains_owned_string_type(raw.env_type)
                 or self._contains_owned_string_type(raw.return_type)
-                or any(
-                    self._contains_owned_string_type(parameter)
-                    for parameter in raw.param_types
-                )
+                or any(self._contains_owned_string_type(parameter) for parameter in raw.param_types)
             )
         return False
 
@@ -2509,17 +2632,15 @@ class Checker:
 
         if isinstance(target, DynType):
             if isinstance(source, DynType):
-                return (
-                    target.interface == source.interface
-                    and (target.is_const or not source.is_const)
+                return target.interface == source.interface and (
+                    target.is_const or not source.is_const
                 )
             source_class, source_is_const = self._class_value_info(source)
             interface = self.classes_by_type.get(target.interface)
             if source_class is None or interface is None:
                 return False
-            return (
-                self._class_implements(source_class, interface)
-                and (target.is_const or not source_is_const)
+            return self._class_implements(source_class, interface) and (
+                target.is_const or not source_is_const
             )
 
         target_raw = strip_const(target)
@@ -2565,8 +2686,7 @@ class Checker:
         if class_.type == interface.type:
             return True
         return any(
-            candidate.type == interface.type
-            for candidate in self._implemented_interfaces(class_)
+            candidate.type == interface.type for candidate in self._implemented_interfaces(class_)
         )
 
     def _lookup_class_field(
@@ -2688,9 +2808,39 @@ class Checker:
                 symbol = self.global_symbols.get(id(declaration))
                 if symbol is None or declaration.initializer is None:
                     continue
-                initializer_type = self._check_expr(declaration.initializer, expected=symbol.type)
-                if not self._can_assign(symbol.type, initializer_type):
-                    self._type_mismatch(symbol.type, initializer_type, declaration.initializer.span)
+                atomic_type = strip_const(symbol.type)
+                if isinstance(atomic_type, AtomicType):
+                    initializer_type = self._check_expr(
+                        declaration.initializer,
+                        expected=atomic_type.inner,
+                    )
+                    if isinstance(value_type(initializer_type), AtomicType):
+                        self._error(
+                            "cannot copy an Atomic cell during initialization",
+                            declaration.initializer.span,
+                            code="C399",
+                            note="initialize the new cell from a scalar value",
+                        )
+                    elif not self._can_assign(atomic_type.inner, initializer_type):
+                        self._type_mismatch(
+                            atomic_type.inner,
+                            initializer_type,
+                            declaration.initializer.span,
+                        )
+                    self.atomic_init_resolutions[id(declaration)] = AtomicInitResolution(
+                        atomic_type, declaration.initializer
+                    )
+                else:
+                    initializer_type = self._check_expr(
+                        declaration.initializer,
+                        expected=symbol.type,
+                    )
+                    if not self._can_assign(symbol.type, initializer_type):
+                        self._type_mismatch(
+                            symbol.type,
+                            initializer_type,
+                            declaration.initializer.span,
+                        )
                 if (
                     symbol.is_const
                     and isinstance(strip_const(symbol.type), StringType)
@@ -2776,7 +2926,9 @@ class Checker:
                         code="C019",
                     )
             self._check_block(declaration.body, scope, create_scope=False)
-            if not is_void(function.return_type) and not self._block_always_returns(declaration.body):
+            if not is_void(function.return_type) and not self._block_always_returns(
+                declaration.body
+            ):
                 self._error(
                     f"function {function.name!r} may reach the end without returning {type_name(function.return_type)}",
                     declaration.span,
@@ -2962,7 +3114,14 @@ class Checker:
             case ast.AssignStmt():
                 self._check_assignment(statement)
             case ast.ExpressionStmt(expression=expression):
-                self._check_expr(expression)
+                expression_type = self._check_expr(expression)
+                if isinstance(value_type(expression_type), AtomicType):
+                    self._error(
+                        "an Atomic cell cannot be used as a value",
+                        expression.span,
+                        code="C400",
+                        note="use .load() to read the scalar value",
+                    )
                 if not isinstance(expression, (ast.CallExpr, ast.AllocExpr, ast.PropagateExpr)):
                     self.diagnostics.warning(
                         "expression result is unused",
@@ -2975,7 +3134,9 @@ class Checker:
                 for branch_index, branch in enumerate(branches):
                     condition_type = self._check_expr(branch.condition)
                     if not is_condition_type(value_type(condition_type)):
-                        self._error("if condition is not scalar", branch.condition.span, code="C024")
+                        self._error(
+                            "if condition is not scalar", branch.condition.span, code="C024"
+                        )
                     if branch_index > 0 and _contains_propagate(branch.condition):
                         self._error(
                             "'?' is not supported in elif conditions",
@@ -3019,7 +3180,11 @@ class Checker:
             case ast.DeferStmt(expression=expression):
                 deferred_type = self._check_expr(expression)
                 if not isinstance(expression, ast.CallExpr):
-                    self._error("defer currently requires a function or method call", expression.span, code="C028")
+                    self._error(
+                        "defer currently requires a function or method call",
+                        expression.span,
+                        code="C028",
+                    )
                 if is_owning_container(value_type(deferred_type)):
                     self._error(
                         "cannot defer a call that returns an owning collection",
@@ -3078,22 +3243,70 @@ class Checker:
 
     def _check_var_decl(self, statement: ast.VarDeclStmt) -> None:
         declared_type = (
-            self._resolve_type(statement.annotation)
-            if statement.annotation is not None
-            else None
+            self._resolve_type(statement.annotation) if statement.annotation is not None else None
         )
         initializer_type: Type | None = None
         if statement.initializer is not None:
-            initializer_type = self._check_expr(statement.initializer, expected=declared_type)
+            initializer_expected = declared_type
+            if declared_type is not None and isinstance(strip_const(declared_type), AtomicType):
+                atomic_type = strip_const(declared_type)
+                assert isinstance(atomic_type, AtomicType)
+                initializer_expected = atomic_type.inner
+            initializer_type = self._check_expr(
+                statement.initializer,
+                expected=initializer_expected,
+            )
 
         if declared_type is None:
             if initializer_type is None:
-                self._error("inferred variable requires an initializer", statement.span, code="C029")
+                self._error(
+                    "inferred variable requires an initializer", statement.span, code="C029"
+                )
                 declared_type = ERROR
             else:
-                declared_type = self._inferred_storage_type(initializer_type, statement.initializer.span)
+                declared_type = self._inferred_storage_type(
+                    initializer_type, statement.initializer.span
+                )
+        elif isinstance(strip_const(declared_type), AtomicType):
+            atomic_type = strip_const(declared_type)
+            assert isinstance(atomic_type, AtomicType)
+            if statement.initializer is None:
+                self._error(
+                    f"atomic local {statement.name!r} requires an initializer",
+                    statement.span,
+                    code="C397",
+                )
+            elif initializer_type is not None:
+                if isinstance(value_type(initializer_type), AtomicType):
+                    self._error(
+                        "cannot copy an Atomic cell during initialization",
+                        statement.initializer.span,
+                        code="C399",
+                        note="initialize the new cell from a scalar value",
+                    )
+                elif not self._can_assign(atomic_type.inner, initializer_type):
+                    self._type_mismatch(
+                        atomic_type.inner,
+                        initializer_type,
+                        statement.initializer.span,
+                    )
+                self.atomic_init_resolutions[id(statement)] = AtomicInitResolution(
+                    atomic_type,
+                    statement.initializer,
+                )
+            if statement.is_const or isinstance(declared_type, ConstType):
+                self._error(
+                    "Atomic locals cannot be const",
+                    statement.span,
+                    code="C398",
+                    note="use a const reference when only load access is needed",
+                )
         elif initializer_type is not None and not self._can_assign(declared_type, initializer_type):
-            self._type_mismatch(declared_type, initializer_type, statement.initializer.span)
+            self._type_mismatch(
+                declared_type,
+                initializer_type,
+                statement.initializer.span,
+            )
 
         if is_void(declared_type):
             self._error("variables cannot have type void", statement.span, code="C030")
@@ -3165,15 +3378,26 @@ class Checker:
             self._duplicate_symbol(symbol, previous)
         self.declaration_symbols[id(statement)] = symbol
         self._clear_moved(symbol)
-        if (
-            isinstance(value_type(symbol.type), MapViewType)
-            and statement.initializer is not None
-        ):
-            self.map_view_storages[id(symbol)] = self._collection_storage(
-                statement.initializer
-            )
+        if isinstance(value_type(symbol.type), MapViewType) and statement.initializer is not None:
+            self.map_view_storages[id(symbol)] = self._collection_storage(statement.initializer)
 
     def _inferred_storage_type(self, type_: Type, span: Span) -> Type:
+        if isinstance(value_type(type_), AtomicType):
+            self._error(
+                "cannot copy an Atomic cell into inferred storage",
+                span,
+                code="C399",
+                note="use .load() to read its scalar value",
+            )
+            return ERROR
+        if self.type_contains_atomic_storage(type_):
+            self._error(
+                f"cannot place atomic storage inside {type_name(type_)}",
+                span,
+                code="C395",
+                note="store a pointer or reference to an Atomic cell instead",
+            )
+            return ERROR
         if isinstance(type_, ReferenceType):
             return type_.inner
         if isinstance(
@@ -3217,9 +3441,7 @@ class Checker:
             self.expr_types[id(statement.target)] = symbol.type
             self.implicit_declarations[id(statement)] = symbol
             if isinstance(value_type(symbol.type), MapViewType):
-                self.map_view_storages[id(symbol)] = self._collection_storage(
-                    statement.value
-                )
+                self.map_view_storages[id(symbol)] = self._collection_storage(statement.value)
             if self.type_needs_drop(inferred):
                 self._validate_move_only_source(statement.value, inferred)
             self._clear_moved(symbol)
@@ -3234,6 +3456,14 @@ class Checker:
 
         effective_target = strip_reference(target_type)
         effective_value = value_type(value_type_)
+        if isinstance(value_type(effective_target), AtomicType):
+            self._error(
+                "ordinary assignment cannot mutate or replace an Atomic cell",
+                statement.target.span,
+                code="C401",
+                note="use .store(value) for atomic mutation",
+            )
+            return
         if isinstance(value_type(effective_target), SetType) and statement.operator in {
             "|=",
             "&=",
@@ -3252,13 +3482,9 @@ class Checker:
             return
 
         if isinstance(statement.target, ast.IndexExpr):
-            map_type = value_type(
-                self.expr_types.get(id(statement.target.value), ERROR)
-            )
+            map_type = value_type(self.expr_types.get(id(statement.target.value), ERROR))
             if isinstance(map_type, MapType):
-                target_is_active = self._collection_storage_is_active(
-                    statement.target.value
-                )
+                target_is_active = self._collection_storage_is_active(statement.target.value)
                 if statement.operator == "=" and target_is_active:
                     self._error(
                         "cannot insert into a Map while iterating over it",
@@ -3300,8 +3526,7 @@ class Checker:
                             code="C331",
                         )
                 elif not (
-                    is_integer(value_type(effective_target))
-                    and is_integer(value_type(value_type_))
+                    is_integer(value_type(effective_target)) and is_integer(value_type(value_type_))
                 ):
                     self._error(
                         f"operator {statement.operator!r} requires integer operands",
@@ -3312,9 +3537,7 @@ class Checker:
 
         if self.type_needs_drop(effective_target):
             owned_container = self._owned_container(effective_target)
-            if owned_container is not None and self._collection_storage_is_active(
-                statement.target
-            ):
+            if owned_container is not None and self._collection_storage_is_active(statement.target):
                 family = type_name(owned_container).split("[", 1)[0]
                 self._error(
                     f"cannot replace a {family} while iterating over it",
@@ -3348,7 +3571,11 @@ class Checker:
                     code="C386",
                 )
         if isinstance(strip_const(effective_target), ArrayType):
-            self._error("fixed arrays cannot be assigned after declaration", statement.target.span, code="C037")
+            self._error(
+                "fixed arrays cannot be assigned after declaration",
+                statement.target.span,
+                code="C037",
+            )
         if statement.operator == "=":
             if not self._can_assign(effective_target, value_type_):
                 self._type_mismatch(effective_target, value_type_, statement.value.span)
@@ -3362,8 +3589,8 @@ class Checker:
                 if isinstance(target_symbol, VariableSymbol):
                     self._clear_moved(target_symbol)
                     if isinstance(value_type(target_symbol.type), MapViewType):
-                        self.map_view_storages[id(target_symbol)] = (
-                            self._collection_storage(statement.value)
+                        self.map_view_storages[id(target_symbol)] = self._collection_storage(
+                            statement.value
                         )
             if isinstance(effective_target, ReferenceType) and value_type_ == NULL:
                 self._error("references cannot be assigned null", statement.value.span, code="C038")
@@ -3372,8 +3599,7 @@ class Checker:
         operator = statement.operator[:-1]
         if operator in ("+", "-", "*", "/", "%"):
             if not (
-                is_numeric(value_type(effective_target))
-                and is_numeric(value_type(value_type_))
+                is_numeric(value_type(effective_target)) and is_numeric(value_type(value_type_))
             ) and not (
                 operator in ("+", "-")
                 and isinstance(strip_const(effective_target), PointerType)
@@ -3385,7 +3611,9 @@ class Checker:
                     code="C039",
                 )
         else:
-            if not (is_integer(value_type(effective_target)) and is_integer(value_type(value_type_))):
+            if not (
+                is_integer(value_type(effective_target)) and is_integer(value_type(value_type_))
+            ):
                 self._error(
                     f"operator {statement.operator!r} requires integer operands",
                     statement.span,
@@ -3418,9 +3646,7 @@ class Checker:
                 return type_, True, self._lvalue_is_const(expression)
             return type_, False, False
         if isinstance(expression, ast.IndexExpr):
-            base_type = value_type(
-                self.expr_types.get(id(expression.value), ERROR)
-            )
+            base_type = value_type(self.expr_types.get(id(expression.value), ERROR))
             if isinstance(base_type, TupleType):
                 return type_, False, True
             return type_, True, self._lvalue_is_const(expression)
@@ -3430,14 +3656,15 @@ class Checker:
 
     def _lvalue_is_const(self, expression: ast.Expression) -> bool:
         if isinstance(expression, ast.NameExpr):
-            symbol = self.name_symbols.get(id(expression)) or self.current_scope.lookup(expression.name)
+            symbol = self.name_symbols.get(id(expression)) or self.current_scope.lookup(
+                expression.name
+            )
             if not isinstance(symbol, VariableSymbol):
                 return False
             if symbol.is_const:
                 return True
-            return (
-                isinstance(symbol.type, (ReferenceType, PointerType))
-                and isinstance(symbol.type.inner, ConstType)
+            return isinstance(symbol.type, (ReferenceType, PointerType)) and isinstance(
+                symbol.type.inner, ConstType
             )
 
         if isinstance(expression, ast.AttributeExpr):
@@ -3460,7 +3687,9 @@ class Checker:
         if isinstance(expression, ast.IndexExpr):
             base_type = value_type(self.expr_types.get(id(expression.value), ERROR))
             if isinstance(base_type, (ArrayType, ListType)):
-                return isinstance(base_type.inner, ConstType) or self._lvalue_is_const(expression.value)
+                return isinstance(base_type.inner, ConstType) or self._lvalue_is_const(
+                    expression.value
+                )
             if isinstance(base_type, MapType):
                 return self._lvalue_is_const(expression.value)
             if isinstance(base_type, (SliceType, PointerType)):
@@ -3469,9 +3698,8 @@ class Checker:
 
         if isinstance(expression, ast.UnaryExpr) and expression.operator == "*":
             operand_type = value_type(self.expr_types.get(id(expression.operand), ERROR))
-            return (
-                isinstance(operand_type, (PointerType, ReferenceType))
-                and isinstance(operand_type.inner, ConstType)
+            return isinstance(operand_type, (PointerType, ReferenceType)) and isinstance(
+                operand_type.inner, ConstType
             )
 
         return False
@@ -3576,9 +3804,7 @@ class Checker:
             elif iterable_value.kind == "values":
                 item_type = iterable_value.map_type.value
             else:
-                item_type = TupleType(
-                    (iterable_value.map_type.key, iterable_value.map_type.value)
-                )
+                item_type = TupleType((iterable_value.map_type.key, iterable_value.map_type.value))
         else:
             self._error(
                 f"cannot iterate over {type_name(iterable_type)}",
@@ -3643,7 +3869,9 @@ class Checker:
             if statement.condition is not None:
                 condition_type = self._check_expr(statement.condition)
                 if not is_condition_type(value_type(condition_type)):
-                    self._error("for condition is not scalar", statement.condition.span, code="C045")
+                    self._error(
+                        "for condition is not scalar", statement.condition.span, code="C045"
+                    )
                 if _contains_propagate(statement.condition):
                     self._error(
                         "'?' is not supported in C-style for conditions",
@@ -3740,7 +3968,9 @@ class Checker:
                         code="C316",
                     )
 
-            bindings = tuple(binding for resolution in pattern_resolutions for binding in resolution.bindings)
+            bindings = tuple(
+                binding for resolution in pattern_resolutions for binding in resolution.bindings
+            )
             case_resolution = MatchCaseResolution(
                 tuple(pattern_resolutions),
                 bindings,
@@ -3813,8 +4043,7 @@ class Checker:
             ]
         if isinstance(pattern, ast.PathPattern) and pattern.arguments:
             expanded_arguments = [
-                self._expand_pattern_alternatives(argument)
-                for argument in pattern.arguments
+                self._expand_pattern_alternatives(argument) for argument in pattern.arguments
             ]
             return [
                 ast.PathPattern(pattern.span, pattern.path, list(arguments))
@@ -3924,7 +4153,9 @@ class Checker:
                 )
                 return PatternResolution("invalid", ERROR)
             if pattern.arguments:
-                self._error("enum match cases cannot bind payload values", pattern.span, code="C125")
+                self._error(
+                    "enum match cases cannot bind payload values", pattern.span, code="C125"
+                )
             return PatternResolution("enum", expected_type, enum_member=member)
 
         if variant is not None:
@@ -4079,11 +4310,15 @@ class Checker:
             return None
         if name in current_names:
             previous = binding_symbols.get(name)
-            duplicate = previous if previous is not None else VariableSymbol(
-                name,
-                span,
-                SymbolKind.VARIABLE,
-                type_,
+            duplicate = (
+                previous
+                if previous is not None
+                else VariableSymbol(
+                    name,
+                    span,
+                    SymbolKind.VARIABLE,
+                    type_,
+                )
             )
             self._duplicate_symbol(
                 VariableSymbol(name, span, SymbolKind.VARIABLE, type_),
@@ -4248,9 +4483,7 @@ class Checker:
         case_names = self._match_case_names(first_type)
         if not case_names:
             residual_rows = [
-                row[1:]
-                for row in rows
-                if row and self._pattern_is_irrefutable(row[0])
+                row[1:] for row in rows if row and self._pattern_is_irrefutable(row[0])
             ]
             return self._pattern_rows_cover_product(remaining_types, residual_rows)
 
@@ -4275,7 +4508,9 @@ class Checker:
         unwrapped = self._unwrap_capture_pattern(pattern)
         payload_types = self._case_payload_types(type_, case_name)
         if unwrapped.kind in {"wildcard", "binding"}:
-            return [tuple(PatternResolution("wildcard", payload_type) for payload_type in payload_types)]
+            return [
+                tuple(PatternResolution("wildcard", payload_type) for payload_type in payload_types)
+            ]
         if self._pattern_case_name(unwrapped) != case_name:
             return []
         if len(unwrapped.arguments) != len(payload_types):
@@ -4348,7 +4583,13 @@ class Checker:
             return self._constructor_payload_is_irrefutable(unwrapped)
         return False
 
-    def _check_expr(self, expression: ast.Expression, expected: Type | None = None) -> Type:
+    def _check_expr(
+        self,
+        expression: ast.Expression,
+        expected: Type | None = None,
+        *,
+        allow_atomic_method: bool = False,
+    ) -> Type:
         match expression:
             case ast.LiteralExpr():
                 result = self._check_literal(expression, expected)
@@ -4364,6 +4605,19 @@ class Checker:
                 result = self._check_binary(expression)
             case ast.AttributeExpr():
                 result = self._check_attribute(expression, expected)
+                resolution = self.attribute_resolutions.get(id(expression))
+                if (
+                    not allow_atomic_method
+                    and resolution is not None
+                    and resolution.kind == "atomic_method"
+                ):
+                    self._error(
+                        f"atomic method {expression.name!r} must be called",
+                        expression.span,
+                        code="C403",
+                        note="add parentheses and any required arguments to invoke the operation",
+                    )
+                    result = ERROR
             case ast.IndexExpr():
                 result = self._check_index(expression)
             case ast.SliceExpr():
@@ -4450,7 +4704,11 @@ class Checker:
                 return I64
             if 0 <= expression.value <= 2**64 - 1:
                 return U64
-            self._error("integer literal is outside the supported 64-bit range", expression.span, code="C047")
+            self._error(
+                "integer literal is outside the supported 64-bit range",
+                expression.span,
+                code="C047",
+            )
             return ERROR
         return ERROR
 
@@ -4462,17 +4720,22 @@ class Checker:
     def _check_name(self, expression: ast.NameExpr) -> Type:
         symbol = self.current_scope.lookup(expression.name)
         if symbol is None:
-            if expression.name in (
-                "range",
-                "len",
-                "sort",
-                "print",
-                "input",
-                "open",
-                "Ok",
-                "Err",
-                "to_string",
-            ) or expression.name in _REFLECTION_BUILTINS or expression.name in _PARSE_BUILTINS:
+            if (
+                expression.name
+                in (
+                    "range",
+                    "len",
+                    "sort",
+                    "print",
+                    "input",
+                    "open",
+                    "Ok",
+                    "Err",
+                    "to_string",
+                )
+                or expression.name in _REFLECTION_BUILTINS
+                or expression.name in _PARSE_BUILTINS
+            ):
                 return FunctionValueType(expression.name)
             if expression.name == "super" and isinstance(self.current_owner, ClassSymbol):
                 return FunctionValueType("super")
@@ -4524,7 +4787,9 @@ class Checker:
             return operand_value
         if expression.operator == "&":
             if not self._is_addressable(expression.operand):
-                self._error("address-of requires an addressable value", expression.operand.span, code="C053")
+                self._error(
+                    "address-of requires an addressable value", expression.operand.span, code="C053"
+                )
                 return ERROR
             self._record_direct_value_use(expression.operand, ValueUseKind.ADDRESS)
             if isinstance(operand_type, ReferenceType):
@@ -4638,10 +4903,7 @@ class Checker:
             return ERROR
 
         if isinstance(left_value, StringType) or isinstance(right_value, StringType):
-            if not (
-                isinstance(left_value, StringType)
-                and isinstance(right_value, StringType)
-            ):
+            if not (isinstance(left_value, StringType) and isinstance(right_value, StringType)):
                 other = right_value if isinstance(left_value, StringType) else left_value
                 self._error(
                     f"String operands cannot be mixed with {type_name(other)}",
@@ -4676,7 +4938,9 @@ class Checker:
 
         if operator in ("and", "or"):
             if not is_condition_type(left_value) or not is_condition_type(right_value):
-                self._error(f"operator {operator!r} requires scalar operands", expression.span, code="C055")
+                self._error(
+                    f"operator {operator!r} requires scalar operands", expression.span, code="C055"
+                )
             if _contains_propagate(expression.right):
                 self._error(
                     f"'?' is not supported on the right side of {operator!r}",
@@ -4725,7 +4989,11 @@ class Checker:
                 (is_numeric(left_value) and is_numeric(right_value))
                 or (is_pointer_like(left_value) and is_pointer_like(right_value))
             ):
-                self._error(f"operator {operator!r} requires comparable operands", expression.span, code="C057")
+                self._error(
+                    f"operator {operator!r} requires comparable operands",
+                    expression.span,
+                    code="C057",
+                )
             return BOOL
 
         if operator in ("+", "-"):
@@ -4735,14 +5003,20 @@ class Checker:
                 return left_value
             if operator == "+" and isinstance(right_value, PointerType) and is_integer(left_value):
                 return right_value
-            if operator == "-" and isinstance(left_value, PointerType) and isinstance(right_value, PointerType):
+            if (
+                operator == "-"
+                and isinstance(left_value, PointerType)
+                and isinstance(right_value, PointerType)
+            ):
                 return PRIMITIVES["isize"]
             self._error(f"invalid operands for {operator!r}", expression.span, code="C058")
             return ERROR
 
         if operator in ("*", "/", "%"):
             if not (is_numeric(left_value) and is_numeric(right_value)):
-                self._error(f"operator {operator!r} requires numeric operands", expression.span, code="C059")
+                self._error(
+                    f"operator {operator!r} requires numeric operands", expression.span, code="C059"
+                )
                 return ERROR
             if operator == "%" and (not is_integer(left_value) or not is_integer(right_value)):
                 self._error("'%' requires integer operands", expression.span, code="C060")
@@ -4751,7 +5025,9 @@ class Checker:
 
         if operator in ("&", "|", "^", "<<", ">>"):
             if not (is_integer(left_value) and is_integer(right_value)):
-                self._error(f"operator {operator!r} requires integer operands", expression.span, code="C061")
+                self._error(
+                    f"operator {operator!r} requires integer operands", expression.span, code="C061"
+                )
                 return ERROR
             return common_type(left_value, right_value)
 
@@ -4817,7 +5093,9 @@ class Checker:
         if isinstance(base_type, ModuleType):
             module = self.imported_modules.get(base_type.name)
             if module is None:
-                self._error(f"unknown module {base_type.name!r}", expression.value.span, code="C062")
+                self._error(
+                    f"unknown module {base_type.name!r}", expression.value.span, code="C062"
+                )
                 return ERROR
             if expression.name in module.functions:
                 function = module.functions[expression.name]
@@ -4926,6 +5204,54 @@ class Checker:
         if isinstance(raw, (PointerType, ReferenceType)):
             base_is_const = base_is_const or isinstance(raw.inner, ConstType)
             raw = strip_const(raw.inner)
+
+        if isinstance(raw, AtomicType):
+            atomic_methods = {
+                "load": AtomicIntrinsicKind.LOAD,
+                "store": AtomicIntrinsicKind.STORE,
+                "exchange": AtomicIntrinsicKind.EXCHANGE,
+                "compare_exchange": AtomicIntrinsicKind.COMPARE_EXCHANGE,
+                "fetch_add": AtomicIntrinsicKind.FETCH_ADD,
+                "fetch_sub": AtomicIntrinsicKind.FETCH_SUB,
+                "fetch_and": AtomicIntrinsicKind.FETCH_AND,
+                "fetch_or": AtomicIntrinsicKind.FETCH_OR,
+                "fetch_xor": AtomicIntrinsicKind.FETCH_XOR,
+            }
+            intrinsic = atomic_methods.get(expression.name)
+            if intrinsic is None:
+                self._error(
+                    f"type {type_name(raw)} has no member {expression.name!r}",
+                    expression.span,
+                    code="C402",
+                )
+                return ERROR
+            self.attribute_resolutions[id(expression)] = AttributeResolution(
+                "atomic_method",
+                owner_type=base_type,
+                compile_value=intrinsic,
+            )
+            return FunctionValueType(f"{type_name(raw)}.{expression.name}")
+
+        if isinstance(raw, AtomicCompareExchangeResultType):
+            if expression.name == "exchanged":
+                intrinsic = AtomicIntrinsicKind.RESULT_EXCHANGED
+                result = BOOL
+            elif expression.name == "observed":
+                intrinsic = AtomicIntrinsicKind.RESULT_OBSERVED
+                result = raw.inner
+            else:
+                self._error(
+                    f"type {type_name(raw)} has no member {expression.name!r}",
+                    expression.span,
+                    code="C402",
+                )
+                return ERROR
+            self.attribute_resolutions[id(expression)] = AttributeResolution(
+                "atomic_result_field",
+                owner_type=base_type,
+                compile_value=intrinsic,
+            )
+            return result
 
         if isinstance(raw, StringType):
             if expression.name in {
@@ -5197,7 +5523,9 @@ class Checker:
                 return BOOL
             if expression.name == "value":
                 if is_void(raw.ok):
-                    self._error("Result[void, E] has no value payload", expression.span, code="C140")
+                    self._error(
+                        "Result[void, E] has no value payload", expression.span, code="C140"
+                    )
                     return ERROR
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
                     "result_value", owner_type=base_type
@@ -5205,7 +5533,9 @@ class Checker:
                 return raw.ok
             if expression.name == "error":
                 if is_void(raw.error):
-                    self._error("Result[T, void] has no error payload", expression.span, code="C141")
+                    self._error(
+                        "Result[T, void] has no error payload", expression.span, code="C141"
+                    )
                     return ERROR
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
                     "result_error", owner_type=base_type
@@ -5473,6 +5803,7 @@ class Checker:
                 assert template is not None
                 self.name_symbols[id(expression.callee)] = template
                 self.expr_types[id(expression.callee)] = FunctionValueType(template.name)
+                prechecked_argument_types: dict[int, Type] | None = None
                 if expression.type_arguments:
                     specialized = self._instantiate_function_template(
                         template,
@@ -5481,8 +5812,8 @@ class Checker:
                         span=expression.span,
                     )
                 else:
-                    inferred = self._infer_function_type_args(template, expression)
-                    if inferred is None:
+                    inference = self._infer_function_type_args(template, expression)
+                    if inference is None:
                         self._error(
                             f"cannot infer type arguments for generic function {template.name!r}",
                             expression.span,
@@ -5490,6 +5821,7 @@ class Checker:
                             note="provide explicit type arguments like name[T](...)",
                         )
                         return ERROR
+                    inferred, prechecked_argument_types = inference
                     specialized = self._instantiate_function_template(
                         template,
                         None,
@@ -5499,7 +5831,12 @@ class Checker:
                 if specialized is None:
                     return ERROR
                 self.name_symbols[id(expression.callee)] = specialized
-                self._validate_function_call(expression, specialized, skip_parameters=0)
+                self._validate_function_call(
+                    expression,
+                    specialized,
+                    skip_parameters=0,
+                    prechecked_argument_types=prechecked_argument_types,
+                )
                 return specialized.return_type
             if isinstance(symbol, FunctionSymbol):
                 if expression.type_arguments:
@@ -5534,9 +5871,7 @@ class Checker:
                     (StructType, ClassType, UnionType),
                 ):
                     expected_raw = strip_const(expected)
-                    assert isinstance(
-                        expected_raw, (StructType, ClassType, UnionType)
-                    )
+                    assert isinstance(expected_raw, (StructType, ClassType, UnionType))
                     if (
                         expected_raw.name == template.name.rsplit(".", 1)[-1]
                         and expected_raw.type_args
@@ -5596,9 +5931,23 @@ class Checker:
                 return self._check_super_call(expression, super_method)
             # Pass expected type so generic enum/variant constructors like
             # Tagged.Some(...) can specialize from context.
-            self._check_expr(expression.callee, expected)
+            self._check_expr(expression.callee, expected, allow_atomic_method=True)
             resolution = self.attribute_resolutions.get(id(expression.callee))
-            if resolution is not None and resolution.kind == "module_function" and resolution.function:
+            if (
+                resolution is not None
+                and resolution.kind == "atomic_method"
+                and isinstance(resolution.compile_value, AtomicIntrinsicKind)
+            ):
+                return self._check_atomic_method_call(
+                    expression,
+                    expression.callee.value,
+                    resolution.compile_value,
+                )
+            if (
+                resolution is not None
+                and resolution.kind == "module_function"
+                and resolution.function
+            ):
                 if self._is_process_run_function(resolution.function):
                     return self._check_process_run_call(expression)
                 self._validate_function_call(expression, resolution.function, skip_parameters=0)
@@ -5609,6 +5958,7 @@ class Checker:
                 and isinstance(resolution.compile_value, FunctionTemplateSymbol)
             ):
                 template = resolution.compile_value
+                module_prechecked_argument_types: dict[int, Type] | None = None
                 if expression.type_arguments:
                     specialized = self._instantiate_function_template(
                         template,
@@ -5617,8 +5967,8 @@ class Checker:
                         span=expression.span,
                     )
                 else:
-                    inferred = self._infer_function_type_args(template, expression)
-                    if inferred is None:
+                    module_inference = self._infer_function_type_args(template, expression)
+                    if module_inference is None:
                         self._error(
                             f"cannot infer type arguments for generic function {template.name!r}",
                             expression.span,
@@ -5626,15 +5976,21 @@ class Checker:
                             note="provide explicit type arguments like name[T](...)",
                         )
                         return ERROR
+                    module_inferred, module_prechecked_argument_types = module_inference
                     specialized = self._instantiate_function_template(
                         template,
                         None,
-                        inferred,
+                        module_inferred,
                         span=expression.span,
                     )
                 if specialized is None:
                     return ERROR
-                self._validate_function_call(expression, specialized, skip_parameters=0)
+                self._validate_function_call(
+                    expression,
+                    specialized,
+                    skip_parameters=0,
+                    prechecked_argument_types=module_prechecked_argument_types,
+                )
                 return specialized.return_type
             if resolution is not None and resolution.kind == "method" and resolution.method:
                 self._validate_method_receiver(expression.callee.value, resolution.method)
@@ -5754,6 +6110,167 @@ class Checker:
             self._check_expr(argument.value)
         return ERROR
 
+    def _check_atomic_method_call(
+        self,
+        call: ast.CallExpr,
+        receiver: ast.Expression,
+        intrinsic: AtomicIntrinsicKind,
+    ) -> Type:
+        if call.type_arguments:
+            self._error(
+                "atomic operations do not take type arguments",
+                call.span,
+                code="C403",
+            )
+
+        receiver_storage = strip_const(self.expr_types.get(id(receiver), ERROR))
+        receiver_is_pointer = isinstance(receiver_storage, (PointerType, ReferenceType))
+        receiver_target = (
+            strip_const(receiver_storage.inner) if receiver_is_pointer else receiver_storage
+        )
+        if not isinstance(receiver_target, AtomicType):
+            self._error(
+                "atomic operation receiver is not an Atomic cell",
+                receiver.span,
+                code="C403",
+            )
+            for argument in call.arguments:
+                self._check_expr(argument.value)
+            return ERROR
+
+        if not receiver_is_pointer and not self._is_addressable(receiver):
+            self._error(
+                "atomic operations require an addressable receiver",
+                receiver.span,
+                code="C403",
+                note="bind the Atomic cell to a local or access it through a pointer/reference",
+            )
+        self._record_direct_value_use(receiver, ValueUseKind.ADDRESS)
+
+        fetch_intrinsics = {
+            AtomicIntrinsicKind.FETCH_ADD,
+            AtomicIntrinsicKind.FETCH_SUB,
+            AtomicIntrinsicKind.FETCH_AND,
+            AtomicIntrinsicKind.FETCH_OR,
+            AtomicIntrinsicKind.FETCH_XOR,
+        }
+        if intrinsic in fetch_intrinsics and receiver_target.inner == BOOL:
+            self._error(
+                f"{intrinsic.value.removeprefix('atomic_')} is not available on Atomic[bool]",
+                call.callee.span,
+                code="C403",
+                note="boolean atomics support load, store, exchange, and compare_exchange",
+            )
+
+        mutating = intrinsic is not AtomicIntrinsicKind.LOAD
+        if isinstance(receiver_storage, (PointerType, ReferenceType)):
+            target_is_const = isinstance(receiver_storage.inner, ConstType)
+        else:
+            target_is_const = self._lvalue_is_const(receiver)
+        if mutating and target_is_const:
+            self._error(
+                "cannot mutate an Atomic cell through a const receiver",
+                receiver.span,
+                code="C403",
+            )
+
+        parameter_names: tuple[str, ...]
+        if intrinsic is AtomicIntrinsicKind.LOAD:
+            parameter_names = ()
+            result_type: Type = receiver_target.inner
+        elif intrinsic is AtomicIntrinsicKind.COMPARE_EXCHANGE:
+            parameter_names = ("expected", "desired")
+            result_type = AtomicCompareExchangeResultType(receiver_target.inner)
+        else:
+            parameter_names = ("value",)
+            result_type = VOID if intrinsic is AtomicIntrinsicKind.STORE else receiver_target.inner
+
+        assigned: list[int | None] = [None] * len(parameter_names)
+        source_order: list[int] = []
+        seen_named = False
+        next_position = 0
+        parameter_by_name = {name: index for index, name in enumerate(parameter_names)}
+
+        for argument_index, argument in enumerate(call.arguments):
+            parameter_index: int | None = None
+            if argument.name is not None:
+                seen_named = True
+                parameter_index = parameter_by_name.get(argument.name)
+                if parameter_index is None:
+                    self._error(
+                        f"atomic operation has no parameter {argument.name!r}",
+                        argument.span,
+                        code="C403",
+                    )
+                elif assigned[parameter_index] is not None:
+                    self._error(
+                        f"parameter {argument.name!r} was supplied more than once",
+                        argument.span,
+                        code="C403",
+                    )
+            else:
+                if seen_named:
+                    self._error(
+                        "positional arguments cannot follow named arguments",
+                        argument.span,
+                        code="C076",
+                    )
+                while next_position < len(assigned) and assigned[next_position] is not None:
+                    next_position += 1
+                if next_position < len(assigned):
+                    parameter_index = next_position
+                    next_position += 1
+                else:
+                    self._error(
+                        f"too many arguments for {intrinsic.value.removeprefix('atomic_')!r}",
+                        argument.span,
+                        code="C403",
+                    )
+
+            actual = self._check_expr(
+                argument.value,
+                expected=(receiver_target.inner if parameter_index is not None else None),
+            )
+            if parameter_index is None:
+                source_order.append(-1)
+                continue
+            if assigned[parameter_index] is None:
+                assigned[parameter_index] = argument_index
+            source_order.append(parameter_index)
+            if not self._can_assign(receiver_target.inner, actual):
+                self._type_mismatch(
+                    receiver_target.inner,
+                    actual,
+                    argument.value.span,
+                )
+
+        for parameter_index, argument_index in enumerate(assigned):
+            if argument_index is None:
+                self._error(
+                    f"missing argument {parameter_names[parameter_index]!r} for "
+                    f"{intrinsic.value.removeprefix('atomic_')!r}",
+                    call.span,
+                    code="C403",
+                )
+
+        if all(index is not None for index in assigned) and all(
+            index >= 0 for index in source_order
+        ):
+            operands = tuple(
+                call.arguments[argument_index].value
+                for argument_index in assigned
+                if argument_index is not None
+            )
+            self.atomic_call_resolutions[id(call)] = AtomicCallResolution(
+                intrinsic=intrinsic,
+                receiver=receiver,
+                atomic_type=receiver_target,
+                result_type=result_type,
+                operands=operands,
+                source_order=tuple(source_order),
+            )
+        return result_type
+
     def _check_string_constructor(
         self,
         call: ast.CallExpr,
@@ -5795,8 +6312,7 @@ class Checker:
                 actual = self._check_expr(argument.value)
                 raw_actual = strip_const(actual)
                 is_char_pointer = (
-                    isinstance(raw_actual, PointerType)
-                    and strip_const(raw_actual.inner) == CHAR
+                    isinstance(raw_actual, PointerType) and strip_const(raw_actual.inner) == CHAR
                 )
                 if (
                     not isinstance(value_type(actual), StringType)
@@ -6004,9 +6520,7 @@ class Checker:
         receiver: ast.Expression,
         method: str,
     ) -> Type:
-        receiver_storage = strip_const(
-            self.expr_types.get(id(receiver), ERROR)
-        )
+        receiver_storage = strip_const(self.expr_types.get(id(receiver), ERROR))
         if isinstance(receiver_storage, (PointerType, ReferenceType)):
             receiver_type = strip_const(receiver_storage.inner)
         else:
@@ -6294,8 +6808,7 @@ class Checker:
             argument_type = ERROR
         if len(call.arguments) != expected_count:
             self._error(
-                f"Map.{method} expects {expected_count} arguments, "
-                f"got {len(call.arguments)}",
+                f"Map.{method} expects {expected_count} arguments, got {len(call.arguments)}",
                 call.span,
                 code="C322",
             )
@@ -6306,9 +6819,7 @@ class Checker:
             )
             if argument_type != ERROR and not self._can_assign(argument_type, actual):
                 self._type_mismatch(argument_type, actual, argument.value.span)
-            expected_types.append(
-                argument_type if argument_type != ERROR else None
-            )
+            expected_types.append(argument_type if argument_type != ERROR else None)
 
         self.call_resolutions[id(call)] = CallResolution(
             f"map_{method}",
@@ -6391,8 +6902,7 @@ class Checker:
             argument_type = ERROR
         if len(call.arguments) != expected_count:
             self._error(
-                f"Set.{method} expects {expected_count} arguments, "
-                f"got {len(call.arguments)}",
+                f"Set.{method} expects {expected_count} arguments, got {len(call.arguments)}",
                 call.span,
                 code="C328",
             )
@@ -6404,9 +6914,7 @@ class Checker:
             )
             if argument_type != ERROR and not self._can_assign(argument_type, actual):
                 self._type_mismatch(argument_type, actual, argument.value.span)
-            expected_types.append(
-                argument_type if argument_type != ERROR else None
-            )
+            expected_types.append(argument_type if argument_type != ERROR else None)
 
         self.call_resolutions[id(call)] = CallResolution(
             f"set_{method}",
@@ -6485,17 +6993,9 @@ class Checker:
     ) -> bool:
         if left.symbol is not None and left.symbol is right.symbol:
             return True
-        if (
-            left.symbol is not None
-            and not left.may_alias
-            and right.unknown_runtime_guarded
-        ):
+        if left.symbol is not None and not left.may_alias and right.unknown_runtime_guarded:
             return False
-        if (
-            right.symbol is not None
-            and not right.may_alias
-            and left.unknown_runtime_guarded
-        ):
+        if right.symbol is not None and not right.may_alias and left.unknown_runtime_guarded:
             return False
         return left.may_alias or right.may_alias
 
@@ -6628,7 +7128,19 @@ class Checker:
         return function.return_type
 
     def _check_reflection_call(self, call: ast.CallExpr, name: str) -> Type:
-        if name in {"type_of", "type_name", "type_info", "size_of", "align_of", "field_count", "method_count", "fields", "methods", "fields_of", "methods_of"}:
+        if name in {
+            "type_of",
+            "type_name",
+            "type_info",
+            "size_of",
+            "align_of",
+            "field_count",
+            "method_count",
+            "fields",
+            "methods",
+            "fields_of",
+            "methods_of",
+        }:
             expected_count = 1
         elif name in {"has_field", "has_method", "implements"}:
             expected_count = 2
@@ -6655,10 +7167,22 @@ class Checker:
             )
             return result
 
-        if name in {"size_of", "align_of", "field_count", "method_count", "fields_of", "methods_of"}:
-            subject = self._reflection_type_argument(call.arguments[0].value) if call.arguments else ERROR
+        if name in {
+            "size_of",
+            "align_of",
+            "field_count",
+            "method_count",
+            "fields_of",
+            "methods_of",
+        }:
+            subject = (
+                self._reflection_type_argument(call.arguments[0].value) if call.arguments else ERROR
+            )
             nominal = self.nominal_symbols.get(value_type(subject))
-            if name in {"field_count", "method_count", "fields_of", "methods_of"} and nominal is None:
+            if (
+                name in {"field_count", "method_count", "fields_of", "methods_of"}
+                and nominal is None
+            ):
                 self._error(
                     f"{name} requires a nominal type",
                     call.span,
@@ -6672,11 +7196,15 @@ class Checker:
                 return USIZE
             if name == "field_count":
                 count = len(self._nominal_fields(nominal)) if nominal is not None else 0
-                self.call_resolutions[id(call)] = CallResolution("compile_integer", compile_value=count)
+                self.call_resolutions[id(call)] = CallResolution(
+                    "compile_integer", compile_value=count
+                )
                 return USIZE
             if name == "method_count":
                 count = len(self._nominal_methods(nominal)) if nominal is not None else 0
-                self.call_resolutions[id(call)] = CallResolution("compile_integer", compile_value=count)
+                self.call_resolutions[id(call)] = CallResolution(
+                    "compile_integer", compile_value=count
+                )
                 return USIZE
             kind = "fields" if name == "fields_of" else "methods"
             self.call_resolutions[id(call)] = CallResolution(
@@ -6686,22 +7214,32 @@ class Checker:
             return ComptimeCollectionType(kind, value_type(subject))
 
         if name in {"has_field", "has_method"}:
-            subject = self._reflection_type_argument(call.arguments[0].value) if call.arguments else ERROR
+            subject = (
+                self._reflection_type_argument(call.arguments[0].value) if call.arguments else ERROR
+            )
             nominal = self.nominal_symbols.get(value_type(subject))
             member_name = self._literal_string_argument(call, 1, name)
             if nominal is None:
                 self._error(f"{name} requires a nominal type", call.span, code="C202")
                 value = False
             elif name == "has_field":
-                value = any(field.name == member_name for field, _, _ in self._nominal_fields(nominal))
+                value = any(
+                    field.name == member_name for field, _, _ in self._nominal_fields(nominal)
+                )
             else:
                 value = any(method.name == member_name for method in self._nominal_methods(nominal))
             self.call_resolutions[id(call)] = CallResolution("compile_bool", compile_value=value)
             return BOOL
 
         if name == "implements":
-            source_type = self._reflection_type_argument(call.arguments[0].value) if call.arguments else ERROR
-            target_type = self._reflection_type_argument(call.arguments[1].value) if len(call.arguments) > 1 else ERROR
+            source_type = (
+                self._reflection_type_argument(call.arguments[0].value) if call.arguments else ERROR
+            )
+            target_type = (
+                self._reflection_type_argument(call.arguments[1].value)
+                if len(call.arguments) > 1
+                else ERROR
+            )
             source = self.nominal_symbols.get(value_type(source_type))
             target = self.nominal_symbols.get(value_type(target_type))
             value = (
@@ -6780,9 +7318,7 @@ class Checker:
                 )
                 type_info_type = self.types["CinderTypeInfo"]
                 return PointerType(ConstType(type_info_type))
-            item_type = self.types[
-                "CinderFieldInfo" if name == "fields" else "CinderMethodInfo"
-            ]
+            item_type = self.types["CinderFieldInfo" if name == "fields" else "CinderMethodInfo"]
             kind = f"dynamic_{name}" if isinstance(subject_type, DynType) else name
             self.call_resolutions[id(call)] = CallResolution(
                 kind,
@@ -6867,9 +7403,7 @@ class Checker:
 
         expected_option = value_type(expected) if expected is not None else None
         payload_expected = (
-            expected_option.inner
-            if isinstance(expected_option, OptionType)
-            else None
+            expected_option.inner if isinstance(expected_option, OptionType) else None
         )
         payload_type: Type = ERROR
         expected_types: list[Type | None] = []
@@ -6935,11 +7469,7 @@ class Checker:
             )
 
         expected_owned = value_type(expected) if expected is not None else None
-        payload_expected = (
-            expected_owned.inner
-            if isinstance(expected_owned, OwnedType)
-            else None
-        )
+        payload_expected = expected_owned.inner if isinstance(expected_owned, OwnedType) else None
         payload_type: Type = ERROR
         expected_types: list[Type | None] = []
         moved_variables: list[VariableSymbol] = []
@@ -6992,6 +7522,8 @@ class Checker:
         raw = strip_const(type_)
         if raw == ERROR:
             return True
+        if self.type_contains_atomic_storage(raw):
+            return False
         if is_void(raw) or isinstance(
             raw,
             (
@@ -7219,9 +7751,9 @@ class Checker:
             if isinstance(field.type, ReferenceType):
                 if actual == NULL:
                     self._error("references cannot receive null", argument.value.span, code="C079")
-                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
-                    argument.value
-                ):
+                elif not isinstance(
+                    actual, (ReferenceType, PointerType)
+                ) and not self._is_addressable(argument.value):
                     self._error(
                         "reference argument must be addressable",
                         argument.value.span,
@@ -7276,6 +7808,7 @@ class Checker:
         function: FunctionSymbol,
         *,
         skip_parameters: int,
+        prechecked_argument_types: dict[int, Type] | None = None,
     ) -> None:
         parameters = function.parameters[skip_parameters:]
         assigned: list[int | None] = [None] * len(parameters)
@@ -7283,6 +7816,14 @@ class Checker:
         seen_named = False
         next_position = 0
         parameter_by_name = {parameter.name: index for index, parameter in enumerate(parameters)}
+
+        def argument_type(argument_index: int, expected: Type | None = None) -> Type:
+            if (
+                prechecked_argument_types is not None
+                and argument_index in prechecked_argument_types
+            ):
+                return prechecked_argument_types[argument_index]
+            return self._check_expr(call.arguments[argument_index].value, expected=expected)
 
         for argument_index, argument in enumerate(call.arguments):
             if argument.name is not None:
@@ -7294,7 +7835,7 @@ class Checker:
                         argument.span,
                         code="C074",
                     )
-                    self._check_expr(argument.value)
+                    argument_type(argument_index)
                     continue
                 if assigned[parameter_index] is not None:
                     self._error(
@@ -7324,7 +7865,7 @@ class Checker:
                     argument.span,
                     code="C077",
                 )
-                self._check_expr(argument.value)
+                argument_type(argument_index)
 
         for parameter_index, argument_index in enumerate(assigned):
             if argument_index is None:
@@ -7345,7 +7886,7 @@ class Checker:
             expected = parameters[parameter_index].type
             expected_types.append(expected)
             argument = call.arguments[argument_index]
-            actual = self._check_expr(argument.value, expected=expected)
+            actual = argument_type(argument_index, expected)
             list_slice_argument = self._is_list_slice_argument(expected, actual)
             ffi_string_borrow = (
                 function.is_extern
@@ -7367,7 +7908,9 @@ class Checker:
             if isinstance(expected, ReferenceType):
                 if actual == NULL:
                     self._error("references cannot receive null", argument.value.span, code="C079")
-                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(argument.value):
+                elif not isinstance(
+                    actual, (ReferenceType, PointerType)
+                ) and not self._is_addressable(argument.value):
                     self._error(
                         "reference argument must be addressable",
                         argument.value.span,
@@ -7383,7 +7926,7 @@ class Checker:
 
         for argument_index in variadic_indices:
             argument = call.arguments[argument_index]
-            actual = self._check_expr(argument.value)
+            actual = argument_type(argument_index)
             ffi_string_borrow = function.is_extern and isinstance(
                 value_type(actual),
                 StringType,
@@ -7391,7 +7934,9 @@ class Checker:
             if ffi_string_borrow:
                 self._record_string_borrow(argument.value, actual)
                 ffi_borrow_indices.append(argument_index)
-            elif not is_scalar(value_type(actual)) and not isinstance(value_type(actual), StructType):
+            elif not is_scalar(value_type(actual)) and not isinstance(
+                value_type(actual), StructType
+            ):
                 self._error(
                     f"type {type_name(actual)} cannot be passed through C varargs",
                     argument.value.span,
@@ -7532,7 +8077,11 @@ class Checker:
         if isinstance(expression, ast.AttributeExpr):
             actual = self._check_expr(expression)
             resolution = self.attribute_resolutions.get(id(expression))
-            if resolution is not None and resolution.kind == "module_function" and resolution.function:
+            if (
+                resolution is not None
+                and resolution.kind == "module_function"
+                and resolution.function
+            ):
                 function = resolution.function
                 pointer = self._function_pointer_from_symbol(function)
                 if pointer is None:
@@ -7673,9 +8222,9 @@ class Checker:
             if isinstance(expected, ReferenceType):
                 if actual == NULL:
                     self._error("references cannot receive null", argument.value.span, code="C079")
-                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
-                    argument.value
-                ):
+                elif not isinstance(
+                    actual, (ReferenceType, PointerType)
+                ) and not self._is_addressable(argument.value):
                     self._error(
                         "reference argument must be addressable",
                         argument.value.span,
@@ -7749,9 +8298,9 @@ class Checker:
             if isinstance(expected, ReferenceType):
                 if actual == NULL:
                     self._error("references cannot receive null", argument.value.span, code="C079")
-                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
-                    argument.value
-                ):
+                elif not isinstance(
+                    actual, (ReferenceType, PointerType)
+                ) and not self._is_addressable(argument.value):
                     self._error(
                         "reference argument must be addressable",
                         argument.value.span,
@@ -7845,9 +8394,9 @@ class Checker:
             if isinstance(field.type, ReferenceType):
                 if actual == NULL:
                     self._error("references cannot receive null", argument.value.span, code="C079")
-                elif not isinstance(actual, (ReferenceType, PointerType)) and not self._is_addressable(
-                    argument.value
-                ):
+                elif not isinstance(
+                    actual, (ReferenceType, PointerType)
+                ) and not self._is_addressable(argument.value):
                     self._error(
                         "reference argument must be addressable",
                         argument.value.span,
@@ -8073,9 +8622,7 @@ class Checker:
         type_: Type,
     ) -> None:
         raw = value_type(type_)
-        if isinstance(raw, (ListType, MapType, SetType)) and not self._is_addressable(
-            expression
-        ):
+        if isinstance(raw, (ListType, MapType, SetType)) and not self._is_addressable(expression):
             self._error(
                 f"print requires an addressable {type_name(raw)}",
                 expression.span,
@@ -8097,15 +8644,21 @@ class Checker:
 
         if raw == BOOL:
             if conversion not in (None, "s"):
-                self._error("bool print values support only the default format or :s", span, code="C223")
+                self._error(
+                    "bool print values support only the default format or :s", span, code="C223"
+                )
             return
         if raw == CHAR:
             if conversion not in (None, "c"):
-                self._error("char print values support only the default format or :c", span, code="C224")
+                self._error(
+                    "char print values support only the default format or :c", span, code="C224"
+                )
             return
         if _is_string_type(raw):
             if conversion not in (None, "s"):
-                self._error("string print values support only the default format or :s", span, code="C225")
+                self._error(
+                    "string print values support only the default format or :s", span, code="C225"
+                )
             return
         if is_float(raw):
             if conversion is None or conversion in "fFeEgG":
@@ -8163,7 +8716,11 @@ class Checker:
         else:
             resolution = RangeResolution(0, 1, 2, element)
             step = call.arguments[2].value
-            if isinstance(step, ast.LiteralExpr) and step.literal_kind == "integer" and step.value == 0:
+            if (
+                isinstance(step, ast.LiteralExpr)
+                and step.literal_kind == "integer"
+                and step.value == 0
+            ):
                 self._error("range step cannot be zero", step.span, code="C090")
         self.range_resolutions[id(call)] = resolution
         self.call_resolutions[id(call)] = CallResolution("range")
@@ -8188,9 +8745,7 @@ class Checker:
                 SetType,
                 MapViewType,
             ),
-        ) and not (
-            isinstance(argument_type, StringType) or is_c_string(argument_type)
-        ):
+        ) and not (isinstance(argument_type, StringType) or is_c_string(argument_type)):
             self._error(
                 f"len does not support {type_name(argument_type)}",
                 call.arguments[0].value.span,
@@ -8236,9 +8791,8 @@ class Checker:
                 argument_expression.span,
                 code="C243",
             )
-        if (
-            isinstance(argument_type, ListType)
-            and self._list_storage_is_active(argument_expression)
+        if isinstance(argument_type, ListType) and self._list_storage_is_active(
+            argument_expression
         ):
             self._error(
                 "cannot sort a List while iterating over it",
@@ -8327,9 +8881,7 @@ class Checker:
         value_type_ = value_type(self._check_expr(first.value))
         for entry in expression.entries[1:]:
             current_key = value_type(self._check_expr(entry.key, expected=key_type))
-            current_value = value_type(
-                self._check_expr(entry.value, expected=value_type_)
-            )
+            current_value = value_type(self._check_expr(entry.value, expected=value_type_))
             key_type = common_type(key_type, current_key)
             value_type_ = common_type(value_type_, current_value)
             if key_type == ERROR:
@@ -8506,15 +9058,10 @@ class Checker:
                 )
             for index, element in enumerate(expression.elements):
                 element_expected = (
-                    expected_value.elements[index]
-                    if index < len(expected_value.elements)
-                    else None
+                    expected_value.elements[index] if index < len(expected_value.elements) else None
                 )
                 actual = self._check_expr(element, expected=element_expected)
-                if (
-                    element_expected is not None
-                    and not self._can_assign(element_expected, actual)
-                ):
+                if element_expected is not None and not self._can_assign(element_expected, actual):
                     self._type_mismatch(
                         element_expected,
                         actual,
@@ -8580,19 +9127,25 @@ class Checker:
             MapViewType,
             OptionType,
             OwnedType,
+            AtomicType,
+            AtomicCompareExchangeResultType,
         )
-        if isinstance(
-            target,
-            (
-                ArrayType,
-                SliceType,
-                ReferenceType,
-                *_aggregate_uncastable,
-            ),
-        ) or isinstance(
-            source_value,
-            _aggregate_uncastable,
-        ) or is_void(target):
+        if (
+            isinstance(
+                target,
+                (
+                    ArrayType,
+                    SliceType,
+                    ReferenceType,
+                    *_aggregate_uncastable,
+                ),
+            )
+            or isinstance(
+                source_value,
+                _aggregate_uncastable,
+            )
+            or is_void(target)
+        ):
             self._error(
                 f"cannot cast from {type_name(source_value)} to {type_name(target)}",
                 expression.target_type.span,
@@ -8600,7 +9153,14 @@ class Checker:
             )
             return ERROR
         safe = False
-        if is_numeric(target) and is_numeric(source_value) or isinstance(target, EnumType) and is_integer(source_value) or is_integer(target) and isinstance(source_value, EnumType):
+        if (
+            is_numeric(target)
+            and is_numeric(source_value)
+            or isinstance(target, EnumType)
+            and is_integer(source_value)
+            or is_integer(target)
+            and isinstance(source_value, EnumType)
+        ):
             safe = True
         elif isinstance(target, PointerType) and isinstance(source_value, PointerType):
             target_inner = strip_const(target.inner)
@@ -8618,18 +9178,22 @@ class Checker:
 
     def _check_alloc(self, expression: ast.AllocExpr) -> Type:
         element = self._resolve_type(expression.element_type)
-        if is_void(element) or isinstance(
-            element,
-            (
-                ReferenceType,
-                SliceType,
-                ArrayType,
-                ListType,
-                MapType,
-                SetType,
-                StringType,
-                StringBuilderType,
-            ),
+        if (
+            is_void(element)
+            or self.type_contains_atomic_storage(element)
+            or isinstance(
+                element,
+                (
+                    ReferenceType,
+                    SliceType,
+                    ArrayType,
+                    ListType,
+                    MapType,
+                    SetType,
+                    StringType,
+                    StringBuilderType,
+                ),
+            )
         ):
             self._error(
                 f"cannot allocate elements of type {type_name(element)}",
@@ -8640,12 +9204,16 @@ class Checker:
         if expression.count is not None:
             count = self._check_expr(expression.count, expected=USIZE)
             if not is_integer(value_type(count)):
-                self._error("allocation count must be an integer", expression.count.span, code="C099")
+                self._error(
+                    "allocation count must be an integer", expression.count.span, code="C099"
+                )
         return PointerType(element)
 
     def _is_addressable(self, expression: ast.Expression) -> bool:
         if isinstance(expression, ast.NameExpr):
-            symbol = self.name_symbols.get(id(expression)) or self.current_scope.lookup(expression.name)
+            symbol = self.name_symbols.get(id(expression)) or self.current_scope.lookup(
+                expression.name
+            )
             return isinstance(symbol, VariableSymbol)
         if isinstance(expression, ast.AttributeExpr):
             resolution = self.attribute_resolutions.get(id(expression))
@@ -8653,9 +9221,7 @@ class Checker:
                 return True
             return self._is_addressable(expression.value)
         if isinstance(expression, ast.IndexExpr):
-            base_type = value_type(
-                self.expr_types.get(id(expression.value), ERROR)
-            )
+            base_type = value_type(self.expr_types.get(id(expression.value), ERROR))
             return not isinstance(base_type, (TupleType, MapType))
         return isinstance(expression, ast.UnaryExpr) and expression.operator == "*"
 
@@ -8665,29 +9231,33 @@ class Checker:
         if isinstance(expression, ast.UnaryExpr):
             return self._is_constant_expression(expression.operand)
         if isinstance(expression, ast.BinaryExpr):
-            return self._is_constant_expression(expression.left) and self._is_constant_expression(expression.right)
-        if isinstance(expression, ast.ListLiteralExpr):
-            expression_type = value_type(
-                self.expr_types.get(id(expression), ERROR)
+            return self._is_constant_expression(expression.left) and self._is_constant_expression(
+                expression.right
             )
+        if isinstance(expression, ast.ListLiteralExpr):
+            expression_type = value_type(self.expr_types.get(id(expression), ERROR))
             return isinstance(expression_type, ArrayType) and all(
-                self._is_constant_expression(element)
-                for element in expression.elements
+                self._is_constant_expression(element) for element in expression.elements
             )
         if isinstance(expression, ast.TupleLiteralExpr):
-            return all(
-                self._is_constant_expression(element)
-                for element in expression.elements
-            )
+            return all(self._is_constant_expression(element) for element in expression.elements)
         if isinstance(expression, ast.CallExpr):
             resolution = self.call_resolutions.get(id(expression))
-            return resolution is not None and resolution.kind in {
-                "constructor",
-                "union_constructor",
-                "variant_constructor",
-                "result_constructor",
-                "option_some",
-            } and all(self._is_constant_expression(argument.value) for argument in expression.arguments)
+            return (
+                resolution is not None
+                and resolution.kind
+                in {
+                    "constructor",
+                    "union_constructor",
+                    "variant_constructor",
+                    "result_constructor",
+                    "option_some",
+                }
+                and all(
+                    self._is_constant_expression(argument.value)
+                    for argument in expression.arguments
+                )
+            )
         if isinstance(expression, ast.CastExpr):
             return self._is_constant_expression(expression.value)
         if isinstance(expression, ast.NameExpr):
@@ -8705,17 +9275,16 @@ class Checker:
             if (
                 isinstance(statement, ast.IfStmt)
                 and statement.else_body is not None
-                and all(
-                    self._block_always_returns(branch.body)
-                    for branch in statement.branches
-                )
+                and all(self._block_always_returns(branch.body) for branch in statement.branches)
                 and self._block_always_returns(statement.else_body)
             ):
                 return True
             if isinstance(statement, ast.MatchStmt):
                 resolution = self.match_resolutions.get(id(statement))
-                if resolution is not None and resolution.exhaustive and all(
-                    self._block_always_returns(case.body) for case in statement.cases
+                if (
+                    resolution is not None
+                    and resolution.exhaustive
+                    and all(self._block_always_returns(case.body) for case in statement.cases)
                 ):
                     return True
             if isinstance(statement, ast.UnsafeStmt) and self._block_always_returns(statement.body):
@@ -8775,11 +9344,22 @@ class Checker:
             return ERROR
 
         type_args = tuple(
-            self._resolve_type(argument, allow_opaque=allow_opaque)
-            for argument in argument_nodes
+            self._resolve_type(argument, allow_opaque=allow_opaque) for argument in argument_nodes
         )
         if any(argument is ERROR for argument in type_args):
             return ERROR
+
+        if template.template_kind == "atomic":
+            element_type = type_args[0]
+            if not is_atomic_element_type(element_type):
+                self._error(
+                    f"unsupported atomic element type {type_name(element_type)}",
+                    argument_nodes[0].span,
+                    code="C394",
+                    note="Atomic supports only bool, u32, u64, and usize",
+                )
+                return ERROR
+            return AtomicType(strip_const(element_type))
 
         cache_key = (template.template_kind, template.name, type_args)
         cached = self._type_specializations.get(cache_key)
@@ -8789,9 +9369,7 @@ class Checker:
         mapping = make_type_param_mapping(template.type_params, argument_nodes)
         specialized_name = template.name.rsplit(".", 1)[-1]
         mangled_key = f"{specialized_name}{specialization_suffix(type_args)}"
-        c_name = self._specialize_c_name(
-            template.name, type_args, c_prefix=template.c_prefix
-        )
+        c_name = self._specialize_c_name(template.name, type_args, c_prefix=template.c_prefix)
 
         if template.template_kind == "struct":
             assert isinstance(template.declaration, ast.StructDecl)
@@ -8940,7 +9518,9 @@ class Checker:
         for field_declaration in declaration.fields:
             field_type = self._resolve_type(field_declaration.annotation)
             if is_void(field_type):
-                self._error("struct fields cannot have type void", field_declaration.span, code="C006")
+                self._error(
+                    "struct fields cannot have type void", field_declaration.span, code="C006"
+                )
                 field_type = ERROR
             if field_declaration.name in struct.fields or field_declaration.name in struct.methods:
                 self._error(
@@ -8959,8 +9539,13 @@ class Checker:
             )
 
         for method_declaration in declaration.methods:
-            self._validate_decorators(method_declaration.decorators, method_declaration.span, allowed=())
-            if method_declaration.name in struct.methods or method_declaration.name in struct.fields:
+            self._validate_decorators(
+                method_declaration.decorators, method_declaration.span, allowed=()
+            )
+            if (
+                method_declaration.name in struct.methods
+                or method_declaration.name in struct.fields
+            ):
                 self._error(
                     f"duplicate member {method_declaration.name!r} in struct {struct.name}",
                     method_declaration.span,
@@ -9008,7 +9593,10 @@ class Checker:
                 method_declaration.span,
                 allowed=allowed,
             )
-            if method_declaration.name in class_.methods or method_declaration.name in class_.fields:
+            if (
+                method_declaration.name in class_.methods
+                or method_declaration.name in class_.fields
+            ):
                 self._error(
                     f"duplicate member {method_declaration.name!r} in class {class_.name}",
                     method_declaration.span,
@@ -9205,9 +9793,7 @@ class Checker:
 
         class_.interface_methods = effective_methods
         class_.abstract_methods = OrderedDict(
-            (name, method)
-            for name, method in effective_methods.items()
-            if method.is_abstract
+            (name, method) for name, method in effective_methods.items() if method.is_abstract
         )
         if not class_.is_abstract and class_.abstract_methods:
             missing = ", ".join(class_.abstract_methods)
@@ -9238,56 +9824,7 @@ class Checker:
         self._validate_constructor_chain(class_)
 
     def _validate_specialized_nominal(self, symbol: NominalSymbol) -> None:
-        if isinstance(symbol, StructSymbol):
-            for field in symbol.fields.values():
-                self._validate_list_elements(field.type, field.span)
-            for method in symbol.methods.values():
-                for parameter in method.parameters:
-                    self._validate_list_elements(parameter.type, parameter.span)
-                self._validate_list_elements(method.return_type, method.span)
-            return
-        if isinstance(symbol, ClassSymbol):
-            for field in symbol.fields.values():
-                self._validate_list_elements(field.type, field.span)
-            for method in symbol.methods.values():
-                for parameter in method.parameters:
-                    self._validate_list_elements(parameter.type, parameter.span)
-                self._validate_list_elements(method.return_type, method.span)
-            return
-        if isinstance(symbol, UnionSymbol):
-            for field in symbol.fields.values():
-                self._validate_list_elements(field.type, field.span)
-                if self._contains_owning_container_value(field.type):
-                    self._error(
-                        f"union field {symbol.name}.{field.name} cannot own a collection",
-                        field.span,
-                        code="C247",
-                    )
-                if self._contains_destructible_value(field.type):
-                    self._error(
-                        f"union field {symbol.name}.{field.name} contains a class with a destructor",
-                        field.span,
-                        code="C222",
-                    )
-            return
-        if isinstance(symbol, VariantSymbol):
-            for case in symbol.cases.values():
-                for field in case.fields.values():
-                    self._validate_list_elements(field.type, field.span)
-                    if self._contains_owning_container_value(field.type):
-                        self._error(
-                            f"variant payload {symbol.name}.{case.name}.{field.name} "
-                            "cannot own a collection",
-                            field.span,
-                            code="C247",
-                        )
-                    if self._contains_destructible_value(field.type):
-                        self._error(
-                            f"variant payload {symbol.name}.{case.name}.{field.name} "
-                            "contains a class with a destructor",
-                            field.span,
-                            code="C223",
-                        )
+        self._validate_nominal_lifetime_type(symbol)
 
     def _fill_enum_members(
         self,
@@ -9473,9 +10010,7 @@ class Checker:
         self._function_specializations[cache_key] = symbol
         self.functions[mangled_key] = symbol
         self.function_symbols[id(specialized_decl)] = symbol
-        for parameter in symbol.parameters:
-            self._validate_list_elements(parameter.type, parameter.span)
-        self._validate_list_elements(symbol.return_type, symbol.span)
+        self._validate_function_lifetime_type(symbol)
         if self._checking_functions:
             self._pending_specialized_checks.append((symbol, None))
         return symbol
@@ -9490,7 +10025,13 @@ class Checker:
                 return ast.NamedTypeNode(span, "String")
             case StringBuilderType():
                 return ast.NamedTypeNode(span, "StringBuilder")
-            case StructType(name=name, type_args=type_args) | ClassType(name=name, type_args=type_args) | EnumType(name=name, type_args=type_args) | UnionType(name=name, type_args=type_args) | VariantType(name=name, type_args=type_args):
+            case (
+                StructType(name=name, type_args=type_args)
+                | ClassType(name=name, type_args=type_args)
+                | EnumType(name=name, type_args=type_args)
+                | UnionType(name=name, type_args=type_args)
+                | VariantType(name=name, type_args=type_args)
+            ):
                 base = ast.NamedTypeNode(span, name)
                 if not type_args:
                     return base
@@ -9506,7 +10047,9 @@ class Checker:
                 err_node = self._type_to_type_node(error, span)
                 if ok_node is None or err_node is None:
                     return None
-                return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "Result"), [ok_node, err_node])
+                return ast.GenericTypeNode(
+                    span, ast.NamedTypeNode(span, "Result"), [ok_node, err_node]
+                )
             case OptionType(inner=inner):
                 inner_node = self._type_to_type_node(inner, span)
                 if inner_node is None:
@@ -9517,6 +10060,15 @@ class Checker:
                 if inner_node is None:
                     return None
                 return ast.GenericTypeNode(span, ast.NamedTypeNode(span, "Owned"), [inner_node])
+            case AtomicType(inner=inner):
+                inner_node = self._type_to_type_node(inner, span)
+                if inner_node is None:
+                    return None
+                return ast.GenericTypeNode(
+                    span,
+                    ast.NamedTypeNode(span, "Atomic"),
+                    [inner_node],
+                )
             case ListType(inner=inner):
                 inner_node = self._type_to_type_node(inner, span)
                 if inner_node is None:
@@ -9580,7 +10132,7 @@ class Checker:
         self,
         template: FunctionTemplateSymbol,
         call: ast.CallExpr,
-    ) -> tuple[Type, ...] | None:
+    ) -> tuple[tuple[Type, ...], dict[int, Type]] | None:
         declaration = template.declaration
         params = [parameter for parameter in declaration.parameters if not parameter.is_variadic]
         if len(call.arguments) != len(params):
@@ -9607,6 +10159,14 @@ class Checker:
                         return False
                     actual_raw = strip_const(actual)
                     if base.name in self.type_templates:
+                        type_template = self._lookup_type_template(base.name)
+                        if (
+                            type_template is not None
+                            and type_template.template_kind == "atomic"
+                            and isinstance(actual_raw, AtomicType)
+                            and len(arguments) == 1
+                        ):
+                            return unify(arguments[0], actual_raw.inner)
                         if not isinstance(
                             actual_raw,
                             (StructType, ClassType, EnumType, UnionType, VariantType),
@@ -9618,7 +10178,9 @@ class Checker:
                             return False
                         return all(
                             unify(argument, type_arg)
-                            for argument, type_arg in zip(arguments, actual_raw.type_args, strict=True)
+                            for argument, type_arg in zip(
+                                arguments, actual_raw.type_args, strict=True
+                            )
                         )
                     # Builtin families
                     mapping_builtins: dict[str, type] = {
@@ -9627,16 +10189,30 @@ class Checker:
                         "List": ListType,
                         "Set": SetType,
                     }
-                    if base.name == "Result" and isinstance(actual_raw, ResultType) and len(arguments) == 2:
-                        return unify(arguments[0], actual_raw.ok) and unify(arguments[1], actual_raw.error)
-                    if base.name == "Map" and isinstance(actual_raw, MapType) and len(arguments) == 2:
-                        return unify(arguments[0], actual_raw.key) and unify(arguments[1], actual_raw.value)
+                    if (
+                        base.name == "Result"
+                        and isinstance(actual_raw, ResultType)
+                        and len(arguments) == 2
+                    ):
+                        return unify(arguments[0], actual_raw.ok) and unify(
+                            arguments[1], actual_raw.error
+                        )
+                    if (
+                        base.name == "Map"
+                        and isinstance(actual_raw, MapType)
+                        and len(arguments) == 2
+                    ):
+                        return unify(arguments[0], actual_raw.key) and unify(
+                            arguments[1], actual_raw.value
+                        )
                     if base.name == "Tuple" and isinstance(actual_raw, TupleType):
                         if len(arguments) != len(actual_raw.elements):
                             return False
                         return all(
                             unify(argument, element)
-                            for argument, element in zip(arguments, actual_raw.elements, strict=True)
+                            for argument, element in zip(
+                                arguments, actual_raw.elements, strict=True
+                            )
                         )
                     cls = mapping_builtins.get(base.name)
                     if cls is not None and isinstance(actual_raw, cls) and len(arguments) == 1:
@@ -9644,7 +10220,9 @@ class Checker:
                     return False
                 case ast.ConstTypeNode(inner=inner):
                     return unify(inner, strip_const(actual))
-                case ast.PointerTypeNode(inner=inner) if isinstance(strip_const(actual), PointerType):
+                case ast.PointerTypeNode(inner=inner) if isinstance(
+                    strip_const(actual), PointerType
+                ):
                     return unify(inner, strip_const(actual).inner)  # type: ignore[union-attr]
                 case ast.ReferenceTypeNode(inner=inner) if isinstance(actual, ReferenceType):
                     return unify(inner, actual.inner)
@@ -9653,8 +10231,12 @@ class Checker:
                 case _:
                     return True
 
-        for argument, parameter in zip(call.arguments, params, strict=False):
+        argument_types: dict[int, Type] = {}
+        for argument_index, (argument, parameter) in enumerate(
+            zip(call.arguments, params, strict=False)
+        ):
             actual = self._check_expr(argument.value)
+            argument_types[argument_index] = actual
             if not unify(parameter.annotation, actual):
                 return None
 
@@ -9664,7 +10246,7 @@ class Checker:
             if inferred_type is None:
                 return None
             type_args.append(inferred_type)
-        return tuple(type_args)
+        return tuple(type_args), argument_types
 
     def _resolve_type(self, node: ast.TypeNode, *, allow_opaque: bool = False) -> Type:
         cached = self.type_nodes.get(id(node))
@@ -9722,15 +10304,26 @@ class Checker:
                         self._resolve_type(argument, allow_opaque=allow_opaque)
                     result = ERROR
                 elif base.name == "Result" and len(arguments) != 2:
-                    self._error("Result requires exactly two type arguments", node.span, code="C156")
+                    self._error(
+                        "Result requires exactly two type arguments", node.span, code="C156"
+                    )
                     for argument in arguments:
                         self._resolve_type(argument, allow_opaque=allow_opaque)
                     result = ERROR
                 elif base.name == "Result":
-                    result = ResultType(
-                        self._resolve_type(arguments[0], allow_opaque=allow_opaque),
-                        self._resolve_type(arguments[1], allow_opaque=allow_opaque),
-                    )
+                    ok_type = self._resolve_type(arguments[0], allow_opaque=allow_opaque)
+                    error_type = self._resolve_type(arguments[1], allow_opaque=allow_opaque)
+                    if self.type_contains_atomic_storage(
+                        ok_type
+                    ) or self.type_contains_atomic_storage(error_type):
+                        self._error(
+                            "Result payloads cannot contain atomic storage",
+                            node.span,
+                            code="C395",
+                        )
+                        result = ERROR
+                    else:
+                        result = ResultType(ok_type, error_type)
                 elif base.name == "Option" and len(arguments) != 1:
                     self._error("Option requires exactly one type argument", node.span, code="C294")
                     for argument in arguments:
@@ -9741,9 +10334,13 @@ class Checker:
                         arguments[0],
                         allow_opaque=allow_opaque,
                     )
-                    if is_void(inner_type) or isinstance(
-                        inner_type,
-                        (ConstType, ReferenceType, ArrayType),
+                    if (
+                        is_void(inner_type)
+                        or self.type_contains_atomic_storage(inner_type)
+                        or isinstance(
+                            inner_type,
+                            (ConstType, ReferenceType, ArrayType),
+                        )
                     ):
                         self._error(
                             f"invalid Option payload type {type_name(inner_type)}",
@@ -9793,10 +10390,7 @@ class Checker:
                             f"Map key type {type_name(key_type)} is not hashable",
                             arguments[0].span,
                             code="C297",
-                            note=(
-                                "Map keys must be integers, bool, char, enums, "
-                                "or const char*"
-                            ),
+                            note=("Map keys must be integers, bool, char, enums, or const char*"),
                         )
                         key_type = ERROR
                     if not self._is_valid_container_element(value_type_):
@@ -9827,8 +10421,7 @@ class Checker:
                             arguments[0].span,
                             code="C300",
                             note=(
-                                "Set elements must be integers, bool, char, enums, "
-                                "or const char*"
+                                "Set elements must be integers, bool, char, enums, or const char*"
                             ),
                         )
                         inner_type = ERROR
@@ -9881,17 +10474,19 @@ class Checker:
                         arguments[0],
                         allow_opaque=allow_opaque,
                     )
-                    if is_void(inner_type) or isinstance(
-                        inner_type,
-                        (ConstType, ReferenceType, ArrayType),
+                    if (
+                        is_void(inner_type)
+                        or self.type_contains_atomic_storage(inner_type)
+                        or isinstance(
+                            inner_type,
+                            (ConstType, ReferenceType, ArrayType),
+                        )
                     ):
                         self._error(
                             f"invalid List element type {type_name(inner_type)}",
                             arguments[0].span,
                             code="C245",
-                            note=(
-                                "list elements must be mutable, directly assignable values"
-                            ),
+                            note=("list elements must be mutable, directly assignable values"),
                         )
                         inner_type = ERROR
                     result = ListType(inner_type)
@@ -9901,9 +10496,13 @@ class Checker:
                         for argument in arguments
                     )
                     for argument, element in zip(arguments, elements, strict=True):
-                        if is_void(element) or isinstance(
-                            element,
-                            (ConstType, ReferenceType, ArrayType),
+                        if (
+                            is_void(element)
+                            or self.type_contains_atomic_storage(element)
+                            or isinstance(
+                                element,
+                                (ConstType, ReferenceType, ArrayType),
+                            )
                         ):
                             self._error(
                                 f"invalid Tuple element type {type_name(element)}",
@@ -9951,7 +10550,11 @@ class Checker:
                 result = ReferenceType(inner_type)
             case ast.ArrayTypeNode(inner=inner, length=length):
                 inner_type = self._resolve_type(inner, allow_opaque=allow_opaque)
-                if is_void(inner_type) or isinstance(inner_type, ReferenceType):
+                if (
+                    is_void(inner_type)
+                    or isinstance(inner_type, ReferenceType)
+                    or self.type_contains_atomic_storage(inner_type)
+                ):
                     self._error(
                         f"invalid array element type {type_name(inner_type)}",
                         node.span,
@@ -9964,6 +10567,7 @@ class Checker:
                     is_void(inner_type)
                     or isinstance(inner_type, ReferenceType)
                     or self._contains_owning_container_value(inner_type)
+                    or self.type_contains_atomic_storage(inner_type)
                 ):
                     self._error(
                         f"invalid slice element type {type_name(inner_type)}",
@@ -10003,6 +10607,14 @@ class Checker:
                             code="C013",
                         )
                         param_type = ERROR
+                    elif self.type_contains_atomic_storage(param_type):
+                        self._error(
+                            f"function pointer parameters cannot pass "
+                            f"{type_name(param_type)} by value",
+                            parameter.span,
+                            code="C396",
+                        )
+                        param_type = ERROR
                     param_types.append(param_type)
                 resolved_return = (
                     VOID
@@ -10017,8 +10629,17 @@ class Checker:
                         note="return a pointer, slice, result, or owned nominal value instead",
                     )
                     resolved_return = ERROR
+                elif self.type_contains_atomic_storage(resolved_return):
+                    self._error(
+                        f"function pointers cannot return {type_name(resolved_return)} by value",
+                        return_type.span if return_type is not None else node.span,
+                        code="C396",
+                    )
+                    resolved_return = ERROR
                 result = FunctionPointerType(tuple(param_types), resolved_return)
-            case ast.ClosureTypeNode(environment=environment, parameters=parameters, return_type=return_type):
+            case ast.ClosureTypeNode(
+                environment=environment, parameters=parameters, return_type=return_type
+            ):
                 resolved_env = self._resolve_type(environment, allow_opaque=allow_opaque)
                 env_is_const = isinstance(resolved_env, ConstType)
                 env_type = strip_const(resolved_env)
@@ -10039,6 +10660,13 @@ class Checker:
                             code="C392",
                         )
                         param_type = ERROR
+                    elif self.type_contains_atomic_storage(param_type):
+                        self._error(
+                            f"closure parameters cannot pass {type_name(param_type)} by value",
+                            parameter.span,
+                            code="C396",
+                        )
+                        param_type = ERROR
                     param_types.append(param_type)
                 resolved_return = (
                     VOID
@@ -10051,6 +10679,13 @@ class Checker:
                         return_type.span if return_type is not None else node.span,
                         code="C393",
                         note="return a pointer, slice, result, or owned nominal value instead",
+                    )
+                    resolved_return = ERROR
+                elif self.type_contains_atomic_storage(resolved_return):
+                    self._error(
+                        f"closures cannot return {type_name(resolved_return)} by value",
+                        return_type.span if return_type is not None else node.span,
+                        code="C396",
                     )
                     resolved_return = ERROR
                 result = ClosureType(env_type, env_is_const, tuple(param_types), resolved_return)
@@ -10089,6 +10724,16 @@ class Checker:
                 )
 
     def _type_mismatch(self, expected: Type, actual: Type, span: Span) -> None:
+        if isinstance(value_type(actual), AtomicType) and not isinstance(
+            value_type(expected), AtomicType
+        ):
+            self._error(
+                f"Atomic cells are not implicitly loaded as {type_name(expected)}",
+                span,
+                code="C400",
+                note="use .load() to read the scalar value",
+            )
+            return
         self._error(
             f"expected {type_name(expected)}, got {type_name(actual)}",
             span,
@@ -10104,7 +10749,6 @@ class Checker:
         note: str | None = None,
     ) -> None:
         self.diagnostics.error(message, span, code=code, note=note)
-
 
 
 def _print_conversion(format_spec: str | None) -> str | None:
@@ -10146,14 +10790,15 @@ def _contains_propagate(expression: ast.Expression) -> bool:
             return _contains_propagate(callee) or any(
                 _contains_propagate(argument.value) for argument in arguments
             )
-        case ast.ListLiteralExpr(elements=elements) | ast.TupleLiteralExpr(
-            elements=elements
-        ) | ast.SetLiteralExpr(elements=elements):
+        case (
+            ast.ListLiteralExpr(elements=elements)
+            | ast.TupleLiteralExpr(elements=elements)
+            | ast.SetLiteralExpr(elements=elements)
+        ):
             return any(_contains_propagate(element) for element in elements)
         case ast.MapLiteralExpr(entries=entries):
             return any(
-                _contains_propagate(entry.key)
-                or _contains_propagate(entry.value)
+                _contains_propagate(entry.key) or _contains_propagate(entry.value)
                 for entry in entries
             )
         case ast.CastExpr(value=value):
@@ -10162,8 +10807,7 @@ def _contains_propagate(expression: ast.Expression) -> bool:
             return count is not None and _contains_propagate(count)
         case ast.FStringExpr(parts=parts):
             return any(
-                isinstance(part, ast.FStringExpression)
-                and _contains_propagate(part.expression)
+                isinstance(part, ast.FStringExpression) and _contains_propagate(part.expression)
                 for part in parts
             )
         case ast.NameExpr() | ast.LiteralExpr() | ast.NoneExpr():
@@ -10180,6 +10824,7 @@ def _statement_contains_propagate(statement: ast.Statement) -> bool:
         case ast.ExpressionStmt(expression=expression):
             return _contains_propagate(expression)
     return False
+
 
 def check(
     module: ast.Module,

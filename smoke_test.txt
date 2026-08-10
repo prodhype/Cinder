@@ -1,8 +1,8 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-09 05:36:44 UTC
+# date:   2026-08-09 23:53:08 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
-# targets: 39 (examples/*.ci + class_project + module_project; excludes large_project)
+# targets: 40 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
 # report mode: both
 #
@@ -13,13 +13,14 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 39 ok, 0 fail
+Summary: 40 ok, 0 fail
 
 ## Status by example
 examples/aggregate_ownership.ci   OK    ok
 examples/algorithm_benchmarks.ci  OK    ok
 examples/anti_examples.ci         OK    ok
 examples/ast_arena.ci             OK    ok
+examples/atomics.ci               OK    ok
 examples/binary_sort.ci           OK    ok
 examples/classes.ci               OK    ok
 examples/closures.ci              OK    ok
@@ -64,6 +65,7 @@ examples/module_project           OK    ok
 - examples/algorithm_benchmarks.ci
 - examples/anti_examples.ci
 - examples/ast_arena.ci
+- examples/atomics.ci
 - examples/binary_sort.ci
 - examples/classes.ci
 - examples/closures.ci

@@ -1,0 +1,225 @@
+import backend_ir
+import syntax
+import types
+from syntax import NodeId, SyntaxArena
+
+
+def module_uses_atomics(nodes: &const List[backend_ir.IRNode], table: &const types.TypeTable) -> bool:
+    for node in nodes:
+        if backend_ir.ir_node_is_atomic(node.kind) or semantic_type_contains_atomic(table, node.type_id):
+            return true
+    return false
+
+
+def semantic_type_contains_atomic(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.ATOMIC or record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
+        return true
+    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.DYN or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or types.is_map_view_kind(record.kind):
+        return semantic_type_contains_atomic(table, record.inner)
+    if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
+        return semantic_type_contains_atomic(table, record.inner) or semantic_type_contains_atomic(table, record.second)
+    if record.kind == types.TypeKind.TUPLE:
+        offset: i32 = 0
+        while offset < record.flags:
+            if semantic_type_contains_atomic(table, table.type_args[cast[usize](record.extra + offset)]):
+                return true
+            offset += 1
+    if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+        if record.kind == types.TypeKind.CLOSURE and semantic_type_contains_atomic(table, record.second):
+            return true
+        if semantic_type_contains_atomic(table, record.inner):
+            return true
+        offset: i32 = 0
+        while offset < record.flags:
+            argument = table.type_args[cast[usize](record.extra + offset)]
+            if semantic_type_contains_atomic(table, argument):
+                return true
+            offset += 1
+    return false
+
+
+def atomic_node_index(nodes: &const List[backend_ir.IRNode], syntax_id: NodeId, specialization: i32) -> i32:
+    index: i32 = 0
+    for node in nodes:
+        if node.syntax.index == syntax_id.index and node.specialization == specialization and backend_ir.ir_node_is_atomic(node.kind):
+            return index
+        index += 1
+    return -1
+
+
+def atomic_node_at(nodes: &const List[backend_ir.IRNode], index: i32) -> backend_ir.IRNode:
+    return nodes[cast[usize](index)]
+
+
+def append_atomic_wrapper_name(builder: &StringBuilder, kind: types.AtomicElementKind) -> void:
+    builder.append("CinderAtomic_")
+    append_atomic_element_suffix(builder, kind)
+
+
+def append_atomic_result_name(builder: &StringBuilder, kind: types.AtomicElementKind) -> void:
+    builder.append("CinderAtomicCompareExchangeResult_")
+    append_atomic_element_suffix(builder, kind)
+
+
+def append_atomic_element_c_type(builder: &StringBuilder, kind: types.AtomicElementKind) -> void:
+    if kind == types.AtomicElementKind.BOOL:
+        builder.append("bool")
+    elif kind == types.AtomicElementKind.U32:
+        builder.append("uint32_t")
+    elif kind == types.AtomicElementKind.U64:
+        builder.append("uint64_t")
+    elif kind == types.AtomicElementKind.USIZE:
+        builder.append("size_t")
+    else:
+        builder.append("int32_t")
+
+
+def append_atomic_element_suffix(builder: &StringBuilder, kind: types.AtomicElementKind) -> void:
+    if kind == types.AtomicElementKind.BOOL:
+        builder.append("bool")
+    elif kind == types.AtomicElementKind.U32:
+        builder.append("u32")
+    elif kind == types.AtomicElementKind.U64:
+        builder.append("u64")
+    elif kind == types.AtomicElementKind.USIZE:
+        builder.append("usize")
+    else:
+        builder.append("invalid")
+
+
+def emit_atomic_header_support(builder: &StringBuilder) -> void:
+    builder.append("#ifndef __cplusplus\n#include <stdatomic.h>\n#endif\n\n")
+    emit_atomic_wrapper(builder, types.AtomicElementKind.BOOL)
+    emit_atomic_wrapper(builder, types.AtomicElementKind.U32)
+    emit_atomic_wrapper(builder, types.AtomicElementKind.U64)
+    emit_atomic_wrapper(builder, types.AtomicElementKind.USIZE)
+    emit_atomic_result(builder, types.AtomicElementKind.BOOL)
+    emit_atomic_result(builder, types.AtomicElementKind.U32)
+    emit_atomic_result(builder, types.AtomicElementKind.U64)
+    emit_atomic_result(builder, types.AtomicElementKind.USIZE)
+
+
+def emit_atomic_wrapper(builder: &StringBuilder, kind: types.AtomicElementKind) -> void:
+    guard_builder = StringBuilder()
+    guard_builder.append("CINDER_ATOMIC_")
+    if kind == types.AtomicElementKind.BOOL:
+        guard_builder.append("BOOL")
+    elif kind == types.AtomicElementKind.U32:
+        guard_builder.append("U32")
+    elif kind == types.AtomicElementKind.U64:
+        guard_builder.append("U64")
+    else:
+        guard_builder.append("USIZE")
+    guard_builder.append("_DEFINED")
+    guard = guard_builder.finish()
+    builder.append("#ifndef ")
+    builder.append(guard[0:len(guard)])
+    builder.append("\n#define ")
+    builder.append(guard[0:len(guard)])
+    builder.append("\ntypedef struct ")
+    append_atomic_wrapper_name(builder, kind)
+    builder.append(" ")
+    append_atomic_wrapper_name(builder, kind)
+    builder.append(";\n#ifndef __cplusplus\nstruct ")
+    append_atomic_wrapper_name(builder, kind)
+    builder.append(" { _Atomic(")
+    append_atomic_element_c_type(builder, kind)
+    builder.append(") value; };\n#endif\n#endif\n")
+
+
+def emit_atomic_result(builder: &StringBuilder, kind: types.AtomicElementKind) -> void:
+    builder.append("#ifndef CINDER_ATOMIC_COMPARE_EXCHANGE_")
+    if kind == types.AtomicElementKind.BOOL:
+        builder.append("BOOL")
+    elif kind == types.AtomicElementKind.U32:
+        builder.append("U32")
+    elif kind == types.AtomicElementKind.U64:
+        builder.append("U64")
+    else:
+        builder.append("USIZE")
+    builder.append("_RESULT_DEFINED\n#define CINDER_ATOMIC_COMPARE_EXCHANGE_")
+    if kind == types.AtomicElementKind.BOOL:
+        builder.append("BOOL")
+    elif kind == types.AtomicElementKind.U32:
+        builder.append("U32")
+    elif kind == types.AtomicElementKind.U64:
+        builder.append("U64")
+    else:
+        builder.append("USIZE")
+    builder.append("_RESULT_DEFINED\n")
+    builder.append("typedef struct ")
+    append_atomic_result_name(builder, kind)
+    builder.append(" { bool exchanged; ")
+    append_atomic_element_c_type(builder, kind)
+    builder.append(" observed; } ")
+    append_atomic_result_name(builder, kind)
+    builder.append(";\n#endif\n")
+
+
+def emit_function_temporaries(arena: &const SyntaxArena, function_id: NodeId, nodes: &const List[backend_ir.IRNode], specialization: i32, builder: &StringBuilder) -> void:
+    for node in nodes:
+        if node.specialization != specialization or not atomic_operation_needs_temporaries(node.kind) or not syntax_subtree_contains(arena, function_id, node.syntax):
+            continue
+        builder.append("    ")
+        if (node.flags & 2) != 0:
+            builder.append("const ")
+        append_atomic_wrapper_name(builder, node.atomic_element_kind)
+        builder.append(" *cinder_atomic_receiver_")
+        append_decimal(builder, node.syntax.index)
+        builder.append(";\n")
+        if node.atomic_first_evaluated.index >= 0:
+            builder.append("    ")
+            append_atomic_element_c_type(builder, node.atomic_element_kind)
+            builder.append(" cinder_atomic_first_")
+            append_decimal(builder, node.syntax.index)
+            builder.append(";\n")
+        if node.atomic_second_evaluated.index >= 0:
+            builder.append("    ")
+            append_atomic_element_c_type(builder, node.atomic_element_kind)
+            builder.append(" cinder_atomic_second_")
+            append_decimal(builder, node.syntax.index)
+            builder.append(";\n")
+        if node.kind == backend_ir.IRNodeKind.ATOMIC_COMPARE_EXCHANGE:
+            builder.append("    ")
+            append_atomic_element_c_type(builder, node.atomic_element_kind)
+            builder.append(" cinder_atomic_expected_")
+            append_decimal(builder, node.syntax.index)
+            builder.append(";\n    bool cinder_atomic_exchanged_")
+            append_decimal(builder, node.syntax.index)
+            builder.append(";\n")
+
+
+def atomic_operation_needs_temporaries(kind: backend_ir.IRNodeKind) -> bool:
+    return kind == backend_ir.IRNodeKind.ATOMIC_LOAD or kind == backend_ir.IRNodeKind.ATOMIC_STORE or kind == backend_ir.IRNodeKind.ATOMIC_EXCHANGE or kind == backend_ir.IRNodeKind.ATOMIC_COMPARE_EXCHANGE or kind == backend_ir.IRNodeKind.ATOMIC_FETCH
+
+
+def syntax_subtree_contains(arena: &const SyntaxArena, root: NodeId, wanted: NodeId) -> bool:
+    if root.index < 0:
+        return false
+    if root.index == wanted.index:
+        return true
+    node = arena.nodes[root.index]
+    for offset in range(0, node.child_count):
+        if syntax_subtree_contains(arena, arena.children[node.first_child + offset], wanted):
+            return true
+    return false
+
+
+def append_decimal(builder: &StringBuilder, value: i32) -> void:
+    if value < 0:
+        builder.append("0")
+        return
+    digits: List[i32] = []
+    current = value
+    if current == 0:
+        digits.append(0)
+    while current > 0:
+        digits.append(current % 10)
+        current = current / 10
+    index = len(digits)
+    while index > 0:
+        index -= 1
+        builder.append_char(cast[char](48 + digits[index]))

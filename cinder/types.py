@@ -78,6 +78,16 @@ class OwnedType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class AtomicType(Type):
+    inner: Type
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicCompareExchangeResultType(Type):
+    inner: Type
+
+
+@dataclass(frozen=True, slots=True)
 class TupleType(Type):
     elements: tuple[Type, ...]
 
@@ -336,23 +346,32 @@ def map_view_c_name(type_: MapViewType) -> str:
         "values": "CinderMapValues",
         "items": "CinderMapItems",
     }[type_.kind]
-    return (
-        f"{prefix}_{type_key(type_.map_type.key)}_"
-        f"{type_key(type_.map_type.value)}"
-    )
+    return f"{prefix}_{type_key(type_.map_type.key)}_{type_key(type_.map_type.value)}"
+
+
+def atomic_c_name(type_: AtomicType) -> str:
+    return f"CinderAtomic_{type_key(type_.inner)}"
+
+
+def atomic_compare_exchange_result_c_name(
+    type_: AtomicCompareExchangeResultType,
+) -> str:
+    return f"CinderAtomicCompareExchangeResult_{type_key(type_.inner)}"
 
 
 def type_name(type_: Type) -> str:
     match type_:
         case PrimitiveType(name=name):
             return name
-        case StructType(name=name, type_args=type_args) | ClassType(name=name, type_args=type_args) | EnumType(name=name, type_args=type_args) | UnionType(name=name, type_args=type_args) | VariantType(name=name, type_args=type_args):
+        case (
+            StructType(name=name, type_args=type_args)
+            | ClassType(name=name, type_args=type_args)
+            | EnumType(name=name, type_args=type_args)
+            | UnionType(name=name, type_args=type_args)
+            | VariantType(name=name, type_args=type_args)
+        ):
             if type_args:
-                return (
-                    f"{name}["
-                    + ", ".join(type_name(argument) for argument in type_args)
-                    + "]"
-                )
+                return f"{name}[" + ", ".join(type_name(argument) for argument in type_args) + "]"
             return name
         case ResultType(ok=ok, error=error):
             return f"Result[{type_name(ok)}, {type_name(error)}]"
@@ -360,6 +379,10 @@ def type_name(type_: Type) -> str:
             return f"Option[{type_name(inner)}]"
         case OwnedType(inner=inner):
             return f"Owned[{type_name(inner)}]"
+        case AtomicType(inner=inner):
+            return f"Atomic[{type_name(inner)}]"
+        case AtomicCompareExchangeResultType(inner=inner):
+            return f"CompareExchangeResult[{type_name(inner)}]"
         case TupleType(elements=elements):
             return "Tuple[" + ", ".join(type_name(element) for element in elements) + "]"
         case ListType(inner=inner):
@@ -380,10 +403,7 @@ def type_name(type_: Type) -> str:
                 "values": "MapValues",
                 "items": "MapItems",
             }[kind]
-            return (
-                f"{view_name}[{type_name(map_type.key)}, "
-                f"{type_name(map_type.value)}]"
-            )
+            return f"{view_name}[{type_name(map_type.key)}, {type_name(map_type.value)}]"
         case OpaqueType(name=name):
             return name
         case ConstType(inner=inner):
@@ -458,6 +478,10 @@ def is_integer(type_: Type) -> bool:
     return isinstance(type_, PrimitiveType) and type_.category == "integer"
 
 
+def is_atomic_element_type(type_: Type) -> bool:
+    return strip_const(type_) in (BOOL, U32, U64, USIZE)
+
+
 def is_float(type_: Type) -> bool:
     type_ = strip_const(type_)
     return isinstance(type_, PrimitiveType) and type_.category == "float"
@@ -526,13 +550,10 @@ def is_owning_container(type_: Type) -> bool:
 
 def is_scalar(type_: Type) -> bool:
     type_ = strip_const(type_)
-    return (
-        isinstance(
-            type_,
-            (PrimitiveType, EnumType, PointerType, ReferenceType, DynType, NullType),
-        )
-        and not is_void(type_)
-    )
+    return isinstance(
+        type_,
+        (PrimitiveType, EnumType, PointerType, ReferenceType, DynType, NullType),
+    ) and not is_void(type_)
 
 
 def is_condition_type(type_: Type) -> bool:
@@ -626,6 +647,8 @@ def common_type(left: Type, right: Type) -> Type:
 def can_assign(target: Type, source: Type) -> bool:
     if target == ERROR or source == ERROR:
         return True
+    if isinstance(strip_const(target), AtomicType) or isinstance(strip_const(source), AtomicType):
+        return False
     if target == source:
         return True
 
@@ -669,10 +692,7 @@ def can_assign(target: Type, source: Type) -> bool:
         return False
 
     if isinstance(target, DynType) and isinstance(source, DynType):
-        return (
-            target.interface == source.interface
-            and (target.is_const or not source.is_const)
-        )
+        return target.interface == source.interface and (target.is_const or not source.is_const)
 
     if isinstance(target, ArrayType) and isinstance(source, ArrayType):
         return target.length == source.length and can_assign(target.inner, source.inner)
@@ -737,6 +757,8 @@ def can_borrow_elements(target: Type, source: Type) -> bool:
         return True
     target_unqualified = strip_const(target)
     source_unqualified = strip_const(source)
+    if isinstance(target_unqualified, AtomicType) or isinstance(source_unqualified, AtomicType):
+        return target_unqualified == source_unqualified and isinstance(target, ConstType)
     if target_unqualified == VOID:
         return not isinstance(source_unqualified, FunctionValueType)
     if source_unqualified == VOID:
@@ -762,6 +784,10 @@ def type_key(type_: Type) -> str:
             return f"option_{type_key(inner)}"
         case OwnedType(inner=inner):
             return f"owned_{type_key(inner)}"
+        case AtomicType(inner=inner):
+            return f"atomic_{type_key(inner)}"
+        case AtomicCompareExchangeResultType(inner=inner):
+            return f"atomic_compare_exchange_result_{type_key(inner)}"
         case TupleType(elements=elements):
             suffix = "_".join(type_key(element) for element in elements)
             return f"tuple_{len(elements)}" + (f"_{suffix}" if suffix else "")
@@ -778,10 +804,7 @@ def type_key(type_: Type) -> str:
         case StringBuilderType():
             return "string_builder"
         case MapViewType(map_type=map_type, kind=kind):
-            return (
-                f"map_{_sanitize_key(kind)}_{type_key(map_type.key)}_"
-                f"{type_key(map_type.value)}"
-            )
+            return f"map_{_sanitize_key(kind)}_{type_key(map_type.key)}_{type_key(map_type.value)}"
         case ConstType(inner=inner):
             return f"const_{type_key(inner)}"
         case PointerType(inner=inner):
@@ -816,10 +839,7 @@ def type_key(type_: Type) -> str:
             env_prefix = "const_env" if env_is_const else "env"
             params = "_".join(type_key(param) for param in param_types)
             suffix = f"_{params}" if params else ""
-            return (
-                f"closure_{env_prefix}_{type_key(env_type)}"
-                f"{suffix}_ret_{type_key(return_type)}"
-            )
+            return f"closure_{env_prefix}_{type_key(env_type)}{suffix}_ret_{type_key(return_type)}"
         case ModuleType(name=name):
             return f"module_{_sanitize_key(name)}"
         case RangeType(inner=inner):
@@ -833,9 +853,7 @@ def type_key(type_: Type) -> str:
 
 def _sanitize_key(value: str) -> str:
     cleaned = "".join(
-        character
-        if character.isascii() and (character.isalnum() or character == "_")
-        else "_"
+        character if character.isascii() and (character.isalnum() or character == "_") else "_"
         for character in value
     )
     return cleaned or "anonymous"

@@ -9,6 +9,7 @@ from cinder.symbols import (
     ModuleSymbol,
     ParameterSymbol,
     SymbolKind,
+    TypeTemplateSymbol,
 )
 from cinder.types import (
     C_INT,
@@ -49,7 +50,9 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
     )
     stdio.functions.update(
         {
-            "printf": _function(span, "printf", C_INT, [("format", c_string_type())], variadic=True, module="stdio"),
+            "printf": _function(
+                span, "printf", C_INT, [("format", c_string_type())], variadic=True, module="stdio"
+            ),
             "fprintf": _function(
                 span,
                 "fprintf",
@@ -80,14 +83,24 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
                 span,
                 "fread",
                 USIZE,
-                [("buffer", void_pointer), ("size", USIZE), ("count", USIZE), ("stream", file_pointer)],
+                [
+                    ("buffer", void_pointer),
+                    ("size", USIZE),
+                    ("count", USIZE),
+                    ("stream", file_pointer),
+                ],
                 module="stdio",
             ),
             "fwrite": _function(
                 span,
                 "fwrite",
                 USIZE,
-                [("buffer", const_void_pointer), ("size", USIZE), ("count", USIZE), ("stream", file_pointer)],
+                [
+                    ("buffer", const_void_pointer),
+                    ("size", USIZE),
+                    ("count", USIZE),
+                    ("stream", file_pointer),
+                ],
                 module="stdio",
             ),
             "fflush": _function(span, "fflush", C_INT, [("stream", file_pointer)], module="stdio"),
@@ -102,11 +115,26 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
         includes=("<math.h>",),
         libraries=("m",),
     )
-    for name in ("sqrt", "sin", "cos", "tan", "asin", "acos", "atan", "exp", "log", "floor", "ceil", "fabs"):
+    for name in (
+        "sqrt",
+        "sin",
+        "cos",
+        "tan",
+        "asin",
+        "acos",
+        "atan",
+        "exp",
+        "log",
+        "floor",
+        "ceil",
+        "fabs",
+    ):
         math.functions[name] = _function(span, name, F64, [("value", F64)], module="math")
     for name in ("sqrtf", "sinf", "cosf", "tanf", "expf", "logf", "floorf", "ceilf", "fabsf"):
         math.functions[name] = _function(span, name, F32, [("value", F32)], module="math")
-    math.functions["pow"] = _function(span, "pow", F64, [("base", F64), ("exponent", F64)], module="math")
+    math.functions["pow"] = _function(
+        span, "pow", F64, [("base", F64), ("exponent", F64)], module="math"
+    )
     math.functions["atan2"] = _function(span, "atan2", F64, [("y", F64), ("x", F64)], module="math")
     math.constants["pi"] = ConstantSymbol("pi", span, SymbolKind.CONSTANT, F64, "CINDER_PI")
 
@@ -120,8 +148,16 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
     stdlib.functions.update(
         {
             "malloc": _function(span, "malloc", void_pointer, [("size", USIZE)], module="stdlib"),
-            "calloc": _function(span, "calloc", void_pointer, [("count", USIZE), ("size", USIZE)], module="stdlib"),
-            "realloc": _function(span, "realloc", void_pointer, [("pointer", void_pointer), ("size", USIZE)], module="stdlib"),
+            "calloc": _function(
+                span, "calloc", void_pointer, [("count", USIZE), ("size", USIZE)], module="stdlib"
+            ),
+            "realloc": _function(
+                span,
+                "realloc",
+                void_pointer,
+                [("pointer", void_pointer), ("size", USIZE)],
+                module="stdlib",
+            ),
             "free": _function(span, "free", VOID, [("pointer", void_pointer)], module="stdlib"),
             "exit": _function(span, "exit", VOID, [("status", I32)], module="stdlib"),
         }
@@ -136,8 +172,16 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
     )
     string.functions.update(
         {
-            "strlen": _function(span, "strlen", USIZE, [("text", c_string_type())], module="string"),
-            "strcmp": _function(span, "strcmp", C_INT, [("left", c_string_type()), ("right", c_string_type())], module="string"),
+            "strlen": _function(
+                span, "strlen", USIZE, [("text", c_string_type())], module="string"
+            ),
+            "strcmp": _function(
+                span,
+                "strcmp",
+                C_INT,
+                [("left", c_string_type()), ("right", c_string_type())],
+                module="string",
+            ),
             "strncmp": _function(
                 span,
                 "strncmp",
@@ -211,6 +255,22 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
         public_name="run",
     )
 
+    atomic = ModuleSymbol(
+        name="atomic",
+        span=span,
+        kind=SymbolKind.MODULE,
+        module_name="std.atomic",
+    )
+    atomic.type_templates["Atomic"] = TypeTemplateSymbol(
+        name="Atomic",
+        span=span,
+        kind=SymbolKind.TYPE_TEMPLATE,
+        type_params=("T",),
+        declaration=None,
+        template_kind="atomic",
+        defining_module="std.atomic",
+    )
+
     return {
         "stdio": stdio,
         "math": math,
@@ -218,6 +278,7 @@ def builtin_modules(path: Path) -> dict[str, ModuleSymbol]:
         "string": string,
         "cinder": cinder,
         "process": process,
+        "std.atomic": atomic,
     }
 
 
@@ -226,7 +287,9 @@ def builtin_global_functions(path: Path) -> dict[str, FunctionSymbol]:
     void_pointer = PointerType(VOID)
     return {
         "free": _function(span, "free", VOID, [("pointer", void_pointer)]),
-        "panic": _function(span, "cinder_panic", VOID, [("message", c_string_type())], public_name="panic"),
+        "panic": _function(
+            span, "cinder_panic", VOID, [("message", c_string_type())], public_name="panic"
+        ),
     }
 
 
@@ -245,7 +308,9 @@ def _function(
         name=name,
         span=span,
         kind=SymbolKind.FUNCTION,
-        parameters=[ParameterSymbol(param_name, param_type, span) for param_name, param_type in parameters],
+        parameters=[
+            ParameterSymbol(param_name, param_type, span) for param_name, param_type in parameters
+        ],
         return_type=return_type,
         c_name=c_name,
         declaration=None,

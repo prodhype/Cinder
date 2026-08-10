@@ -66,7 +66,14 @@ def compile_and_run_c(tmp_path: Path, c_source: str) -> subprocess.CompletedProc
     executable = tmp_path / "bootstrap_backend_generated"
     source_path.write_text(c_source, encoding="utf-8")
     compiled = subprocess.run(
-        [compiler, "-std=c11", str(source_path), "-o", str(executable)],
+        [
+            compiler,
+            "-std=c11",
+            f"-I{ROOT / 'cinder' / 'runtime'}",
+            str(source_path),
+            "-o",
+            str(executable),
+        ],
         check=False,
         text=True,
         capture_output=True,
@@ -255,6 +262,26 @@ def test_bootstrap_backend_summary_counts_nominal_declarations(
     assert values[3] == 1  # enums
     assert values[4] == 1  # unions
     assert values[5] == 1  # variants
+
+
+def test_stage0_atomic_backend_emits_runnable_c11_operations(tmp_path: Path) -> None:
+    source = (
+        "from std.atomic import Atomic\n"
+        "\n"
+        "def main() -> i32:\n"
+        "    counter: Atomic[u64] = 0\n"
+        "    return cast[i32](counter.fetch_add(1))\n"
+    )
+    generated = Compiler().compile_source(source, Path(INPUT_NAME)).c_source
+
+    assert "#include <stdatomic.h>" in generated
+    assert "_Atomic(uint64_t) value;" in generated
+    assert "atomic_init(" in generated
+    assert "atomic_fetch_add_explicit(" in generated
+    assert "memory_order_seq_cst" in generated
+
+    result = compile_and_run_c(tmp_path, generated)
+    assert result.returncode == 0, result.stderr
 
 
 def test_bootstrap_backend_matches_unknown_name_diagnostic(

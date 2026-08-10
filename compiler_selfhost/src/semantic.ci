@@ -12,9 +12,33 @@ enum ValueUseKind:
     ADDRESS
 
 
+enum AtomicIntrinsicKind:
+    NONE
+    INIT
+    LOAD
+    STORE
+    EXCHANGE
+    COMPARE_EXCHANGE
+    FETCH_ADD
+    FETCH_SUB
+    FETCH_AND
+    FETCH_OR
+    FETCH_XOR
+    RESULT_EXCHANGED
+    RESULT_OBSERVED
+
+
+enum AtomicArgumentRole:
+    NONE
+    VALUE
+    EXPECTED
+    DESIRED
+
+
 struct NodeTypeBinding:
     node: NodeId
     type_id: TypeId
+    specialization: i32
 
 
 struct NodeSymbolBinding:
@@ -44,6 +68,24 @@ struct CallResolution:
     node: NodeId
     callee: SymbolId
     return_type: TypeId
+    flags: i32
+
+
+struct AtomicIntrinsicResolution:
+    node: NodeId
+    specialization: i32
+    kind: AtomicIntrinsicKind
+    element_kind: types.AtomicElementKind
+    atomic_type: TypeId
+    element_type: TypeId
+    result_type: TypeId
+    receiver: NodeId
+    operand0: NodeId
+    operand1: NodeId
+    first_evaluated: NodeId
+    second_evaluated: NodeId
+    first_role: AtomicArgumentRole
+    second_role: AtomicArgumentRole
     flags: i32
 
 
@@ -81,12 +123,14 @@ struct SemanticModel:
     user_specializations: List[UserSpecialization]
     cleanups: List[CleanupBinding]
     value_use_resolutions: List[ValueUseResolution]
+    atomic_intrinsics: List[AtomicIntrinsicResolution]
+    active_user_specialization: i32
 
     def record_expr_type(self: &SemanticModel, node: NodeId, type_id: TypeId) -> void:
-        record_node_type(self.expr_types, node, type_id)
+        record_node_type(self.expr_types, node, type_id, self.active_user_specialization)
 
     def record_type_node(self: &SemanticModel, node: NodeId, type_id: TypeId) -> void:
-        record_node_type(self.type_nodes, node, type_id)
+        record_node_type(self.type_nodes, node, type_id, self.active_user_specialization)
 
     def record_name_symbol(self: &SemanticModel, node: NodeId, symbol: SymbolId) -> void:
         record_node_symbol(self.name_symbols, node, symbol)
@@ -171,11 +215,74 @@ struct SemanticModel:
             index += 1
         self.value_use_resolutions.append(ValueUseResolution(node=node, kind=kind, symbol=symbol, type_id=type_id))
 
+    def record_atomic_intrinsic(
+        self: &SemanticModel,
+        node: NodeId,
+        kind: AtomicIntrinsicKind,
+        element_kind: types.AtomicElementKind,
+        atomic_type: TypeId,
+        element_type: TypeId,
+        result_type: TypeId,
+        receiver: NodeId,
+        operand0: NodeId,
+        operand1: NodeId,
+        first_evaluated: NodeId,
+        second_evaluated: NodeId,
+        first_role: AtomicArgumentRole,
+        second_role: AtomicArgumentRole,
+        flags: i32,
+    ) -> void:
+        if element_kind == types.AtomicElementKind.INVALID:
+            return
+        index: usize = 0
+        while index < len(self.atomic_intrinsics):
+            if self.atomic_intrinsics[index].node.index == node.index and self.atomic_intrinsics[index].specialization == self.active_user_specialization:
+                self.atomic_intrinsics[index].kind = kind
+                self.atomic_intrinsics[index].element_kind = element_kind
+                self.atomic_intrinsics[index].atomic_type = atomic_type
+                self.atomic_intrinsics[index].element_type = element_type
+                self.atomic_intrinsics[index].result_type = result_type
+                self.atomic_intrinsics[index].receiver = receiver
+                self.atomic_intrinsics[index].operand0 = operand0
+                self.atomic_intrinsics[index].operand1 = operand1
+                self.atomic_intrinsics[index].first_evaluated = first_evaluated
+                self.atomic_intrinsics[index].second_evaluated = second_evaluated
+                self.atomic_intrinsics[index].first_role = first_role
+                self.atomic_intrinsics[index].second_role = second_role
+                self.atomic_intrinsics[index].flags = flags
+                return
+            index += 1
+        self.atomic_intrinsics.append(
+            AtomicIntrinsicResolution(
+                node=node,
+                specialization=self.active_user_specialization,
+                kind=kind,
+                element_kind=element_kind,
+                atomic_type=atomic_type,
+                element_type=element_type,
+                result_type=result_type,
+                receiver=receiver,
+                operand0=operand0,
+                operand1=operand1,
+                first_evaluated=first_evaluated,
+                second_evaluated=second_evaluated,
+                first_role=first_role,
+                second_role=second_role,
+                flags=flags,
+            )
+        )
+
     def expr_type(self: &const SemanticModel, node: NodeId) -> TypeId:
-        return find_node_type(self.expr_types, node)
+        return find_node_type(self.expr_types, node, self.active_user_specialization)
 
     def type_node(self: &const SemanticModel, node: NodeId) -> TypeId:
-        return find_node_type(self.type_nodes, node)
+        return find_node_type(self.type_nodes, node, self.active_user_specialization)
+
+    def expr_type_for_specialization(self: &const SemanticModel, node: NodeId, specialization: i32) -> TypeId:
+        return find_node_type(self.expr_types, node, specialization)
+
+    def type_node_for_specialization(self: &const SemanticModel, node: NodeId, specialization: i32) -> TypeId:
+        return find_node_type(self.type_nodes, node, specialization)
 
     def scope_for_node(self: &const SemanticModel, node: NodeId) -> ScopeId:
         index: usize = 0
@@ -205,6 +312,7 @@ def new_semantic_model() -> SemanticModel:
     user_specializations: List[UserSpecialization] = []
     cleanups: List[CleanupBinding] = []
     value_use_resolutions: List[ValueUseResolution] = []
+    atomic_intrinsics: List[AtomicIntrinsicResolution] = []
     return SemanticModel(
         expr_types=expr_types,
         type_nodes=type_nodes,
@@ -224,17 +332,19 @@ def new_semantic_model() -> SemanticModel:
         user_specializations=user_specializations,
         cleanups=cleanups,
         value_use_resolutions=value_use_resolutions,
+        atomic_intrinsics=atomic_intrinsics,
+        active_user_specialization=-1,
     )
 
 
-def record_node_type(bindings: &List[NodeTypeBinding], node: NodeId, type_id: TypeId) -> void:
+def record_node_type(bindings: &List[NodeTypeBinding], node: NodeId, type_id: TypeId, specialization: i32) -> void:
     index: usize = 0
     while index < len(bindings):
-        if bindings[index].node.index == node.index:
+        if bindings[index].node.index == node.index and bindings[index].specialization == specialization:
             bindings[index].type_id = type_id
             return
         index += 1
-    bindings.append(NodeTypeBinding(node=node, type_id=type_id))
+    bindings.append(NodeTypeBinding(node=node, type_id=type_id, specialization=specialization))
 
 
 def record_node_symbol(bindings: &List[NodeSymbolBinding], node: NodeId, symbol: SymbolId) -> void:
@@ -247,10 +357,16 @@ def record_node_symbol(bindings: &List[NodeSymbolBinding], node: NodeId, symbol:
     bindings.append(NodeSymbolBinding(node=node, symbol=symbol))
 
 
-def find_node_type(bindings: &const List[NodeTypeBinding], node: NodeId) -> TypeId:
+def find_node_type(bindings: &const List[NodeTypeBinding], node: NodeId, specialization: i32) -> TypeId:
     index: usize = 0
     while index < len(bindings):
-        if bindings[index].node.index == node.index:
+        if bindings[index].node.index == node.index and bindings[index].specialization == specialization:
             return bindings[index].type_id
         index += 1
+    if specialization >= 0:
+        index = 0
+        while index < len(bindings):
+            if bindings[index].node.index == node.index and bindings[index].specialization < 0:
+                return bindings[index].type_id
+            index += 1
     return types.type_error()

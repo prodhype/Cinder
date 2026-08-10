@@ -1,6 +1,60 @@
+import std.atomic as atom
+import api
 import model
+import state
 import support.parser as parser
 from model import ParseError, Token
+from state import Atomic
+
+# WRONG: an imported const global is an addressable object, not a C constant
+# expression, so it cannot statically initialize a global Atomic cell.
+# imported_counter: atom.Atomic[u64] = cast[u64](model.offset)
+#
+# CORRECT: use a constant expression for global initialization.
+qualified_counter: atom.Atomic[u64] = 4
+reexported_counter: Atomic[u64] = 11
+qualified_reexported_counter: state.Atomic[u64] = 13
+renamed_qualified_reexported_counter: api.Cell[u64] = 0
+
+
+struct AtomicReaderEnv:
+    offset: u64
+
+
+def read_reexported(cell: *Atomic[u64]) -> u64:
+    return cell.load()
+
+
+def get_reexported_cell() -> *Atomic[u64]:
+    return &reexported_counter
+
+
+def read_reexported_with_env(env: &const AtomicReaderEnv, cell: *Atomic[u64]) -> u64:
+    return cell.load() + env.offset
+
+
+def invoke_atomic_function(
+    callback: def(*Atomic[u64]) -> u64,
+    cell: *Atomic[u64],
+) -> u64:
+    return callback(cell)
+
+
+def invoke_atomic_factory(callback: def() -> *Atomic[u64]) -> u64:
+    cell = callback()
+    return cell.load()
+
+
+def invoke_atomic_closure(
+    callback: closure[const AtomicReaderEnv](*Atomic[u64]) -> u64,
+    cell: *Atomic[u64],
+) -> u64:
+    return callback(cell)
+
+
+def initialize_local_from_imported_const() -> u64:
+    counter: atom.Atomic[u64] = cast[u64](model.offset)
+    return counter.load()
 
 
 def increment(value: i32) -> Result[i32, ParseError]:
@@ -14,6 +68,28 @@ def increment(value: i32) -> Result[i32, ParseError]:
 
 
 def main() -> i32:
+    if qualified_counter.fetch_add(2) != 4 or qualified_counter.load() != 6:
+        return 1
+    if renamed_qualified_reexported_counter.exchange(12) != 0 or renamed_qualified_reexported_counter.load() != 12:
+        return 10
+    if state.counter.fetch_add(3) != 7 or state.counter.load() != 10:
+        return 2
+    if state.pointer().fetch_add(5) != 10 or state.counter.load() != 15:
+        return 9
+    if not state.atomic_specializations_work():
+        return 3
+    reader = closure(AtomicReaderEnv(offset=2), read_reexported_with_env)
+    if invoke_atomic_function(read_reexported, &reexported_counter) != 11:
+        return 4
+    if invoke_atomic_factory(get_reexported_cell) != 11:
+        return 5
+    if invoke_atomic_closure(reader, &reexported_counter) != 13:
+        return 6
+    if initialize_local_from_imported_const() != 1:
+        return 7
+    if qualified_reexported_counter.fetch_add(2) != 13 or qualified_reexported_counter.load() != 15:
+        return 8
+
     result = increment(41)
 
     match result:
