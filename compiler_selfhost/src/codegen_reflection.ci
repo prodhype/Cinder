@@ -1,8 +1,6 @@
 import classes
 import codegen_names
 import codegen_type_names
-import lexer
-import parser
 import project
 import reflection
 import syntax
@@ -90,28 +88,20 @@ def collect_project_reflection_model(
     registry: &const codegen_names.SpecializationNameRegistry,
     class_model: &const classes.ProjectClassModel,
 ) -> ProjectReflectionModel:
-    model = new_project_reflection_model()
+    model: ProjectReflectionModel = new_project_reflection_model()
     index: usize = 0
     while index < len(graph.modules):
         module: &const project.ParsedModule = &graph.modules[index]
-        scan = lexer.new_lexer(module.source[0:len(module.source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
-        collect_module_nominal_shells(parsed.arena, root, &module.source, &module.name, &prefix, class_model, model)
+        prefix: String = codegen_names.c_prefix(&graph.project_name, &module.name)
+        collect_module_nominal_shells(module.arena, module.root, &module.source, &module.name, &prefix, class_model, model)
         index += 1
     index = 0
     while index < len(graph.modules):
         module: &const project.ParsedModule = &graph.modules[index]
-        scan = lexer.new_lexer(module.source[0:len(module.source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
+        prefix: String = codegen_names.c_prefix(&graph.project_name, &module.name)
         collect_module_nominal_details(
-            parsed.arena,
-            root,
+            module.arena,
+            module.root,
             &module.source,
             &module.name,
             &prefix,
@@ -134,8 +124,8 @@ def collect_single_module_reflection_model(
     registry: &const codegen_names.SpecializationNameRegistry,
     class_model: &const classes.ProjectClassModel,
 ) -> ProjectReflectionModel:
-    model = new_project_reflection_model()
-    prefix = codegen_names.c_prefix(project_name, module_name)
+    model: ProjectReflectionModel = new_project_reflection_model()
+    prefix: String = codegen_names.c_prefix(project_name, module_name)
     collect_module_nominal_shells(arena, root, source, module_name, &prefix, class_model, model)
     collect_module_nominal_details(arena, root, source, module_name, &prefix, project_name, imports, registry, model)
     return model

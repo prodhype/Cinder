@@ -661,6 +661,8 @@ def keyword_kind(source: &const String, start: usize, length: usize) -> TokenKin
         return TokenKind.WITH
     if range_equals(source, start, length, "private"):
         return TokenKind.PRIVATE
+    if range_equals(source, start, length, "lock"):
+        return TokenKind.LOCK
     return TokenKind.NAME
 
 

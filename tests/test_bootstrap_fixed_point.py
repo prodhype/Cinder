@@ -5372,3 +5372,367 @@ def test_gen3_supports_atomic_import_forms(
     tmp_path: Path,
 ) -> None:
     assert_compiler_supports_atomic_import_forms(gen3_compiler, tmp_path)
+
+
+def test_gen1_sorted_cleans_up_only_owned_call_results(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "sorted_borrowed_slice.ci"
+    source.write_text(
+        "def identity(values: []const i32) -> []const i32:\n"
+        "    return values\n"
+        "def make_values() -> List[i32]:\n"
+        "    return [6, 4, 5]\n"
+        "def main() -> i32:\n"
+        "    values: List[i32] = [3, 1, 2]\n"
+        "    ordered: List[i32] = sorted(identity(values))\n"
+        "    if ordered[0] != 1 or ordered[2] != 3:\n"
+        "        return 1\n"
+        "    owned: List[i32] = sorted(make_values())\n"
+        "    if owned[0] != 4 or owned[2] != 6:\n"
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert emitted.stdout.count("CinderList_i32_drop(&cinder_sorted_source)") == 1
+
+    executable = tmp_path / "sorted-borrowed-slice"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "sorted-borrowed-slice-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True, timeout=5)
+    assert ran.returncode == 0, ran.stderr
+
+
+def assert_compiler_supports_lock_ordering(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    valid = tmp_path / "lock_order_valid.ci"
+    valid.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "def acquire_cache() -> void:\n"
+        "    CriticalSection cache:\n"
+        "        pass\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [cache, database, database]\n"
+        "    ordered = sorted(locks)\n"
+        "    defer acquire_cache()\n"
+        "    CriticalSection ordered:\n"
+        "        return 0\n"
+        "    return 1\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(compiler, "emit-c", str(valid))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "cinder_lock_acquire" in emitted.stdout
+    assert "cinder_lock_release" in emitted.stdout
+    assert "cinder_sort" in emitted.stdout
+    assert "__auto_type *cinder_lock_source" not in emitted.stdout
+    assert "__auto_type cinder_lock_source" in emitted.stdout
+    executable = tmp_path / f"{compiler.name}-lock-order"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(valid),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / f"{compiler.name}-lock-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True, timeout=5)
+    assert ran.returncode == 0, ran.stderr
+
+    invalid = tmp_path / "lock_order_invalid.ci"
+    invalid.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        CriticalSection database:\n"
+        "            pass\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    rejected = run_gen1(compiler, "check", str(invalid))
+    assert rejected.returncode != 0
+    assert "cannot acquire 'database' while 'cache' is held" in rejected.stdout
+
+    cycle = tmp_path / "lock_order_cycle.ci"
+    cycle.write_text(
+        "lock first after third\n"
+        "lock second after first\n"
+        "lock third after second\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    cycle_result = run_gen1(compiler, "check", str(cycle))
+    assert cycle_result.returncode != 0
+    assert "lock order contains a cycle" in cycle_result.stdout
+
+    effect = tmp_path / "lock_order_effect.ci"
+    effect.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "def update_database() -> void:\n"
+        "    CriticalSection database:\n"
+        "        pass\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        update_database()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    effect_result = run_gen1(compiler, "check", str(effect))
+    assert effect_result.returncode != 0
+    assert "cannot acquire 'database' while 'cache' is held" in effect_result.stdout
+
+    destructor_cleanup = tmp_path / "lock_order_destructor_cleanup.ci"
+    destructor_cleanup.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "class Guard:\n"
+        "    def __del__(self):\n"
+        "        CriticalSection database:\n"
+        "            pass\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        guard = Guard()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    destructor_cleanup_result = run_gen1(compiler, "check", str(destructor_cleanup))
+    assert destructor_cleanup_result.returncode != 0
+    assert (
+        "cannot acquire 'database' while 'cache' is held"
+        in destructor_cleanup_result.stdout
+    )
+
+    default_constructor = tmp_path / "lock_order_default_constructor.ci"
+    default_constructor.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "class Base:\n"
+        "    def __init__(self):\n"
+        "        CriticalSection database:\n"
+        "            pass\n"
+        "class Derived(Base):\n"
+        "    pass\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        derived = Derived()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    default_constructor_result = run_gen1(compiler, "check", str(default_constructor))
+    assert default_constructor_result.returncode != 0
+    assert (
+        "cannot acquire 'database' while 'cache' is held"
+        in default_constructor_result.stdout
+    )
+
+    method = tmp_path / "lock_order_method.ci"
+    method.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "struct Worker:\n"
+        "    def update(self) -> void:\n"
+        "        CriticalSection cache:\n"
+        "            CriticalSection root:\n"
+        "                pass\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    method_result = run_gen1(compiler, "check", str(method))
+    assert method_result.returncode != 0
+    assert "cannot acquire 'root' while 'cache' is held" in method_result.stdout
+
+    concrete_method = tmp_path / "lock_order_concrete_method.ci"
+    concrete_method.write_text(
+        "lock root\n"
+        "struct Counter:\n"
+        "    value: i32\n"
+        "    def read(self) -> i32:\n"
+        "        return self.value\n"
+        "def main() -> i32:\n"
+        "    counter = Counter(value=7)\n"
+        "    CriticalSection root:\n"
+        "        counter.read()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    concrete_method_result = run_gen1(compiler, "check", str(concrete_method))
+    assert concrete_method_result.returncode == 0, concrete_method_result.stderr
+
+    method_effect = tmp_path / "lock_order_method_effect.ci"
+    method_effect.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "struct Worker:\n"
+        "    value: i32\n"
+        "    def acquire_root(self) -> void:\n"
+        "        CriticalSection root:\n"
+        "            pass\n"
+        "def main() -> i32:\n"
+        "    worker = Worker(value=0)\n"
+        "    CriticalSection cache:\n"
+        "        worker.acquire_root()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    method_effect_result = run_gen1(compiler, "check", str(method_effect))
+    assert method_effect_result.returncode != 0
+    assert "cannot acquire 'root' while 'cache' is held" in method_effect_result.stdout
+
+    conditional_alias = tmp_path / "lock_order_conditional_alias.ci"
+    conditional_alias.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "def check(flag: bool) -> void:\n"
+        "    selected = root\n"
+        "    if flag:\n"
+        "        selected = cache\n"
+        "    CriticalSection root:\n"
+        "        CriticalSection selected:\n"
+        "            pass\n"
+        "def main() -> i32:\n"
+        "    check(false)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    conditional_alias_result = run_gen1(compiler, "check", str(conditional_alias))
+    assert conditional_alias_result.returncode != 0
+    assert "cannot acquire a dynamic lock while another lock is held" in conditional_alias_result.stdout
+
+    mutable_alias = tmp_path / "lock_order_mutable_alias.ci"
+    mutable_alias.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "def retarget(target: &Lock) -> void:\n"
+        "    *target = root\n"
+        "def main() -> i32:\n"
+        "    selected = cache\n"
+        "    retarget(&selected)\n"
+        "    CriticalSection root:\n"
+        "        CriticalSection selected:\n"
+        "            pass\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    mutable_alias_result = run_gen1(compiler, "check", str(mutable_alias))
+    assert mutable_alias_result.returncode != 0
+    assert "cannot acquire a dynamic lock while another lock is held" in mutable_alias_result.stdout
+
+    indirect = tmp_path / "lock_order_indirect_call.ci"
+    indirect.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "def acquire_root() -> void:\n"
+        "    CriticalSection root:\n"
+        "        pass\n"
+        "def invoke(callback: def() -> void) -> void:\n"
+        "    CriticalSection cache:\n"
+        "        callback()\n"
+        "def main() -> i32:\n"
+        "    invoke(acquire_root)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    indirect_result = run_gen1(compiler, "check", str(indirect))
+    assert indirect_result.returncode != 0
+    assert "cannot call a function with an unknown lock effect while a lock is held" in indirect_result.stdout
+
+    extern_call = tmp_path / "lock_order_extern_call.ci"
+    extern_call.write_text(
+        'extern "C":\n'
+        "    def opaque_operation() -> void\n"
+        "lock root\n"
+        "def main() -> i32:\n"
+        "    CriticalSection root:\n"
+        "        opaque_operation()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    extern_result = run_gen1(compiler, "check", str(extern_call))
+    assert extern_result.returncode != 0
+    assert (
+        "cannot call a function with an unknown lock effect while a lock is held"
+        in extern_result.stdout
+    )
+
+    ordered_element_address = tmp_path / "lock_order_element_address.ci"
+    ordered_element_address.write_text(
+        "lock first\n"
+        "lock second after first\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [first, second, second]\n"
+        "    ordered = sorted(locks)\n"
+        "    slot = &ordered[2]\n"
+        "    slot[0] = first\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    ordered_element_address_result = run_gen1(
+        compiler,
+        "check",
+        str(ordered_element_address),
+    )
+    assert ordered_element_address_result.returncode != 0
+    assert "E 419 " in ordered_element_address_result.stdout
+
+    ordered_element_borrow = tmp_path / "lock_order_element_borrow.ci"
+    ordered_element_borrow.write_text(
+        "lock first\n"
+        "lock second after first\n"
+        "def retarget(target: &Lock, replacement: Lock) -> void:\n"
+        "    *target = replacement\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [first, second, second]\n"
+        "    ordered = sorted(locks)\n"
+        "    retarget(ordered[2], first)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    ordered_element_borrow_result = run_gen1(
+        compiler,
+        "check",
+        str(ordered_element_borrow),
+    )
+    assert ordered_element_borrow_result.returncode != 0
+    assert "E 419 " in ordered_element_borrow_result.stdout
+
+
+def test_gen1_supports_lock_ordering(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_lock_ordering(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_lock_ordering(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_lock_ordering(gen2, tmp_path)
+
+
+def test_gen3_supports_lock_ordering(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_lock_ordering(gen3_compiler, tmp_path)

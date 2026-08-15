@@ -12,6 +12,7 @@ from cinder.symbols import (
     ClassSymbol,
     EnumSymbol,
     FunctionSymbol,
+    LockSymbol,
     NominalSymbol,
     StructSymbol,
     UnionSymbol,
@@ -189,6 +190,12 @@ class IRGlobal:
 
 
 @dataclass(frozen=True, slots=True)
+class IRLock:
+    symbol: LockSymbol
+    declaration: ast.LockDecl
+
+
+@dataclass(frozen=True, slots=True)
 class IRModule:
     semantic: SemanticModel
     structs: tuple[IRStruct, ...]
@@ -198,6 +205,7 @@ class IRModule:
     variants: tuple[IRVariant, ...]
     functions: tuple[IRFunction, ...]
     globals: tuple[IRGlobal, ...]
+    locks: tuple[IRLock, ...]
     atomic_operations: tuple[IRAtomicOperation, ...]
     atomic_types: tuple[AtomicType, ...]
     atomic_result_types: tuple[AtomicCompareExchangeResultType, ...]
@@ -209,6 +217,7 @@ class IRModule:
     set_types: tuple[SetType, ...]
     map_view_types: tuple[MapViewType, ...]
     sort_types: tuple[Type, ...]
+    sorted_types: tuple[Type, ...]
     result_types: tuple[ResultType, ...]
     option_types: tuple[OptionType, ...]
     owned_types: tuple[OwnedType, ...]
@@ -264,19 +273,31 @@ class Lowerer:
                 )
                 globals_.append(IRGlobal(symbol, declaration, atomic_init))
 
-        slices = set(self._collect_slices())
+        locks = tuple(
+            IRLock(symbol, symbol.declaration)
+            for symbol in self.semantic.locks.values()
+            if symbol.declaration is not None
+        )
+
+        sorted_values = self._collect_sorted_types()
+        sort_values = self._collect_sort_types() | sorted_values
+        slice_values = set(self._collect_slices())
+        for element in sort_values:
+            slice_values.add(SliceType(element))
+            slice_values.add(SliceType(ConstType(element)))
         uses_file = any(
             isinstance(strip_const(type_), FileType) for type_ in self._all_semantic_types()
         )
         if uses_file:
-            slices.add(SliceType(ConstType(U8)))
-            slices.add(SliceType(U8))
-        slices = tuple(sorted(slices, key=type_key))
+            slice_values.add(SliceType(ConstType(U8)))
+            slice_values.add(SliceType(U8))
+        slices = tuple(sorted(slice_values, key=type_key))
         list_values = self._collect_lists()
         # File helpers always include read_all under a shared include guard, so every
         # File-using module must emit List[u8] support alongside the File helper set.
         if uses_file:
             list_values.add(ListType(U8))
+        list_values.update(ListType(element) for element in sorted_values)
         lists = tuple(sorted(list_values, key=type_key))
         maps = tuple(sorted(self._collect_maps(), key=type_key))
         sets = tuple(sorted(self._collect_sets(), key=type_key))
@@ -289,7 +310,8 @@ class Lowerer:
         tuple_values.update(TupleType((map_type.key, map_type.value)) for map_type in maps)
         tuples = tuple(sorted(tuple_values, key=type_key))
         closures = tuple(sorted(self._collect_closures(), key=type_key))
-        sort_types = tuple(sorted(self._collect_sort_types(), key=type_key))
+        sort_types = tuple(sorted(sort_values, key=type_key))
+        sorted_types = tuple(sorted(sorted_values, key=type_key))
         results = tuple(sorted(self._collect_results(), key=type_key))
         option_values = self._collect_options()
         option_values.update(OptionType(map_type.value) for map_type in maps)
@@ -326,6 +348,7 @@ class Lowerer:
             variants=variants,
             functions=tuple(functions),
             globals=tuple(globals_),
+            locks=locks,
             atomic_operations=atomic_operations,
             atomic_types=atomic_types,
             atomic_result_types=atomic_result_types,
@@ -337,6 +360,7 @@ class Lowerer:
             set_types=sets,
             map_view_types=map_views,
             sort_types=sort_types,
+            sorted_types=sorted_types,
             result_types=results,
             option_types=options,
             owned_types=owneds,
@@ -600,9 +624,10 @@ class Lowerer:
             if isinstance(raw, (StringType, StringBuilderType)):
                 return
             if isinstance(raw, ListType):
-                if raw in result:
+                normalized = ListType(raw.inner)
+                if normalized in result:
                     return
-                result.add(raw)
+                result.add(normalized)
                 collect(raw.inner)
             elif isinstance(
                 raw,
@@ -912,7 +937,17 @@ class Lowerer:
                 continue
             expected = resolution.expected_types[0]
             if isinstance(expected, SliceType):
-                result.add(expected.inner)
+                result.add(strip_const(expected.inner))
+        return result
+
+    def _collect_sorted_types(self) -> set[Type]:
+        result: set[Type] = set()
+        for resolution in self.semantic.call_resolutions.values():
+            if resolution.kind != "sorted" or not resolution.expected_types:
+                continue
+            expected = resolution.expected_types[0]
+            if isinstance(expected, SliceType):
+                result.add(strip_const(expected.inner))
         return result
 
     def _collect_results(self) -> set[ResultType]:

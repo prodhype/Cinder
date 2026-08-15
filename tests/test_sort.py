@@ -64,6 +64,66 @@ def test_sort_codegen_reuses_a_specialization_and_coerces_arrays() -> None:
     assert "CinderSlice_i32){ .data = second, .length = 2" in generated
 
 
+def test_sorted_returns_a_new_list_and_keeps_sort_behavior() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    values: List[i32] = [3, 1, 2]\n"
+        "    ordered = sorted(values)\n"
+        "    sort(values)\n"
+        "    return ordered[0] - values[0]\n"
+    )
+
+    assert "CinderSorted_i32(" in generated
+    assert "CinderSort_i32(" in generated
+
+
+def test_sorted_borrows_addressable_list_fields_without_dropping_source() -> None:
+    generated = compile_source(
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "def main() -> i32:\n"
+        "    bundle = Bundle(items=[3, 1, 2])\n"
+        "    ordered = sorted(bundle.items)\n"
+        "    return ordered[0] + bundle.items[0]\n"
+    )
+
+    assert "CinderSorted_i32(" in generated
+    assert "__cinder_sorted_source_" not in generated
+
+
+def test_sorted_evaluates_addressable_list_field_receiver_once() -> None:
+    generated = compile_source(
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "calls: i32 = 0\n"
+        "def get_bundle(bundle: Bundle*) -> Bundle*:\n"
+        "    calls += 1\n"
+        "    return bundle\n"
+        "def main() -> i32:\n"
+        "    bundle = Bundle(items=[3, 1, 2])\n"
+        "    ordered = sorted(get_bundle(&bundle).items)\n"
+        "    if calls != 1:\n"
+        "        return 1\n"
+        "    return ordered[0]\n"
+    )
+
+    assert generated.count("get_bundle((&(bundle)))") == 1
+    assert "CinderList_i32 *__cinder_sorted_list_" in generated
+
+
+def test_sorted_drops_materialized_rvalue_list_source() -> None:
+    generated = compile_source(
+        "def get_values() -> List[i32]:\n"
+        "    return [3, 1, 2]\n"
+        "def main() -> i32:\n"
+        "    ordered = sorted(get_values())\n"
+        "    return ordered[0]\n"
+    )
+
+    assert "CinderList_i32 __cinder_sorted_source_" in generated
+    assert "CinderList_i32_drop(&__cinder_sorted_source_" in generated
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [
@@ -154,11 +214,19 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "    low = -4\n"
         "    normal = 7\n"
         "\n"
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "\n"
         "calls: i32 = 0\n"
+        "bundle_calls: i32 = 0\n"
         "\n"
         "def view(values: []i32) -> []i32:\n"
         "    calls += 1\n"
         "    return values\n"
+        "\n"
+        "def get_bundle(bundle: Bundle*) -> Bundle*:\n"
+        "    bundle_calls += 1\n"
+        "    return bundle\n"
         "\n"
         "def main() -> i32:\n"
         "    numbers: i32[6] = [9, 4, 3, 2, 1, 8]\n"
@@ -190,6 +258,18 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "        return 5\n"
         '    if owned_words[2] != "zeta" or owned_words[3] != "éclair":\n'
         "        return 6\n"
+        "\n"
+        '    word_list: List[String] = ["zeta", "alpha"]\n'
+        "    ordered_words = sorted(word_list)\n"
+        '    if ordered_words[0] != "alpha" or word_list[0] != "zeta":\n'
+        "        return 7\n"
+        "\n"
+        "    bundle = Bundle(items=[3, 1, 2])\n"
+        "    ordered_items = sorted(get_bundle(&bundle).items)\n"
+        "    if bundle_calls != 1 or ordered_items[0] != 1 or bundle.items[0] != 3:\n"
+        "        return 8\n"
+        "    if len(bundle.items) != 3:\n"
+        "        return 8\n"
         "\n"
         "    single: f64[1] = [1.5]\n"
         "    sort(numbers[0:0])\n"

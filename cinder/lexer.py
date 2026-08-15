@@ -57,6 +57,7 @@ class TokenKind(StrEnum):
     DEFER = "defer"
     WITH = "with"
     PRIVATE = "private"
+    LOCK = "lock"
 
     LEFT_PAREN = "("
     RIGHT_PAREN = ")"
@@ -144,6 +145,7 @@ _KEYWORDS: dict[str, TokenKind] = {
         TokenKind.DEFER,
         TokenKind.WITH,
         TokenKind.PRIVATE,
+        TokenKind.LOCK,
     )
 }
 

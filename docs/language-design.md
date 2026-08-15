@@ -551,6 +551,40 @@ Compile-time inspection does not emit per-object metadata. Member loops must app
 inside a function and are unrolled into ordinary C blocks. See `docs/reflection.md`
 for the exact metadata ABI and limits.
 
+## Lock ordering
+
+Cinder uses lexical critical sections and compile-time lock-order analysis.
+
+```python
+lock database
+lock cache after database
+
+def update() -> void:
+    CriticalSection database:
+        CriticalSection cache:
+            pass
+```
+
+An order declaration adds a directed graph edge. The compiler uses graph reachability, so the user does not write transitive edges. Nested acquisitions and direct function calls can add inferred edges. Explicit and inferred edges use one graph. The compiler rejects a cycle and reports the locks in the cycle.
+
+Modules export lock identities and function lock effects. Application code can add a cross-module edge:
+
+```python
+lockorder storage.cache before sessions.active
+```
+
+The graph is a partial order. Independent locks do not need a relationship. After validation, the compiler creates a deterministic total order that extends the graph. This total order is an internal implementation detail. Cinder does not expose a numeric rank.
+
+Use normal `sorted()` for a dynamic lock collection:
+
+```python
+ordered = sorted(locks)
+CriticalSection ordered:
+    work()
+```
+
+The critical section snapshots the collection. It ignores duplicate references to the same lock. It acquires the unique locks in canonical order and releases them in reverse order. An unknown dynamic lock set cannot nest with another acquisition because the compiler cannot prove that order.
+
 ## Memory management
 
 Cinder does not perform automatic ownership inference or hide heap allocation.

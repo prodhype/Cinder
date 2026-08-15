@@ -1,7 +1,9 @@
 import checker_core
 import collections
 import generics
+import lock_order
 import ownership
+import project
 import semantic
 import symbols
 import syntax
@@ -38,6 +40,7 @@ def checker_type_can_clone(table: &const types.TypeTable, type_id: types.TypeId)
         or record.kind == types.TypeKind.CHAR
         or record.kind == types.TypeKind.STRING
         or record.kind == types.TypeKind.ENUM
+        or record.kind == types.TypeKind.LOCK
         or record.kind == types.TypeKind.POINTER
         or record.kind == types.TypeKind.REFERENCE
     ):
@@ -202,6 +205,9 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "StringBuilder"):
         checker.model.record_expr_type(id, types.type_string_builder())
         return
+    if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "sorted"):
+        validate_sorted_call(checker, arena, id, source, current_scope)
+        return
     if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "input") or checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "to_string"):
         argument = call_argument_value(arena, id, 0)
         if argument.index >= 0:
@@ -300,6 +306,62 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
     elif actual > expected:
         checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+
+
+def validate_sorted_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    call = arena.nodes[id.index]
+    argument_count = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    argument = call_argument_value(arena, id, 0)
+    if argument_count != 1 or call_argument_is_named(arena, id, 0):
+        checker_core.emit_error(checker, 405, call.start, call.length, call.line, call.column)
+        checker.model.record_expr_type(id, collections.list_type(checker.type_table, types.type_error()))
+        return
+    argument_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, argument, source, current_scope))
+    if argument_type.index < 0 or argument_type.index >= cast[i32](len(checker.type_table.types)):
+        checker_core.emit_error(checker, 406, call.start, call.length, call.line, call.column)
+        checker.model.record_expr_type(id, collections.list_type(checker.type_table, types.type_error()))
+        return
+    record = checker.type_table.types[argument_type.index]
+    if record.kind != types.TypeKind.LIST and record.kind != types.TypeKind.ARRAY and record.kind != types.TypeKind.SLICE:
+        argument_node = arena.nodes[argument.index]
+        checker_core.emit_error(checker, 406, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+        checker.model.record_expr_type(id, collections.list_type(checker.type_table, types.type_error()))
+        return
+    element = types.strip_const(&checker.type_table, record.inner)
+    if not semantic_type_is_sortable(checker.type_table, element, source):
+        argument_node = arena.nodes[argument.index]
+        checker_core.emit_error(checker, 407, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+    if element.index == types.type_lock().index:
+        checker.model.record_expr_type(id, checker.type_table.ordered_lock_list())
+    else:
+        checker.model.record_expr_type(id, collections.list_type(checker.type_table, element))
+
+
+def call_argument_is_named(arena: &const syntax.SyntaxArena, call_id: NodeId, wanted: i32) -> bool:
+    call = arena.nodes[call_id.index]
+    seen: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind == syntax.SyntaxKind.EXPR_ARGUMENT:
+            if seen == wanted:
+                return argument.flags == 1
+            seen += 1
+    return false
+
+
+def semantic_type_is_sortable(table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    kind = table.types[current.index].kind
+    return kind == types.TypeKind.BOOL or kind == types.TypeKind.STRING or kind == types.TypeKind.ENUM or kind == types.TypeKind.LOCK or semantic_type_is_numeric(table, current, source)
 
 
 def validate_owned_constructor(
@@ -652,6 +714,36 @@ def declaration_parameter_at(arena: &const syntax.SyntaxArena, declaration: Node
     return syntax.missing_node()
 
 
+def is_mutable_reference_type(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if record.kind != types.TypeKind.REFERENCE:
+        return false
+    if record.inner.index < 0 or record.inner.index >= cast[i32](len(table.types)):
+        return true
+    return table.types[record.inner.index].kind != types.TypeKind.CONST
+
+
+def validate_ordered_lock_element_mutation(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expression: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    if expression.index < 0:
+        return
+    expression_node = arena.nodes[expression.index]
+    if expression_node.kind != syntax.SyntaxKind.EXPR_INDEX:
+        return
+    collection = checker_core.first_child(arena, expression)
+    collection_type = infer_expression_type(checker, arena, collection, source, current_scope)
+    if types.is_ordered_lock_list(&checker.type_table, collection_type):
+        checker_core.emit_error(checker, 419, expression_node.start, expression_node.length, expression_node.line, expression_node.column)
+
+
 def validate_atomic_call_argument_type(
     checker: &checker_core.Checker,
     arena: &const syntax.SyntaxArena,
@@ -695,6 +787,8 @@ def validate_declared_call_move_arguments(
         destination_type = value_type
         if parameter.index >= 0:
             destination_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter, source, value_type)
+        if is_mutable_reference_type(&checker.type_table, destination_type):
+            validate_ordered_lock_element_mutation(checker, arena, value, source, current_scope)
         validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)
         validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
@@ -719,6 +813,8 @@ def validate_callable_call_move_arguments(
         destination_type = generic_actual_argument(checker.type_table, callable_type, argument_index)
         if destination_type.index < 0:
             destination_type = value_type
+        if is_mutable_reference_type(&checker.type_table, destination_type):
+            validate_ordered_lock_element_mutation(checker, arena, value, source, current_scope)
         validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)
         validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
@@ -1068,6 +1164,7 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         operand_type = infer_expression_type(checker, arena, operand, source, current_scope)
         result = operand_type
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
+            validate_ordered_lock_element_mutation(checker, arena, operand, source, current_scope)
             result = checker.type_table.pointer_to(operand_type)
         elif types.is_atomic_type(&checker.type_table, operand_type):
             operand_node = arena.nodes[operand.index]
@@ -1119,6 +1216,18 @@ def infer_attribute_expression_type(
 ) -> types.TypeId:
     receiver = checker_core.first_child(arena, id)
     member = checker_core.second_child(arena, id)
+    if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == syntax.SyntaxKind.EXPR_NAME:
+        receiver_node = arena.nodes[receiver.index]
+        member_node = arena.nodes[member.index]
+        alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+        name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+        import_index: usize = 0
+        module_imports: &const List[project.ImportBinding] = &checker.module_imports
+        while import_index < len(module_imports):
+            imported: &const project.ImportBinding = &module_imports[import_index]
+            if len(imported.member) == 0 and imported.alias == alias and lock_order.find_lock(&checker.lock_model, &imported.module_name, &name) >= 0:
+                return types.type_lock()
+            import_index += 1
     receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, receiver, source, current_scope))
     if receiver_type.index < 0 or receiver_type.index >= cast[i32](len(checker.type_table.types)) or member.index < 0:
         return receiver_type
@@ -1296,6 +1405,8 @@ def validate_collection_method_call(
         checker.model.record_expr_type(call_id, result)
         return
     if receiver_record.kind == types.TypeKind.LIST:
+        if types.is_ordered_lock_list(&checker.type_table, receiver_type) and not collections.text_equals(&member_name, "sort"):
+            checker_core.emit_error(checker, 419, member_node.start, member_node.length, member_node.line, member_node.column)
         expected: i32 = 0
         result = types.type_void()
         takes_element = false
@@ -1384,6 +1495,42 @@ def semantic_type_is_kind(table: &const types.TypeTable, type_id: types.TypeId, 
     return value_type.index >= 0 and value_type.index < cast[i32](len(table.types)) and table.types[value_type.index].kind == kind
 
 
+def lock_list_storage_type(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    value_type = types.strip_const(table, type_id)
+    if value_type.index < 0 or value_type.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[value_type.index]
+    return record.kind == types.TypeKind.LIST and types.strip_const(table, record.inner).index == types.type_lock().index
+
+
+def const_lock_element_type(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind != types.TypeKind.CONST:
+        return false
+    return types.strip_const(table, record.inner).index == types.type_lock().index
+
+
+def ordered_lock_list_readonly_view(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.CONST:
+        return lock_list_storage_type(table, record.inner)
+    if record.kind == types.TypeKind.SLICE:
+        return const_lock_element_type(table, record.inner)
+    if record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.POINTER:
+        inner = record.inner
+        if inner.index < 0 or inner.index >= cast[i32](len(table.types)):
+            return false
+        inner_record = table.types[inner.index]
+        if inner_record.kind != types.TypeKind.CONST:
+            return false
+        return lock_list_storage_type(table, inner_record.inner)
+    return false
+
+
 def is_set_algebra_operator(operator: i32) -> bool:
     return operator == cast[i32](token.TokenKind.PIPE) or operator == cast[i32](token.TokenKind.AMPERSAND) or operator == cast[i32](token.TokenKind.MINUS) or operator == cast[i32](token.TokenKind.CARET)
 
@@ -1417,6 +1564,12 @@ def atomic_indirection_const_compatible(table: &const types.TypeTable, expected:
 
 
 def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId) -> bool:
+    expected_ordered = types.is_ordered_lock_list(&checker.type_table, expected)
+    actual_ordered = types.is_ordered_lock_list(&checker.type_table, actual)
+    if expected_ordered and not actual_ordered:
+        return false
+    if actual_ordered and not expected_ordered and not ordered_lock_list_readonly_view(&checker.type_table, expected):
+        return false
     if checker.type_table.same(expected, actual):
         return true
     if expected.index < 0 or actual.index < 0:
@@ -1492,7 +1645,7 @@ def semantic_type_is_scalar(table: &const types.TypeTable, type_id: types.TypeId
     if current.index < 0 or current.index >= cast[i32](len(table.types)):
         return false
     kind = table.types[current.index].kind
-    return kind == types.TypeKind.BOOL or semantic_type_is_numeric(table, current, source) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN
+    return kind == types.TypeKind.BOOL or semantic_type_is_numeric(table, current, source) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN or kind == types.TypeKind.LOCK
 
 
 def specialized_operand_types_compatible(checker: &checker_core.Checker, left: types.TypeId, right: types.TypeId) -> bool:
@@ -1510,7 +1663,7 @@ def is_numeric_kind(kind: types.TypeKind) -> bool:
 
 
 def is_scalar_kind(kind: types.TypeKind) -> bool:
-    return kind == types.TypeKind.BOOL or is_numeric_kind(kind) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN
+    return kind == types.TypeKind.BOOL or is_numeric_kind(kind) or kind == types.TypeKind.ENUM or kind == types.TypeKind.POINTER or kind == types.TypeKind.REFERENCE or kind == types.TypeKind.DYN or kind == types.TypeKind.LOCK
 
 
 def validate_hashable_collection_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
@@ -1617,7 +1770,7 @@ def is_string_literal(arena: &const syntax.SyntaxArena, id: NodeId) -> bool:
 
 
 def is_builtin_name(source: &const String, start: usize, length: usize) -> bool:
-    return checker_core.range_text_equals(source, start, length, "print") or checker_core.range_text_equals(source, start, length, "len") or checker_core.range_text_equals(source, start, length, "open") or checker_core.range_text_equals(source, start, length, "range") or checker_core.range_text_equals(source, start, length, "sort") or checker_core.range_text_equals(source, start, length, "input") or checker_core.range_text_equals(source, start, length, "to_string") or checker_core.range_text_equals(source, start, length, "set") or checker_core.range_text_equals(source, start, length, "free") or checker_core.range_text_equals(source, start, length, "panic") or checker_core.range_text_equals(source, start, length, "String") or checker_core.range_text_equals(source, start, length, "StringBuilder") or checker_core.range_text_equals(source, start, length, "Some") or checker_core.range_text_equals(source, start, length, "Owned") or checker_core.range_text_equals(source, start, length, "Ok") or checker_core.range_text_equals(source, start, length, "Err") or checker_core.range_text_equals(source, start, length, "closure") or checker_core.range_text_equals(source, start, length, "super") or is_parse_builtin_name(source, start, length) or is_reflection_builtin_name(source, start, length)
+    return checker_core.range_text_equals(source, start, length, "print") or checker_core.range_text_equals(source, start, length, "len") or checker_core.range_text_equals(source, start, length, "open") or checker_core.range_text_equals(source, start, length, "range") or checker_core.range_text_equals(source, start, length, "sort") or checker_core.range_text_equals(source, start, length, "sorted") or checker_core.range_text_equals(source, start, length, "input") or checker_core.range_text_equals(source, start, length, "to_string") or checker_core.range_text_equals(source, start, length, "set") or checker_core.range_text_equals(source, start, length, "free") or checker_core.range_text_equals(source, start, length, "panic") or checker_core.range_text_equals(source, start, length, "String") or checker_core.range_text_equals(source, start, length, "StringBuilder") or checker_core.range_text_equals(source, start, length, "Some") or checker_core.range_text_equals(source, start, length, "Owned") or checker_core.range_text_equals(source, start, length, "Ok") or checker_core.range_text_equals(source, start, length, "Err") or checker_core.range_text_equals(source, start, length, "closure") or checker_core.range_text_equals(source, start, length, "super") or is_parse_builtin_name(source, start, length) or is_reflection_builtin_name(source, start, length)
 
 
 def is_parse_builtin_name(source: &const String, start: usize, length: usize) -> bool:

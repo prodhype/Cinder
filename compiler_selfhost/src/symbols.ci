@@ -24,6 +24,7 @@ enum SymbolKind:
     EXTERN_TYPE
     TYPE_PARAMETER
     MODULE
+    LOCK
 
 
 struct SymbolId:

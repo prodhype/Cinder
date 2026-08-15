@@ -770,6 +770,36 @@ Locals use lexical block scope.
 This matches generated C.
 It does not match Python function-wide local scope.
 
+## Compile-time lock ordering
+
+Declare lock relationships as a partial-order graph:
+
+```python
+lock database
+lock cache after database
+
+def update() -> void:
+    CriticalSection database:
+        CriticalSection cache:
+            pass
+```
+
+The compiler infers safe nested relationships and checks function lock effects.
+It rejects reverse acquisition and graph cycles.
+Use `lockorder module.first before other.second` to add a cross-module relationship.
+
+Use `sorted(locks)` before a dynamic critical section.
+Cinder uses a hidden canonical order and ignores duplicate lock identities during acquisition.
+It releases locks in reverse order.
+The language does not expose a numeric lock rank.
+
+```python
+CriticalSection sorted(locks):
+    work()
+```
+
+All critical sections use the normal lexical cleanup paths.
+
 ## Allocation and `defer`
 
 Cinder has no garbage collector.

@@ -1,6 +1,4 @@
 import checker_core
-import lexer
-import parser
 import project
 import semantic
 import symbols
@@ -115,19 +113,14 @@ def imported_declaration_atomic_type(
     for module in modules:
         if not (module.name == module_name[0:len(module_name)]):
             continue
-        module_source = module.source[0:len(module.source)]
-        scan = lexer.new_lexer(module_source[0:len(module_source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        module_root = parsed.parse_module()
-        parsed_arena: &const syntax.SyntaxArena = &parsed.arena
-        declaration = find_exported_declaration(parsed_arena, module_root, &module_source, member_name)
-        if declaration.index < 0 or parsed_arena.nodes[declaration.index].kind != declaration_kind:
+        module_arena: &const syntax.SyntaxArena = &module.arena
+        declaration = find_exported_declaration(module_arena, module.root, &module.source, member_name)
+        if declaration.index < 0 or module_arena.nodes[declaration.index].kind != declaration_kind:
             return types.missing_type()
-        annotation = checker_core.find_child_type(parsed_arena, declaration)
+        annotation = checker_core.find_child_type(module_arena, declaration)
         if annotation.index < 0:
             return types.missing_type()
-        return resolve_imported_atomic_annotation(checker, parsed_arena, annotation, &module_source, &module.imports, modules)
+        return resolve_imported_atomic_annotation(checker, module_arena, annotation, &module.source, &module.imports, modules)
     return types.missing_type()
 
 
@@ -205,6 +198,20 @@ def imported_member_is_atomic_template(
     return false
 
 
+def imported_member_is_lock(
+    module_name: &const String,
+    member_name: &const String,
+    modules: &const List[project.ParsedModule],
+) -> bool:
+    for module in modules:
+        if not (module.name == module_name[0:len(module_name)]):
+            continue
+        module_arena: &const syntax.SyntaxArena = &module.arena
+        declaration = find_exported_declaration(module_arena, module.root, &module.source, member_name)
+        return declaration.index >= 0 and module_arena.nodes[declaration.index].kind == syntax.SyntaxKind.LOCK_DECL
+    return false
+
+
 def collect_qualified_import_enum_names(checker: &checker_core.Checker, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:
     for imported in imports:
         if len(imported.member) > 0:
@@ -212,12 +219,7 @@ def collect_qualified_import_enum_names(checker: &checker_core.Checker, imports:
         for module in modules:
             if not (module.name == imported.module_name):
                 continue
-            module_source = module.source[0:len(module.source)]
-            scan = lexer.new_lexer(module_source[0:len(module_source)])
-            scan.tokenize()
-            parsed = parser.new_parser(scan)
-            module_root = parsed.parse_module()
-            collect_module_enum_names(checker, parsed.arena, module_root, &module_source, &imported.alias)
+            collect_module_enum_names(checker, &module.arena, module.root, &module.source, &imported.alias)
 
 
 def collect_module_enum_names(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, root: NodeId, source: &const String, alias: &const String) -> void:
@@ -261,11 +263,7 @@ def validate_from_import_members(checker: &checker_core.Checker, arena: &const s
         index += 1
     if module_index < 0:
         return
-    module_source = modules[cast[usize](module_index)].source[0:len(modules[cast[usize](module_index)].source)]
-    scan = lexer.new_lexer(module_source[0:len(module_source)])
-    scan.tokenize()
-    parsed = parser.new_parser(scan)
-    module_root = parsed.parse_module()
+    target_module: &const project.ParsedModule = &modules[cast[usize](module_index)]
     node = arena.nodes[id.index]
     for offset in range(0, node.child_count):
         import_id = arena.children[node.first_child + offset]
@@ -276,11 +274,11 @@ def validate_from_import_members(checker: &checker_core.Checker, arena: &const s
                 name_node = arena.nodes[name_id.index]
                 if name_node.kind == syntax.SyntaxKind.NAME and name_node.flags != 1:
                     member_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
-                    declaration = find_exported_declaration(parsed.arena, module_root, &module_source, &member_name)
+                    declaration = find_exported_declaration(&target_module.arena, target_module.root, &target_module.source, &member_name)
                     if declaration.index < 0:
                         if not imported_member_is_atomic_template(&module_name, &member_name, modules):
                             checker_core.emit_error(checker, 48, name_node.start, name_node.length, name_node.line, name_node.column)
-                    elif exported_declaration_kind(parsed.arena, declaration) == syntax.SyntaxKind.ENUM_DECL:
+                    elif exported_declaration_kind(&target_module.arena, declaration) == syntax.SyntaxKind.ENUM_DECL:
                         binding_id = name_id
                         for binding_offset in range(0, imported.child_count):
                             candidate_id = arena.children[imported.first_child + binding_offset]
@@ -332,23 +330,19 @@ def validate_import_member_call(checker: &checker_core.Checker, arena: &const sy
         index += 1
     if module_index < 0:
         return
-    module_source = modules[cast[usize](module_index)].source[0:len(modules[cast[usize](module_index)].source)]
-    scan = lexer.new_lexer(module_source[0:len(module_source)])
-    scan.tokenize()
-    parsed = parser.new_parser(scan)
-    module_root = parsed.parse_module()
-    declaration = find_exported_declaration(parsed.arena, module_root, &module_source, &member_name)
+    target_module: &const project.ParsedModule = &modules[cast[usize](module_index)]
+    declaration = find_exported_declaration(&target_module.arena, target_module.root, &target_module.source, &member_name)
     if declaration.index < 0:
         checker_core.emit_error(checker, 48, member_node.start, member_node.length, member_node.line, member_node.column)
         return
-    declaration_kind = exported_declaration_kind(parsed.arena, declaration)
+    declaration_kind = exported_declaration_kind(&target_module.arena, declaration)
     if declaration_kind != syntax.SyntaxKind.FUNCTION_DECL and declaration_kind != syntax.SyntaxKind.STRUCT_DECL and declaration_kind != syntax.SyntaxKind.CLASS_DECL and declaration_kind != syntax.SyntaxKind.ENUM_DECL and declaration_kind != syntax.SyntaxKind.UNION_DECL and declaration_kind != syntax.SyntaxKind.VARIANT_DECL:
         checker_core.emit_error(checker, 48, member_node.start, member_node.length, member_node.line, member_node.column)
         return
     if declaration_kind != syntax.SyntaxKind.FUNCTION_DECL:
         return
     actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
-    expected = checker_core.count_direct_children(parsed.arena, declaration, syntax.SyntaxKind.PARAMETER)
+    expected = checker_core.count_direct_children(&target_module.arena, declaration, syntax.SyntaxKind.PARAMETER)
     call = arena.nodes[call_id.index]
     if actual < expected:
         checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
@@ -361,7 +355,7 @@ def find_exported_declaration(arena: &const syntax.SyntaxArena, root: NodeId, so
     for offset in range(0, node.child_count):
         child_id = arena.children[node.first_child + offset]
         child = arena.nodes[child_id.index]
-        if (child.kind == syntax.SyntaxKind.FUNCTION_DECL or child.kind == syntax.SyntaxKind.STRUCT_DECL or child.kind == syntax.SyntaxKind.CLASS_DECL or child.kind == syntax.SyntaxKind.ENUM_DECL or child.kind == syntax.SyntaxKind.UNION_DECL or child.kind == syntax.SyntaxKind.VARIANT_DECL or child.kind == syntax.SyntaxKind.GLOBAL_DECL) and source[child.value_start:child.value_start + child.value_length] == name:
+        if (child.kind == syntax.SyntaxKind.FUNCTION_DECL or child.kind == syntax.SyntaxKind.STRUCT_DECL or child.kind == syntax.SyntaxKind.CLASS_DECL or child.kind == syntax.SyntaxKind.ENUM_DECL or child.kind == syntax.SyntaxKind.UNION_DECL or child.kind == syntax.SyntaxKind.VARIANT_DECL or child.kind == syntax.SyntaxKind.GLOBAL_DECL or child.kind == syntax.SyntaxKind.LOCK_DECL) and source[child.value_start:child.value_start + child.value_length] == name:
             return child_id
     return syntax.missing_node()
 

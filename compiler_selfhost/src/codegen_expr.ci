@@ -750,8 +750,180 @@ def emit_module_propagate(
     context.expected_type = previous_expected
     builder.append("; if (cinder_result.tag == ")
     builder.append(source_name[0:len(source_name)])
-    builder.append("_Tag_Err) return (")
+    builder.append("_Tag_Err) { ")
+    emit_module_propagate_cleanups(arena, source, builder, prefix, project_name, imports, context)
+    builder.append("return (")
     builder.append(enclosing_name[0:len(enclosing_name)])
     builder.append("){ .tag = ")
     builder.append(enclosing_name[0:len(enclosing_name)])
-    builder.append("_Tag_Err, .data.err = cinder_result.data.err }; cinder_result.data.ok; })")
+    builder.append("_Tag_Err, .data.err = cinder_result.data.err }; } cinder_result.data.ok; })")
+
+
+def emit_module_propagate_cleanups(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    emit_module_propagate_active_cleanups(arena, source, builder, prefix, project_name, imports, context, 0)
+
+
+def emit_module_propagate_iterator_guard_cleanups_until(builder: &StringBuilder, context: &const codegen_model.ModuleCodegenContext, start: usize, end: usize) -> void:
+    iterator_guard_names: &const List[String] = &context.iterator_guard_names
+    index = end
+    while index > start:
+        index -= 1
+        name: &const String = &iterator_guard_names[index]
+        builder.append("if (")
+        builder.append(name[0:len(name)])
+        builder.append(" != NULL && ")
+        builder.append(name[0:len(name)])
+        builder.append("->active_iterators > 0) ")
+        builder.append(name[0:len(name)])
+        builder.append("->active_iterators -= 1; ")
+
+
+def emit_module_propagate_defers_until(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    defer_start: usize,
+    defer_end: usize,
+) -> void:
+    index = defer_end
+    while index > defer_start:
+        index -= 1
+        emit_module_expression(arena, context.deferred_expressions[index], source, builder, prefix, project_name, imports, context)
+        builder.append("; ")
+
+
+def emit_module_propagate_with_resource_cleanups_until(builder: &StringBuilder, context: &const codegen_model.ModuleCodegenContext, start: usize, end: usize) -> void:
+    index = end
+    while index > start:
+        index -= 1
+        builder.append("fclose(")
+        builder.append(context.with_resources[index])
+        builder.append("); ")
+
+
+def emit_module_propagate_lock_cleanups_until(builder: &StringBuilder, context: &const codegen_model.ModuleCodegenContext, start: usize, end: usize) -> void:
+    lock_cleanups: &const List[codegen_context.CodegenLockCleanup] = &context.lock_cleanups
+    index = end
+    while index > start:
+        index -= 1
+        cleanup: &const codegen_context.CodegenLockCleanup = &lock_cleanups[index]
+        if not cleanup.collection:
+            builder.append("cinder_lock_release(")
+            builder.append(cleanup.name[0:len(cleanup.name)])
+            builder.append("); ")
+            continue
+        builder.append("for (size_t cinder_lock_release_index = ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".length; cinder_lock_release_index > 0; --cinder_lock_release_index) { size_t cinder_lock_item = cinder_lock_release_index - 1; if (cinder_lock_release_index < ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".length && ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".data[cinder_lock_item] == ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".data[cinder_lock_release_index]) continue; cinder_lock_release(")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".data[cinder_lock_item]); } CinderList_Lock_drop(&")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append("); ")
+
+
+def emit_module_propagate_cleanup_segment(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    local_start: usize,
+    local_end: usize,
+    defer_start: usize,
+    defer_end: usize,
+    with_resource_start: usize,
+    with_resource_end: usize,
+    iterator_guard_start: usize,
+    iterator_guard_end: usize,
+    lock_cleanup_start: usize,
+    lock_cleanup_end: usize,
+) -> void:
+    emit_module_propagate_iterator_guard_cleanups_until(builder, context, iterator_guard_start, iterator_guard_end)
+    emit_module_propagate_defers_until(arena, source, builder, prefix, project_name, imports, context, defer_start, defer_end)
+    emit_module_propagate_with_resource_cleanups_until(builder, context, with_resource_start, with_resource_end)
+    codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, local_end, prefix, project_name, imports)
+    emit_module_propagate_lock_cleanups_until(builder, context, lock_cleanup_start, lock_cleanup_end)
+
+
+def emit_module_propagate_active_cleanups(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    boundary_start: usize,
+) -> void:
+    local_end = len(context.local_types)
+    defer_end = len(context.deferred_expressions)
+    with_resource_end = len(context.with_resources)
+    iterator_guard_end = len(context.iterator_guard_names)
+    lock_cleanup_end = len(context.lock_cleanups)
+    boundary_index = len(context.cleanup_boundaries)
+    while boundary_index > boundary_start:
+        boundary_index -= 1
+        emit_module_propagate_cleanup_segment(
+            arena,
+            source,
+            builder,
+            prefix,
+            project_name,
+            imports,
+            context,
+            codegen_context.context_scope_local_start(context, boundary_index),
+            local_end,
+            codegen_context.context_scope_defer_start(context, boundary_index),
+            defer_end,
+            codegen_context.context_scope_with_resource_start(context, boundary_index),
+            with_resource_end,
+            codegen_context.context_scope_iterator_guard_start(context, boundary_index),
+            iterator_guard_end,
+            codegen_context.context_scope_lock_cleanup_start(context, boundary_index),
+            lock_cleanup_end,
+        )
+        local_end = codegen_context.context_scope_local_start(context, boundary_index)
+        defer_end = codegen_context.context_scope_defer_start(context, boundary_index)
+        with_resource_end = codegen_context.context_scope_with_resource_start(context, boundary_index)
+        iterator_guard_end = codegen_context.context_scope_iterator_guard_start(context, boundary_index)
+        lock_cleanup_end = codegen_context.context_scope_lock_cleanup_start(context, boundary_index)
+    if boundary_start == 0:
+        emit_module_propagate_cleanup_segment(
+            arena,
+            source,
+            builder,
+            prefix,
+            project_name,
+            imports,
+            context,
+            context.local_start,
+            local_end,
+            0,
+            defer_end,
+            0,
+            with_resource_end,
+            0,
+            iterator_guard_end,
+            0,
+            lock_cleanup_end,
+        )

@@ -388,6 +388,19 @@ def emit_common_support(builder: &StringBuilder) -> void:
     builder.append("static inline void cinder_selfhost_print_f64_list(const void *data, size_t length, bool first) { if (!first) printf(\" \"); printf(\"[\"); const double *items = (const double *)data; for (size_t index = 0; index < length; ++index) { if (index > 0) printf(\", \"); printf(\"%g\", items[index]); } printf(\"]\"); }\n")
     builder.append("static inline void cinder_selfhost_print_string_list(const void *data, size_t length, bool first) { if (!first) printf(\" \"); printf(\"[\"); const CinderString *items = (const CinderString *)data; for (size_t index = 0; index < length; ++index) { if (index > 0) printf(\", \"); cinder_print_repr_string(cinder_string_cstr(&items[index])); } printf(\"]\"); }\n")
     builder.append("static inline int cinder_selfhost_compare_i32(const void *left, const void *right) { const int32_t a = *(const int32_t *)left; const int32_t b = *(const int32_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_i8(const void *left, const void *right) { const int8_t a = *(const int8_t *)left; const int8_t b = *(const int8_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_i16(const void *left, const void *right) { const int16_t a = *(const int16_t *)left; const int16_t b = *(const int16_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_u8(const void *left, const void *right) { const uint8_t a = *(const uint8_t *)left; const uint8_t b = *(const uint8_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_u16(const void *left, const void *right) { const uint16_t a = *(const uint16_t *)left; const uint16_t b = *(const uint16_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_u32(const void *left, const void *right) { const uint32_t a = *(const uint32_t *)left; const uint32_t b = *(const uint32_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_i64(const void *left, const void *right) { const int64_t a = *(const int64_t *)left; const int64_t b = *(const int64_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_u64(const void *left, const void *right) { const uint64_t a = *(const uint64_t *)left; const uint64_t b = *(const uint64_t *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_f32(const void *left, const void *right) { const float a = *(const float *)left; const float b = *(const float *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_f64(const void *left, const void *right) { const double a = *(const double *)left; const double b = *(const double *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_char(const void *left, const void *right) { const char a = *(const char *)left; const char b = *(const char *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_bool(const void *left, const void *right) { const bool a = *(const bool *)left; const bool b = *(const bool *)right; return (a > b) - (a < b); }\n")
+    builder.append("static inline int cinder_selfhost_compare_cstr(const void *left, const void *right) { return strcmp(*(const char *const *)left, *(const char *const *)right); }\n")
+    builder.append("static inline int cinder_selfhost_compare_lock(const void *left, const void *right) { return cinder_lock_compare(*(const CinderLock *)left, *(const CinderLock *)right); }\n")
     builder.append("static inline int cinder_selfhost_compare_string(const void *left, const void *right) { return cinder_string_compare_value((const CinderString *)left, (const CinderString *)right); }\n")
     builder.append("static inline void cinder_selfhost_sort_i32(void *data, size_t length) { cinder_sort(data, length, sizeof(int32_t), cinder_selfhost_compare_i32); }\n")
     builder.append("static inline void cinder_selfhost_sort_string(void *data, size_t length) { cinder_sort(data, length, sizeof(CinderString), cinder_selfhost_compare_string); }\n")
@@ -1026,6 +1039,11 @@ def emit_module_declarations(
         else:
             emit_module_function_declaration(arena, id, source, builder, prefix, project_name, imports, is_entry, context)
         return
+    if node.kind == SyntaxKind.LOCK_DECL:
+        builder.append("extern CinderLock ")
+        codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        builder.append(";\n")
+        return
     if node.kind == SyntaxKind.GLOBAL_DECL:
         builder.append("extern ")
         if node.flags == 1:
@@ -1126,6 +1144,20 @@ def emit_module_top_level(
         return
     if node.kind == SyntaxKind.FUNCTION_DECL:
         emit_module_function(arena, id, source, builder, prefix, project_name, imports, is_entry, context)
+        return
+    if node.kind == SyntaxKind.LOCK_DECL:
+        builder.append("static CINDER_MAYBE_UNUSED CinderLockState ")
+        codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        builder.append("__state = CINDER_LOCK_STATE_INIT(")
+        lock_key = codegen_context.context_lock_key(context, id)
+        if lock_key < 0:
+            lock_key = 0
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](lock_key))
+        builder.append(");\nCinderLock ")
+        codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        builder.append(" = &")
+        codegen_names.emit_prefixed_name(builder, prefix, source, node.value_start, node.value_length)
+        builder.append("__state;\n\n")
         return
     if node.kind == SyntaxKind.GLOBAL_DECL:
         if node.flags == 1:

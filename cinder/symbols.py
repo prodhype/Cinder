@@ -6,7 +6,7 @@ from enum import StrEnum
 
 from cinder import ast
 from cinder.diagnostics import Span
-from cinder.types import AtomicType, ClassType, ResultType, Type
+from cinder.types import LOCK, AtomicType, ClassType, ResultType, Type
 
 
 class SymbolKind(StrEnum):
@@ -22,6 +22,7 @@ class SymbolKind(StrEnum):
     CONSTANT = "constant"
     TYPE_TEMPLATE = "type_template"
     FUNCTION_TEMPLATE = "function_template"
+    LOCK = "lock"
 
 
 class AtomicIntrinsicKind(StrEnum):
@@ -55,6 +56,7 @@ class VariableSymbol(Symbol):
     is_module_public: bool = False
     is_match_binding: bool = False
     is_borrow_binding: bool = False
+    lock_identity: str | None = None
 
 
 @dataclass(slots=True)
@@ -81,6 +83,15 @@ class ParameterSymbol:
 
 
 @dataclass(slots=True)
+class LockSymbol(Symbol):
+    type: Type = LOCK
+    c_name: str = ""
+    qualified_name: str = ""
+    declaration: ast.LockDecl | None = None
+    canonical_key: int | None = None
+
+
+@dataclass(slots=True)
 class FunctionSymbol(Symbol):
     parameters: list[ParameterSymbol]
     return_type: Type
@@ -98,6 +109,8 @@ class FunctionSymbol(Symbol):
     type_params: tuple[str, ...] = ()
     type_args: tuple[Type, ...] = ()
     template_name: str | None = None
+    lock_effects: frozenset[str] = frozenset()
+    has_unknown_lock_effect: bool = False
 
 
 @dataclass(slots=True)
@@ -233,6 +246,7 @@ class ModuleSymbol(Symbol):
     type_symbols: dict[str, NominalSymbol] = field(default_factory=dict)
     type_templates: dict[str, TypeTemplateSymbol] = field(default_factory=dict)
     function_templates: dict[str, FunctionTemplateSymbol] = field(default_factory=dict)
+    locks: dict[str, LockSymbol] = field(default_factory=dict)
     includes: tuple[str, ...] = ()
     libraries: tuple[str, ...] = ()
     generated_header: str | None = None
@@ -276,6 +290,7 @@ class AttributeResolution:
     variant_case: VariantCaseSymbol | None = None
     nominal: NominalSymbol | None = None
     class_: ClassSymbol | None = None
+    lock: LockSymbol | None = None
     access_path: tuple[str, ...] = ()
     compile_value: object | None = None
 
@@ -315,6 +330,13 @@ class AtomicCallResolution:
     result_type: Type
     operands: tuple[ast.Expression, ...] = ()
     source_order: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class CriticalSectionResolution:
+    kind: str
+    lock: LockSymbol | None = None
+    ordered_type: Type | None = None
 
 
 @dataclass(frozen=True, slots=True)

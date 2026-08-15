@@ -88,6 +88,11 @@ class AtomicCompareExchangeResultType(Type):
 
 
 @dataclass(frozen=True, slots=True)
+class LockType(Type):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class TupleType(Type):
     elements: tuple[Type, ...]
 
@@ -95,6 +100,11 @@ class TupleType(Type):
 @dataclass(frozen=True, slots=True)
 class ListType(Type):
     inner: Type
+
+
+@dataclass(frozen=True, slots=True)
+class OrderedLockListType(ListType):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,6 +256,7 @@ ERROR: Final = ErrorType()
 FILE: Final = FileType()
 STRING: Final = StringType()
 STRING_BUILDER: Final = StringBuilderType()
+LOCK: Final = LockType()
 
 PRIMITIVES: Final[dict[str, PrimitiveType]] = {
     value.name: value
@@ -383,6 +394,8 @@ def type_name(type_: Type) -> str:
             return f"Atomic[{type_name(inner)}]"
         case AtomicCompareExchangeResultType(inner=inner):
             return f"CompareExchangeResult[{type_name(inner)}]"
+        case LockType():
+            return "Lock"
         case TupleType(elements=elements):
             return "Tuple[" + ", ".join(type_name(element) for element in elements) + "]"
         case ListType(inner=inner):
@@ -528,7 +541,7 @@ def is_equatable(type_: Type) -> bool:
     return (
         is_numeric(raw)
         or raw == BOOL
-        or isinstance(raw, (EnumType, PointerType, ReferenceType))
+        or isinstance(raw, (EnumType, PointerType, ReferenceType, LockType))
         or is_string(raw)
     )
 
@@ -552,7 +565,7 @@ def is_scalar(type_: Type) -> bool:
     type_ = strip_const(type_)
     return isinstance(
         type_,
-        (PrimitiveType, EnumType, PointerType, ReferenceType, DynType, NullType),
+        (PrimitiveType, EnumType, PointerType, ReferenceType, DynType, LockType, NullType),
     ) and not is_void(type_)
 
 
@@ -653,6 +666,13 @@ def can_assign(target: Type, source: Type) -> bool:
         return True
 
     if isinstance(target, ConstType):
+        source_unqualified = strip_const(source)
+        if (
+            isinstance(target.inner, ListType)
+            and isinstance(source_unqualified, OrderedLockListType)
+            and target.inner.inner == source_unqualified.inner
+        ):
+            return True
         return can_assign(target.inner, strip_const(source))
     if isinstance(source, ConstType) and not isinstance(
         target, (PointerType, ReferenceType, SliceType)
@@ -701,7 +721,11 @@ def can_assign(target: Type, source: Type) -> bool:
         return target == source
 
     if isinstance(target, ListType) and isinstance(source, ListType):
-        return target == source
+        if isinstance(target, OrderedLockListType) or isinstance(source, OrderedLockListType):
+            return isinstance(target, OrderedLockListType) and isinstance(
+                source, OrderedLockListType
+            )
+        return target.inner == source.inner
 
     if isinstance(target, OptionType) and isinstance(source, OptionType):
         return target == source
@@ -764,7 +788,13 @@ def can_borrow_elements(target: Type, source: Type) -> bool:
     if source_unqualified == VOID:
         return True
     if isinstance(target, ConstType):
-        return can_assign(target.inner, strip_const(source))
+        if (
+            isinstance(target.inner, ListType)
+            and isinstance(source_unqualified, OrderedLockListType)
+            and target.inner.inner == source_unqualified.inner
+        ):
+            return True
+        return can_assign(target.inner, source_unqualified)
     if isinstance(source, ConstType):
         return False
     return can_assign(target, source)
@@ -788,6 +818,8 @@ def type_key(type_: Type) -> str:
             return f"atomic_{type_key(inner)}"
         case AtomicCompareExchangeResultType(inner=inner):
             return f"atomic_compare_exchange_result_{type_key(inner)}"
+        case LockType():
+            return "lock"
         case TupleType(elements=elements):
             suffix = "_".join(type_key(element) for element in elements)
             return f"tuple_{len(elements)}" + (f"_{suffix}" if suffix else "")

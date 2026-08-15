@@ -13,6 +13,7 @@ enum TypeKind:
     STRING
     STRING_BUILDER
     CONVERT_ERROR
+    LOCK
     NAMED
     POINTER
     REFERENCE
@@ -112,6 +113,9 @@ struct TypeTable:
 
     def atomic_compare_exchange_result(self: &TypeTable, inner: TypeId, element_kind: AtomicElementKind) -> TypeId:
         return self.add(TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT, 0, 0, inner, cast[i32](element_kind), 0)
+
+    def ordered_lock_list(self: &TypeTable) -> TypeId:
+        return self.add(TypeKind.LIST, 0, 0, type_lock(), 1, 1)
 
     def named(self: &TypeTable, start: usize, length: usize) -> TypeId:
         return self.add(TypeKind.NAMED, start, length, missing_type(), 0, 0)
@@ -249,6 +253,8 @@ struct TypeTable:
             return type_string_builder()
         if range_text_equals(source, start, length, "ConvertError"):
             return type_convert_error()
+        if range_text_equals(source, start, length, "Lock"):
+            return type_lock()
         if range_text_equals(source, start, length, "File"):
             return self.nominal(TypeKind.FILE, start, length)
         return self.named(start, length)
@@ -378,6 +384,14 @@ def is_atomic_type(table: &const TypeTable, type_id: TypeId) -> bool:
     return current.index >= 0 and current.index < cast[i32](len(table.types)) and table.types[current.index].kind == TypeKind.ATOMIC
 
 
+def is_ordered_lock_list(table: &const TypeTable, type_id: TypeId) -> bool:
+    current = strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    return record.kind == TypeKind.LIST and record.extra == 1 and strip_const(table, record.inner).index == type_lock().index
+
+
 def new_type_table() -> TypeTable:
     records: List[TypeRecord] = []
     args: List[TypeId] = []
@@ -392,6 +406,7 @@ def new_type_table() -> TypeTable:
     table.primitive(TypeKind.STRING)
     table.primitive(TypeKind.STRING_BUILDER)
     table.primitive(TypeKind.CONVERT_ERROR)
+    table.primitive(TypeKind.LOCK)
     return table
 
 
@@ -433,6 +448,10 @@ def type_string_builder() -> TypeId:
 
 def type_convert_error() -> TypeId:
     return TypeId(index=9)
+
+
+def type_lock() -> TypeId:
+    return TypeId(index=10)
 
 
 def first_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:

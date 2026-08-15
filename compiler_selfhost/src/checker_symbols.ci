@@ -2,6 +2,7 @@ import checker_core
 import checker_imports
 import classes
 import generics
+import lock_order
 import project
 import reflection
 import semantic
@@ -19,6 +20,7 @@ def collect_symbols(
     source: &const String,
     modules: &const List[project.ParsedModule],
 ) -> void:
+    checker_core.prepare_lock_context(checker, source, modules)
     checker.model.record_scope(root, symbols.root_scope())
     collect_qualified_atomic_template_names_in_node(checker, arena, root, source, modules)
     collect_symbols_in_node(checker, arena, root, source, modules)
@@ -216,6 +218,22 @@ def collect_symbols_in_node(
         )
         checker.model.record_declaration_symbol(id, symbol)
         checker.model.global_symbols.append(semantic.NodeSymbolBinding(node=id, symbol=symbol))
+    elif node.kind == syntax.SyntaxKind.LOCK_DECL:
+        symbol = checker.symbols.add_symbol(
+            symbols.SymbolKind.LOCK,
+            node.value_start,
+            node.value_length,
+            types.type_lock(),
+            id,
+            symbols.root_scope(),
+            0,
+        )
+        checker.model.record_declaration_symbol(id, symbol)
+        name = source[node.value_start:node.value_start + node.value_length]
+        lock_index = lock_order.find_lock(&checker.lock_model, &checker.module_name, &name)
+        if lock_index >= 0:
+            project_locks: &const List[lock_order.ProjectLock] = &checker.lock_model.locks
+            checker.model.record_lock(id, lock_index, project_locks[cast[usize](lock_index)].canonical_key)
     elif node.kind == syntax.SyntaxKind.EXTERN_TYPE_DECL:
         symbol = checker.symbols.add_symbol(
             symbols.SymbolKind.EXTERN_TYPE,
@@ -261,6 +279,9 @@ def collect_from_import_symbols(
                     if checker_imports.imported_member_is_atomic_template(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.BUILTIN
                         imported_type = checker.type_table.atomic_of(types.type_error(), types.AtomicElementKind.INVALID)
+                    elif checker_imports.imported_member_is_lock(&module_name, &original_text, modules):
+                        symbol_kind = symbols.SymbolKind.LOCK
+                        imported_type = types.type_lock()
                 symbol = checker.symbols.add_symbol(
                     symbol_kind,
                     name_node.value_start,

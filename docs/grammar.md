@@ -27,6 +27,8 @@ top_level_item     := import_decl
                     | variant_decl
                     | global_decl
                     | static_assert_decl
+                    | lock_decl
+                    | lockorder_decl
 
 import_decl        := "import" dotted_name ("as" NAME)? NEWLINE
 from_import_decl   := "from" dotted_name "import" imported_name
@@ -75,6 +77,9 @@ enum_decl          := decorator* "enum" NAME type_params? ":" enum_suite
 union_decl         := decorator* "union" NAME type_params? ":" union_suite
 variant_decl       := decorator* "variant" NAME type_params? ":" variant_suite
 static_assert_decl := "static_assert" "(" expression ("," STRING)? ")" NEWLINE
+lock_decl          := "lock" NAME ("after" lock_reference)? NEWLINE
+lockorder_decl     := "lockorder" lock_reference "before" lock_reference NEWLINE
+lock_reference     := NAME ("." NAME)?
 
 type_params        := "[" NAME ("," NAME)* ","? "]"
 class_bases        := "(" type ("," type)* ","? ")"
@@ -276,6 +281,7 @@ statement          := variable_decl NEWLINE
                     | "pass" NEWLINE
                     | "defer" expression NEWLINE
                     | with_stmt
+                    | critical_section_stmt
                     | if_stmt
                     | while_stmt
                     | foreach_stmt
@@ -292,6 +298,7 @@ if_stmt            := "if" expression ":" suite
                       ("else" ":" suite)?
 while_stmt         := "while" expression ":" suite
 with_stmt          := "with" expression "as" NAME ":" suite
+critical_section_stmt := "CriticalSection" expression ":" suite
 foreach_stmt       := "for" NAME (":" type)? "in" "comptime"? expression ":" suite
 c_for_stmt         := "for" simple_stmt? ";" expression? ";"
                       simple_stmt? ":" suite
@@ -303,6 +310,12 @@ An untyped assignment to an unknown local name declares that local and infers it
 `defer` accepts a call expression. Deferred calls run in reverse declaration order on normal scope exit, `return`, `break`, `continue`, and propagated error returns. Class destructor and owning-collection cleanup use the same control-flow cleanup paths.
 
 `with expression as name:` opens a nested scope, binds `name` to the expression result, runs the suite, and runs ordinary scope cleanup for that binding on every normal exit. There is no `__enter__` / `__exit__` protocol; destructor-bearing and owning values such as `File` close through the same drop path used for locals.
+
+`lock name` declares a static `Lock` value. `lock later after earlier` adds the constraint `earlier -> later`. `lockorder module.first before other.second` adds a constraint between imported locks. The compiler combines explicit constraints with constraints that it infers from nested critical sections and function calls. It rejects a cycle before it generates C.
+
+`CriticalSection lock:` acquires one lock for the lexical suite. `CriticalSection sorted(locks):` acquires a dynamic lock collection. It evaluates the expression once. It acquires unique lock identities in canonical order and releases them in reverse order. Cleanup runs on fallthrough, `return`, `break`, `continue`, and Result propagation. The compiler rejects an unknown dynamic acquisition when another lock is held.
+
+The compiler infers effects for resolved function calls. It rejects an indirect call or an unresolved call while a lock is held because it cannot prove the lock order.
 
 A `comptime` foreach is valid only with `fields_of(...)` or `methods_of(...)`. The loop is unrolled and its binding cannot escape into runtime storage.
 
@@ -484,6 +497,8 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 `len(array)`, `len(slice)`, `len(tuple)`, `len(string)`, `len(list)`, `len(map)`, `len(set)`, and `len(map_view)` return `usize`. String length is the number of UTF-8 bytes. The low-level `len(const char*)` form follows the C string terminator.
 
 `sort(array_or_slice_or_list)` stably sorts mutable elements in ascending order and returns `void`. Fixed arrays and lists must refer to addressable storage. Slices may select a subrange to sort, but slicing a const array produces a const slice that cannot be sorted. Numeric primitives use numeric order, `bool` orders `false` before `true`, enums use their declared integer values, and `String` values use lexicographic UTF-8 byte-content order. Low-level `char*` and `const char*` elements retain C-string ordering. Const elements and unordered aggregate or non-string pointer types are rejected. Unlike Python's list API, Cinder's builtin does not currently accept `key` or `reverse` arguments.
+
+`sorted(array_or_slice_or_list)` returns a new sorted `List`. It does not change the input. `sorted()` uses the same value order as `sort()`. For `Lock` values, it uses the compiler's canonical lock order. The canonical key is an implementation detail. Cinder does not expose a lock rank.
 
 `print(...)` is globally available and emits to standard output without importing `stdio`. It accepts zero or more printable values, separates multiple arguments with a space, and appends a newline. Printable values are booleans, characters, integers, floats, `String`, low-level `const char*`, and collections whose nested element types are printable: `List`, `Map`, `Set`, and `Tuple`. String arguments are borrowed, not consumed. Collection formatting uses Python-like brackets (`[1, 2]`, `{'a': 1}`, `{1, 2}` / `set()`, `(1, 2)`). Owning collections must be addressable locals, like `len`. Format specs are not supported on collections.
 

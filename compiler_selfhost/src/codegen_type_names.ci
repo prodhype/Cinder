@@ -454,6 +454,8 @@ def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: typ
         builder.append("StringBuilder")
     elif record.kind == types.TypeKind.CONVERT_ERROR:
         builder.append("n_CinderParseError")
+    elif record.kind == types.TypeKind.LOCK:
+        builder.append("Lock")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE")
     elif record.kind == types.TypeKind.ATOMIC:
@@ -582,6 +584,8 @@ def emit_semantic_c_type(
         builder.append("CinderStringBuilder")
     elif record.kind == types.TypeKind.CONVERT_ERROR:
         builder.append("CinderParseError")
+    elif record.kind == types.TypeKind.LOCK:
+        builder.append("CinderLock")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE *")
     elif record.kind == types.TypeKind.ATOMIC:
@@ -714,6 +718,8 @@ def emit_module_nominal_type(
         builder.append("CinderStringBuilder")
     elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "ConvertError"):
         builder.append("CinderParseError")
+    elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "Lock"):
+        builder.append("CinderLock")
     elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "File"):
         builder.append("FILE *")
     elif codegen_names.range_text_equals(source, node.value_start, node.value_length, "clock_t"):

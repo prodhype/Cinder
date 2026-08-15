@@ -53,7 +53,13 @@ struct CodegenCleanupBoundary:
     defer_start: usize
     with_resource_start: usize
     iterator_guard_start: usize
+    lock_cleanup_start: usize
     loop_body: bool
+
+
+struct CodegenLockCleanup:
+    name: String
+    collection: bool
 
 
 struct ModuleCodegenContext:
@@ -78,6 +84,7 @@ struct ModuleCodegenContext:
     reflection_bindings: List[ModuleReflectionBinding]
     semantic_string_names: List[String]
     iterator_guard_names: List[String]
+    lock_cleanups: List[CodegenLockCleanup]
     cleanup_boundaries: List[CodegenCleanupBoundary]
     field_types: List[ModuleFieldTypeBinding]
     current_owner: String
@@ -125,6 +132,7 @@ def make_module_codegen_context(
     reflection_bindings: List[ModuleReflectionBinding] = []
     semantic_string_names: List[String] = []
     iterator_guard_names: List[String] = []
+    lock_cleanups: List[CodegenLockCleanup] = []
     cleanup_boundaries: List[CodegenCleanupBoundary] = []
     field_types: List[ModuleFieldTypeBinding] = []
     deferred_expressions: List[NodeId] = []
@@ -153,6 +161,7 @@ def make_module_codegen_context(
         reflection_bindings=reflection_bindings,
         semantic_string_names=semantic_string_names,
         iterator_guard_names=iterator_guard_names,
+        lock_cleanups=lock_cleanups,
         cleanup_boundaries=cleanup_boundaries,
         field_types=field_types,
         current_owner="",
@@ -197,6 +206,29 @@ def context_scope_with_resource_start(context: &const ModuleCodegenContext, inde
 
 def context_scope_iterator_guard_start(context: &const ModuleCodegenContext, index: usize) -> usize:
     return context.cleanup_boundaries[index].iterator_guard_start
+
+
+def context_scope_lock_cleanup_start(context: &const ModuleCodegenContext, index: usize) -> usize:
+    return context.cleanup_boundaries[index].lock_cleanup_start
+
+
+def context_lock_kind(context: &ModuleCodegenContext, syntax_id: NodeId) -> i32:
+    semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
+    for node in semantic_nodes:
+        if node.syntax.index == syntax_id.index and node.specialization == context.active_user_specialization:
+            return node.lock_kind
+    for node in semantic_nodes:
+        if node.syntax.index == syntax_id.index and node.specialization < 0:
+            return node.lock_kind
+    return 0
+
+
+def context_lock_key(context: &ModuleCodegenContext, syntax_id: NodeId) -> i32:
+    semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
+    for node in semantic_nodes:
+        if node.syntax.index == syntax_id.index and node.specialization < 0:
+            return node.lock_key
+    return -1
 
 
 def context_class_for_name(context: &ModuleCodegenContext, name: &const String) -> i32:
@@ -472,7 +504,7 @@ def collect_module_global_names(arena: &const SyntaxArena, id: NodeId, source: &
         for offset in range(0, node.child_count):
             collect_module_global_names(arena, arena.children[node.first_child + offset], source, context)
         return
-    if node.kind == SyntaxKind.GLOBAL_DECL:
+    if node.kind == SyntaxKind.GLOBAL_DECL or node.kind == SyntaxKind.LOCK_DECL:
         context.global_names.append(source[node.value_start:node.value_start + node.value_length])
 
 def collect_module_field_types(arena: &const SyntaxArena, id: NodeId, source: &const String, context: &ModuleCodegenContext) -> void:
@@ -826,12 +858,33 @@ def context_semantic_name_type(context: &ModuleCodegenContext, source: &const St
     return types.missing_type()
 
 
+def context_semantic_name_type_for_name(context: &ModuleCodegenContext, name: &const String) -> types.TypeId:
+    index = len(context.semantic_name_types)
+    while index > 0:
+        index -= 1
+        binding: &const ModuleSemanticNameTypeBinding = &context.semantic_name_types[index]
+        if context_name_range_equals_string(context.type_source, binding.name_start, binding.name_length, name):
+            return binding.type_id
+    return types.missing_type()
+
+
 def context_name_ranges_equal(left_source: &const String, left_start: usize, left_length: usize, right_source: &const String, right_start: usize, right_length: usize) -> bool:
     if left_length != right_length:
         return false
     offset: usize = 0
     while offset < left_length:
         if left_source.byte_at(left_start + offset) != right_source.byte_at(right_start + offset):
+            return false
+        offset += 1
+    return true
+
+
+def context_name_range_equals_string(source: &const String, start: usize, length: usize, name: &const String) -> bool:
+    if length != len(name):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != name.byte_at(offset):
             return false
         offset += 1
     return true
@@ -1404,7 +1457,7 @@ def emit_context_drops(
     while index > local_start:
         index -= 1
         if not context.local_types[index].moved:
-            emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
+            emit_context_local_drop(arena, context, source, builder, index, prefix, project_name, imports)
 
 
 def emit_context_live_drops(
@@ -1417,23 +1470,63 @@ def emit_context_live_drops(
     project_name: &const String,
     imports: &const List[project.ImportBinding],
 ) -> void:
-    index = len(context.local_types)
+    emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
+
+
+def emit_context_live_drops_range(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    source: &const String,
+    builder: &StringBuilder,
+    local_start: usize,
+    local_end: usize,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    index = local_end
     while index > local_start:
         index -= 1
-        if not context.local_types[index].moved and context_type_needs_drop(arena, context, context.local_types[index].type_id, source):
-            emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
+        if context_local_needs_drop(arena, context, source, index):
+            emit_context_local_drop(arena, context, source, builder, index, prefix, project_name, imports)
 
 
 def context_has_live_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String) -> bool:
     index = len(context.local_types)
     while index > context.local_start:
         index -= 1
-        if (
-            not context.local_types[index].moved
-            and context_type_needs_drop(arena, context, context.local_types[index].type_id, source)
-        ):
+        if context_local_needs_drop(arena, context, source, index):
             return true
     return false
+
+
+def context_local_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, index: usize) -> bool:
+    if index >= len(context.local_types) or context.local_types[index].moved:
+        return false
+    if context_type_needs_drop(arena, context, context.local_types[index].type_id, source):
+        return true
+    semantic_type = context_semantic_name_type_for_name(context, &context.local_types[index].name)
+    return semantic_type.index >= 0 and ownership.type_needs_drop_for_table(context.type_table, semantic_type)
+
+
+def emit_context_local_drop(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    source: &const String,
+    builder: &StringBuilder,
+    index: usize,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    if index >= len(context.local_types) or context.local_types[index].moved:
+        return
+    if context.local_types[index].type_id.index >= 0:
+        emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
+        return
+    semantic_type = context_semantic_name_type_for_name(context, &context.local_types[index].name)
+    if semantic_type.index >= 0 and ownership.type_needs_drop_for_table(context.type_table, semantic_type):
+        emit_context_semantic_drop(context, semantic_type, builder, &context.local_types[index].name, prefix, project_name, imports)
 
 
 def emit_context_semantic_drop(

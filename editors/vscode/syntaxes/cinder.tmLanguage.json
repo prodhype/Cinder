@@ -274,7 +274,7 @@
         },
         {
           "name": "support.type.builtin.cinder",
-          "match": "\\b(?:Result|Option|Tuple|List|Map|Set|MapKeys|MapValues|MapItems)\\b"
+          "match": "\\b(?:Result|Option|Tuple|List|Map|Set|MapKeys|MapValues|MapItems|Lock)\\b"
         }
       ]
     },
@@ -282,7 +282,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.cinder",
-          "match": "\\b(?:static_assert|cast|alloc|range|len|sort|print|input|set|Ok|Err|Some|free|panic|type_of|type_name|type_info|size_of|align_of|field_count|method_count|fields|methods|fields_of|methods_of|has_field|has_method|implements)\\b(?=\\s*(?:\\(|\\[))"
+          "match": "\\b(?:static_assert|cast|alloc|range|len|sort|sorted|print|input|set|Ok|Err|Some|free|panic|type_of|type_name|type_info|size_of|align_of|field_count|method_count|fields|methods|fields_of|methods_of|has_field|has_method|implements)\\b(?=\\s*(?:\\(|\\[))"
         }
       ]
     },
@@ -362,11 +362,11 @@
         },
         {
           "name": "keyword.control.flow.cinder",
-          "match": "\\b(?:return|break|continue|pass|defer|with)\\b"
+          "match": "\\b(?:return|break|continue|pass|defer|with|CriticalSection)\\b"
         },
         {
           "name": "storage.type.cinder",
-          "match": "\\b(?:def|struct|enum|union|variant|class)\\b"
+          "match": "\\b(?:def|struct|enum|union|variant|class|lock|lockorder)\\b"
         },
         {
           "name": "storage.modifier.cinder",

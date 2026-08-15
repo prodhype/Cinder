@@ -4,6 +4,7 @@ from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from dataclasses import fields as dataclass_fields
 from itertools import product
 
 from cinder import ast
@@ -18,6 +19,7 @@ from cinder.generics import (
     specialize_union,
     specialize_variant,
 )
+from cinder.lock_order import LockOrderGraph
 from cinder.ownership import (
     ValueUseKind,
     ValueUseResolution,
@@ -45,12 +47,14 @@ from cinder.symbols import (
     ClassSymbol,
     ComptimeVariableSymbol,
     ConstantSymbol,
+    CriticalSectionResolution,
     EnumMemberSymbol,
     EnumSymbol,
     FieldSymbol,
     FunctionSymbol,
     FunctionTemplateSymbol,
     IndexResolution,
+    LockSymbol,
     MatchCaseResolution,
     MatchResolution,
     ModuleSymbol,
@@ -83,6 +87,7 @@ from cinder.types import (
     I32,
     I64,
     ISIZE,
+    LOCK,
     NULL,
     PRIMITIVES,
     STRING,
@@ -107,11 +112,13 @@ from cinder.types import (
     FunctionPointerType,
     FunctionValueType,
     ListType,
+    LockType,
     MapType,
     MapViewType,
     ModuleType,
     OpaqueType,
     OptionType,
+    OrderedLockListType,
     OwnedType,
     PointerType,
     PrimitiveType,
@@ -228,6 +235,8 @@ class SemanticModel:
     variants: OrderedDict[str, VariantSymbol]
     functions: OrderedDict[str, FunctionSymbol]
     globals: OrderedDict[str, VariableSymbol]
+    locks: OrderedDict[str, LockSymbol]
+    lock_graph: LockOrderGraph
     includes: list[str]
     libraries: list[str]
     opaques: OrderedDict[str, OpaqueType] = dataclass_field(default_factory=OrderedDict)
@@ -240,6 +249,9 @@ class SemanticModel:
     call_resolutions: dict[int, CallResolution] = dataclass_field(default_factory=dict)
     atomic_init_resolutions: dict[int, AtomicInitResolution] = dataclass_field(default_factory=dict)
     atomic_call_resolutions: dict[int, AtomicCallResolution] = dataclass_field(default_factory=dict)
+    critical_section_resolutions: dict[int, CriticalSectionResolution] = dataclass_field(
+        default_factory=dict
+    )
     index_resolutions: dict[int, IndexResolution] = dataclass_field(default_factory=dict)
     binary_resolutions: dict[int, BinaryResolution] = dataclass_field(default_factory=dict)
     range_resolutions: dict[int, RangeResolution] = dataclass_field(default_factory=dict)
@@ -305,6 +317,7 @@ class SemanticModel:
             },
             constants=constants,
             globals=public_globals,
+            locks=dict(self.locks),
             types=exported_types,
             type_symbols=exported_type_symbols,
             type_templates=dict(self.type_templates),
@@ -325,6 +338,7 @@ class Checker:
         c_prefix: str = "",
         module_mode: bool = False,
         is_entry: bool = True,
+        lock_graph: LockOrderGraph | None = None,
     ) -> None:
         self.module = module
         self.source = source
@@ -333,12 +347,14 @@ class Checker:
         self.c_prefix = c_prefix
         self.module_mode = module_mode
         self.is_entry = is_entry
+        self.lock_graph = lock_graph or LockOrderGraph()
         self.diagnostics = DiagnosticBag()
         self.global_scope = Scope()
         self.types: dict[str, Type] = dict(PRIMITIVES)
         self.types["File"] = FILE
         self.types["String"] = STRING
         self.types["StringBuilder"] = STRING_BUILDER
+        self.types["Lock"] = LOCK
         self.available_modules = builtin_modules(self.path)
         if available_modules is not None:
             self.available_modules.update(available_modules)
@@ -366,6 +382,7 @@ class Checker:
         self.variants_by_type: dict[VariantType, VariantSymbol] = {}
         self.functions: OrderedDict[str, FunctionSymbol] = OrderedDict()
         self.globals: OrderedDict[str, VariableSymbol] = OrderedDict()
+        self.locks: OrderedDict[str, LockSymbol] = OrderedDict()
         self.includes: list[str] = []
         self.libraries: list[str] = []
 
@@ -376,6 +393,7 @@ class Checker:
         self.call_resolutions: dict[int, CallResolution] = {}
         self.atomic_init_resolutions: dict[int, AtomicInitResolution] = {}
         self.atomic_call_resolutions: dict[int, AtomicCallResolution] = {}
+        self.critical_section_resolutions: dict[int, CriticalSectionResolution] = {}
         self.index_resolutions: dict[int, IndexResolution] = {}
         self.binary_resolutions: dict[int, BinaryResolution] = {}
         self.range_resolutions: dict[int, RangeResolution] = {}
@@ -406,10 +424,15 @@ class Checker:
         self.moved_variables: set[int] = set()
         self._validated_lifetime_nominals: set[int] = set()
         self._validated_lifetime_functions: set[int] = set()
+        self._lock_constraint_spans: list[Span] = []
+        self._unstable_lock_alias_names: set[str] = set()
+        self._lock_moved_symbol_ids: set[int] = set()
 
     def check(self) -> SemanticModel:
         self._install_builtins()
         self._collect_imports()
+        self._collect_locks()
+        self._resolve_lock_orders()
         self._collect_type_names()
         self._collect_nominal_members()
         self._resolve_class_hierarchy()
@@ -419,6 +442,7 @@ class Checker:
         self._check_struct_layouts()
         self._check_global_initializers()
         self._check_functions()
+        self._analyze_lock_order()
         self._check_static_asserts()
         self._check_main()
 
@@ -440,6 +464,8 @@ class Checker:
             variants=self.variants,
             functions=self.functions,
             globals=self.globals,
+            locks=self.locks,
+            lock_graph=self.lock_graph,
             opaques=self.opaques,
             type_templates=self.type_templates,
             function_templates=self.function_templates,
@@ -452,6 +478,7 @@ class Checker:
             call_resolutions=self.call_resolutions,
             atomic_init_resolutions=self.atomic_init_resolutions,
             atomic_call_resolutions=self.atomic_call_resolutions,
+            critical_section_resolutions=self.critical_section_resolutions,
             index_resolutions=self.index_resolutions,
             binary_resolutions=self.binary_resolutions,
             range_resolutions=self.range_resolutions,
@@ -633,6 +660,7 @@ class Checker:
                     type_symbols=module.type_symbols,
                     type_templates=module.type_templates,
                     function_templates=module.function_templates,
+                    locks=module.locks,
                     includes=module.includes,
                     libraries=module.libraries,
                     generated_header=module.generated_header,
@@ -678,8 +706,23 @@ class Checker:
                             is_variadic=original.is_variadic,
                             module=module.module_name,
                             is_module_public=True,
+                            lock_effects=original.lock_effects,
+                            has_unknown_lock_effect=original.has_unknown_lock_effect,
                         )
                         self._declare_global(clone)
+                    elif imported_name in module.locks:
+                        original_lock = module.locks[imported_name]
+                        self._declare_global(
+                            LockSymbol(
+                                name=public_name,
+                                span=item.span,
+                                kind=SymbolKind.LOCK,
+                                c_name=original_lock.c_name,
+                                qualified_name=original_lock.qualified_name,
+                                declaration=original_lock.declaration,
+                                canonical_key=original_lock.canonical_key,
+                            )
+                        )
                     elif imported_name in module.constants:
                         original_constant = module.constants[imported_name]
                         self._declare_global(
@@ -771,6 +814,66 @@ class Checker:
                 include = f'"{item.header}"'
                 if include not in self.includes:
                     self.includes.append(include)
+
+    def _collect_locks(self) -> None:
+        for declaration in self.module.locks:
+            symbol = LockSymbol(
+                name=declaration.name,
+                span=declaration.span,
+                kind=SymbolKind.LOCK,
+                c_name=self._c_type_name(declaration.name),
+                qualified_name=f"{self.module_name}::{declaration.name}",
+                declaration=declaration,
+            )
+            previous = self._declare_global(symbol)
+            if previous is not None:
+                continue
+            self.locks[symbol.name] = symbol
+            self.lock_graph.add_lock(symbol)
+
+    def _resolve_lock_reference(self, reference: ast.LockReference) -> LockSymbol | None:
+        if len(reference.parts) == 1:
+            symbol = self.global_scope.lookup(reference.parts[0])
+            if isinstance(symbol, LockSymbol):
+                return symbol
+        elif len(reference.parts) == 2:
+            module = self.global_scope.lookup(reference.parts[0])
+            if isinstance(module, ModuleSymbol):
+                lock = module.locks.get(reference.parts[1])
+                if lock is not None:
+                    return lock
+        self._error(
+            f"cannot resolve lock {'.'.join(reference.parts)!r}",
+            reference.span,
+            code="C404",
+        )
+        return None
+
+    def _resolve_lock_orders(self) -> None:
+        for declaration in self.module.locks:
+            if declaration.after is None:
+                continue
+            current = self.locks.get(declaration.name)
+            before = self._resolve_lock_reference(declaration.after)
+            if current is not None and before is not None:
+                self.lock_graph.add_constraint(
+                    before,
+                    current,
+                    declaration.span,
+                    explicit=True,
+                )
+                self._lock_constraint_spans.append(declaration.span)
+        for order_declaration in self.module.lock_orders:
+            before = self._resolve_lock_reference(order_declaration.before)
+            after = self._resolve_lock_reference(order_declaration.after)
+            if before is not None and after is not None:
+                self.lock_graph.add_constraint(
+                    before,
+                    after,
+                    order_declaration.span,
+                    explicit=True,
+                )
+                self._lock_constraint_spans.append(order_declaration.span)
 
     def _alias_nominal(self, symbol: NominalSymbol, name: str, span: Span) -> NominalSymbol:
         if isinstance(symbol, StructSymbol):
@@ -2409,8 +2512,30 @@ class Checker:
                 code="C238",
                 note="bind the class value to a local before borrowing it as &dyn",
             )
+        if (
+            isinstance(target_raw, ReferenceType)
+            and not isinstance(target_raw.inner, ConstType)
+        ):
+            self._validate_ordered_lock_element_mutation(expression)
         if isinstance(target_raw, (ReferenceType, DynType)):
             self._record_direct_value_use(expression, ValueUseKind.BORROW)
+
+    def _validate_ordered_lock_element_mutation(
+        self,
+        expression: ast.Expression,
+    ) -> None:
+        if not isinstance(expression, ast.IndexExpr):
+            return
+        collection_type = value_type(
+            self.expr_types.get(id(expression.value), ERROR)
+        )
+        if isinstance(collection_type, OrderedLockListType):
+            self._error(
+                "cannot change a sorted lock collection",
+                expression.span,
+                code="C419",
+                note="call sorted() again to create a new canonical order",
+            )
 
     def _record_string_borrow(self, expression: ast.Expression, type_: Type) -> None:
         if isinstance(value_type(type_), StringType):
@@ -2434,6 +2559,16 @@ class Checker:
     ) -> None:
         target_raw = strip_const(target)
         assert isinstance(target_raw, SliceType)
+        source_raw = value_type(self.expr_types.get(id(expression), ERROR))
+        if isinstance(source_raw, OrderedLockListType) and not isinstance(
+            target_raw.inner, ConstType
+        ):
+            self._error(
+                "cannot borrow sorted locks as a mutable slice",
+                expression.span,
+                code="C418",
+                note="use []const Lock to keep the canonical order",
+            )
         if not self._is_addressable(expression):
             self._error(
                 "List-to-slice coercion requires an addressable List",
@@ -2571,6 +2706,7 @@ class Checker:
             module=self.module_name if self.module_mode else None,
             is_module_public=self.module_mode and not declaration.is_extern,
             owner_class=owner if isinstance(owner, ClassSymbol) else None,
+            has_unknown_lock_effect=declaration.is_extern,
         )
 
     def _c_type_name(self, name: str) -> str:
@@ -2889,6 +3025,486 @@ class Checker:
             self._check_function(function, owner)
         self._checking_functions = False
 
+    @staticmethod
+    def _walk_ast(node: ast.Node) -> list[ast.Node]:
+        result: list[ast.Node] = []
+
+        def visit(value: object) -> None:
+            if isinstance(value, ast.Node):
+                result.append(value)
+                for field in dataclass_fields(value):
+                    if field.name != "span":
+                        visit(getattr(value, field.name))
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    visit(item)
+
+        visit(node)
+        return result
+
+    def _lock_functions(self) -> list[FunctionSymbol]:
+        functions: list[FunctionSymbol] = list(self.functions.values())
+        for struct in self.structs.values():
+            functions.extend(struct.methods.values())
+        for class_ in self.classes.values():
+            functions.extend(class_.methods.values())
+        return [
+            function
+            for function in functions
+            if function.declaration is not None and function.declaration.body is not None
+        ]
+
+    @staticmethod
+    def _default_constructor_lock_function(
+        class_: ClassSymbol | None,
+    ) -> FunctionSymbol | None:
+        current = class_
+        while current is not None:
+            if current.constructor is not None:
+                return current.constructor
+            current = current.primary_base
+        return None
+
+    def _resolved_call_lock_function(
+        self,
+        resolution: CallResolution,
+    ) -> FunctionSymbol | None:
+        if resolution.function is not None:
+            return resolution.function
+        if resolution.kind == "class_constructor":
+            return self._default_constructor_lock_function(resolution.class_)
+        if resolution.kind == "super_init":
+            return self._default_constructor_lock_function(resolution.super_class)
+        return None
+
+    def _call_lock_effect(self, call: ast.CallExpr) -> tuple[set[str], bool]:
+        resolution = self.call_resolutions.get(id(call))
+        if resolution is None:
+            return set(), False
+        if resolution.kind in {"closure", "function_pointer", "dynamic_method"}:
+            return set(), True
+        function = self._resolved_call_lock_function(resolution)
+        if function is None:
+            return set(), False
+        return set(function.lock_effects), function.has_unknown_lock_effect
+
+    def _drop_lock_functions(self, type_: Type) -> tuple[FunctionSymbol, ...]:
+        functions: list[FunctionSymbol] = []
+        function_ids: set[int] = set()
+        seen: set[Type] = set()
+
+        def add(function: FunctionSymbol | None) -> None:
+            if function is not None and id(function) not in function_ids:
+                function_ids.add(id(function))
+                functions.append(function)
+
+        def visit(candidate: Type) -> None:
+            raw = strip_const(candidate)
+            if raw in seen:
+                return
+            if isinstance(raw, (ClassType, StructType)):
+                seen.add(raw)
+            if isinstance(raw, ClassType):
+                class_ = self.classes_by_type.get(raw)
+                if class_ is None:
+                    return
+                add(class_.destructor)
+                for field in class_.fields.values():
+                    visit(field.type)
+                if class_.primary_base is not None:
+                    visit(class_.primary_base.type)
+                return
+            if isinstance(raw, StructType):
+                struct = self.structs_by_type.get(raw)
+                if struct is not None:
+                    for field in struct.fields.values():
+                        visit(field.type)
+                return
+            if isinstance(raw, ClosureType):
+                visit(raw.env_type)
+                return
+            if isinstance(raw, (ArrayType, ListType, SetType, OptionType, OwnedType)):
+                visit(raw.inner)
+                return
+            if isinstance(raw, MapType):
+                visit(raw.key)
+                visit(raw.value)
+                return
+            if isinstance(raw, TupleType):
+                for element in raw.elements:
+                    visit(element)
+                return
+            if isinstance(raw, ResultType):
+                if not is_void(raw.ok):
+                    visit(raw.ok)
+                if not is_void(raw.error):
+                    visit(raw.error)
+
+        visit(type_)
+        return tuple(functions)
+
+    def _drop_lock_callees(
+        self,
+        function: FunctionSymbol,
+        body: ast.Block,
+    ) -> tuple[FunctionSymbol, ...]:
+        nodes = self._walk_ast(body)
+        moved_parameter_names: set[str] = set()
+        for node in nodes:
+            resolution = self.value_use_resolutions.get(id(node))
+            if (
+                resolution is not None
+                and resolution.kind is ValueUseKind.MOVE
+                and resolution.source is not None
+                and resolution.source.is_parameter
+            ):
+                moved_parameter_names.add(resolution.source.name)
+
+        result: list[FunctionSymbol] = []
+        result_ids: set[int] = set()
+
+        def add_type(type_: Type, symbol: VariableSymbol | None = None) -> None:
+            if symbol is not None and id(symbol) in self._lock_moved_symbol_ids:
+                return
+            for callee in self._drop_lock_functions(type_):
+                if id(callee) not in result_ids:
+                    result_ids.add(id(callee))
+                    result.append(callee)
+
+        for parameter in function.parameters:
+            if parameter.name not in moved_parameter_names:
+                add_type(parameter.type)
+
+        for node in nodes:
+            if isinstance(node, ast.VarDeclStmt):
+                symbol = self.declaration_symbols.get(id(node))
+                if symbol is not None:
+                    add_type(symbol.type, symbol)
+            elif isinstance(node, ast.AssignStmt):
+                implicit = self.implicit_declarations.get(id(node))
+                if implicit is not None:
+                    add_type(implicit.type, implicit)
+                elif node.operator == "=" and isinstance(
+                    node.target,
+                    (ast.NameExpr, ast.AttributeExpr),
+                ):
+                    add_type(strip_reference(self.expr_types.get(id(node.target), ERROR)))
+            elif isinstance(node, ast.ExpressionStmt):
+                add_type(self.expr_types.get(id(node.expression), ERROR))
+            elif isinstance(node, ast.WithStmt):
+                symbol = self.with_symbols.get(id(node))
+                if symbol is not None:
+                    add_type(symbol.type, symbol)
+        return tuple(result)
+
+    def _analyze_lock_order(self) -> None:
+        functions = self._lock_functions()
+        local = {id(function): function for function in functions}
+        direct: dict[int, set[str]] = {}
+        unknown: dict[int, bool] = {}
+        callees: dict[int, list[FunctionSymbol]] = {}
+        self._lock_moved_symbol_ids = {
+            id(resolution.source)
+            for resolution in self.value_use_resolutions.values()
+            if resolution.kind is ValueUseKind.MOVE and resolution.source is not None
+        }
+
+        for function in functions:
+            declaration = function.declaration
+            assert declaration is not None and declaration.body is not None
+            direct_effects: set[str] = set()
+            has_unknown = False
+            direct_callees = list(self._drop_lock_callees(function, declaration.body))
+            for node in self._walk_ast(declaration.body):
+                if isinstance(node, ast.CriticalSectionStmt):
+                    lock_resolution = self.critical_section_resolutions.get(id(node))
+                    if (
+                        lock_resolution is None
+                        or lock_resolution.kind != "static"
+                        or lock_resolution.lock is None
+                    ):
+                        has_unknown = True
+                    else:
+                        direct_effects.add(lock_resolution.lock.qualified_name)
+                elif isinstance(node, ast.CallExpr):
+                    call_resolution = self.call_resolutions.get(id(node))
+                    if call_resolution is None:
+                        continue
+                    if call_resolution.kind in {
+                        "closure",
+                        "function_pointer",
+                        "dynamic_method",
+                    }:
+                        has_unknown = True
+                    else:
+                        callee = self._resolved_call_lock_function(call_resolution)
+                        if callee is not None:
+                            direct_callees.append(callee)
+            direct[id(function)] = direct_effects
+            unknown[id(function)] = has_unknown
+            callees[id(function)] = direct_callees
+
+        changed = True
+        while changed:
+            changed = False
+            for function in functions:
+                effects = set(direct[id(function)])
+                has_unknown = unknown[id(function)]
+                for callee in callees[id(function)]:
+                    if id(callee) in local:
+                        effects.update(direct[id(callee)])
+                        has_unknown = has_unknown or unknown[id(callee)]
+                    else:
+                        effects.update(callee.lock_effects)
+                        has_unknown = has_unknown or callee.has_unknown_lock_effect
+                if effects != direct[id(function)] or has_unknown != unknown[id(function)]:
+                    direct[id(function)] = effects
+                    unknown[id(function)] = has_unknown
+                    changed = True
+
+        for function in functions:
+            function.lock_effects = frozenset(direct[id(function)])
+            function.has_unknown_lock_effect = unknown[id(function)]
+
+        for function in functions:
+            declaration = function.declaration
+            assert declaration is not None and declaration.body is not None
+            self._validate_lock_block(declaration.body, (), False)
+
+        cycle = self.lock_graph.find_cycle()
+        if cycle is not None:
+            span = next(
+                (item for item in reversed(self._lock_constraint_spans) if item.path == self.path),
+                self.module.span,
+            )
+            names = " -> ".join(self.lock_graph.display_name(name) for name in cycle)
+            locations = []
+            for index in range(len(cycle) - 1):
+                constraint = self.lock_graph.edges[cycle[index]][cycle[index + 1]]
+                locations.append(
+                    f"{self.lock_graph.display_name(constraint.before)} -> "
+                    f"{self.lock_graph.display_name(constraint.after)} at "
+                    f"{constraint.span.path}:{constraint.span.start_line}"
+                )
+            self._error(
+                f"lock order contains a cycle: {names}",
+                span,
+                code="C410",
+                note="The constraints are at " + "; ".join(locations),
+            )
+
+    def _path_is_explicit(self, path: tuple[str, ...]) -> bool:
+        return all(
+            self.lock_graph.edges[path[index]][path[index + 1]].explicit
+            for index in range(len(path) - 1)
+        )
+
+    def _record_lock_acquisition(
+        self,
+        lock: LockSymbol,
+        held: tuple[LockSymbol, ...],
+        span: Span,
+    ) -> None:
+        for current in held:
+            if current.qualified_name == lock.qualified_name:
+                self._error(
+                    f"cannot acquire {lock.name!r} while it is already held",
+                    span,
+                    code="C411",
+                )
+                continue
+            reverse = self.lock_graph.path(lock.qualified_name, current.qualified_name)
+            if reverse is not None and self._path_is_explicit(reverse):
+                self._error(
+                    f"cannot acquire {lock.name!r} while {current.name!r} is held",
+                    span,
+                    code="C412",
+                    note=f"lock order requires {lock.name!r} before {current.name!r}",
+                )
+                continue
+            self.lock_graph.add_constraint(current, lock, span, explicit=False)
+            self._lock_constraint_spans.append(span)
+
+    def _validate_lock_calls(
+        self,
+        expression: ast.Expression | None,
+        held: tuple[LockSymbol, ...],
+        dynamic_held: bool,
+    ) -> None:
+        if expression is None:
+            return
+        for node in self._walk_ast(expression):
+            if not isinstance(node, ast.CallExpr):
+                continue
+            effects, unknown = self._call_lock_effect(node)
+            self._validate_lock_effect(effects, unknown, held, dynamic_held, node.span)
+
+    def _validate_lock_effect(
+        self,
+        effects: set[str],
+        unknown: bool,
+        held: tuple[LockSymbol, ...],
+        dynamic_held: bool,
+        span: Span,
+    ) -> None:
+        if (held or dynamic_held) and unknown:
+            self._error(
+                "cannot call a function with an unknown lock effect while a lock is held",
+                span,
+                code="C413",
+            )
+        if dynamic_held and effects:
+            self._error(
+                "cannot acquire another lock while a dynamic lock set is held",
+                span,
+                code="C414",
+            )
+            return
+        for name in sorted(effects):
+            lock = self.lock_graph.nodes.get(name)
+            if lock is not None:
+                self._record_lock_acquisition(lock, held, span)
+
+    def _validate_drop_lock_effect(
+        self,
+        type_: Type,
+        held: tuple[LockSymbol, ...],
+        dynamic_held: bool,
+        span: Span,
+    ) -> None:
+        effects: set[str] = set()
+        unknown = False
+        for function in self._drop_lock_functions(type_):
+            effects.update(function.lock_effects)
+            unknown = unknown or function.has_unknown_lock_effect
+        self._validate_lock_effect(effects, unknown, held, dynamic_held, span)
+
+    def _validate_lock_block(
+        self,
+        block: ast.Block,
+        held: tuple[LockSymbol, ...],
+        dynamic_held: bool,
+    ) -> None:
+        cleanups: list[tuple[VariableSymbol, Span]] = []
+        for statement in block.statements:
+            self._validate_lock_statement(statement, held, dynamic_held)
+            symbol: VariableSymbol | None = None
+            if isinstance(statement, ast.VarDeclStmt):
+                symbol = self.declaration_symbols.get(id(statement))
+            elif isinstance(statement, ast.AssignStmt):
+                symbol = self.implicit_declarations.get(id(statement))
+            if (
+                symbol is not None
+                and id(symbol) not in self._lock_moved_symbol_ids
+                and self.type_needs_drop(symbol.type)
+            ):
+                cleanups.append((symbol, statement.span))
+        for symbol, span in reversed(cleanups):
+            self._validate_drop_lock_effect(symbol.type, held, dynamic_held, span)
+
+    def _validate_lock_statement(
+        self,
+        statement: ast.Statement,
+        held: tuple[LockSymbol, ...],
+        dynamic_held: bool,
+    ) -> None:
+        match statement:
+            case ast.VarDeclStmt(initializer=initializer):
+                self._validate_lock_calls(initializer, held, dynamic_held)
+            case ast.AssignStmt(target=target, value=value):
+                self._validate_lock_calls(target, held, dynamic_held)
+                self._validate_lock_calls(value, held, dynamic_held)
+                if (
+                    id(statement) not in self.implicit_declarations
+                    and statement.operator == "="
+                    and isinstance(target, (ast.NameExpr, ast.AttributeExpr))
+                ):
+                    target_type = strip_reference(self.expr_types.get(id(target), ERROR))
+                    if self.type_needs_drop(target_type):
+                        self._validate_drop_lock_effect(
+                            target_type,
+                            held,
+                            dynamic_held,
+                            target.span,
+                        )
+            case ast.ExpressionStmt(expression=expression):
+                self._validate_lock_calls(expression, held, dynamic_held)
+                expression_type = self.expr_types.get(id(expression), ERROR)
+                if self.type_needs_drop(expression_type):
+                    self._validate_drop_lock_effect(
+                        expression_type,
+                        held,
+                        dynamic_held,
+                        expression.span,
+                    )
+            case ast.ReturnStmt(value=value):
+                self._validate_lock_calls(value, held, dynamic_held)
+            case ast.IfStmt(branches=branches, else_body=else_body):
+                for branch in branches:
+                    self._validate_lock_calls(branch.condition, held, dynamic_held)
+                    self._validate_lock_block(branch.body, held, dynamic_held)
+                if else_body is not None:
+                    self._validate_lock_block(else_body, held, dynamic_held)
+            case ast.WhileStmt(condition=condition, body=body):
+                self._validate_lock_calls(condition, held, dynamic_held)
+                self._validate_lock_block(body, held, dynamic_held)
+            case ast.ForEachStmt(iterable=iterable, body=body):
+                self._validate_lock_calls(iterable, held, dynamic_held)
+                self._validate_lock_block(body, held, dynamic_held)
+            case ast.ForCStmt(initializer=initializer, condition=condition, update=update, body=body):
+                if initializer is not None:
+                    self._validate_lock_statement(initializer, held, dynamic_held)
+                self._validate_lock_calls(condition, held, dynamic_held)
+                if update is not None:
+                    self._validate_lock_statement(update, held, dynamic_held)
+                self._validate_lock_block(body, held, dynamic_held)
+            case ast.MatchStmt(value=value, cases=cases):
+                self._validate_lock_calls(value, held, dynamic_held)
+                for case in cases:
+                    self._validate_lock_calls(case.guard, held, dynamic_held)
+                    self._validate_lock_block(case.body, held, dynamic_held)
+            case ast.DeferStmt(expression=expression):
+                self._validate_lock_calls(expression, held, dynamic_held)
+            case ast.UnsafeStmt(body=body):
+                self._validate_lock_block(body, held, dynamic_held)
+            case ast.WithStmt(context=context, body=body):
+                self._validate_lock_calls(context, held, dynamic_held)
+                self._validate_lock_block(body, held, dynamic_held)
+                symbol = self.with_symbols.get(id(statement))
+                if (
+                    symbol is not None
+                    and id(symbol) not in self._lock_moved_symbol_ids
+                    and self.type_needs_drop(symbol.type)
+                ):
+                    self._validate_drop_lock_effect(
+                        symbol.type,
+                        held,
+                        dynamic_held,
+                        statement.span,
+                    )
+            case ast.CriticalSectionStmt(lock=expression, body=body):
+                self._validate_lock_calls(expression, held, dynamic_held)
+                resolution = self.critical_section_resolutions.get(id(statement))
+                if resolution is None:
+                    return
+                if resolution.kind == "static" and resolution.lock is not None:
+                    if dynamic_held:
+                        self._error(
+                            "cannot acquire a static lock while a dynamic lock set is held",
+                            expression.span,
+                            code="C415",
+                        )
+                    self._record_lock_acquisition(resolution.lock, held, expression.span)
+                    self._validate_lock_block(body, (*held, resolution.lock), dynamic_held)
+                else:
+                    if held or dynamic_held:
+                        self._error(
+                            "cannot acquire a dynamic lock while another lock is held",
+                            expression.span,
+                            code="C416",
+                        )
+                    self._validate_lock_block(body, held, True)
+
     def _check_function(
         self,
         function: FunctionSymbol,
@@ -2902,11 +3518,34 @@ class Checker:
         previous_function = self.current_function
         previous_owner = self.current_owner
         previous_moved = self.moved_variables
+        previous_unstable_aliases = self._unstable_lock_alias_names
         scope = Scope(self.global_scope)
         self.current_scope = scope
         self.current_function = function
         self.current_owner = owner
         self.moved_variables = set()
+        body_nodes = self._walk_ast(declaration.body)
+        declared_names = {
+            node.name
+            for node in body_nodes
+            if isinstance(node, ast.VarDeclStmt)
+        }
+        assignment_counts: dict[str, int] = {}
+        address_taken_names: set[str] = set()
+        for node in body_nodes:
+            if isinstance(node, ast.AssignStmt) and isinstance(node.target, ast.NameExpr):
+                assignment_counts[node.target.name] = assignment_counts.get(node.target.name, 0) + 1
+            elif (
+                isinstance(node, ast.UnaryExpr)
+                and node.operator == "&"
+                and isinstance(node.operand, ast.NameExpr)
+            ):
+                address_taken_names.add(node.operand.name)
+        self._unstable_lock_alias_names = {
+            name
+            for name, count in assignment_counts.items()
+            if name in declared_names or count > 1
+        } | address_taken_names
         try:
             for parameter in function.parameters:
                 symbol = VariableSymbol(
@@ -2939,6 +3578,7 @@ class Checker:
             self.current_function = previous_function
             self.current_owner = previous_owner
             self.moved_variables = previous_moved
+            self._unstable_lock_alias_names = previous_unstable_aliases
 
     def _check_main(self) -> None:
         main = self.functions.get("main")
@@ -3207,8 +3847,54 @@ class Checker:
                     self.unsafe_depth -= 1
             case ast.WithStmt():
                 self._check_with(statement)
+            case ast.CriticalSectionStmt():
+                self._check_critical_section(statement)
             case _:
                 raise AssertionError(f"unhandled statement: {statement!r}")
+
+    def _known_lock_identity(self, expression: ast.Expression) -> str | None:
+        if isinstance(expression, ast.NameExpr):
+            symbol = self.name_symbols.get(id(expression))
+            if isinstance(symbol, LockSymbol):
+                return symbol.qualified_name
+            if isinstance(symbol, VariableSymbol):
+                return symbol.lock_identity
+        if isinstance(expression, ast.AttributeExpr):
+            resolution = self.attribute_resolutions.get(id(expression))
+            if resolution is not None and resolution.lock is not None:
+                return resolution.lock.qualified_name
+        return None
+
+    def _check_critical_section(self, statement: ast.CriticalSectionStmt) -> None:
+        lock_type = value_type(self._check_expr(statement.lock))
+        if isinstance(lock_type, LockType):
+            identity = self._known_lock_identity(statement.lock)
+            lock = self.lock_graph.nodes.get(identity) if identity is not None else None
+            self.critical_section_resolutions[id(statement)] = CriticalSectionResolution(
+                "static" if lock is not None else "dynamic",
+                lock=lock,
+            )
+        elif isinstance(lock_type, OrderedLockListType):
+            self.critical_section_resolutions[id(statement)] = CriticalSectionResolution(
+                "dynamic_collection",
+                ordered_type=lock_type,
+            )
+        elif isinstance(lock_type, ListType) and isinstance(
+            strip_const(lock_type.inner), LockType
+        ):
+            self._error(
+                "sort the lock collection before you acquire it",
+                statement.lock.span,
+                code="C408",
+                note="use sorted(locks)",
+            )
+        else:
+            self._error(
+                f"CriticalSection requires Lock or sorted locks, got {type_name(lock_type)}",
+                statement.lock.span,
+                code="C409",
+            )
+        self._check_block(statement.body, self.current_scope)
 
     def _check_with(self, statement: ast.WithStmt) -> None:
         context_type = self._check_expr(statement.context)
@@ -3373,6 +4059,11 @@ class Checker:
             False,
             statement.name,
         )
+        if (
+            statement.initializer is not None
+            and statement.name not in self._unstable_lock_alias_names
+        ):
+            symbol.lock_identity = self._known_lock_identity(statement.initializer)
         previous = self.current_scope.declare(symbol)
         if previous is not None:
             self._duplicate_symbol(symbol, previous)
@@ -3436,6 +4127,8 @@ class Checker:
                 False,
                 statement.target.name,
             )
+            if statement.target.name not in self._unstable_lock_alias_names:
+                symbol.lock_identity = self._known_lock_identity(statement.value)
             self.current_scope.declare(symbol)
             self.name_symbols[id(statement.target)] = symbol
             self.expr_types[id(statement.target)] = symbol.type
@@ -3456,6 +4149,7 @@ class Checker:
 
         effective_target = strip_reference(target_type)
         effective_value = value_type(value_type_)
+        self._validate_ordered_lock_element_mutation(statement.target)
         if isinstance(value_type(effective_target), AtomicType):
             self._error(
                 "ordinary assignment cannot mutate or replace an Atomic cell",
@@ -3588,6 +4282,7 @@ class Checker:
                 target_symbol = self.name_symbols.get(id(statement.target))
                 if isinstance(target_symbol, VariableSymbol):
                     self._clear_moved(target_symbol)
+                    target_symbol.lock_identity = None
                     if isinstance(value_type(target_symbol.type), MapViewType):
                         self.map_view_storages[id(target_symbol)] = self._collection_storage(
                             statement.value
@@ -4726,6 +5421,7 @@ class Checker:
                     "range",
                     "len",
                     "sort",
+                    "sorted",
                     "print",
                     "input",
                     "open",
@@ -4747,6 +5443,8 @@ class Checker:
             self._record_direct_value_use(expression, ValueUseKind.COPY)
             return symbol.type
         if isinstance(symbol, ComptimeVariableSymbol):
+            return symbol.type
+        if isinstance(symbol, LockSymbol):
             return symbol.type
         if isinstance(symbol, FunctionSymbol):
             pointer = self._function_pointer_from_symbol(symbol)
@@ -4791,6 +5489,7 @@ class Checker:
                     "address-of requires an addressable value", expression.operand.span, code="C053"
                 )
                 return ERROR
+            self._validate_ordered_lock_element_mutation(expression.operand)
             self._record_direct_value_use(expression.operand, ValueUseKind.ADDRESS)
             if isinstance(operand_type, ReferenceType):
                 return PointerType(operand_type.inner)
@@ -5118,6 +5817,12 @@ class Checker:
                     "module_global", global_=global_
                 )
                 return global_.type
+            if expression.name in module.locks:
+                lock = module.locks[expression.name]
+                self.attribute_resolutions[id(expression)] = AttributeResolution(
+                    "module_lock", lock=lock
+                )
+                return lock.type
             if expression.name in module.type_symbols:
                 nominal = module.type_symbols[expression.name]
                 self.attribute_resolutions[id(expression)] = AttributeResolution(
@@ -5774,6 +6479,8 @@ class Checker:
                 return self._check_len_call(expression)
             if name == "sort":
                 return self._check_sort_call(expression)
+            if name == "sorted":
+                return self._check_sorted_call(expression)
             if name == "print":
                 return self._check_print_call(expression)
             if name == "input":
@@ -6532,6 +7239,13 @@ class Checker:
                 code="C265",
             )
             return ERROR
+        if isinstance(receiver_type, OrderedLockListType):
+            self._error(
+                "cannot change a sorted lock collection",
+                receiver.span,
+                code="C419",
+                note="call sorted() again to create a new canonical order",
+            )
 
         if self._list_storage_is_active(receiver):
             self._error(
@@ -8821,12 +9535,49 @@ class Checker:
         self.expr_types[id(call.callee)] = FunctionValueType("sort")
         return VOID
 
+    def _check_sorted_call(self, call: ast.CallExpr) -> Type:
+        if len(call.arguments) != 1 or call.arguments[0].name is not None:
+            self._error("sorted expects exactly one positional argument", call.span, code="C405")
+            for call_argument in call.arguments:
+                self._check_expr(call_argument.value)
+            return ListType(ERROR)
+
+        argument = call.arguments[0].value
+        argument_type = value_type(self._check_expr(argument))
+        if not isinstance(argument_type, (ArrayType, SliceType, ListType)):
+            self._error(
+                f"sorted requires an array, slice, or List, got {type_name(argument_type)}",
+                argument.span,
+                code="C406",
+            )
+            return ListType(ERROR)
+        element = strip_const(argument_type.inner)
+        if not self._is_sortable_element_type(element):
+            self._error(
+                f"sorted does not support elements of type {type_name(element)}",
+                argument.span,
+                code="C407",
+            )
+        expected = SliceType(ConstType(element))
+        result: ListType = (
+            OrderedLockListType(LOCK) if isinstance(element, LockType) else ListType(element)
+        )
+        self.call_resolutions[id(call)] = CallResolution(
+            "sorted",
+            argument_order=(0,),
+            expected_types=(expected,),
+        )
+        self.expr_types[id(call.callee)] = FunctionValueType("sorted")
+        return result
+
     @staticmethod
     def _is_sortable_element_type(type_: Type) -> bool:
         raw = strip_const(type_)
         if is_numeric(raw) or raw == BOOL or isinstance(raw, (EnumType, StringType)):
             return True
-        return isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR
+        return isinstance(raw, LockType) or (
+            isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR
+        )
 
     def _check_none(
         self,
@@ -9290,6 +10041,10 @@ class Checker:
             if isinstance(statement, ast.UnsafeStmt) and self._block_always_returns(statement.body):
                 return True
             if isinstance(statement, ast.WithStmt) and self._block_always_returns(statement.body):
+                return True
+            if isinstance(statement, ast.CriticalSectionStmt) and self._block_always_returns(
+                statement.body
+            ):
                 return True
         return False
 
@@ -10835,6 +11590,7 @@ def check(
     c_prefix: str = "",
     module_mode: bool = False,
     is_entry: bool = True,
+    lock_graph: LockOrderGraph | None = None,
 ) -> SemanticModel:
     return Checker(
         module,
@@ -10844,4 +11600,5 @@ def check(
         c_prefix=c_prefix,
         module_mode=module_mode,
         is_entry=is_entry,
+        lock_graph=lock_graph,
     ).check()

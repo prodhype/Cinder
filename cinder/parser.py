@@ -89,6 +89,16 @@ class Parser:
                     items.append(self.parse_variant(decorators))
                 elif self.at(TokenKind.DEF):
                     items.append(self.parse_function(decorators, owner=None, is_extern=False))
+                elif self.at(TokenKind.LOCK):
+                    self._reject_decorators(decorators)
+                    items.append(self.parse_lock())
+                elif (
+                    self.at(TokenKind.NAME)
+                    and self.current.lexeme == "lockorder"
+                    and self.peek().kind is TokenKind.NAME
+                ):
+                    self._reject_decorators(decorators)
+                    items.append(self.parse_lock_order())
                 elif (
                     self.at(TokenKind.NAME)
                     and self.current.lexeme == "static_assert"
@@ -670,6 +680,36 @@ class Parser:
         end = self.expect(TokenKind.NEWLINE, "expected newline after static_assert", code="P140")
         return ast.StaticAssertDecl(start.merge(end.span), condition, message)
 
+    def parse_lock_reference(self) -> ast.LockReference:
+        first = self.expect(TokenKind.NAME, "expected a lock name", code="P149")
+        parts = [first.lexeme]
+        end = first.span
+        while self.match(TokenKind.DOT):
+            name = self.expect(TokenKind.NAME, "expected a lock name after '.'", code="P150")
+            parts.append(name.lexeme)
+            end = name.span
+        return ast.LockReference(first.span.merge(end), tuple(parts))
+
+    def parse_lock(self) -> ast.LockDecl:
+        start = self.expect(TokenKind.LOCK).span
+        name = self.expect(TokenKind.NAME, "expected a lock name", code="P151")
+        after: ast.LockReference | None = None
+        if self.at(TokenKind.NAME) and self.current.lexeme == "after":
+            self.advance()
+            after = self.parse_lock_reference()
+        end = self.expect(TokenKind.NEWLINE, "expected newline after lock declaration", code="P152")
+        return ast.LockDecl(start.merge(end.span), name.lexeme, after)
+
+    def parse_lock_order(self) -> ast.LockOrderDecl:
+        start = self.expect(TokenKind.NAME).span
+        before = self.parse_lock_reference()
+        relation = self.expect(TokenKind.NAME, "expected 'before' in lock order", code="P153")
+        if relation.lexeme != "before":
+            self.error("expected 'before' in lock order", relation.span, code="P153")
+        after = self.parse_lock_reference()
+        end = self.expect(TokenKind.NEWLINE, "expected newline after lock order", code="P154")
+        return ast.LockOrderDecl(start.merge(end.span), before, after)
+
     def parse_suite_after_colon(self, colon_span: Span) -> ast.Block:
         self.expect(TokenKind.NEWLINE, "expected newline before block", code="P045")
         self.expect(TokenKind.INDENT, "expected an indented block", code="P046")
@@ -688,6 +728,12 @@ class Parser:
         return ast.Block(colon_span.merge(end), statements)
 
     def parse_statement(self) -> ast.Statement:
+        if (
+            self.at(TokenKind.NAME)
+            and self.current.lexeme == "CriticalSection"
+            and self.peek().kind not in {TokenKind.LEFT_PAREN, *_ASSIGNMENT_KINDS}
+        ):
+            return self.parse_critical_section()
         if self.at(TokenKind.IF):
             return self.parse_if()
         if self.at(TokenKind.WHILE):
@@ -729,6 +775,13 @@ class Parser:
         statement = self.parse_simple_statement()
         self.expect(TokenKind.NEWLINE, "expected newline after statement", code="P055")
         return statement
+
+    def parse_critical_section(self) -> ast.CriticalSectionStmt:
+        start = self.expect(TokenKind.NAME).span
+        lock = self.parse_expression()
+        colon = self.expect(TokenKind.COLON, "expected ':' after CriticalSection", code="P155")
+        body = self.parse_suite_after_colon(colon.span)
+        return ast.CriticalSectionStmt(start.merge(body.span), lock, body)
 
     def parse_simple_statement(self) -> ast.Statement:
         is_const = self.match(TokenKind.CONST) is not None
