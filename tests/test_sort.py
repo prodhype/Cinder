@@ -91,6 +91,26 @@ def test_sorted_borrows_addressable_list_fields_without_dropping_source() -> Non
     assert "__cinder_sorted_source_" not in generated
 
 
+def test_sorted_evaluates_addressable_list_field_receiver_once() -> None:
+    generated = compile_source(
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "calls: i32 = 0\n"
+        "def get_bundle(bundle: Bundle*) -> Bundle*:\n"
+        "    calls += 1\n"
+        "    return bundle\n"
+        "def main() -> i32:\n"
+        "    bundle = Bundle(items=[3, 1, 2])\n"
+        "    ordered = sorted(get_bundle(&bundle).items)\n"
+        "    if calls != 1:\n"
+        "        return 1\n"
+        "    return ordered[0]\n"
+    )
+
+    assert generated.count("get_bundle((&(bundle)))") == 1
+    assert "CinderList_i32 *__cinder_sorted_list_" in generated
+
+
 def test_sorted_drops_materialized_rvalue_list_source() -> None:
     generated = compile_source(
         "def get_values() -> List[i32]:\n"
@@ -198,10 +218,15 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "    items: List[i32]\n"
         "\n"
         "calls: i32 = 0\n"
+        "bundle_calls: i32 = 0\n"
         "\n"
         "def view(values: []i32) -> []i32:\n"
         "    calls += 1\n"
         "    return values\n"
+        "\n"
+        "def get_bundle(bundle: Bundle*) -> Bundle*:\n"
+        "    bundle_calls += 1\n"
+        "    return bundle\n"
         "\n"
         "def main() -> i32:\n"
         "    numbers: i32[6] = [9, 4, 3, 2, 1, 8]\n"
@@ -240,8 +265,10 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "        return 7\n"
         "\n"
         "    bundle = Bundle(items=[3, 1, 2])\n"
-        "    ordered_items = sorted(bundle.items)\n"
-        "    if ordered_items[0] != 1 or bundle.items[0] != 3 or len(bundle.items) != 3:\n"
+        "    ordered_items = sorted(get_bundle(&bundle).items)\n"
+        "    if bundle_calls != 1 or ordered_items[0] != 1 or bundle.items[0] != 3:\n"
+        "        return 8\n"
+        "    if len(bundle.items) != 3:\n"
         "        return 8\n"
         "\n"
         "    single: f64[1] = [1.5]\n"

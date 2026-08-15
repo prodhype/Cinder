@@ -5374,6 +5374,46 @@ def test_gen3_supports_atomic_import_forms(
     assert_compiler_supports_atomic_import_forms(gen3_compiler, tmp_path)
 
 
+def test_gen1_sorted_cleans_up_only_owned_call_results(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "sorted_borrowed_slice.ci"
+    source.write_text(
+        "def identity(values: []const i32) -> []const i32:\n"
+        "    return values\n"
+        "def make_values() -> List[i32]:\n"
+        "    return [6, 4, 5]\n"
+        "def main() -> i32:\n"
+        "    values: List[i32] = [3, 1, 2]\n"
+        "    ordered: List[i32] = sorted(identity(values))\n"
+        "    if ordered[0] != 1 or ordered[2] != 3:\n"
+        "        return 1\n"
+        "    owned: List[i32] = sorted(make_values())\n"
+        "    if owned[0] != 4 or owned[2] != 6:\n"
+        "        return 2\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(gen1_compiler, "emit-c", str(source))
+    assert emitted.returncode == 0, emitted.stderr
+    assert emitted.stdout.count("CinderList_i32_drop(&cinder_sorted_source)") == 1
+
+    executable = tmp_path / "sorted-borrowed-slice"
+    built = run_gen1(
+        gen1_compiler,
+        "build",
+        str(source),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / "sorted-borrowed-slice-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True, timeout=5)
+    assert ran.returncode == 0, ran.stderr
+
+
 def assert_compiler_supports_lock_ordering(
     compiler: Path,
     tmp_path: Path,

@@ -5638,6 +5638,19 @@ class CGenerator:
                 )
                 self.writer.line(f"{source_name}_drop(&{source});")
                 return result
+            if isinstance(argument_type, ListType):
+                source = self._new_temp("sorted_list")
+                source_type = strip_reference(self.semantic.expression_type(argument))
+                self.writer.line(
+                    f"{c_decl(PointerType(source_type), source)} = "
+                    f"{self._container_pointer(argument)};"
+                )
+                slice_name = self._slice_name(expected)
+                sorted_argument = (
+                    f"(({slice_name}){{ .data = {source}->data, "
+                    f".length = {source}->length }})"
+                )
+                return f"{helper}({sorted_argument})"
             sorted_argument = self._emit_with_expected(argument, expected)
             return f"{helper}({sorted_argument})"
         if resolution.kind == "range":

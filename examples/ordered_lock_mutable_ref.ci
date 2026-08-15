@@ -139,6 +139,18 @@ struct Counter:
         return self.value
 
 
+def identity_slice(values: []const i32) -> []const i32:
+    return values
+
+
+def sorted_call_regressions() -> i32:
+    values: List[i32] = [3, 1, 2]
+    slice_ordered: List[i32] = sorted(identity_slice(values))
+    if slice_ordered[0] != 1 or slice_ordered[2] != 3:
+        return 1
+    return 0
+
+
 def remember(step: i32) -> void:
     progress += step
 
@@ -209,6 +221,8 @@ def main() -> i32:
     record_independent_metric()
     if acquire_runtime_collection() != 0:
         return 1
-    if progress != 11111111:
+    if sorted_call_regressions() != 0:
         return 2
+    if progress != 11111111:
+        return 3
     return 0

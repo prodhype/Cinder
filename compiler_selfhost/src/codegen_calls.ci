@@ -1076,22 +1076,24 @@ def emit_sorted_call(
             builder.append(".")
         builder.append("length; ++cinder_sorted_index) cinder_selfhost_list_append_value(&cinder_sorted_result, ")
         if element_is_string:
-            builder.append("cinder_string_clone(&cinder_sorted_source")
-        else:
-            builder.append("cinder_sorted_source")
+            builder.append("cinder_string_clone(&")
+        builder.append("((")
+        codegen_type_names.emit_semantic_c_type(type_table, raw_element, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+        builder.append(" *)cinder_sorted_source")
         if pointer_like:
             builder.append("->")
         else:
             builder.append(".")
-        builder.append("data[cinder_sorted_index]")
+        builder.append("data)[cinder_sorted_index]")
         if element_is_string:
             builder.append(")")
         builder.append("); ")
     argument_kind = arena.nodes[argument.index].kind
     if argument_kind == SyntaxKind.EXPR_CALL or argument_kind == SyntaxKind.EXPR_LIST:
         argument_semantic_type = codegen_context.context_semantic_type(context, argument)
-        codegen_type_names.emit_semantic_specialized_type_name(type_table, argument_semantic_type, context.type_source, builder, context.specialization_names)
-        builder.append("_drop(&cinder_sorted_source); ")
+        if codegen_type_names.semantic_type_is_kind(type_table, argument_semantic_type, types.TypeKind.LIST):
+            codegen_type_names.emit_semantic_specialized_type_name(type_table, argument_semantic_type, context.type_source, builder, context.specialization_names)
+            builder.append("_drop(&cinder_sorted_source); ")
     builder.append("cinder_sort(cinder_sorted_result.data, cinder_sorted_result.length, sizeof(*cinder_sorted_result.data), ")
     append_sorted_comparator(builder, type_table, element_type, context.type_source)
     builder.append("); cinder_sorted_result; })")
