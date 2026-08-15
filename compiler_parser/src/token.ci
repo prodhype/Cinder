@@ -46,6 +46,7 @@ enum TokenKind:
     DEFER
     WITH
     PRIVATE
+    LOCK
     LEFT_PAREN
     RIGHT_PAREN
     LEFT_BRACKET

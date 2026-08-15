@@ -17,6 +17,8 @@ def parse_suite_after_colon(context: &parser_core.ParserContext, newline_code: i
     return parser_core.make_node_from_range(context, SyntaxKind.BLOCK, start, end, children, 0)
 
 def parse_statement(context: &parser_core.ParserContext) -> NodeId:
+    if parser_core.at(context, TokenKind.NAME) and parser_core.token_text_equals(context, parser_core.current(context), "CriticalSection") and parser_core.peek(context, 1).kind != TokenKind.LEFT_PAREN and not parser_core.is_assignment_kind(parser_core.peek(context, 1).kind):
+        return parse_critical_section(context)
     if parser_core.at(context, TokenKind.IF):
         return parse_if(context)
     if parser_core.at(context, TokenKind.WHILE):
@@ -61,6 +63,16 @@ def parse_statement(context: &parser_core.ParserContext) -> NodeId:
     statement = parse_simple_statement(context)
     parser_core.expect(context, TokenKind.NEWLINE, 55)
     return statement
+
+
+def parse_critical_section(context: &parser_core.ParserContext) -> NodeId:
+    start = parser_core.advance(context)
+    children: List[NodeId] = []
+    syntax.append_valid(children, parser_expressions.parse_expression(context, 0))
+    parser_core.expect(context, TokenKind.COLON, 155)
+    syntax.append_valid(children, parse_suite_after_colon(context, 155, 155))
+    return parser_core.make_node(context, SyntaxKind.CRITICAL_SECTION_STMT, start, parser_core.previous(context), start, children, 0)
+
 
 def parse_simple_statement(context: &parser_core.ParserContext) -> NodeId:
     is_const = parser_core.match_kind(context, TokenKind.CONST)

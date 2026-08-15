@@ -4,17 +4,18 @@ import hashlib
 import os
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Sequence
 
 from cinder.checker import SemanticModel, check
 from cinder.codegen_c import generate_c, generate_module_header, generate_module_source
 from cinder.ir import IRModule, lower
 from cinder.lexer import lex
+from cinder.lock_order import LockOrderGraph
 from cinder.parser import parse
-from cinder.project import ProjectConfig, ProjectGraph
+from cinder.project import ParsedModule, ProjectConfig, ProjectGraph
 from cinder.symbols import ModuleSymbol
 from cinder.toolchain import ToolchainResult, compile_c11, discover_compiler
 
@@ -118,7 +119,9 @@ class Compiler:
         source_path = Path(path)
         tokens = lex(source, source_path)
         syntax = parse(tokens, source, source_path)
-        semantic = check(syntax, source)
+        lock_graph = LockOrderGraph()
+        semantic = check(syntax, source, lock_graph=lock_graph)
+        lock_graph.assign_canonical_keys()
         ir = lower(semantic)
         c_source = generate_c(ir)
         return CompilationUnit(
@@ -133,6 +136,8 @@ class Compiler:
     def compile_project(self, path: Path | str) -> CompilationProject:
         graph = ProjectGraph.load(path)
         available_modules: dict[str, ModuleSymbol] = {}
+        lock_graph = LockOrderGraph()
+        checked_modules: list[tuple[ParsedModule, SemanticModel, str, str]] = []
         units: list[CompilationUnit] = []
 
         for parsed in graph.modules:
@@ -146,7 +151,16 @@ class Compiler:
                 c_prefix=_module_c_prefix(graph.config.name, parsed.name),
                 module_mode=True,
                 is_entry=parsed.name == graph.entry_module,
+                lock_graph=lock_graph,
             )
+            module_symbol = semantic.module_symbol()
+            module_symbol.generated_header = header_name
+            available_modules[parsed.name] = module_symbol
+            checked_modules.append((parsed, semantic, header_name, generated_source_name))
+
+        lock_graph.assign_canonical_keys()
+
+        for parsed, semantic, header_name, generated_source_name in checked_modules:
             ir = lower(semantic)
             dependency_headers = tuple(
                 header
@@ -167,10 +181,6 @@ class Compiler:
                 generated_source_name=generated_source_name,
             )
             units.append(unit)
-
-            module_symbol = semantic.module_symbol()
-            module_symbol.generated_header = header_name
-            available_modules[parsed.name] = module_symbol
 
         return CompilationProject(graph, tuple(units))
 

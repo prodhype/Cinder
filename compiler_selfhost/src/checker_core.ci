@@ -3,7 +3,9 @@ import symbols
 import syntax
 import types
 import generics
+import lock_order
 import ownership
+import project
 from syntax import NodeId
 
 
@@ -24,6 +26,9 @@ struct Checker:
     qualified_atomic_template_names: List[String]
     specialization_declaration: NodeId
     specialization_args: List[types.TypeId]
+    lock_model: lock_order.ProjectLockModel
+    module_name: String
+    module_imports: List[project.ImportBinding]
 
     def emit_error(self: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
         if len(self.diagnostics) > 0:
@@ -38,6 +43,7 @@ def new_checker() -> Checker:
     imported_enum_names: List[String] = []
     qualified_atomic_template_names: List[String] = []
     specialization_args: List[types.TypeId] = []
+    module_imports: List[project.ImportBinding] = []
     return Checker(
         type_table=types.new_type_table(),
         symbols=symbols.new_symbol_table(),
@@ -47,6 +53,9 @@ def new_checker() -> Checker:
         qualified_atomic_template_names=qualified_atomic_template_names,
         specialization_declaration=syntax.missing_node(),
         specialization_args=specialization_args,
+        lock_model=lock_order.new_project_lock_model(),
+        module_name="",
+        module_imports=module_imports,
     )
 
 
@@ -57,6 +66,46 @@ def emit_error(checker: &Checker, code: i32, start: usize, length: usize, line: 
 def dump_diagnostics(checker: &const Checker) -> void:
     for diagnostic in checker.diagnostics:
         print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+
+
+def prepare_lock_context(checker: &Checker, source: &const String, modules: &const List[project.ParsedModule]) -> void:
+    lock_order.prepare_project_lock_model(&checker.lock_model, modules)
+    module_index: usize = 0
+    while module_index < len(modules):
+        module: &const project.ParsedModule = &modules[module_index]
+        if module.source == source[0:len(source)]:
+            checker.module_name = module.name[0:len(module.name)]
+            while len(checker.module_imports) > 0:
+                checker.module_imports.pop()
+            import_index: usize = 0
+            module_imports: &const List[project.ImportBinding] = &module.imports
+            while import_index < len(module_imports):
+                imported: &const project.ImportBinding = &module_imports[import_index]
+                checker.module_imports.append(
+                    project.ImportBinding(
+                        alias=imported.alias[0:len(imported.alias)],
+                        module_name=imported.module_name[0:len(imported.module_name)],
+                        member=imported.member[0:len(imported.member)],
+                    )
+                )
+                import_index += 1
+            diagnostic_index: usize = 0
+            lock_diagnostics: &const List[lock_order.LockDiagnostic] = &checker.lock_model.diagnostics
+            while diagnostic_index < len(lock_diagnostics):
+                diagnostic: &const lock_order.LockDiagnostic = &lock_diagnostics[diagnostic_index]
+                if diagnostic.module_name == module.name:
+                    emit_error(
+                        checker,
+                        diagnostic.code,
+                        diagnostic.start,
+                        diagnostic.length,
+                        diagnostic.line,
+                        diagnostic.column,
+                    )
+                    lock_order.print_diagnostic(diagnostic)
+                diagnostic_index += 1
+            return
+        module_index += 1
 
 
 def count_direct_children(arena: &const syntax.SyntaxArena, id: NodeId, kind: syntax.SyntaxKind) -> i32:

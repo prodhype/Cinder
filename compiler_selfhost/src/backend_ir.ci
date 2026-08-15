@@ -43,6 +43,8 @@ enum IRNodeKind:
     ATOMIC_COMPARE_EXCHANGE
     ATOMIC_FETCH
     ATOMIC_RESULT_FIELD
+    LOCK
+    CRITICAL_SECTION
 
 
 enum IRAtomicFetchKind:
@@ -86,6 +88,9 @@ struct IRNode:
     atomic_second_role: semantic.AtomicArgumentRole
     atomic_fetch_kind: IRAtomicFetchKind
     atomic_order: IRAtomicMemoryOrder
+    lock_index: i32
+    lock_key: i32
+    lock_kind: i32
 
 
 struct BackendSummary:
@@ -148,6 +153,9 @@ struct IRModule:
                 atomic_second_role=semantic.AtomicArgumentRole.NONE,
                 atomic_fetch_kind=IRAtomicFetchKind.INVALID,
                 atomic_order=IRAtomicMemoryOrder.INVALID,
+                lock_index=-1,
+                lock_key=-1,
+                lock_kind=0,
             )
         )
         return id
@@ -307,6 +315,7 @@ def lower_node(module: &IRModule, arena: &const SyntaxArena, id: NodeId, model: 
         offset += 1
     lowered = module.add_node(ir_kind_for_syntax(node.kind), id, specialization, ir_type_for_node(node.kind, id, model, specialization), child_nodes, node.flags)
     attach_atomic_metadata(module, lowered, id, model, specialization)
+    attach_lock_metadata(module, lowered, id, model)
     return lowered
 
 
@@ -338,6 +347,24 @@ def attach_atomic_metadata(module: &IRModule, lowered: IRNodeId, syntax_id: Node
         if resolution.kind != semantic.AtomicIntrinsicKind.INIT and resolution.kind != semantic.AtomicIntrinsicKind.RESULT_EXCHANGED and resolution.kind != semantic.AtomicIntrinsicKind.RESULT_OBSERVED:
             node.atomic_order = IRAtomicMemoryOrder.SEQ_CST
         return
+
+
+def attach_lock_metadata(module: &IRModule, lowered: IRNodeId, syntax_id: NodeId, model: &const semantic.SemanticModel) -> void:
+    node: &IRNode = &module.nodes[lowered.index]
+    locks: &const List[semantic.LockBinding] = &model.locks
+    for binding in locks:
+        if binding.node.index == syntax_id.index:
+            node.kind = IRNodeKind.LOCK
+            node.lock_index = binding.lock_index
+            node.lock_key = binding.canonical_key
+            return
+    critical_sections: &const List[semantic.CriticalSectionResolution] = &model.critical_sections
+    for resolution in critical_sections:
+        if resolution.node.index == syntax_id.index:
+            node.kind = IRNodeKind.CRITICAL_SECTION
+            node.lock_index = resolution.lock_index
+            node.lock_kind = resolution.kind
+            return
 
 
 def atomic_ir_kind(kind: semantic.AtomicIntrinsicKind) -> IRNodeKind:
@@ -518,6 +545,8 @@ def ir_kind_for_syntax(kind: SyntaxKind) -> IRNodeKind:
         return IRNodeKind.VARIANT
     if kind == SyntaxKind.GLOBAL_DECL:
         return IRNodeKind.GLOBAL
+    if kind == SyntaxKind.LOCK_DECL:
+        return IRNodeKind.LOCK
     if kind == SyntaxKind.BLOCK:
         return IRNodeKind.BLOCK
     if kind == SyntaxKind.VAR_DECL_STMT or kind == SyntaxKind.PARAMETER:
@@ -540,6 +569,8 @@ def ir_kind_for_syntax(kind: SyntaxKind) -> IRNodeKind:
         return IRNodeKind.CONTINUE
     if kind == SyntaxKind.DEFER_STMT:
         return IRNodeKind.DEFER
+    if kind == SyntaxKind.CRITICAL_SECTION_STMT:
+        return IRNodeKind.CRITICAL_SECTION
     if kind == SyntaxKind.EXPR_CALL:
         return IRNodeKind.CALL
     if kind == SyntaxKind.EXPR_NAME:
@@ -620,7 +651,7 @@ def dump_summary(summary: BackendSummary) -> void:
 
 
 def is_statement_kind(kind: SyntaxKind) -> bool:
-    return kind == SyntaxKind.VAR_DECL_STMT or kind == SyntaxKind.ASSIGN_STMT or kind == SyntaxKind.EXPR_STMT or kind == SyntaxKind.IF_STMT or kind == SyntaxKind.IF_BRANCH or kind == SyntaxKind.WHILE_STMT or kind == SyntaxKind.FOR_EACH_STMT or kind == SyntaxKind.FOR_C_STMT or kind == SyntaxKind.MATCH_STMT or kind == SyntaxKind.MATCH_CASE or kind == SyntaxKind.RETURN_STMT or kind == SyntaxKind.BREAK_STMT or kind == SyntaxKind.CONTINUE_STMT or kind == SyntaxKind.PASS_STMT or kind == SyntaxKind.DEFER_STMT or kind == SyntaxKind.WITH_STMT or kind == SyntaxKind.UNSAFE_STMT
+    return kind == SyntaxKind.VAR_DECL_STMT or kind == SyntaxKind.ASSIGN_STMT or kind == SyntaxKind.EXPR_STMT or kind == SyntaxKind.IF_STMT or kind == SyntaxKind.IF_BRANCH or kind == SyntaxKind.WHILE_STMT or kind == SyntaxKind.FOR_EACH_STMT or kind == SyntaxKind.FOR_C_STMT or kind == SyntaxKind.MATCH_STMT or kind == SyntaxKind.MATCH_CASE or kind == SyntaxKind.RETURN_STMT or kind == SyntaxKind.BREAK_STMT or kind == SyntaxKind.CONTINUE_STMT or kind == SyntaxKind.PASS_STMT or kind == SyntaxKind.DEFER_STMT or kind == SyntaxKind.WITH_STMT or kind == SyntaxKind.UNSAFE_STMT or kind == SyntaxKind.CRITICAL_SECTION_STMT
 
 
 def is_expression_kind(kind: SyntaxKind) -> bool:

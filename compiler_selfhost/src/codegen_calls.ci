@@ -77,6 +77,9 @@ def emit_module_call(
             if name == "sort":
                 emit_sort_call(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
                 return
+            if name == "sorted":
+                emit_sorted_call(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                return
             if name == "free":
                 builder.append("free(")
                 emit_nested(state, codegen_names.first_call_argument(arena, id))
@@ -1026,3 +1029,123 @@ def emit_sort_call(
     else:
         builder.append("cinder_selfhost_sort_i32(")
     builder.append("cinder_sort_list->data, cinder_sort_list->length); })")
+
+
+def emit_sorted_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    argument = codegen_names.first_call_argument(arena, id)
+    result_type = codegen_context.context_semantic_type(context, id)
+    argument_type = codegen_context.context_expression_type(arena, context, argument, source)
+    type_table: &const types.TypeTable = context.type_table
+    element_type = types.type_i32()
+    if result_type.index >= 0 and result_type.index < cast[i32](len(type_table.types)):
+        element_type = type_table.types[result_type.index].inner
+    raw_element = types.strip_const(type_table, element_type)
+    element_is_string = raw_element.index >= 0 and raw_element.index < cast[i32](len(type_table.types)) and type_table.types[raw_element.index].kind == types.TypeKind.STRING
+    builder.append("({ ")
+    codegen_type_names.emit_semantic_c_type(type_table, result_type, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
+    builder.append(" cinder_sorted_result = {0}; __auto_type cinder_sorted_source = ")
+    emit_nested(state, argument)
+    builder.append("; ")
+    if codegen_specializations.context_type_is_array(context.type_arena, argument_type):
+        length = codegen_specializations.array_length_node(context.type_arena, argument_type)
+        builder.append("for (size_t cinder_sorted_index = 0; cinder_sorted_index < ")
+        codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+        builder.append("; ++cinder_sorted_index) cinder_selfhost_list_append_value(&cinder_sorted_result, ")
+        if element_is_string:
+            builder.append("cinder_string_clone(&cinder_sorted_source[cinder_sorted_index])")
+        else:
+            builder.append("cinder_sorted_source[cinder_sorted_index]")
+        builder.append("); ")
+    else:
+        pointer_like = codegen_context.context_expression_is_pointer_like(arena, context, argument, source)
+        builder.append("for (size_t cinder_sorted_index = 0; cinder_sorted_index < cinder_sorted_source")
+        if pointer_like:
+            builder.append("->")
+        else:
+            builder.append(".")
+        builder.append("length; ++cinder_sorted_index) cinder_selfhost_list_append_value(&cinder_sorted_result, ")
+        if element_is_string:
+            builder.append("cinder_string_clone(&cinder_sorted_source")
+        else:
+            builder.append("cinder_sorted_source")
+        if pointer_like:
+            builder.append("->")
+        else:
+            builder.append(".")
+        builder.append("data[cinder_sorted_index]")
+        if element_is_string:
+            builder.append(")")
+        builder.append("); ")
+    argument_kind = arena.nodes[argument.index].kind
+    if argument_kind == SyntaxKind.EXPR_CALL or argument_kind == SyntaxKind.EXPR_LIST:
+        argument_semantic_type = codegen_context.context_semantic_type(context, argument)
+        codegen_type_names.emit_semantic_specialized_type_name(type_table, argument_semantic_type, context.type_source, builder, context.specialization_names)
+        builder.append("_drop(&cinder_sorted_source); ")
+    builder.append("cinder_sort(cinder_sorted_result.data, cinder_sorted_result.length, sizeof(*cinder_sorted_result.data), ")
+    append_sorted_comparator(builder, type_table, element_type, context.type_source)
+    builder.append("); cinder_sorted_result; })")
+
+
+def append_sorted_comparator(builder: &StringBuilder, table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> void:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        builder.append("cinder_selfhost_compare_i32")
+        return
+    record = table.types[current.index]
+    if record.kind == types.TypeKind.STRING:
+        builder.append("cinder_selfhost_compare_string")
+    elif record.kind == types.TypeKind.LOCK:
+        builder.append("cinder_selfhost_compare_lock")
+    elif record.kind == types.TypeKind.I64:
+        builder.append("cinder_selfhost_compare_i64")
+    elif record.kind == types.TypeKind.F64:
+        builder.append("cinder_selfhost_compare_f64")
+    elif record.kind == types.TypeKind.CHAR:
+        builder.append("cinder_selfhost_compare_char")
+    elif record.kind == types.TypeKind.BOOL:
+        builder.append("cinder_selfhost_compare_bool")
+    elif record.kind == types.TypeKind.POINTER:
+        builder.append("cinder_selfhost_compare_cstr")
+    elif record.kind == types.TypeKind.NAMED and record.name_length > 0:
+        name = source[record.name_start:record.name_start + record.name_length]
+        if name == "i8":
+            builder.append("cinder_selfhost_compare_i8")
+            return
+        if name == "i16":
+            builder.append("cinder_selfhost_compare_i16")
+            return
+        if name == "u8":
+            builder.append("cinder_selfhost_compare_u8")
+            return
+        if name == "u16":
+            builder.append("cinder_selfhost_compare_u16")
+            return
+        if name == "u32":
+            builder.append("cinder_selfhost_compare_u32")
+            return
+        if name == "u64" or name == "usize" or name == "c_size_t":
+            builder.append("cinder_selfhost_compare_u64")
+            return
+        if name == "i64" or name == "isize" or name == "c_long":
+            builder.append("cinder_selfhost_compare_i64")
+            return
+        if name == "f32":
+            builder.append("cinder_selfhost_compare_f32")
+            return
+        if name == "f64":
+            builder.append("cinder_selfhost_compare_f64")
+            return
+        builder.append("cinder_selfhost_compare_i32")
+    else:
+        builder.append("cinder_selfhost_compare_i32")

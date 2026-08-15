@@ -89,6 +89,18 @@ struct AtomicIntrinsicResolution:
     flags: i32
 
 
+struct LockBinding:
+    node: NodeId
+    lock_index: i32
+    canonical_key: i32
+
+
+struct CriticalSectionResolution:
+    node: NodeId
+    kind: i32
+    lock_index: i32
+
+
 struct SpecializationBinding:
     node: NodeId
     callee: SymbolId
@@ -124,6 +136,8 @@ struct SemanticModel:
     cleanups: List[CleanupBinding]
     value_use_resolutions: List[ValueUseResolution]
     atomic_intrinsics: List[AtomicIntrinsicResolution]
+    locks: List[LockBinding]
+    critical_sections: List[CriticalSectionResolution]
     active_user_specialization: i32
 
     def record_expr_type(self: &SemanticModel, node: NodeId, type_id: TypeId) -> void:
@@ -214,6 +228,26 @@ struct SemanticModel:
                 return
             index += 1
         self.value_use_resolutions.append(ValueUseResolution(node=node, kind=kind, symbol=symbol, type_id=type_id))
+
+    def record_lock(self: &SemanticModel, node: NodeId, lock_index: i32, canonical_key: i32) -> void:
+        index: usize = 0
+        while index < len(self.locks):
+            if self.locks[index].node.index == node.index:
+                self.locks[index].lock_index = lock_index
+                self.locks[index].canonical_key = canonical_key
+                return
+            index += 1
+        self.locks.append(LockBinding(node=node, lock_index=lock_index, canonical_key=canonical_key))
+
+    def record_critical_section(self: &SemanticModel, node: NodeId, kind: i32, lock_index: i32) -> void:
+        index: usize = 0
+        while index < len(self.critical_sections):
+            if self.critical_sections[index].node.index == node.index:
+                self.critical_sections[index].kind = kind
+                self.critical_sections[index].lock_index = lock_index
+                return
+            index += 1
+        self.critical_sections.append(CriticalSectionResolution(node=node, kind=kind, lock_index=lock_index))
 
     def record_atomic_intrinsic(
         self: &SemanticModel,
@@ -313,6 +347,8 @@ def new_semantic_model() -> SemanticModel:
     cleanups: List[CleanupBinding] = []
     value_use_resolutions: List[ValueUseResolution] = []
     atomic_intrinsics: List[AtomicIntrinsicResolution] = []
+    locks: List[LockBinding] = []
+    critical_sections: List[CriticalSectionResolution] = []
     return SemanticModel(
         expr_types=expr_types,
         type_nodes=type_nodes,
@@ -333,6 +369,8 @@ def new_semantic_model() -> SemanticModel:
         cleanups=cleanups,
         value_use_resolutions=value_use_resolutions,
         atomic_intrinsics=atomic_intrinsics,
+        locks=locks,
+        critical_sections=critical_sections,
         active_user_specialization=-1,
     )
 

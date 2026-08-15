@@ -64,6 +64,19 @@ def test_sort_codegen_reuses_a_specialization_and_coerces_arrays() -> None:
     assert "CinderSlice_i32){ .data = second, .length = 2" in generated
 
 
+def test_sorted_returns_a_new_list_and_keeps_sort_behavior() -> None:
+    generated = compile_source(
+        "def main() -> i32:\n"
+        "    values: List[i32] = [3, 1, 2]\n"
+        "    ordered = sorted(values)\n"
+        "    sort(values)\n"
+        "    return ordered[0] - values[0]\n"
+    )
+
+    assert "CinderSorted_i32(" in generated
+    assert "CinderSort_i32(" in generated
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [
@@ -190,6 +203,11 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "        return 5\n"
         '    if owned_words[2] != "zeta" or owned_words[3] != "éclair":\n'
         "        return 6\n"
+        "\n"
+        '    word_list: List[String] = ["zeta", "alpha"]\n'
+        "    ordered_words = sorted(word_list)\n"
+        '    if ordered_words[0] != "alpha" or word_list[0] != "zeta":\n'
+        "        return 7\n"
         "\n"
         "    single: f64[1] = [1.5]\n"
         "    sort(numbers[0:0])\n"

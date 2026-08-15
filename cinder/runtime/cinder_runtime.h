@@ -6,6 +6,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#if !defined(__cplusplus)
+#include <stdatomic.h>
+#endif
+
 #if defined(__cplusplus)
 #define CINDER_NORETURN [[noreturn]]
 #define CINDER_MAYBE_UNUSED
@@ -88,6 +92,17 @@ typedef struct CinderProcessResult {
 } CinderProcessResult;
 
 typedef int (*CinderCompareFn)(const void *left, const void *right);
+
+typedef struct CinderLockState CinderLockState;
+typedef CinderLockState *CinderLock;
+
+#if !defined(__cplusplus)
+struct CinderLockState {
+    atomic_flag held;
+    size_t order_key;
+};
+#define CINDER_LOCK_STATE_INIT(key) { ATOMIC_FLAG_INIT, (key) }
+#endif
 
 typedef enum CinderParseError {
     CinderParseError_empty = 0,
@@ -196,6 +211,9 @@ void cinder_sort(
     size_t element_size,
     CinderCompareFn compare
 );
+void cinder_lock_acquire(CinderLock lock);
+void cinder_lock_release(CinderLock lock);
+int cinder_lock_compare(CinderLock left, CinderLock right);
 
 #ifdef __cplusplus
 }

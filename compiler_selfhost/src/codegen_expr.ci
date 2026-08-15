@@ -750,8 +750,68 @@ def emit_module_propagate(
     context.expected_type = previous_expected
     builder.append("; if (cinder_result.tag == ")
     builder.append(source_name[0:len(source_name)])
-    builder.append("_Tag_Err) return (")
+    builder.append("_Tag_Err) { ")
+    emit_module_propagate_cleanups(arena, source, builder, prefix, project_name, imports, context)
+    builder.append("return (")
     builder.append(enclosing_name[0:len(enclosing_name)])
     builder.append("){ .tag = ")
     builder.append(enclosing_name[0:len(enclosing_name)])
-    builder.append("_Tag_Err, .data.err = cinder_result.data.err }; cinder_result.data.ok; })")
+    builder.append("_Tag_Err, .data.err = cinder_result.data.err }; } cinder_result.data.ok; })")
+
+
+def emit_module_propagate_cleanups(
+    arena: &const SyntaxArena,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> void:
+    iterator_guard_names: &const List[String] = &context.iterator_guard_names
+    index = len(iterator_guard_names)
+    while index > 0:
+        index -= 1
+        name: &const String = &iterator_guard_names[index]
+        builder.append("if (")
+        builder.append(name[0:len(name)])
+        builder.append(" != NULL && ")
+        builder.append(name[0:len(name)])
+        builder.append("->active_iterators > 0) ")
+        builder.append(name[0:len(name)])
+        builder.append("->active_iterators -= 1; ")
+    index = len(context.deferred_expressions)
+    while index > 0:
+        index -= 1
+        emit_module_expression(arena, context.deferred_expressions[index], source, builder, prefix, project_name, imports, context)
+        builder.append("; ")
+    index = len(context.with_resources)
+    while index > 0:
+        index -= 1
+        builder.append("fclose(")
+        builder.append(context.with_resources[index])
+        builder.append("); ")
+    codegen_context.emit_context_live_drops(arena, context, source, builder, context.local_start, prefix, project_name, imports)
+    lock_cleanups: &const List[codegen_context.CodegenLockCleanup] = &context.lock_cleanups
+    index = len(lock_cleanups)
+    while index > 0:
+        index -= 1
+        cleanup: &const codegen_context.CodegenLockCleanup = &lock_cleanups[index]
+        if not cleanup.collection:
+            builder.append("cinder_lock_release(")
+            builder.append(cleanup.name[0:len(cleanup.name)])
+            builder.append("); ")
+            continue
+        builder.append("for (size_t cinder_lock_release_index = ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".length; cinder_lock_release_index > 0; --cinder_lock_release_index) { size_t cinder_lock_item = cinder_lock_release_index - 1; if (cinder_lock_release_index < ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".length && ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".data[cinder_lock_item] == ")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".data[cinder_lock_release_index]) continue; cinder_lock_release(")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append(".data[cinder_lock_item]); } CinderList_Lock_drop(&")
+        builder.append(cleanup.name[0:len(cleanup.name)])
+        builder.append("); ")

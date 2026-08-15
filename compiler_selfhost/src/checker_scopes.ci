@@ -1,5 +1,6 @@
 import checker_core
 import checker_types
+import lock_order
 import ownership
 import reflection
 import semantic
@@ -264,6 +265,30 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         if expression.index >= 0:
             expression_type = checker_types.infer_expression_type(checker, arena, expression, source, current_scope)
             checker_types.validate_partial_move_source(checker, arena, expression, expression_type, expression_type, source, current_scope)
+    elif node.kind == syntax.SyntaxKind.CRITICAL_SECTION_STMT:
+        expression = checker_core.first_child(arena, id)
+        expression_type = types.strip_const(&checker.type_table, checker_types.infer_expression_type(checker, arena, expression, source, current_scope))
+        lock_index = lock_order.resolve_lock_expression(
+            &checker.lock_model,
+            &checker.module_name,
+            &checker.module_imports,
+            arena,
+            expression,
+            source,
+        )
+        if expression_type.index == types.type_lock().index:
+            critical_kind: i32 = 2
+            if lock_index >= 0:
+                critical_kind = 1
+            checker.model.record_critical_section(id, critical_kind, lock_index)
+        elif types.is_ordered_lock_list(&checker.type_table, expression_type):
+            checker.model.record_critical_section(id, 3, -1)
+        elif expression_type.index >= 0 and expression_type.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[expression_type.index].kind == types.TypeKind.LIST and types.strip_const(&checker.type_table, checker.type_table.types[expression_type.index].inner).index == types.type_lock().index:
+            expression_node = arena.nodes[expression.index]
+            checker_core.emit_error(checker, 408, expression_node.start, expression_node.length, expression_node.line, expression_node.column)
+        else:
+            expression_node = arena.nodes[expression.index]
+            checker_core.emit_error(checker, 409, expression_node.start, expression_node.length, expression_node.line, expression_node.column)
     elif node.kind == syntax.SyntaxKind.RETURN_STMT:
         if node.child_count == 0:
             if expected_return.index != types.type_void().index:
@@ -287,6 +312,12 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         if target.index >= 0 and value.index >= 0:
             target_type = checker_types.infer_expression_type(checker, arena, target, source, current_scope)
             value_type = checker_types.infer_expression_type(checker, arena, value, source, current_scope)
+            if arena.nodes[target.index].kind == syntax.SyntaxKind.EXPR_INDEX:
+                collection = checker_core.first_child(arena, target)
+                collection_type = checker_types.infer_expression_type(checker, arena, collection, source, current_scope)
+                if types.is_ordered_lock_list(&checker.type_table, collection_type):
+                    target_node = arena.nodes[target.index]
+                    checker_core.emit_error(checker, 419, target_node.start, target_node.length, target_node.line, target_node.column)
             if types.is_atomic_type(&checker.type_table, target_type):
                 target_node = arena.nodes[target.index]
                 checker_core.emit_error(checker, 401, target_node.start, target_node.length, target_node.line, target_node.column)

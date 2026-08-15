@@ -153,6 +153,7 @@ def diagnostic_record(source: str, diagnostic: Diagnostic) -> tuple[str, int, in
         "a <<= 1\nb >>= 2\nc = ...\nd = a != b and c == d\n",
         "a = 0x2a\nb = 0b1010\nc = 0o52\nd = 1_000.5e-2\ne = .5\n",
         "# comment\n\n// c++ style comment\nvalue = 'x'; text = \"héllo\"; next = 1\n",
+        "lock database\nlock cache after database\n",
     ],
 )
 def test_bootstrap_lexer_matches_stage0_tokens(

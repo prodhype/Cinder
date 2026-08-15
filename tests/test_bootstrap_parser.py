@@ -152,6 +152,14 @@ VALID_SOURCES = [
     "\n"
     "def increment() -> u64:\n"
     "    return counter.fetch_add(1)\n",
+    "lock database\n"
+    "lock cache after database\n"
+    "lockorder database before cache\n"
+    "def main() -> i32:\n"
+    "    CriticalSection database:\n"
+    "        CriticalSection cache:\n"
+    "            pass\n"
+    "    return 0\n",
 ]
 
 

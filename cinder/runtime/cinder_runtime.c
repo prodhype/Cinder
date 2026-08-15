@@ -25,6 +25,31 @@ CINDER_NORETURN void cinder_panic(const char *message)
     abort();
 }
 
+void cinder_lock_acquire(CinderLock lock)
+{
+    if (lock == NULL) {
+        cinder_panic("lock is null");
+    }
+    while (atomic_flag_test_and_set_explicit(&lock->held, memory_order_acquire)) {
+    }
+}
+
+void cinder_lock_release(CinderLock lock)
+{
+    if (lock == NULL) {
+        cinder_panic("lock is null");
+    }
+    atomic_flag_clear_explicit(&lock->held, memory_order_release);
+}
+
+int cinder_lock_compare(CinderLock left, CinderLock right)
+{
+    if (left == NULL || right == NULL) {
+        cinder_panic("lock collection contains null");
+    }
+    return (left->order_key > right->order_key) - (left->order_key < right->order_key);
+}
+
 double cinder_wall_time(void)
 {
     struct timespec timestamp;

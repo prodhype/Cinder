@@ -37,6 +37,7 @@ from cinder.symbols import (
     EnumSymbol,
     FieldSymbol,
     FunctionSymbol,
+    LockSymbol,
     ModuleSymbol,
     NominalSymbol,
     PatternAccessStep,
@@ -59,6 +60,7 @@ from cinder.types import (
     I32,
     I64,
     ISIZE,
+    LOCK,
     U8,
     U16,
     U32,
@@ -78,6 +80,7 @@ from cinder.types import (
     FunctionPointerType,
     FunctionValueType,
     ListType,
+    LockType,
     MapType,
     MapViewType,
     ModuleType,
@@ -240,6 +243,7 @@ class _Cleanup:
     drop_type: Type | None = None
     iterator_end: tuple[str, str] | None = None
     drop_statement: str | None = None
+    lock_collection: tuple[str, ListType] | None = None
 
 
 @dataclass(slots=True)
@@ -311,6 +315,7 @@ class CGenerator:
         self._emit_reflection_declarations()
         self._emit_function_prototypes()
         self._emit_static_asserts()
+        self._emit_locks()
         self._emit_globals()
         self._emit_reflection_definitions()
         self._emit_class_support_definitions()
@@ -368,6 +373,7 @@ class CGenerator:
         self._emit_collection_print_helpers()
         self._emit_reflection_declarations()
         self._emit_function_prototypes()
+        self._emit_lock_declarations()
         self._emit_global_declarations()
         self._emit_static_asserts()
         self.writer.line("#ifdef __cplusplus")
@@ -386,6 +392,7 @@ class CGenerator:
         self.writer.line(f'#include "{header_name}"')
         self.writer.line()
         self._emit_sort_helpers()
+        self._emit_locks()
         self._emit_globals()
         self._emit_reflection_definitions()
         self._emit_class_support_definitions()
@@ -2637,6 +2644,8 @@ class CGenerator:
             raw = strip_const(element_type)
             if isinstance(raw, StringType):
                 self.writer.line("return cinder_string_compare_value(left, right);")
+            elif isinstance(raw, LockType):
+                self.writer.line("return cinder_lock_compare(*left, *right);")
             elif isinstance(raw, PointerType) and strip_const(raw.inner) == CHAR:
                 self.writer.line("return strcmp(*left, *right);")
             else:
@@ -2644,6 +2653,50 @@ class CGenerator:
             self.writer.indent -= 1
             self.writer.line("}")
             self.writer.line()
+
+            if element_type in self.ir.sorted_types:
+                sorted_name = self._sorted_helper_name(element_type)
+                list_type = ListType(element_type)
+                list_name = c_identifier(list_c_name(list_type))
+                source_slice = SliceType(ConstType(element_type))
+                self.writer.line(
+                    f"static CINDER_MAYBE_UNUSED {list_name} {sorted_name}("
+                    f"{self._slice_name(source_slice)} values)"
+                )
+                self.writer.line("{")
+                self.writer.indent += 1
+                self.writer.line(f"{list_name} result = {{ NULL, 0, 0 }};")
+                self.writer.line("if (values.length == 0)")
+                self.writer.line("{")
+                self.writer.indent += 1
+                self.writer.line("return result;")
+                self.writer.indent -= 1
+                self.writer.line("}")
+                self.writer.line(
+                    f"result.data = ({c_type_expression(PointerType(element_type))})"
+                    f"cinder_alloc(values.length, sizeof(*result.data));"
+                )
+                self.writer.line("for (size_t index = 0; index < values.length; ++index)")
+                self.writer.line("{")
+                self.writer.indent += 1
+                if isinstance(raw, StringType):
+                    self.writer.line(
+                        "result.data[index] = cinder_string_clone(&values.data[index]);"
+                    )
+                else:
+                    self.writer.line("result.data[index] = values.data[index];")
+                self.writer.indent -= 1
+                self.writer.line("}")
+                self.writer.line("result.length = values.length;")
+                self.writer.line("result.capacity = values.length;")
+                self.writer.line(
+                    "cinder_sort(result.data, result.length, sizeof(*result.data), "
+                    f"{compare_name});"
+                )
+                self.writer.line("return result;")
+                self.writer.indent -= 1
+                self.writer.line("}")
+                self.writer.line()
 
             helper_name = self._sort_helper_name(element_type)
             slice_type = SliceType(element_type)
@@ -3343,6 +3396,28 @@ class CGenerator:
         if self.ir.functions:
             self.writer.line()
 
+    def _emit_lock_declarations(self) -> None:
+        for lock in self.ir.locks:
+            self.writer.line(f"extern CinderLock {c_identifier(lock.symbol.c_name)};")
+        if self.ir.locks:
+            self.writer.line()
+
+    def _emit_locks(self) -> None:
+        for lock in self.ir.locks:
+            key = lock.symbol.canonical_key
+            if key is None:
+                raise AssertionError("lock has no canonical order key")
+            name = c_identifier(lock.symbol.c_name)
+            storage_name = f"{name}__state"
+            storage = "static CINDER_MAYBE_UNUSED "
+            value_storage = "" if self.semantic.module_mode else "static CINDER_MAYBE_UNUSED "
+            self.writer.line(
+                f"{storage}CinderLockState {storage_name} = CINDER_LOCK_STATE_INIT({key});"
+            )
+            self.writer.line(f"{value_storage}CinderLock {name} = &{storage_name};")
+        if self.ir.locks:
+            self.writer.line()
+
     def _emit_global_declarations(self) -> None:
         for global_ in self.ir.globals:
             symbol = global_.symbol
@@ -3536,6 +3611,10 @@ class CGenerator:
                 return True
             if isinstance(statement, ast.WithStmt) and self._block_always_exits(statement.body):
                 return True
+            if isinstance(statement, ast.CriticalSectionStmt) and self._block_always_exits(
+                statement.body
+            ):
+                return True
         return False
 
     def _emit_statement(self, statement: ast.Statement) -> None:
@@ -3591,6 +3670,8 @@ class CGenerator:
                 self.writer.line("}")
             case ast.WithStmt():
                 self._emit_with(statement)
+            case ast.CriticalSectionStmt():
+                self._emit_critical_section(statement)
             case _:
                 raise AssertionError(f"unhandled statement: {statement!r}")
 
@@ -3604,6 +3685,63 @@ class CGenerator:
         initializer = self._emit_initializer(statement.context, symbol.type)
         self.writer.line(f"{declaration} = {initializer};")
         self._register_owned_cleanup(symbol)
+        self._emit_block_contents(statement.body, loop_body=False)
+        if not self._block_always_exits(statement.body):
+            self._emit_deferred(frame)
+        self.scope_frames.pop()
+        self.writer.indent -= 1
+        self.writer.line("}")
+
+    def _emit_critical_section(self, statement: ast.CriticalSectionStmt) -> None:
+        resolution = self.semantic.critical_section_resolutions[id(statement)]
+        self.writer.line("{")
+        self.writer.indent += 1
+        frame = _ScopeFrame()
+        self.scope_frames.append(frame)
+
+        if resolution.kind in {"static", "dynamic"}:
+            temporary = self._new_temp("lock")
+            self.writer.line(f"CinderLock {temporary} = {self._emit_expr(statement.lock)};")
+            self.writer.line(f"cinder_lock_acquire({temporary});")
+            frame.cleanups.append(
+                _Cleanup(drop_statement=f"cinder_lock_release({temporary});")
+            )
+        elif resolution.kind == "dynamic_collection":
+            list_type = ListType(LOCK)
+            list_name = c_identifier(list_c_name(list_type))
+            temporary = self._new_temp("locks")
+            call_resolution = (
+                self.semantic.call_resolutions.get(id(statement.lock))
+                if isinstance(statement.lock, ast.CallExpr)
+                else None
+            )
+            if call_resolution is not None and call_resolution.kind == "sorted":
+                self.writer.line(
+                    f"{list_name} {temporary} = {self._emit_expr(statement.lock)};"
+                )
+            else:
+                source = self._container_pointer(statement.lock)
+                self.writer.line(
+                    f"{list_name} {temporary} = {list_name}_from_values("
+                    f"{source}->data, {source}->length);"
+                )
+            index = self._new_temp("lock_index")
+            self.writer.line(
+                f"for (size_t {index} = 0; {index} < {temporary}.length; ++{index})"
+            )
+            self.writer.line("{")
+            self.writer.indent += 1
+            self.writer.line(
+                f"if ({index} > 0 && {temporary}.data[{index}] == "
+                f"{temporary}.data[{index} - 1]) continue;"
+            )
+            self.writer.line(f"cinder_lock_acquire({temporary}.data[{index}]);")
+            self.writer.indent -= 1
+            self.writer.line("}")
+            frame.cleanups.append(_Cleanup(lock_collection=(temporary, list_type)))
+        else:
+            raise AssertionError(f"unknown critical section kind: {resolution.kind}")
+
         self._emit_block_contents(statement.body, loop_body=False)
         if not self._block_always_exits(statement.body):
             self._emit_deferred(frame)
@@ -4147,6 +4285,26 @@ class CGenerator:
         exclude_variable: VariableSymbol | None = None,
     ) -> None:
         for cleanup in reversed(frame.cleanups):
+            if cleanup.lock_collection is not None:
+                name, list_type = cleanup.lock_collection
+                index = self._new_temp("lock_release")
+                self.writer.line(
+                    f"for (size_t {index} = {name}.length; {index} > 0; --{index})"
+                )
+                self.writer.line("{")
+                self.writer.indent += 1
+                item = f"({index} - 1)"
+                self.writer.line(
+                    f"if ({index} < {name}.length && {name}.data[{item}] == "
+                    f"{name}.data[{index}]) continue;"
+                )
+                self.writer.line(f"cinder_lock_release({name}.data[{item}]);")
+                self.writer.indent -= 1
+                self.writer.line("}")
+                self.writer.line(
+                    f"{c_identifier(list_c_name(list_type))}_drop(&{name});"
+                )
+                continue
             if cleanup.drop_statement is not None:
                 self.writer.line(cleanup.drop_statement)
                 continue
@@ -4816,6 +4974,8 @@ class CGenerator:
             return c_identifier(symbol.c_name)
         if isinstance(symbol, ConstantSymbol):
             return c_identifier(symbol.c_name)
+        if isinstance(symbol, LockSymbol):
+            return c_identifier(symbol.c_name)
         if isinstance(symbol, (StructSymbol, ClassSymbol, EnumSymbol, UnionSymbol, VariantSymbol)):
             return c_identifier(symbol.c_name)
         if isinstance(symbol, ComptimeVariableSymbol):
@@ -4832,6 +4992,9 @@ class CGenerator:
         if resolution.kind == "module_global":
             assert resolution.global_ is not None
             return c_identifier(resolution.global_.c_name or resolution.global_.name)
+        if resolution.kind == "module_lock":
+            assert resolution.lock is not None
+            return c_identifier(resolution.lock.c_name)
         if resolution.kind == "module_function":
             assert resolution.function is not None
             return c_identifier(resolution.function.c_name)
@@ -5454,6 +5617,29 @@ class CGenerator:
                 raise AssertionError("sort has no slice element type")
             sort_argument = self._emit_with_expected(expression.arguments[0].value, expected)
             return f"{self._sort_helper_name(expected.inner)}({sort_argument})"
+        if resolution.kind == "sorted":
+            expected = resolution.expected_types[0]
+            if not isinstance(expected, SliceType):
+                raise AssertionError("sorted has no slice element type")
+            argument = expression.arguments[0].value
+            element = strip_const(expected.inner)
+            helper = self._sorted_helper_name(element)
+            argument_type = value_type(self.semantic.expression_type(argument))
+            if isinstance(argument_type, ListType) and not isinstance(argument, ast.NameExpr):
+                source = self._new_temp("sorted_source")
+                result = self._new_temp("sorted_result")
+                source_list = ListType(argument_type.inner)
+                source_name = c_identifier(list_c_name(source_list))
+                self.writer.line(f"{source_name} {source} = {self._emit_expr(argument)};")
+                slice_name = self._slice_name(expected)
+                self.writer.line(
+                    f"{c_identifier(list_c_name(ListType(element)))} {result} = {helper}("
+                    f"(({slice_name}){{ .data = {source}.data, .length = {source}.length }}));"
+                )
+                self.writer.line(f"{source_name}_drop(&{source});")
+                return result
+            sorted_argument = self._emit_with_expected(argument, expected)
+            return f"{helper}({sorted_argument})"
         if resolution.kind == "range":
             raise AssertionError("range may only be emitted as a for-loop iterable")
 
@@ -6554,6 +6740,10 @@ class CGenerator:
     def _sort_helper_name(element_type: Type) -> str:
         return "CinderSort_" + c_identifier(type_key(element_type))
 
+    @staticmethod
+    def _sorted_helper_name(element_type: Type) -> str:
+        return "CinderSorted_" + c_identifier(type_key(element_type))
+
     def _result_tag(self, result_type: ResultType, suffix: str) -> str:
         return f"{c_identifier(result_c_name(result_type))}_Tag_{suffix}"
 
@@ -7007,6 +7197,8 @@ def c_decl(type_: Type, name: str) -> str:
         return f"{string_builder_c_name()} {name}".strip()
     if isinstance(type_, PrimitiveType):
         return f"{type_.c_name} {name}".strip()
+    if isinstance(type_, LockType):
+        return f"CinderLock {name}".strip()
     if isinstance(type_, (StructType, ClassType, EnumType, UnionType, VariantType)):
         return f"{c_identifier(nominal_c_name(type_))} {name}".strip()
     if isinstance(type_, DynType):

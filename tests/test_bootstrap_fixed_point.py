@@ -5372,3 +5372,106 @@ def test_gen3_supports_atomic_import_forms(
     tmp_path: Path,
 ) -> None:
     assert_compiler_supports_atomic_import_forms(gen3_compiler, tmp_path)
+
+
+def assert_compiler_supports_lock_ordering(
+    compiler: Path,
+    tmp_path: Path,
+) -> None:
+    valid = tmp_path / "lock_order_valid.ci"
+    valid.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [cache, database, database]\n"
+        "    ordered = sorted(locks)\n"
+        "    CriticalSection ordered:\n"
+        "        pass\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    emitted = run_gen1(compiler, "emit-c", str(valid))
+    assert emitted.returncode == 0, emitted.stderr
+    assert "cinder_lock_acquire" in emitted.stdout
+    assert "cinder_lock_release" in emitted.stdout
+    assert "cinder_sort" in emitted.stdout
+    executable = tmp_path / f"{compiler.name}-lock-order"
+    built = run_gen1(
+        compiler,
+        "build",
+        str(valid),
+        "-o",
+        str(executable),
+        "--build-dir",
+        str(tmp_path / f"{compiler.name}-lock-build"),
+    )
+    assert built.returncode == 0, built.stderr
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    assert ran.returncode == 0, ran.stderr
+
+    invalid = tmp_path / "lock_order_invalid.ci"
+    invalid.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        CriticalSection database:\n"
+        "            pass\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    rejected = run_gen1(compiler, "check", str(invalid))
+    assert rejected.returncode != 0
+    assert "cannot acquire 'database' while 'cache' is held" in rejected.stdout
+
+    cycle = tmp_path / "lock_order_cycle.ci"
+    cycle.write_text(
+        "lock first after third\n"
+        "lock second after first\n"
+        "lock third after second\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    cycle_result = run_gen1(compiler, "check", str(cycle))
+    assert cycle_result.returncode != 0
+    assert "lock order contains a cycle" in cycle_result.stdout
+
+    effect = tmp_path / "lock_order_effect.ci"
+    effect.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "def update_database() -> void:\n"
+        "    CriticalSection database:\n"
+        "        pass\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        update_database()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    effect_result = run_gen1(compiler, "check", str(effect))
+    assert effect_result.returncode != 0
+    assert "cannot acquire 'database' while 'cache' is held" in effect_result.stdout
+
+
+def test_gen1_supports_lock_ordering(
+    gen1_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_lock_ordering(gen1_compiler, tmp_path)
+
+
+def test_gen2_supports_lock_ordering(
+    gen2_compiler: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    gen2, _build_dir = gen2_compiler
+    assert_compiler_supports_lock_ordering(gen2, tmp_path)
+
+
+def test_gen3_supports_lock_ordering(
+    gen3_compiler: Path,
+    tmp_path: Path,
+) -> None:
+    assert_compiler_supports_lock_ordering(gen3_compiler, tmp_path)

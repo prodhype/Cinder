@@ -206,6 +206,23 @@ class StaticAssertDecl(TopLevel):
 
 
 @dataclass(slots=True)
+class LockReference(Node):
+    parts: tuple[str, ...]
+
+
+@dataclass(slots=True)
+class LockDecl(TopLevel):
+    name: str
+    after: LockReference | None = None
+
+
+@dataclass(slots=True)
+class LockOrderDecl(TopLevel):
+    before: LockReference
+    after: LockReference
+
+
+@dataclass(slots=True)
 class Module(Node):
     path: Path
     items: list[TopLevel]
@@ -257,6 +274,14 @@ class Module(Node):
     @property
     def static_asserts(self) -> list[StaticAssertDecl]:
         return [item for item in self.items if isinstance(item, StaticAssertDecl)]
+
+    @property
+    def locks(self) -> list[LockDecl]:
+        return [item for item in self.items if isinstance(item, LockDecl)]
+
+    @property
+    def lock_orders(self) -> list[LockOrderDecl]:
+        return [item for item in self.items if isinstance(item, LockOrderDecl)]
 
 
 @dataclass(slots=True)
@@ -393,6 +418,12 @@ class UnsafeStmt(Statement):
 class WithStmt(Statement):
     context: Expression
     name: str
+    body: Block
+
+
+@dataclass(slots=True)
+class CriticalSectionStmt(Statement):
+    lock: Expression
     body: Block
 
 

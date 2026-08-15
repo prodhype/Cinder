@@ -1,0 +1,734 @@
+import lexer
+import parser
+import project
+import syntax
+from syntax import NodeId, SyntaxArena, SyntaxKind
+
+
+struct ProjectLock:
+    module_name: String
+    name: String
+    canonical_key: i32
+
+
+struct LockEdge:
+    before: i32
+    after: i32
+    explicit: bool
+    module_name: String
+    start: usize
+    length: usize
+    line: i32
+    column: i32
+
+
+struct LockDiagnostic:
+    module_name: String
+    code: i32
+    start: usize
+    length: usize
+    line: i32
+    column: i32
+    message: String
+
+
+struct FunctionLockEffect:
+    qualified_name: String
+    module_name: String
+    name: String
+    locks: List[i32]
+    callees: List[String]
+    unknown: bool
+
+
+struct LockAlias:
+    name: String
+    lock_index: i32
+
+
+struct ProjectLockModel:
+    locks: List[ProjectLock]
+    edges: List[LockEdge]
+    functions: List[FunctionLockEffect]
+    diagnostics: List[LockDiagnostic]
+    prepared: bool
+
+
+def new_project_lock_model() -> ProjectLockModel:
+    lock_values: List[ProjectLock] = []
+    edge_values: List[LockEdge] = []
+    function_values: List[FunctionLockEffect] = []
+    diagnostic_values: List[LockDiagnostic] = []
+    return ProjectLockModel(
+        locks=lock_values,
+        edges=edge_values,
+        functions=function_values,
+        diagnostics=diagnostic_values,
+        prepared=false,
+    )
+
+
+def prepare_project_lock_model(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
+    if model.prepared:
+        return
+    model.prepared = true
+    collect_locks(model, modules)
+    collect_explicit_edges(model, modules)
+    collect_function_effects(model, modules)
+    infer_function_effects(model)
+    infer_nested_edges(model, modules)
+    assign_canonical_keys(model)
+
+
+def collect_locks(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
+    module_index: usize = 0
+    while module_index < len(modules):
+        module: &const project.ParsedModule = &modules[module_index]
+        module_source = module.source[0:len(module.source)]
+        scan = lexer.new_lexer(module_source[0:len(module_source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        if root.index < 0:
+            module_index += 1
+            continue
+        parsed_arena: &const SyntaxArena = &parsed.arena
+        root_node = parsed_arena.nodes[root.index]
+        for offset in range(0, root_node.child_count):
+            declaration_id = parsed_arena.children[root_node.first_child + offset]
+            declaration = parsed_arena.nodes[declaration_id.index]
+            if declaration.kind == SyntaxKind.LOCK_DECL:
+                name = module_source[declaration.value_start:declaration.value_start + declaration.value_length]
+                if find_lock(model, &module.name, &name) < 0:
+                    model.locks.append(
+                        ProjectLock(
+                            module_name=module.name[0:len(module.name)],
+                            name=name,
+                            canonical_key=-1,
+                        )
+                    )
+        module_index += 1
+
+
+def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
+    for module in modules:
+        module_source = module.source[0:len(module.source)]
+        scan = lexer.new_lexer(module_source[0:len(module_source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        if root.index < 0:
+            continue
+        parsed_arena: &const SyntaxArena = &parsed.arena
+        root_node = parsed_arena.nodes[root.index]
+        for offset in range(0, root_node.child_count):
+            declaration_id = parsed_arena.children[root_node.first_child + offset]
+            declaration = parsed_arena.nodes[declaration_id.index]
+            if declaration.kind == SyntaxKind.LOCK_DECL and declaration.child_count > 0:
+                name = module_source[declaration.value_start:declaration.value_start + declaration.value_length]
+                after = find_lock(model, &module.name, &name)
+                before = resolve_lock_reference(
+                    model,
+                    &module.name,
+                    &module.imports,
+                    parsed_arena,
+                    parsed_arena.children[declaration.first_child],
+                    &module_source,
+                )
+                if before >= 0 and after >= 0:
+                    add_edge(model, before, after, true, &module.name, &declaration)
+                elif before < 0:
+                    add_diagnostic(model, &module.name, 404, &declaration, "cannot resolve the lock order reference")
+            elif declaration.kind == SyntaxKind.LOCK_ORDER_DECL and declaration.child_count >= 2:
+                before = resolve_lock_reference(
+                    model,
+                    &module.name,
+                    &module.imports,
+                    parsed_arena,
+                    parsed_arena.children[declaration.first_child],
+                    &module_source,
+                )
+                after = resolve_lock_reference(
+                    model,
+                    &module.name,
+                    &module.imports,
+                    parsed_arena,
+                    parsed_arena.children[declaration.first_child + 1],
+                    &module_source,
+                )
+                if before >= 0 and after >= 0:
+                    add_edge(model, before, after, true, &module.name, &declaration)
+                else:
+                    add_diagnostic(model, &module.name, 404, &declaration, "cannot resolve the lock order reference")
+
+
+def collect_function_effects(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
+    module_index: usize = 0
+    while module_index < len(modules):
+        module: &const project.ParsedModule = &modules[module_index]
+        module_source = module.source[0:len(module.source)]
+        scan = lexer.new_lexer(module_source[0:len(module_source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        if root.index < 0:
+            module_index += 1
+            continue
+        parsed_arena: &const SyntaxArena = &parsed.arena
+        root_node = parsed_arena.nodes[root.index]
+        for offset in range(0, root_node.child_count):
+            declaration_id = parsed_arena.children[root_node.first_child + offset]
+            declaration = parsed_arena.nodes[declaration_id.index]
+            if declaration.kind != SyntaxKind.FUNCTION_DECL:
+                continue
+            name = module_source[declaration.value_start:declaration.value_start + declaration.value_length]
+            effect_locks: List[i32] = []
+            callees: List[String] = []
+            model.functions.append(
+                FunctionLockEffect(
+                    qualified_name=qualified_name(&module.name, &name),
+                    module_name=module.name[0:len(module.name)],
+                    name=name,
+                    locks=effect_locks,
+                    callees=callees,
+                    unknown=false,
+                )
+            )
+            function_index = cast[i32](len(model.functions)) - 1
+            collect_direct_effects(
+                model,
+                function_index,
+                &module.name,
+                &module.imports,
+                parsed_arena,
+                declaration_id,
+                &module_source,
+            )
+        module_index += 1
+
+
+def collect_direct_effects(
+    model: &ProjectLockModel,
+    function_index: i32,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.CRITICAL_SECTION_STMT:
+        expression = first_child(arena, id)
+        lock_index = resolve_lock_expression(model, module_name, imports, arena, expression, source)
+        if lock_index >= 0:
+            append_i32_once(&model.functions[cast[usize](function_index)].locks, lock_index)
+        else:
+            model.functions[cast[usize](function_index)].unknown = true
+    elif node.kind == SyntaxKind.EXPR_CALL:
+        callee = first_child(arena, id)
+        if not call_is_known_builtin(arena, callee, source):
+            effect_name = resolve_callee_name(module_name, imports, arena, callee, source)
+            if len(effect_name) > 0:
+                append_string_once(&model.functions[cast[usize](function_index)].callees, effect_name)
+            else:
+                model.functions[cast[usize](function_index)].unknown = true
+    for offset in range(0, node.child_count):
+        collect_direct_effects(
+            model,
+            function_index,
+            module_name,
+            imports,
+            arena,
+            arena.children[node.first_child + offset],
+            source,
+        )
+
+
+def infer_function_effects(model: &ProjectLockModel) -> void:
+    changed = true
+    while changed:
+        changed = false
+        function_index: usize = 0
+        while function_index < len(model.functions):
+            callee_index: usize = 0
+            while callee_index < len(model.functions[function_index].callees):
+                name: &const String = &model.functions[function_index].callees[callee_index]
+                target = find_function(model, name)
+                if target < 0:
+                    if not model.functions[function_index].unknown:
+                        model.functions[function_index].unknown = true
+                        changed = true
+                else:
+                    target_effect: &const FunctionLockEffect = &model.functions[cast[usize](target)]
+                    for lock_index in target_effect.locks:
+                        if append_i32_once(&model.functions[function_index].locks, lock_index):
+                            changed = true
+                    if target_effect.unknown and not model.functions[function_index].unknown:
+                        model.functions[function_index].unknown = true
+                        changed = true
+                callee_index += 1
+            function_index += 1
+
+
+def infer_nested_edges(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
+    for module in modules:
+        module_source = module.source[0:len(module.source)]
+        scan = lexer.new_lexer(module_source[0:len(module_source)])
+        scan.tokenize()
+        parsed = parser.new_parser(scan)
+        root = parsed.parse_module()
+        if root.index < 0:
+            continue
+        parsed_arena: &const SyntaxArena = &parsed.arena
+        root_node = parsed_arena.nodes[root.index]
+        for offset in range(0, root_node.child_count):
+            declaration_id = parsed_arena.children[root_node.first_child + offset]
+            declaration = parsed_arena.nodes[declaration_id.index]
+            if declaration.kind != SyntaxKind.FUNCTION_DECL:
+                continue
+            held: List[i32] = []
+            aliases: List[LockAlias] = []
+            validate_lock_node(
+                model,
+                &module.name,
+                &module.imports,
+                parsed_arena,
+                declaration_id,
+                &module_source,
+                held,
+                aliases,
+                false,
+            )
+
+
+def validate_lock_node(
+    model: &ProjectLockModel,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    held: &List[i32],
+    aliases: &List[LockAlias],
+    dynamic_held: bool,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.VAR_DECL_STMT:
+        initializer = last_child(arena, id)
+        lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, initializer, source, aliases)
+        if lock_index >= 0:
+            set_alias(aliases, source[node.value_start:node.value_start + node.value_length], lock_index)
+    elif node.kind == SyntaxKind.ASSIGN_STMT:
+        target = first_child(arena, id)
+        value = second_child(arena, id)
+        if target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
+            target_node = arena.nodes[target.index]
+            lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, value, source, aliases)
+            set_alias(aliases, source[target_node.value_start:target_node.value_start + target_node.value_length], lock_index)
+    if node.kind == SyntaxKind.CRITICAL_SECTION_STMT:
+        expression = first_child(arena, id)
+        lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, expression, source, aliases)
+        body = find_child_kind(arena, id, SyntaxKind.BLOCK)
+        if lock_index >= 0:
+            if dynamic_held:
+                add_diagnostic(model, module_name, 415, &arena.nodes[expression.index], "cannot acquire a static lock while a dynamic lock set is held")
+            for current in held:
+                if current == lock_index:
+                    name: &const String = &model.locks[cast[usize](lock_index)].name
+                    add_diagnostic(model, module_name, 411, &arena.nodes[expression.index], "cannot acquire '" + name[0:len(name)] + "' while it is already held")
+                elif explicit_path_exists(model, lock_index, current):
+                    name: &const String = &model.locks[cast[usize](lock_index)].name
+                    held_name: &const String = &model.locks[cast[usize](current)].name
+                    add_diagnostic(model, module_name, 412, &arena.nodes[expression.index], "cannot acquire '" + name[0:len(name)] + "' while '" + held_name[0:len(held_name)] + "' is held")
+                else:
+                    add_edge(model, current, lock_index, false, module_name, &arena.nodes[expression.index])
+            held.append(lock_index)
+            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, dynamic_held)
+            held.pop()
+        else:
+            if len(held) > 0 or dynamic_held:
+                add_diagnostic(model, module_name, 416, &arena.nodes[expression.index], "cannot acquire a dynamic lock while another lock is held")
+            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, true)
+        return
+    if node.kind == SyntaxKind.EXPR_CALL and (len(held) > 0 or dynamic_held):
+        callee = first_child(arena, id)
+        effect_name = resolve_callee_name(module_name, imports, arena, callee, source)
+        function_index = find_function(model, &effect_name)
+        unknown = len(effect_name) == 0 and not call_is_known_builtin(arena, callee, source)
+        if function_index >= 0:
+            effect: &const FunctionLockEffect = &model.functions[cast[usize](function_index)]
+            unknown = effect.unknown
+            if dynamic_held and len(effect.locks) > 0:
+                add_diagnostic(model, module_name, 414, &node, "cannot acquire another lock while a dynamic lock set is held")
+            elif not dynamic_held:
+                for lock_index in effect.locks:
+                    for current in held:
+                        if current == lock_index:
+                            name: &const String = &model.locks[cast[usize](lock_index)].name
+                            add_diagnostic(model, module_name, 411, &node, "cannot acquire '" + name[0:len(name)] + "' while it is already held")
+                        elif explicit_path_exists(model, lock_index, current):
+                            name: &const String = &model.locks[cast[usize](lock_index)].name
+                            held_name: &const String = &model.locks[cast[usize](current)].name
+                            add_diagnostic(model, module_name, 412, &node, "cannot acquire '" + name[0:len(name)] + "' while '" + held_name[0:len(held_name)] + "' is held")
+                        else:
+                            add_edge(model, current, lock_index, false, module_name, &node)
+        if unknown:
+            add_diagnostic(model, module_name, 413, &node, "cannot call a function with an unknown lock effect while a lock is held")
+    for offset in range(0, node.child_count):
+        validate_lock_node(
+            model,
+            module_name,
+            imports,
+            arena,
+            arena.children[node.first_child + offset],
+            source,
+            held,
+            aliases,
+            dynamic_held,
+        )
+
+
+def assign_canonical_keys(model: &ProjectLockModel) -> void:
+    count = len(model.locks)
+    indegree: List[i32] = []
+    assigned: List[bool] = []
+    index: usize = 0
+    while index < count:
+        indegree.append(0)
+        assigned.append(false)
+        index += 1
+    for edge in model.edges:
+        if edge.after >= 0 and edge.after < cast[i32](count):
+            indegree[cast[usize](edge.after)] += 1
+    key: i32 = 0
+    while key < cast[i32](count):
+        selected: i32 = -1
+        index = 0
+        while index < count:
+            if not assigned[index] and indegree[index] == 0:
+                if selected < 0 or lock_name_less(&model.locks[index], &model.locks[cast[usize](selected)]):
+                    selected = cast[i32](index)
+            index += 1
+        if selected < 0:
+            if len(model.edges) > 0:
+                edge: &const LockEdge = &model.edges[len(model.edges) - 1]
+                before_name: &const String = &model.locks[cast[usize](edge.before)].name
+                after_name: &const String = &model.locks[cast[usize](edge.after)].name
+                add_raw_diagnostic(model, &edge.module_name, 410, edge.start, edge.length, edge.line, edge.column, "lock order contains a cycle near: " + before_name[0:len(before_name)] + " -> " + after_name[0:len(after_name)])
+            index = 0
+            while index < count:
+                if not assigned[index]:
+                    model.locks[index].canonical_key = key
+                    key += 1
+                index += 1
+            return
+        assigned[cast[usize](selected)] = true
+        model.locks[cast[usize](selected)].canonical_key = key
+        for edge in model.edges:
+            if edge.before == selected:
+                indegree[cast[usize](edge.after)] -= 1
+        key += 1
+
+
+def resolve_lock_reference(
+    model: &const ProjectLockModel,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    if node.child_count == 1:
+        part = arena.nodes[arena.children[node.first_child].index]
+        name = source[part.value_start:part.value_start + part.value_length]
+        local = find_lock(model, module_name, &name)
+        if local >= 0:
+            return local
+        for imported in imports:
+            if len(imported.member) > 0 and imported.alias == name:
+                return find_lock(model, &imported.module_name, &imported.member)
+        return -1
+    if node.child_count == 2:
+        first = arena.nodes[arena.children[node.first_child].index]
+        second = arena.nodes[arena.children[node.first_child + 1].index]
+        alias = source[first.value_start:first.value_start + first.value_length]
+        name = source[second.value_start:second.value_start + second.value_length]
+        for imported in imports:
+            if len(imported.member) == 0 and imported.alias == alias:
+                return find_lock(model, &imported.module_name, &name)
+        return -1
+    return -1
+
+
+def resolve_lock_expression(
+    model: &const ProjectLockModel,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> i32:
+    aliases: List[LockAlias] = []
+    return resolve_lock_expression_with_aliases(model, module_name, imports, arena, id, source, aliases)
+
+
+def resolve_lock_expression_with_aliases(
+    model: &const ProjectLockModel,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    aliases: &const List[LockAlias],
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        alias_index = find_alias(aliases, &name)
+        if alias_index >= 0:
+            return aliases[cast[usize](alias_index)].lock_index
+        local = find_lock(model, module_name, &name)
+        if local >= 0:
+            return local
+        for imported in imports:
+            if len(imported.member) > 0 and imported.alias == name:
+                return find_lock(model, &imported.module_name, &imported.member)
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = first_child(arena, id)
+        member = second_child(arena, id)
+        if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_NAME:
+            receiver_node = arena.nodes[receiver.index]
+            member_node = arena.nodes[member.index]
+            alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            for imported in imports:
+                if len(imported.member) == 0 and imported.alias == alias:
+                    return find_lock(model, &imported.module_name, &name)
+    return -1
+
+
+def resolve_callee_name(
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> String:
+    if id.index < 0:
+        return ""
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        for imported in imports:
+            if len(imported.member) > 0 and imported.alias == name:
+                return qualified_name(&imported.module_name, &imported.member)
+        return qualified_name(module_name, &name)
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = first_child(arena, id)
+        member = second_child(arena, id)
+        if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_NAME:
+            receiver_node = arena.nodes[receiver.index]
+            member_node = arena.nodes[member.index]
+            alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            for imported in imports:
+                if len(imported.member) == 0 and imported.alias == alias:
+                    return qualified_name(&imported.module_name, &name)
+    return ""
+
+
+def call_is_known_builtin(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_NAME:
+        return false
+    node = arena.nodes[id.index]
+    name = source[node.value_start:node.value_start + node.value_length]
+    return name == "print" or name == "len" or name == "range" or name == "sort" or name == "sorted" or name == "input" or name == "to_string" or name == "set" or name == "free" or name == "panic" or name == "String" or name == "StringBuilder" or name == "Some" or name == "Owned" or name == "Ok" or name == "Err" or name == "cast" or name == "alloc"
+
+
+def add_edge(
+    model: &ProjectLockModel,
+    before: i32,
+    after: i32,
+    explicit: bool,
+    module_name: &const String,
+    node: &const syntax.SyntaxNode,
+) -> void:
+    edge_index: usize = 0
+    while edge_index < len(model.edges):
+        if model.edges[edge_index].before == before and model.edges[edge_index].after == after:
+            if explicit and not model.edges[edge_index].explicit:
+                model.edges[edge_index].explicit = true
+            return
+        edge_index += 1
+    model.edges.append(
+        LockEdge(
+            before=before,
+            after=after,
+            explicit=explicit,
+            module_name=module_name[0:len(module_name)],
+            start=node.start,
+            length=node.length,
+            line=node.line,
+            column=node.column,
+        )
+    )
+
+
+def explicit_path_exists(model: &const ProjectLockModel, start: i32, target: i32) -> bool:
+    pending: List[i32] = [start]
+    visited: List[i32] = []
+    while len(pending) > 0:
+        current = pending[len(pending) - 1]
+        pending.pop()
+        if current == target:
+            return true
+        if contains_i32(&visited, current):
+            continue
+        visited.append(current)
+        edge_index: usize = 0
+        while edge_index < len(model.edges):
+            if model.edges[edge_index].explicit and model.edges[edge_index].before == current:
+                pending.append(model.edges[edge_index].after)
+            edge_index += 1
+    return false
+
+
+def add_diagnostic(model: &ProjectLockModel, module_name: &const String, code: i32, node: &const syntax.SyntaxNode, message: String) -> void:
+    add_raw_diagnostic(model, module_name, code, node.start, node.length, node.line, node.column, message)
+
+
+def add_raw_diagnostic(
+    model: &ProjectLockModel,
+    module_name: &const String,
+    code: i32,
+    start: usize,
+    length: usize,
+    line: i32,
+    column: i32,
+    message: String,
+) -> void:
+    for diagnostic in model.diagnostics:
+        if diagnostic.module_name == module_name[0:len(module_name)] and diagnostic.code == code and diagnostic.start == start:
+            return
+    model.diagnostics.append(
+        LockDiagnostic(
+            module_name=module_name[0:len(module_name)],
+            code=code,
+            start=start,
+            length=length,
+            line=line,
+            column=column,
+            message=message,
+        )
+    )
+
+
+def print_diagnostic(diagnostic: &const LockDiagnostic) -> void:
+    print("error:", diagnostic.message)
+
+
+def find_lock(model: &const ProjectLockModel, module_name: &const String, name: &const String) -> i32:
+    index: usize = 0
+    while index < len(model.locks):
+        if model.locks[index].module_name == module_name[0:len(module_name)] and model.locks[index].name == name[0:len(name)]:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def find_function(model: &const ProjectLockModel, qualified: &const String) -> i32:
+    if len(qualified) == 0:
+        return -1
+    index: usize = 0
+    while index < len(model.functions):
+        if model.functions[index].qualified_name == qualified[0:len(qualified)]:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def qualified_name(module_name: &const String, name: &const String) -> String:
+    return module_name[0:len(module_name)] + "::" + name[0:len(name)]
+
+
+def first_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    if id.index < 0 or arena.nodes[id.index].child_count < 1:
+        return syntax.missing_node()
+    return arena.children[arena.nodes[id.index].first_child]
+
+
+def second_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    if id.index < 0 or arena.nodes[id.index].child_count < 2:
+        return syntax.missing_node()
+    return arena.children[arena.nodes[id.index].first_child + 1]
+
+
+def last_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    if id.index < 0 or arena.nodes[id.index].child_count < 1:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    return arena.children[node.first_child + node.child_count - 1]
+
+
+def find_child_kind(arena: &const SyntaxArena, id: NodeId, kind: SyntaxKind) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        if arena.nodes[child_id.index].kind == kind:
+            return child_id
+    return syntax.missing_node()
+
+
+def find_alias(aliases: &const List[LockAlias], name: &const String) -> i32:
+    index = len(aliases)
+    while index > 0:
+        index -= 1
+        if aliases[index].name == name[0:len(name)]:
+            return cast[i32](index)
+    return -1
+
+
+def set_alias(aliases: &List[LockAlias], name: String, lock_index: i32) -> void:
+    index = find_alias(aliases, &name)
+    if index >= 0:
+        aliases[cast[usize](index)].lock_index = lock_index
+        return
+    aliases.append(LockAlias(name=name, lock_index=lock_index))
+
+
+def append_i32_once(values: &List[i32], value: i32) -> bool:
+    if contains_i32(values, value):
+        return false
+    values.append(value)
+    return true
+
+
+def contains_i32(values: &const List[i32], value: i32) -> bool:
+    for item in values:
+        if item == value:
+            return true
+    return false
+
+
+def append_string_once(values: &List[String], value: String) -> void:
+    for item in values:
+        if item == value:
+            return
+    values.append(value)
+
+
+def lock_name_less(left: &const ProjectLock, right: &const ProjectLock) -> bool:
+    left_name = left.module_name[0:len(left.module_name)] + "::" + left.name[0:len(left.name)]
+    right_name = right.module_name[0:len(right.module_name)] + "::" + right.name[0:len(right.name)]
+    return left_name < right_name
