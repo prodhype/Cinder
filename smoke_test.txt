@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-15 19:53:22 UTC
+# date:   2026-08-15 21:39:48 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 41 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s

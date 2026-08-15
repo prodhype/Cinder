@@ -147,10 +147,6 @@ def count_locks(locks: &const List[Lock]) -> i32:
     return cast[i32](len(locks))
 
 
-def observe_lock(target: &const Lock) -> void:
-    pass
-
-
 def static_hierarchy() -> void:
     CriticalSection root:
         remember(1)
@@ -197,7 +193,6 @@ def acquire_runtime_collection() -> i32:
     # makes them adjacent and CriticalSection acquires each distinct lock once.
     locks: List[Lock] = [audit, root, cache, config, config]
     ordered = sorted(locks)
-    observe_lock(ordered[0])
     if count_locks(ordered) != 5:
         return 1
 
