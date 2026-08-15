@@ -3289,20 +3289,28 @@ class Checker:
         self.current_function = function
         self.current_owner = owner
         self.moved_variables = set()
+        body_nodes = self._walk_ast(declaration.body)
         declared_names = {
             node.name
-            for node in self._walk_ast(declaration.body)
+            for node in body_nodes
             if isinstance(node, ast.VarDeclStmt)
         }
         assignment_counts: dict[str, int] = {}
-        for node in self._walk_ast(declaration.body):
+        address_taken_names: set[str] = set()
+        for node in body_nodes:
             if isinstance(node, ast.AssignStmt) and isinstance(node.target, ast.NameExpr):
                 assignment_counts[node.target.name] = assignment_counts.get(node.target.name, 0) + 1
+            elif (
+                isinstance(node, ast.UnaryExpr)
+                and node.operator == "&"
+                and isinstance(node.operand, ast.NameExpr)
+            ):
+                address_taken_names.add(node.operand.name)
         self._unstable_lock_alias_names = {
             name
             for name, count in assignment_counts.items()
             if name in declared_names or count > 1
-        }
+        } | address_taken_names
         try:
             for parameter in function.parameters:
                 symbol = VariableSymbol(

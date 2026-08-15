@@ -129,6 +129,25 @@ def test_static_alias_keeps_lock_identity() -> None:
     assert "cannot acquire 'first' while 'second' is held" in str(captured.value)
 
 
+def test_mutable_lock_reference_invalidates_alias_identity() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock first\n"
+            "lock second after first\n"
+            "def retarget(target: &Lock) -> void:\n"
+            "    *target = first\n"
+            "def main() -> i32:\n"
+            "    alias = second\n"
+            "    retarget(&alias)\n"
+            "    CriticalSection first:\n"
+            "        CriticalSection alias:\n"
+            "            pass\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire a dynamic lock while another lock is held" in str(captured.value)
+
+
 def test_method_body_lock_order_is_validated() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(
@@ -140,6 +159,41 @@ def test_method_body_lock_order_is_validated() -> None:
             "            CriticalSection root:\n"
             "                pass\n"
             "def main() -> i32:\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire 'root' while 'cache' is held" in str(captured.value)
+
+
+def test_concrete_method_call_inside_critical_section_is_allowed() -> None:
+    compile_source(
+        "lock root\n"
+        "struct Counter:\n"
+        "    value: i32\n"
+        "    def read(self) -> i32:\n"
+        "        return self.value\n"
+        "def main() -> i32:\n"
+        "    counter = Counter(value=0)\n"
+        "    CriticalSection root:\n"
+        "        counter.read()\n"
+        "    return 0\n"
+    )
+
+
+def test_concrete_method_lock_effect_is_validated() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock root\n"
+            "lock cache after root\n"
+            "struct Worker:\n"
+            "    value: i32\n"
+            "    def acquire_root(self) -> void:\n"
+            "        CriticalSection root:\n"
+            "            pass\n"
+            "def main() -> i32:\n"
+            "    worker = Worker(value=0)\n"
+            "    CriticalSection cache:\n"
+            "        worker.acquire_root()\n"
             "    return 0\n"
         )
 

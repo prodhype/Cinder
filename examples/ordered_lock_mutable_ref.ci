@@ -4,6 +4,7 @@
 # - explicit lock order declarations
 # - nested CriticalSection blocks
 # - lock effects through function calls
+# - concrete method effects while a lock is held
 # - aliases that keep static lock identity
 # - independent locks
 # - dynamic lock collections that must be sorted before acquisition
@@ -52,6 +53,19 @@
 #         CriticalSection selected:
 #             pass
 #
+# WRONG: taking a lock alias by mutable reference makes its identity dynamic;
+# the callee can retarget it without a direct assignment in this function.
+#
+# def retarget(target: &Lock) -> void:
+#     *target = root
+#
+# def invalid_mutable_alias() -> void:
+#     selected = cache
+#     retarget(&selected)
+#     CriticalSection root:
+#         CriticalSection selected:
+#             pass
+#
 # WRONG: indirect calls have unknown lock effects while a lock is held.
 #
 # def invalid_indirect_call(callback: def() -> void) -> void:
@@ -68,6 +82,13 @@ lock audit after cache
 lock metrics
 
 progress: i32 = 0
+
+
+struct Counter:
+    value: i32
+
+    def current(self) -> i32:
+        return self.value
 
 
 def remember(step: i32) -> void:
@@ -108,6 +129,12 @@ def alias_keeps_lock_identity() -> void:
                 remember(100000)
 
 
+def concrete_method_effect_is_known() -> void:
+    counter = Counter(value=progress)
+    CriticalSection root:
+        counter.current()
+
+
 def record_independent_metric() -> void:
     CriticalSection metrics:
         remember(1000000)
@@ -130,6 +157,7 @@ def main() -> i32:
     static_hierarchy()
     update_configured_cache()
     alias_keeps_lock_identity()
+    concrete_method_effect_is_known()
     record_independent_metric()
     if acquire_runtime_collection() != 0:
         return 1

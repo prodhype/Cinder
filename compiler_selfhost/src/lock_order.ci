@@ -1,6 +1,7 @@
 import project
 import syntax
 from syntax import NodeId, SyntaxArena, SyntaxKind
+from token import TokenKind
 
 
 struct ProjectLock:
@@ -42,6 +43,17 @@ struct FunctionLockEffect:
 struct LockAlias:
     name: String
     lock_index: i32
+
+
+struct MethodOwner:
+    module_name: String
+    name: String
+
+
+struct MethodReceiverBinding:
+    name: String
+    module_name: String
+    owner_name: String
 
 
 struct ProjectLockModel:
@@ -214,6 +226,10 @@ def collect_function_effect_from_declaration(
             )
         )
         function_index = cast[i32](len(model.functions)) - 1
+        receiver_bindings: List[MethodReceiverBinding] = []
+        if len(owner_name) > 0:
+            self_name = "self"
+            set_method_receiver_binding(receiver_bindings, &self_name, module_name, owner_name)
         collect_direct_effects(
             model,
             function_index,
@@ -222,6 +238,7 @@ def collect_function_effect_from_declaration(
             arena,
             declaration_id,
             source,
+            receiver_bindings,
         )
         return
     if declaration.kind == SyntaxKind.STRUCT_DECL or declaration.kind == SyntaxKind.CLASS_DECL:
@@ -240,10 +257,28 @@ def collect_direct_effects(
     arena: &const SyntaxArena,
     id: NodeId,
     source: &const String,
+    receiver_bindings: &List[MethodReceiverBinding],
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.BLOCK:
+        binding_count = len(receiver_bindings)
+        for offset in range(0, node.child_count):
+            collect_direct_effects(
+                model,
+                function_index,
+                module_name,
+                imports,
+                arena,
+                arena.children[node.first_child + offset],
+                source,
+                receiver_bindings,
+            )
+        while len(receiver_bindings) > binding_count:
+            receiver_bindings.pop()
+        return
+    record_method_receiver_binding(module_name, imports, arena, id, source, receiver_bindings)
     if node.kind == SyntaxKind.CRITICAL_SECTION_STMT:
         expression = first_child(arena, id)
         lock_index = resolve_lock_expression(model, module_name, imports, arena, expression, source)
@@ -254,7 +289,7 @@ def collect_direct_effects(
     elif node.kind == SyntaxKind.EXPR_CALL:
         callee = first_child(arena, id)
         if not call_is_known_builtin(arena, callee, source):
-            effect_name = resolve_callee_name(module_name, imports, arena, callee, source)
+            effect_name = resolve_callee_name(model, module_name, imports, arena, callee, source, receiver_bindings)
             if len(effect_name) > 0:
                 append_string_once(&model.functions[cast[usize](function_index)].callees, effect_name)
             else:
@@ -268,6 +303,7 @@ def collect_direct_effects(
             arena,
             arena.children[node.first_child + offset],
             source,
+            receiver_bindings,
         )
 
 
@@ -303,9 +339,10 @@ def infer_nested_edges(model: &ProjectLockModel, modules: &const List[project.Pa
             continue
         module_arena: &const SyntaxArena = &module.arena
         root_node = module_arena.nodes[module.root.index]
+        empty_owner = ""
         for offset in range(0, root_node.child_count):
             declaration_id = module_arena.children[root_node.first_child + offset]
-            validate_lock_declaration(model, &module.name, &module.imports, module_arena, declaration_id, &module.source)
+            validate_lock_declaration(model, &module.name, &module.imports, module_arena, declaration_id, &module.source, &empty_owner)
 
 
 def validate_lock_declaration(
@@ -315,6 +352,7 @@ def validate_lock_declaration(
     arena: &const SyntaxArena,
     declaration_id: NodeId,
     source: &const String,
+    owner_name: &const String,
 ) -> void:
     if declaration_id.index < 0:
         return
@@ -325,6 +363,10 @@ def validate_lock_declaration(
         unstable_aliases = unstable_lock_alias_names(arena, declaration_id, source)
         for name in unstable_aliases:
             set_alias(aliases, name[0:len(name)], -1)
+        receiver_bindings: List[MethodReceiverBinding] = []
+        if len(owner_name) > 0:
+            self_name = "self"
+            set_method_receiver_binding(receiver_bindings, &self_name, module_name, owner_name)
         validate_lock_node(
             model,
             module_name,
@@ -336,13 +378,15 @@ def validate_lock_declaration(
             aliases,
             &unstable_aliases,
             false,
+            receiver_bindings,
         )
         return
     if declaration.kind == SyntaxKind.STRUCT_DECL or declaration.kind == SyntaxKind.CLASS_DECL:
+        owner = source[declaration.value_start:declaration.value_start + declaration.value_length]
         for offset in range(0, declaration.child_count):
             child_id = arena.children[declaration.first_child + offset]
             if arena.nodes[child_id.index].kind == SyntaxKind.FUNCTION_DECL:
-                validate_lock_declaration(model, module_name, imports, arena, child_id, source)
+                validate_lock_declaration(model, module_name, imports, arena, child_id, source, &owner)
 
 
 def unstable_lock_alias_names(arena: &const SyntaxArena, function_id: NodeId, source: &const String) -> List[String]:
@@ -390,6 +434,12 @@ def collect_unstable_alias_names(
             count = increment_string_count(assignment_names, assignment_counts, &name)
             if conditional_context or contains_string(declared_names, &name) or count > 1:
                 append_string_once(result, name)
+    elif node.kind == SyntaxKind.EXPR_UNARY and node.flags == cast[i32](TokenKind.AMPERSAND):
+        operand = first_child(arena, id)
+        if operand.index >= 0 and arena.nodes[operand.index].kind == SyntaxKind.EXPR_NAME:
+            operand_node = arena.nodes[operand.index]
+            name = source[operand_node.value_start:operand_node.value_start + operand_node.value_length]
+            append_string_once(result, name)
     nested_conditional = conditional_context or node.kind == SyntaxKind.IF_STMT or node.kind == SyntaxKind.IF_BRANCH or node.kind == SyntaxKind.WHILE_STMT or node.kind == SyntaxKind.FOR_EACH_STMT or node.kind == SyntaxKind.FOR_C_STMT or node.kind == SyntaxKind.MATCH_STMT or node.kind == SyntaxKind.MATCH_CASE
     for offset in range(0, node.child_count):
         collect_unstable_alias_names(arena, arena.children[node.first_child + offset], source, nested_conditional, declared_names, assignment_names, assignment_counts, result)
@@ -406,10 +456,31 @@ def validate_lock_node(
     aliases: &List[LockAlias],
     unstable_aliases: &const List[String],
     dynamic_held: bool,
+    receiver_bindings: &List[MethodReceiverBinding],
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.BLOCK:
+        binding_count = len(receiver_bindings)
+        for offset in range(0, node.child_count):
+            validate_lock_node(
+                model,
+                module_name,
+                imports,
+                arena,
+                arena.children[node.first_child + offset],
+                source,
+                held,
+                aliases,
+                unstable_aliases,
+                dynamic_held,
+                receiver_bindings,
+            )
+        while len(receiver_bindings) > binding_count:
+            receiver_bindings.pop()
+        return
+    record_method_receiver_binding(module_name, imports, arena, id, source, receiver_bindings)
     if node.kind == SyntaxKind.VAR_DECL_STMT:
         name = source[node.value_start:node.value_start + node.value_length]
         if contains_string(unstable_aliases, &name):
@@ -448,16 +519,16 @@ def validate_lock_node(
                 else:
                     add_edge(model, current, lock_index, false, module_name, &arena.nodes[expression.index])
             held.append(lock_index)
-            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, unstable_aliases, dynamic_held)
+            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, unstable_aliases, dynamic_held, receiver_bindings)
             held.pop()
         else:
             if len(held) > 0 or dynamic_held:
                 add_diagnostic(model, module_name, 416, &arena.nodes[expression.index], "cannot acquire a dynamic lock while another lock is held")
-            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, unstable_aliases, true)
+            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, unstable_aliases, true, receiver_bindings)
         return
     if node.kind == SyntaxKind.EXPR_CALL and (len(held) > 0 or dynamic_held):
         callee = first_child(arena, id)
-        effect_name = resolve_callee_name(module_name, imports, arena, callee, source)
+        effect_name = resolve_callee_name(model, module_name, imports, arena, callee, source, receiver_bindings)
         function_index = find_function(model, &effect_name)
         known_builtin = call_is_known_builtin(arena, callee, source)
         unknown = not known_builtin and (len(effect_name) == 0 or function_index < 0)
@@ -492,6 +563,7 @@ def validate_lock_node(
             aliases,
             unstable_aliases,
             dynamic_held,
+            receiver_bindings,
         )
 
 
@@ -619,12 +691,194 @@ def resolve_lock_expression_with_aliases(
     return -1
 
 
-def resolve_callee_name(
+def missing_method_owner() -> MethodOwner:
+    return MethodOwner(module_name="", name="")
+
+
+def method_owner_for_name(
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    name: &const String,
+) -> MethodOwner:
+    for imported in imports:
+        if len(imported.member) > 0 and imported.alias == name[0:len(name)]:
+            return MethodOwner(
+                module_name=imported.module_name[0:len(imported.module_name)],
+                name=imported.member[0:len(imported.member)],
+            )
+    return MethodOwner(
+        module_name=module_name[0:len(module_name)],
+        name=name[0:len(name)],
+    )
+
+
+def method_owner_from_constructor(
     module_name: &const String,
     imports: &const List[project.ImportBinding],
     arena: &const SyntaxArena,
     id: NodeId,
     source: &const String,
+) -> MethodOwner:
+    if id.index < 0:
+        return missing_method_owner()
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        return method_owner_for_name(module_name, imports, &name)
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = first_child(arena, id)
+        member = second_child(arena, id)
+        if receiver.index >= 0 and member.index >= 0 and arena.nodes[receiver.index].kind == SyntaxKind.EXPR_NAME:
+            receiver_node = arena.nodes[receiver.index]
+            member_node = arena.nodes[member.index]
+            alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            for imported in imports:
+                if len(imported.member) == 0 and imported.alias == alias:
+                    return MethodOwner(
+                        module_name=imported.module_name[0:len(imported.module_name)],
+                        name=name,
+                    )
+    return missing_method_owner()
+
+
+def lock_order_type_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        kind = arena.nodes[child_id.index].kind
+        if kind == SyntaxKind.TYPE_NAME or kind == SyntaxKind.TYPE_GENERIC or kind == SyntaxKind.TYPE_CONST or kind == SyntaxKind.TYPE_POINTER or kind == SyntaxKind.TYPE_REFERENCE or kind == SyntaxKind.TYPE_ARRAY or kind == SyntaxKind.TYPE_SLICE or kind == SyntaxKind.TYPE_DYN or kind == SyntaxKind.TYPE_FUNCTION or kind == SyntaxKind.TYPE_CLOSURE:
+            return child_id
+    return syntax.missing_node()
+
+
+def method_owner_from_type(
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> MethodOwner:
+    if id.index < 0:
+        return missing_method_owner()
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST or node.kind == SyntaxKind.TYPE_GENERIC:
+        return method_owner_from_type(module_name, imports, arena, first_child(arena, id), source)
+    if node.kind != SyntaxKind.TYPE_NAME:
+        return missing_method_owner()
+    if node.child_count > 1:
+        receiver = first_child(arena, id)
+        member = second_child(arena, id)
+        if receiver.index >= 0 and member.index >= 0:
+            receiver_node = arena.nodes[receiver.index]
+            member_node = arena.nodes[member.index]
+            alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            for imported in imports:
+                if len(imported.member) == 0 and imported.alias == alias:
+                    return MethodOwner(
+                        module_name=imported.module_name[0:len(imported.module_name)],
+                        name=name,
+                    )
+        return missing_method_owner()
+    name = source[node.value_start:node.value_start + node.value_length]
+    return method_owner_for_name(module_name, imports, &name)
+
+
+def find_method_receiver_binding(
+    bindings: &const List[MethodReceiverBinding],
+    name: &const String,
+) -> i32:
+    index = len(bindings)
+    while index > 0:
+        index -= 1
+        if bindings[index].name == name[0:len(name)]:
+            return cast[i32](index)
+    return -1
+
+
+def method_owner_from_expression(
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    receiver_bindings: &const List[MethodReceiverBinding],
+) -> MethodOwner:
+    if id.index < 0:
+        return missing_method_owner()
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_CALL:
+        return method_owner_from_constructor(module_name, imports, arena, first_child(arena, id), source)
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        binding_index = find_method_receiver_binding(receiver_bindings, &name)
+        if binding_index >= 0:
+            binding: &const MethodReceiverBinding = &receiver_bindings[cast[usize](binding_index)]
+            return MethodOwner(
+                module_name=binding.module_name[0:len(binding.module_name)],
+                name=binding.owner_name[0:len(binding.owner_name)],
+            )
+    if node.kind == SyntaxKind.EXPR_UNARY and (node.flags == cast[i32](TokenKind.AMPERSAND) or node.flags == cast[i32](TokenKind.STAR)):
+        return method_owner_from_expression(module_name, imports, arena, first_child(arena, id), source, receiver_bindings)
+    return missing_method_owner()
+
+
+def set_method_receiver_binding(
+    bindings: &List[MethodReceiverBinding],
+    name: &const String,
+    module_name: &const String,
+    owner_name: &const String,
+) -> void:
+    if len(name) == 0 or len(module_name) == 0 or len(owner_name) == 0:
+        return
+    bindings.append(
+        MethodReceiverBinding(
+            name=name[0:len(name)],
+            module_name=module_name[0:len(module_name)],
+            owner_name=owner_name[0:len(owner_name)],
+        )
+    )
+
+
+def record_method_receiver_binding(
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    receiver_bindings: &List[MethodReceiverBinding],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    name = ""
+    owner = missing_method_owner()
+    if node.kind == SyntaxKind.PARAMETER or node.kind == SyntaxKind.VAR_DECL_STMT:
+        name = source[node.value_start:node.value_start + node.value_length]
+        owner = method_owner_from_type(module_name, imports, arena, lock_order_type_child(arena, id), source)
+        if len(owner.name) == 0 and node.kind == SyntaxKind.VAR_DECL_STMT:
+            owner = method_owner_from_expression(module_name, imports, arena, last_child(arena, id), source, receiver_bindings)
+    elif node.kind == SyntaxKind.ASSIGN_STMT:
+        target = first_child(arena, id)
+        if target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
+            target_node = arena.nodes[target.index]
+            name = source[target_node.value_start:target_node.value_start + target_node.value_length]
+            owner = method_owner_from_expression(module_name, imports, arena, second_child(arena, id), source, receiver_bindings)
+    if len(owner.name) > 0:
+        set_method_receiver_binding(receiver_bindings, &name, &owner.module_name, &owner.name)
+
+
+def resolve_callee_name(
+    model: &const ProjectLockModel,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    receiver_bindings: &const List[MethodReceiverBinding],
 ) -> String:
     if id.index < 0:
         return ""
@@ -643,6 +897,13 @@ def resolve_callee_name(
             member_node = arena.nodes[member.index]
             alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
             name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            binding_index = find_method_receiver_binding(receiver_bindings, &alias)
+            if binding_index >= 0:
+                binding: &const MethodReceiverBinding = &receiver_bindings[cast[usize](binding_index)]
+                candidate = qualified_function_name(&binding.module_name, &binding.owner_name, &name)
+                if find_function(model, &candidate) >= 0:
+                    return candidate
+                return ""
             for imported in imports:
                 if len(imported.member) == 0 and imported.alias == alias:
                     return qualified_name(&imported.module_name, &name)

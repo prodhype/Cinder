@@ -5477,6 +5477,43 @@ def assert_compiler_supports_lock_ordering(
     assert method_result.returncode != 0
     assert "cannot acquire 'root' while 'cache' is held" in method_result.stdout
 
+    concrete_method = tmp_path / "lock_order_concrete_method.ci"
+    concrete_method.write_text(
+        "lock root\n"
+        "struct Counter:\n"
+        "    value: i32\n"
+        "    def read(self) -> i32:\n"
+        "        return self.value\n"
+        "def main() -> i32:\n"
+        "    counter = Counter(value=7)\n"
+        "    CriticalSection root:\n"
+        "        counter.read()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    concrete_method_result = run_gen1(compiler, "check", str(concrete_method))
+    assert concrete_method_result.returncode == 0, concrete_method_result.stderr
+
+    method_effect = tmp_path / "lock_order_method_effect.ci"
+    method_effect.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "struct Worker:\n"
+        "    value: i32\n"
+        "    def acquire_root(self) -> void:\n"
+        "        CriticalSection root:\n"
+        "            pass\n"
+        "def main() -> i32:\n"
+        "    worker = Worker(value=0)\n"
+        "    CriticalSection cache:\n"
+        "        worker.acquire_root()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    method_effect_result = run_gen1(compiler, "check", str(method_effect))
+    assert method_effect_result.returncode != 0
+    assert "cannot acquire 'root' while 'cache' is held" in method_effect_result.stdout
+
     conditional_alias = tmp_path / "lock_order_conditional_alias.ci"
     conditional_alias.write_text(
         "lock root\n"
@@ -5496,6 +5533,25 @@ def assert_compiler_supports_lock_ordering(
     conditional_alias_result = run_gen1(compiler, "check", str(conditional_alias))
     assert conditional_alias_result.returncode != 0
     assert "cannot acquire a dynamic lock while another lock is held" in conditional_alias_result.stdout
+
+    mutable_alias = tmp_path / "lock_order_mutable_alias.ci"
+    mutable_alias.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "def retarget(target: &Lock) -> void:\n"
+        "    *target = root\n"
+        "def main() -> i32:\n"
+        "    selected = cache\n"
+        "    retarget(&selected)\n"
+        "    CriticalSection root:\n"
+        "        CriticalSection selected:\n"
+        "            pass\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    mutable_alias_result = run_gen1(compiler, "check", str(mutable_alias))
+    assert mutable_alias_result.returncode != 0
+    assert "cannot acquire a dynamic lock while another lock is held" in mutable_alias_result.stdout
 
     indirect = tmp_path / "lock_order_indirect_call.ci"
     indirect.write_text(
