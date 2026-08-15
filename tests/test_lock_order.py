@@ -129,6 +129,79 @@ def test_static_alias_keeps_lock_identity() -> None:
     assert "cannot acquire 'first' while 'second' is held" in str(captured.value)
 
 
+def test_method_body_lock_order_is_validated() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock root\n"
+            "lock cache after root\n"
+            "struct Worker:\n"
+            "    def update(self) -> void:\n"
+            "        CriticalSection cache:\n"
+            "            CriticalSection root:\n"
+            "                pass\n"
+            "def main() -> i32:\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire 'root' while 'cache' is held" in str(captured.value)
+
+
+def test_conditional_alias_assignment_becomes_dynamic() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock root\n"
+            "lock cache after root\n"
+            "def check(flag: bool) -> void:\n"
+            "    selected = root\n"
+            "    if flag:\n"
+            "        selected = cache\n"
+            "    CriticalSection root:\n"
+            "        CriticalSection selected:\n"
+            "            pass\n"
+            "def main() -> i32:\n"
+            "    check(false)\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire a dynamic lock while another lock is held" in str(captured.value)
+
+
+def test_reassigned_alias_becomes_dynamic() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock root\n"
+            "lock cache after root\n"
+            "def main() -> i32:\n"
+            "    selected = root\n"
+            "    selected = cache\n"
+            "    CriticalSection root:\n"
+            "        CriticalSection selected:\n"
+            "            pass\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire a dynamic lock while another lock is held" in str(captured.value)
+
+
+def test_indirect_call_while_holding_lock_is_rejected() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock root\n"
+            "lock cache after root\n"
+            "def acquire_root() -> void:\n"
+            "    CriticalSection root:\n"
+            "        pass\n"
+            "def invoke(callback: def() -> void) -> void:\n"
+            "    CriticalSection cache:\n"
+            "        callback()\n"
+            "def main() -> i32:\n"
+            "    invoke(acquire_root)\n"
+            "    return 0\n"
+        )
+
+    assert "cannot call a function with an unknown lock effect while a lock is held" in str(captured.value)
+
+
 def test_function_effect_infers_caller_order() -> None:
     generated = compile_source(
         "lock database\n"

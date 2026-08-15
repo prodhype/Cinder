@@ -176,35 +176,56 @@ def collect_function_effects(model: &ProjectLockModel, modules: &const List[proj
             continue
         parsed_arena: &const SyntaxArena = &parsed.arena
         root_node = parsed_arena.nodes[root.index]
+        empty_owner = ""
         for offset in range(0, root_node.child_count):
             declaration_id = parsed_arena.children[root_node.first_child + offset]
-            declaration = parsed_arena.nodes[declaration_id.index]
-            if declaration.kind != SyntaxKind.FUNCTION_DECL:
-                continue
-            name = module_source[declaration.value_start:declaration.value_start + declaration.value_length]
-            effect_locks: List[i32] = []
-            callees: List[String] = []
-            model.functions.append(
-                FunctionLockEffect(
-                    qualified_name=qualified_name(&module.name, &name),
-                    module_name=module.name[0:len(module.name)],
-                    name=name,
-                    locks=effect_locks,
-                    callees=callees,
-                    unknown=false,
-                )
-            )
-            function_index = cast[i32](len(model.functions)) - 1
-            collect_direct_effects(
-                model,
-                function_index,
-                &module.name,
-                &module.imports,
-                parsed_arena,
-                declaration_id,
-                &module_source,
-            )
+            collect_function_effect_from_declaration(model, &module.name, &module.imports, parsed_arena, declaration_id, &module_source, &empty_owner)
         module_index += 1
+
+
+def collect_function_effect_from_declaration(
+    model: &ProjectLockModel,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    declaration_id: NodeId,
+    source: &const String,
+    owner_name: &const String,
+) -> void:
+    if declaration_id.index < 0:
+        return
+    declaration = arena.nodes[declaration_id.index]
+    if declaration.kind == SyntaxKind.FUNCTION_DECL:
+        name = source[declaration.value_start:declaration.value_start + declaration.value_length]
+        effect_locks: List[i32] = []
+        callees: List[String] = []
+        model.functions.append(
+            FunctionLockEffect(
+                qualified_name=qualified_function_name(module_name, owner_name, &name),
+                module_name=module_name[0:len(module_name)],
+                name=name,
+                locks=effect_locks,
+                callees=callees,
+                unknown=false,
+            )
+        )
+        function_index = cast[i32](len(model.functions)) - 1
+        collect_direct_effects(
+            model,
+            function_index,
+            module_name,
+            imports,
+            arena,
+            declaration_id,
+            source,
+        )
+        return
+    if declaration.kind == SyntaxKind.STRUCT_DECL or declaration.kind == SyntaxKind.CLASS_DECL:
+        owner = source[declaration.value_start:declaration.value_start + declaration.value_length]
+        for offset in range(0, declaration.child_count):
+            child_id = arena.children[declaration.first_child + offset]
+            if arena.nodes[child_id.index].kind == SyntaxKind.FUNCTION_DECL:
+                collect_function_effect_from_declaration(model, module_name, imports, arena, child_id, source, &owner)
 
 
 def collect_direct_effects(
@@ -285,22 +306,94 @@ def infer_nested_edges(model: &ProjectLockModel, modules: &const List[project.Pa
         root_node = parsed_arena.nodes[root.index]
         for offset in range(0, root_node.child_count):
             declaration_id = parsed_arena.children[root_node.first_child + offset]
-            declaration = parsed_arena.nodes[declaration_id.index]
-            if declaration.kind != SyntaxKind.FUNCTION_DECL:
-                continue
-            held: List[i32] = []
-            aliases: List[LockAlias] = []
-            validate_lock_node(
-                model,
-                &module.name,
-                &module.imports,
-                parsed_arena,
-                declaration_id,
-                &module_source,
-                held,
-                aliases,
-                false,
-            )
+            validate_lock_declaration(model, &module.name, &module.imports, parsed_arena, declaration_id, &module_source)
+
+
+def validate_lock_declaration(
+    model: &ProjectLockModel,
+    module_name: &const String,
+    imports: &const List[project.ImportBinding],
+    arena: &const SyntaxArena,
+    declaration_id: NodeId,
+    source: &const String,
+) -> void:
+    if declaration_id.index < 0:
+        return
+    declaration = arena.nodes[declaration_id.index]
+    if declaration.kind == SyntaxKind.FUNCTION_DECL:
+        held: List[i32] = []
+        aliases: List[LockAlias] = []
+        unstable_aliases = unstable_lock_alias_names(arena, declaration_id, source)
+        for name in unstable_aliases:
+            set_alias(aliases, name[0:len(name)], -1)
+        validate_lock_node(
+            model,
+            module_name,
+            imports,
+            arena,
+            declaration_id,
+            source,
+            held,
+            aliases,
+            &unstable_aliases,
+            false,
+        )
+        return
+    if declaration.kind == SyntaxKind.STRUCT_DECL or declaration.kind == SyntaxKind.CLASS_DECL:
+        for offset in range(0, declaration.child_count):
+            child_id = arena.children[declaration.first_child + offset]
+            if arena.nodes[child_id.index].kind == SyntaxKind.FUNCTION_DECL:
+                validate_lock_declaration(model, module_name, imports, arena, child_id, source)
+
+
+def unstable_lock_alias_names(arena: &const SyntaxArena, function_id: NodeId, source: &const String) -> List[String]:
+    declared_names: List[String] = []
+    collect_declared_names(arena, function_id, source, &declared_names)
+    assignment_names: List[String] = []
+    assignment_counts: List[i32] = []
+    unstable_names: List[String] = []
+    collect_unstable_alias_names(arena, function_id, source, false, &declared_names, &assignment_names, &assignment_counts, &unstable_names)
+    return unstable_names
+
+
+def collect_declared_names(arena: &const SyntaxArena, id: NodeId, source: &const String, result: &List[String]) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.VAR_DECL_STMT:
+        append_string_once(result, source[node.value_start:node.value_start + node.value_length])
+    for offset in range(0, node.child_count):
+        collect_declared_names(arena, arena.children[node.first_child + offset], source, result)
+
+
+def collect_unstable_alias_names(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    conditional_context: bool,
+    declared_names: &const List[String],
+    assignment_names: &List[String],
+    assignment_counts: &List[i32],
+    result: &List[String],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.VAR_DECL_STMT:
+        name = source[node.value_start:node.value_start + node.value_length]
+        if conditional_context:
+            append_string_once(result, name)
+    elif node.kind == SyntaxKind.ASSIGN_STMT:
+        target = first_child(arena, id)
+        if target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
+            target_node = arena.nodes[target.index]
+            name = source[target_node.value_start:target_node.value_start + target_node.value_length]
+            count = increment_string_count(assignment_names, assignment_counts, &name)
+            if conditional_context or contains_string(declared_names, &name) or count > 1:
+                append_string_once(result, name)
+    nested_conditional = conditional_context or node.kind == SyntaxKind.IF_STMT or node.kind == SyntaxKind.IF_BRANCH or node.kind == SyntaxKind.WHILE_STMT or node.kind == SyntaxKind.FOR_EACH_STMT or node.kind == SyntaxKind.FOR_C_STMT or node.kind == SyntaxKind.MATCH_STMT or node.kind == SyntaxKind.MATCH_CASE
+    for offset in range(0, node.child_count):
+        collect_unstable_alias_names(arena, arena.children[node.first_child + offset], source, nested_conditional, declared_names, assignment_names, assignment_counts, result)
 
 
 def validate_lock_node(
@@ -312,23 +405,32 @@ def validate_lock_node(
     source: &const String,
     held: &List[i32],
     aliases: &List[LockAlias],
+    unstable_aliases: &const List[String],
     dynamic_held: bool,
 ) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.VAR_DECL_STMT:
-        initializer = last_child(arena, id)
-        lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, initializer, source, aliases)
-        if lock_index >= 0:
-            set_alias(aliases, source[node.value_start:node.value_start + node.value_length], lock_index)
+        name = source[node.value_start:node.value_start + node.value_length]
+        if contains_string(unstable_aliases, &name):
+            set_alias(aliases, source[node.value_start:node.value_start + node.value_length], -1)
+        else:
+            initializer = last_child(arena, id)
+            lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, initializer, source, aliases)
+            if lock_index >= 0:
+                set_alias(aliases, source[node.value_start:node.value_start + node.value_length], lock_index)
     elif node.kind == SyntaxKind.ASSIGN_STMT:
         target = first_child(arena, id)
         value = second_child(arena, id)
         if target.index >= 0 and arena.nodes[target.index].kind == SyntaxKind.EXPR_NAME:
             target_node = arena.nodes[target.index]
-            lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, value, source, aliases)
-            set_alias(aliases, source[target_node.value_start:target_node.value_start + target_node.value_length], lock_index)
+            name = source[target_node.value_start:target_node.value_start + target_node.value_length]
+            if contains_string(unstable_aliases, &name):
+                set_alias(aliases, source[target_node.value_start:target_node.value_start + target_node.value_length], -1)
+            else:
+                lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, value, source, aliases)
+                set_alias(aliases, source[target_node.value_start:target_node.value_start + target_node.value_length], lock_index)
     if node.kind == SyntaxKind.CRITICAL_SECTION_STMT:
         expression = first_child(arena, id)
         lock_index = resolve_lock_expression_with_aliases(model, module_name, imports, arena, expression, source, aliases)
@@ -347,18 +449,19 @@ def validate_lock_node(
                 else:
                     add_edge(model, current, lock_index, false, module_name, &arena.nodes[expression.index])
             held.append(lock_index)
-            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, dynamic_held)
+            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, unstable_aliases, dynamic_held)
             held.pop()
         else:
             if len(held) > 0 or dynamic_held:
                 add_diagnostic(model, module_name, 416, &arena.nodes[expression.index], "cannot acquire a dynamic lock while another lock is held")
-            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, true)
+            validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, unstable_aliases, true)
         return
     if node.kind == SyntaxKind.EXPR_CALL and (len(held) > 0 or dynamic_held):
         callee = first_child(arena, id)
         effect_name = resolve_callee_name(module_name, imports, arena, callee, source)
         function_index = find_function(model, &effect_name)
-        unknown = len(effect_name) == 0 and not call_is_known_builtin(arena, callee, source)
+        known_builtin = call_is_known_builtin(arena, callee, source)
+        unknown = not known_builtin and (len(effect_name) == 0 or function_index < 0)
         if function_index >= 0:
             effect: &const FunctionLockEffect = &model.functions[cast[usize](function_index)]
             unknown = effect.unknown
@@ -388,6 +491,7 @@ def validate_lock_node(
             source,
             held,
             aliases,
+            unstable_aliases,
             dynamic_held,
         )
 
@@ -551,7 +655,7 @@ def call_is_known_builtin(arena: &const SyntaxArena, id: NodeId, source: &const 
         return false
     node = arena.nodes[id.index]
     name = source[node.value_start:node.value_start + node.value_length]
-    return name == "print" or name == "len" or name == "range" or name == "sort" or name == "sorted" or name == "input" or name == "to_string" or name == "set" or name == "free" or name == "panic" or name == "String" or name == "StringBuilder" or name == "Some" or name == "Owned" or name == "Ok" or name == "Err" or name == "cast" or name == "alloc"
+    return name == "print" or name == "len" or name == "range" or name == "sort" or name == "sorted" or name == "input" or name == "to_string" or name == "set" or name == "free" or name == "panic" or name == "String" or name == "StringBuilder" or name == "Some" or name == "Owned" or name == "Ok" or name == "Err" or name == "cast" or name == "alloc" or name == "closure"
 
 
 def add_edge(
@@ -660,6 +764,12 @@ def qualified_name(module_name: &const String, name: &const String) -> String:
     return module_name[0:len(module_name)] + "::" + name[0:len(name)]
 
 
+def qualified_function_name(module_name: &const String, owner_name: &const String, name: &const String) -> String:
+    if len(owner_name) > 0:
+        return module_name[0:len(module_name)] + "::" + owner_name[0:len(owner_name)] + "::" + name[0:len(name)]
+    return qualified_name(module_name, name)
+
+
 def first_child(arena: &const SyntaxArena, id: NodeId) -> NodeId:
     if id.index < 0 or arena.nodes[id.index].child_count < 1:
         return syntax.missing_node()
@@ -719,6 +829,25 @@ def contains_i32(values: &const List[i32], value: i32) -> bool:
         if item == value:
             return true
     return false
+
+
+def contains_string(values: &const List[String], value: &const String) -> bool:
+    for item in values:
+        if item == value[0:len(value)]:
+            return true
+    return false
+
+
+def increment_string_count(names: &List[String], counts: &List[i32], name: &const String) -> i32:
+    index: usize = 0
+    while index < len(names):
+        if names[index] == name[0:len(name)]:
+            counts[index] += 1
+            return counts[index]
+        index += 1
+    names.append(name[0:len(name)])
+    counts.append(1)
+    return 1
 
 
 def append_string_once(values: &List[String], value: String) -> void:

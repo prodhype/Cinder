@@ -5454,6 +5454,62 @@ def assert_compiler_supports_lock_ordering(
     assert effect_result.returncode != 0
     assert "cannot acquire 'database' while 'cache' is held" in effect_result.stdout
 
+    method = tmp_path / "lock_order_method.ci"
+    method.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "struct Worker:\n"
+        "    def update(self) -> void:\n"
+        "        CriticalSection cache:\n"
+        "            CriticalSection root:\n"
+        "                pass\n"
+        "def main() -> i32:\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    method_result = run_gen1(compiler, "check", str(method))
+    assert method_result.returncode != 0
+    assert "cannot acquire 'root' while 'cache' is held" in method_result.stdout
+
+    conditional_alias = tmp_path / "lock_order_conditional_alias.ci"
+    conditional_alias.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "def check(flag: bool) -> void:\n"
+        "    selected = root\n"
+        "    if flag:\n"
+        "        selected = cache\n"
+        "    CriticalSection root:\n"
+        "        CriticalSection selected:\n"
+        "            pass\n"
+        "def main() -> i32:\n"
+        "    check(false)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    conditional_alias_result = run_gen1(compiler, "check", str(conditional_alias))
+    assert conditional_alias_result.returncode != 0
+    assert "cannot acquire a dynamic lock while another lock is held" in conditional_alias_result.stdout
+
+    indirect = tmp_path / "lock_order_indirect_call.ci"
+    indirect.write_text(
+        "lock root\n"
+        "lock cache after root\n"
+        "def acquire_root() -> void:\n"
+        "    CriticalSection root:\n"
+        "        pass\n"
+        "def invoke(callback: def() -> void) -> void:\n"
+        "    CriticalSection cache:\n"
+        "        callback()\n"
+        "def main() -> i32:\n"
+        "    invoke(acquire_root)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    indirect_result = run_gen1(compiler, "check", str(indirect))
+    assert indirect_result.returncode != 0
+    assert "cannot call a function with an unknown lock effect while a lock is held" in indirect_result.stdout
+
 
 def test_gen1_supports_lock_ordering(
     gen1_compiler: Path,

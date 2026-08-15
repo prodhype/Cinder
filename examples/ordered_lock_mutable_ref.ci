@@ -34,6 +34,30 @@
 #         CriticalSection root:
 #             pass
 #
+# WRONG: methods are checked against the same lock order as free functions.
+#
+# struct InvalidWorker:
+#     def update(self) -> void:
+#         CriticalSection cache:
+#             CriticalSection root:
+#                 pass
+#
+# WRONG: an alias assigned on a conditional path is dynamic after the branch.
+#
+# def invalid_conditional_alias(flag: bool) -> void:
+#     selected = root
+#     if flag:
+#         selected = cache
+#     CriticalSection root:
+#         CriticalSection selected:
+#             pass
+#
+# WRONG: indirect calls have unknown lock effects while a lock is held.
+#
+# def invalid_indirect_call(callback: def() -> void) -> void:
+#     CriticalSection cache:
+#         callback()
+#
 # CORRECT: read-only views cannot invalidate canonical order, and sorted dynamic
 # collections can be acquired as a single CriticalSection target.
 
