@@ -72,6 +72,33 @@
 #     CriticalSection cache:
 #         callback()
 #
+# WRONG: locals are destroyed before their enclosing critical section releases
+# its lock, so destructor effects must also follow the declared order.
+#
+# class InvalidCleanup:
+#     def __del__(self):
+#         CriticalSection root:
+#             pass
+#
+# def invalid_destructor_cleanup() -> void:
+#     CriticalSection cache:
+#         cleanup = InvalidCleanup()
+#
+# WRONG: a generated default constructor initializes its implementation base.
+# The base constructor's lock effects still apply at the derived call site.
+#
+# class InvalidBase:
+#     def __init__(self):
+#         CriticalSection root:
+#             pass
+#
+# class InvalidDerived(InvalidBase):
+#     pass
+#
+# def invalid_default_constructor() -> void:
+#     CriticalSection cache:
+#         value = InvalidDerived()
+#
 # CORRECT: read-only views cannot invalidate canonical order, and sorted dynamic
 # collections can be acquired as a single CriticalSection target.
 

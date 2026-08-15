@@ -306,6 +306,129 @@ def test_caller_that_holds_later_lock_fails() -> None:
     assert "cannot acquire 'database' while 'cache' is held" in str(captured.value)
 
 
+def test_destructor_cleanup_inside_critical_section_is_rejected() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock database\n"
+            "lock cache after database\n"
+            "class Guard:\n"
+            "    def __del__(self):\n"
+            "        CriticalSection database:\n"
+            "            pass\n"
+            "def main() -> i32:\n"
+            "    CriticalSection cache:\n"
+            "        guard = Guard()\n"
+            "        return 0\n"
+        )
+
+    assert "cannot acquire 'database' while 'cache' is held" in str(captured.value)
+
+
+def test_destructor_cleanup_effect_propagates_through_caller() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock database\n"
+            "lock cache after database\n"
+            "class Guard:\n"
+            "    def __del__(self):\n"
+            "        CriticalSection database:\n"
+            "            pass\n"
+            "def drop_guard() -> void:\n"
+            "    guard = Guard()\n"
+            "def main() -> i32:\n"
+            "    CriticalSection cache:\n"
+            "        drop_guard()\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire 'database' while 'cache' is held" in str(captured.value)
+
+
+def test_moved_destructor_local_is_not_cleaned_up_under_held_lock() -> None:
+    compile_source(
+        "lock database\n"
+        "lock cache after database\n"
+        "class Guard:\n"
+        "    def __del__(self):\n"
+        "        CriticalSection database:\n"
+        "            pass\n"
+        "def make() -> Guard:\n"
+        "    CriticalSection cache:\n"
+        "        guard = Guard()\n"
+        "        return guard\n"
+        "def main() -> i32:\n"
+        "    guard = make()\n"
+        "    return 0\n"
+    )
+
+
+def test_default_constructor_inherits_base_lock_effect() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock database\n"
+            "lock cache after database\n"
+            "class Grandparent:\n"
+            "    def __init__(self):\n"
+            "        CriticalSection database:\n"
+            "            pass\n"
+            "class Parent(Grandparent):\n"
+            "    pass\n"
+            "class Child(Parent):\n"
+            "    pass\n"
+            "def main() -> i32:\n"
+            "    CriticalSection cache:\n"
+            "        child = Child()\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire 'database' while 'cache' is held" in str(captured.value)
+
+
+def test_super_init_inherits_default_base_constructor_lock_effect() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock database\n"
+            "lock cache after database\n"
+            "class Grandparent:\n"
+            "    def __init__(self):\n"
+            "        CriticalSection database:\n"
+            "            pass\n"
+            "class Parent(Grandparent):\n"
+            "    pass\n"
+            "class Child(Parent):\n"
+            "    def __init__(self):\n"
+            "        super().__init__()\n"
+            "def main() -> i32:\n"
+            "    CriticalSection cache:\n"
+            "        child = Child()\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire 'database' while 'cache' is held" in str(captured.value)
+
+
+def test_default_constructor_effect_propagates_through_caller() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock database\n"
+            "lock cache after database\n"
+            "class Base:\n"
+            "    def __init__(self):\n"
+            "        CriticalSection database:\n"
+            "            pass\n"
+            "class Derived(Base):\n"
+            "    pass\n"
+            "def make() -> Derived:\n"
+            "    return Derived()\n"
+            "def main() -> i32:\n"
+            "    CriticalSection cache:\n"
+            "        derived = make()\n"
+            "    return 0\n"
+        )
+
+    assert "cannot acquire 'database' while 'cache' is held" in str(captured.value)
+
+
 def test_recursive_call_graph_without_reacquisition_is_valid() -> None:
     compile_source(
         "lock work\n"

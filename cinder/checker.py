@@ -426,6 +426,7 @@ class Checker:
         self._validated_lifetime_functions: set[int] = set()
         self._lock_constraint_spans: list[Span] = []
         self._unstable_lock_alias_names: set[str] = set()
+        self._lock_moved_symbol_ids: set[int] = set()
 
     def check(self) -> SemanticModel:
         self._install_builtins()
@@ -3030,15 +3031,148 @@ class Checker:
             if function.declaration is not None and function.declaration.body is not None
         ]
 
+    @staticmethod
+    def _default_constructor_lock_function(
+        class_: ClassSymbol | None,
+    ) -> FunctionSymbol | None:
+        current = class_
+        while current is not None:
+            if current.constructor is not None:
+                return current.constructor
+            current = current.primary_base
+        return None
+
+    def _resolved_call_lock_function(
+        self,
+        resolution: CallResolution,
+    ) -> FunctionSymbol | None:
+        if resolution.function is not None:
+            return resolution.function
+        if resolution.kind == "class_constructor":
+            return self._default_constructor_lock_function(resolution.class_)
+        if resolution.kind == "super_init":
+            return self._default_constructor_lock_function(resolution.super_class)
+        return None
+
     def _call_lock_effect(self, call: ast.CallExpr) -> tuple[set[str], bool]:
         resolution = self.call_resolutions.get(id(call))
         if resolution is None:
             return set(), False
         if resolution.kind in {"closure", "function_pointer", "dynamic_method"}:
             return set(), True
-        if resolution.function is None:
+        function = self._resolved_call_lock_function(resolution)
+        if function is None:
             return set(), False
-        return set(resolution.function.lock_effects), resolution.function.has_unknown_lock_effect
+        return set(function.lock_effects), function.has_unknown_lock_effect
+
+    def _drop_lock_functions(self, type_: Type) -> tuple[FunctionSymbol, ...]:
+        functions: list[FunctionSymbol] = []
+        function_ids: set[int] = set()
+        seen: set[Type] = set()
+
+        def add(function: FunctionSymbol | None) -> None:
+            if function is not None and id(function) not in function_ids:
+                function_ids.add(id(function))
+                functions.append(function)
+
+        def visit(candidate: Type) -> None:
+            raw = strip_const(candidate)
+            if raw in seen:
+                return
+            if isinstance(raw, (ClassType, StructType)):
+                seen.add(raw)
+            if isinstance(raw, ClassType):
+                class_ = self.classes_by_type.get(raw)
+                if class_ is None:
+                    return
+                add(class_.destructor)
+                for field in class_.fields.values():
+                    visit(field.type)
+                if class_.primary_base is not None:
+                    visit(class_.primary_base.type)
+                return
+            if isinstance(raw, StructType):
+                struct = self.structs_by_type.get(raw)
+                if struct is not None:
+                    for field in struct.fields.values():
+                        visit(field.type)
+                return
+            if isinstance(raw, ClosureType):
+                visit(raw.env_type)
+                return
+            if isinstance(raw, (ArrayType, ListType, SetType, OptionType, OwnedType)):
+                visit(raw.inner)
+                return
+            if isinstance(raw, MapType):
+                visit(raw.key)
+                visit(raw.value)
+                return
+            if isinstance(raw, TupleType):
+                for element in raw.elements:
+                    visit(element)
+                return
+            if isinstance(raw, ResultType):
+                if not is_void(raw.ok):
+                    visit(raw.ok)
+                if not is_void(raw.error):
+                    visit(raw.error)
+
+        visit(type_)
+        return tuple(functions)
+
+    def _drop_lock_callees(
+        self,
+        function: FunctionSymbol,
+        body: ast.Block,
+    ) -> tuple[FunctionSymbol, ...]:
+        nodes = self._walk_ast(body)
+        moved_parameter_names: set[str] = set()
+        for node in nodes:
+            resolution = self.value_use_resolutions.get(id(node))
+            if (
+                resolution is not None
+                and resolution.kind is ValueUseKind.MOVE
+                and resolution.source is not None
+                and resolution.source.is_parameter
+            ):
+                moved_parameter_names.add(resolution.source.name)
+
+        result: list[FunctionSymbol] = []
+        result_ids: set[int] = set()
+
+        def add_type(type_: Type, symbol: VariableSymbol | None = None) -> None:
+            if symbol is not None and id(symbol) in self._lock_moved_symbol_ids:
+                return
+            for callee in self._drop_lock_functions(type_):
+                if id(callee) not in result_ids:
+                    result_ids.add(id(callee))
+                    result.append(callee)
+
+        for parameter in function.parameters:
+            if parameter.name not in moved_parameter_names:
+                add_type(parameter.type)
+
+        for node in nodes:
+            if isinstance(node, ast.VarDeclStmt):
+                symbol = self.declaration_symbols.get(id(node))
+                if symbol is not None:
+                    add_type(symbol.type, symbol)
+            elif isinstance(node, ast.AssignStmt):
+                implicit = self.implicit_declarations.get(id(node))
+                if implicit is not None:
+                    add_type(implicit.type, implicit)
+                elif node.operator == "=" and isinstance(
+                    node.target,
+                    (ast.NameExpr, ast.AttributeExpr),
+                ):
+                    add_type(strip_reference(self.expr_types.get(id(node.target), ERROR)))
+            elif isinstance(node, ast.ExpressionStmt):
+                add_type(self.expr_types.get(id(node.expression), ERROR))
+            elif isinstance(node, ast.WithStmt):
+                symbol = self.with_symbols.get(id(node))
+                if symbol is not None:
+                    add_type(symbol.type, symbol)
+        return tuple(result)
 
     def _analyze_lock_order(self) -> None:
         functions = self._lock_functions()
@@ -3046,13 +3180,18 @@ class Checker:
         direct: dict[int, set[str]] = {}
         unknown: dict[int, bool] = {}
         callees: dict[int, list[FunctionSymbol]] = {}
+        self._lock_moved_symbol_ids = {
+            id(resolution.source)
+            for resolution in self.value_use_resolutions.values()
+            if resolution.kind is ValueUseKind.MOVE and resolution.source is not None
+        }
 
         for function in functions:
             declaration = function.declaration
             assert declaration is not None and declaration.body is not None
             direct_effects: set[str] = set()
             has_unknown = False
-            direct_callees: list[FunctionSymbol] = []
+            direct_callees = list(self._drop_lock_callees(function, declaration.body))
             for node in self._walk_ast(declaration.body):
                 if isinstance(node, ast.CriticalSectionStmt):
                     lock_resolution = self.critical_section_resolutions.get(id(node))
@@ -3074,8 +3213,10 @@ class Checker:
                         "dynamic_method",
                     }:
                         has_unknown = True
-                    elif call_resolution.function is not None:
-                        direct_callees.append(call_resolution.function)
+                    else:
+                        callee = self._resolved_call_lock_function(call_resolution)
+                        if callee is not None:
+                            direct_callees.append(callee)
             direct[id(function)] = direct_effects
             unknown[id(function)] = has_unknown
             callees[id(function)] = direct_callees
@@ -3173,23 +3314,47 @@ class Checker:
             if not isinstance(node, ast.CallExpr):
                 continue
             effects, unknown = self._call_lock_effect(node)
-            if (held or dynamic_held) and unknown:
-                self._error(
-                    "cannot call a function with an unknown lock effect while a lock is held",
-                    node.span,
-                    code="C413",
-                )
-            if dynamic_held and effects:
-                self._error(
-                    "cannot acquire another lock while a dynamic lock set is held",
-                    node.span,
-                    code="C414",
-                )
-                continue
-            for name in sorted(effects):
-                lock = self.lock_graph.nodes.get(name)
-                if lock is not None:
-                    self._record_lock_acquisition(lock, held, node.span)
+            self._validate_lock_effect(effects, unknown, held, dynamic_held, node.span)
+
+    def _validate_lock_effect(
+        self,
+        effects: set[str],
+        unknown: bool,
+        held: tuple[LockSymbol, ...],
+        dynamic_held: bool,
+        span: Span,
+    ) -> None:
+        if (held or dynamic_held) and unknown:
+            self._error(
+                "cannot call a function with an unknown lock effect while a lock is held",
+                span,
+                code="C413",
+            )
+        if dynamic_held and effects:
+            self._error(
+                "cannot acquire another lock while a dynamic lock set is held",
+                span,
+                code="C414",
+            )
+            return
+        for name in sorted(effects):
+            lock = self.lock_graph.nodes.get(name)
+            if lock is not None:
+                self._record_lock_acquisition(lock, held, span)
+
+    def _validate_drop_lock_effect(
+        self,
+        type_: Type,
+        held: tuple[LockSymbol, ...],
+        dynamic_held: bool,
+        span: Span,
+    ) -> None:
+        effects: set[str] = set()
+        unknown = False
+        for function in self._drop_lock_functions(type_):
+            effects.update(function.lock_effects)
+            unknown = unknown or function.has_unknown_lock_effect
+        self._validate_lock_effect(effects, unknown, held, dynamic_held, span)
 
     def _validate_lock_block(
         self,
@@ -3197,8 +3362,22 @@ class Checker:
         held: tuple[LockSymbol, ...],
         dynamic_held: bool,
     ) -> None:
+        cleanups: list[tuple[VariableSymbol, Span]] = []
         for statement in block.statements:
             self._validate_lock_statement(statement, held, dynamic_held)
+            symbol: VariableSymbol | None = None
+            if isinstance(statement, ast.VarDeclStmt):
+                symbol = self.declaration_symbols.get(id(statement))
+            elif isinstance(statement, ast.AssignStmt):
+                symbol = self.implicit_declarations.get(id(statement))
+            if (
+                symbol is not None
+                and id(symbol) not in self._lock_moved_symbol_ids
+                and self.type_needs_drop(symbol.type)
+            ):
+                cleanups.append((symbol, statement.span))
+        for symbol, span in reversed(cleanups):
+            self._validate_drop_lock_effect(symbol.type, held, dynamic_held, span)
 
     def _validate_lock_statement(
         self,
@@ -3212,8 +3391,29 @@ class Checker:
             case ast.AssignStmt(target=target, value=value):
                 self._validate_lock_calls(target, held, dynamic_held)
                 self._validate_lock_calls(value, held, dynamic_held)
+                if (
+                    id(statement) not in self.implicit_declarations
+                    and statement.operator == "="
+                    and isinstance(target, (ast.NameExpr, ast.AttributeExpr))
+                ):
+                    target_type = strip_reference(self.expr_types.get(id(target), ERROR))
+                    if self.type_needs_drop(target_type):
+                        self._validate_drop_lock_effect(
+                            target_type,
+                            held,
+                            dynamic_held,
+                            target.span,
+                        )
             case ast.ExpressionStmt(expression=expression):
                 self._validate_lock_calls(expression, held, dynamic_held)
+                expression_type = self.expr_types.get(id(expression), ERROR)
+                if self.type_needs_drop(expression_type):
+                    self._validate_drop_lock_effect(
+                        expression_type,
+                        held,
+                        dynamic_held,
+                        expression.span,
+                    )
             case ast.ReturnStmt(value=value):
                 self._validate_lock_calls(value, held, dynamic_held)
             case ast.IfStmt(branches=branches, else_body=else_body):
@@ -3247,6 +3447,18 @@ class Checker:
             case ast.WithStmt(context=context, body=body):
                 self._validate_lock_calls(context, held, dynamic_held)
                 self._validate_lock_block(body, held, dynamic_held)
+                symbol = self.with_symbols.get(id(statement))
+                if (
+                    symbol is not None
+                    and id(symbol) not in self._lock_moved_symbol_ids
+                    and self.type_needs_drop(symbol.type)
+                ):
+                    self._validate_drop_lock_effect(
+                        symbol.type,
+                        held,
+                        dynamic_held,
+                        statement.span,
+                    )
             case ast.CriticalSectionStmt(lock=expression, body=body):
                 self._validate_lock_calls(expression, held, dynamic_held)
                 resolution = self.critical_section_resolutions.get(id(statement))

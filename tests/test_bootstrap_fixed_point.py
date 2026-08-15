@@ -5460,6 +5460,50 @@ def assert_compiler_supports_lock_ordering(
     assert effect_result.returncode != 0
     assert "cannot acquire 'database' while 'cache' is held" in effect_result.stdout
 
+    destructor_cleanup = tmp_path / "lock_order_destructor_cleanup.ci"
+    destructor_cleanup.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "class Guard:\n"
+        "    def __del__(self):\n"
+        "        CriticalSection database:\n"
+        "            pass\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        guard = Guard()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    destructor_cleanup_result = run_gen1(compiler, "check", str(destructor_cleanup))
+    assert destructor_cleanup_result.returncode != 0
+    assert (
+        "cannot acquire 'database' while 'cache' is held"
+        in destructor_cleanup_result.stdout
+    )
+
+    default_constructor = tmp_path / "lock_order_default_constructor.ci"
+    default_constructor.write_text(
+        "lock database\n"
+        "lock cache after database\n"
+        "class Base:\n"
+        "    def __init__(self):\n"
+        "        CriticalSection database:\n"
+        "            pass\n"
+        "class Derived(Base):\n"
+        "    pass\n"
+        "def main() -> i32:\n"
+        "    CriticalSection cache:\n"
+        "        derived = Derived()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    default_constructor_result = run_gen1(compiler, "check", str(default_constructor))
+    assert default_constructor_result.returncode != 0
+    assert (
+        "cannot acquire 'database' while 'cache' is held"
+        in default_constructor_result.stdout
+    )
+
     method = tmp_path / "lock_order_method.ci"
     method.write_text(
         "lock root\n"
