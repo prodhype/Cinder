@@ -1460,6 +1460,42 @@ def semantic_type_is_kind(table: &const types.TypeTable, type_id: types.TypeId, 
     return value_type.index >= 0 and value_type.index < cast[i32](len(table.types)) and table.types[value_type.index].kind == kind
 
 
+def lock_list_storage_type(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    value_type = types.strip_const(table, type_id)
+    if value_type.index < 0 or value_type.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[value_type.index]
+    return record.kind == types.TypeKind.LIST and types.strip_const(table, record.inner).index == types.type_lock().index
+
+
+def const_lock_element_type(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind != types.TypeKind.CONST:
+        return false
+    return types.strip_const(table, record.inner).index == types.type_lock().index
+
+
+def ordered_lock_list_readonly_view(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.CONST:
+        return lock_list_storage_type(table, record.inner)
+    if record.kind == types.TypeKind.SLICE:
+        return const_lock_element_type(table, record.inner)
+    if record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.POINTER:
+        inner = record.inner
+        if inner.index < 0 or inner.index >= cast[i32](len(table.types)):
+            return false
+        inner_record = table.types[inner.index]
+        if inner_record.kind != types.TypeKind.CONST:
+            return false
+        return lock_list_storage_type(table, inner_record.inner)
+    return false
+
+
 def is_set_algebra_operator(operator: i32) -> bool:
     return operator == cast[i32](token.TokenKind.PIPE) or operator == cast[i32](token.TokenKind.AMPERSAND) or operator == cast[i32](token.TokenKind.MINUS) or operator == cast[i32](token.TokenKind.CARET)
 
@@ -1493,16 +1529,12 @@ def atomic_indirection_const_compatible(table: &const types.TypeTable, expected:
 
 
 def types_compatible(checker: &checker_core.Checker, expected: types.TypeId, actual: types.TypeId) -> bool:
-    if types.is_ordered_lock_list(&checker.type_table, expected) and not types.is_ordered_lock_list(&checker.type_table, actual):
+    expected_ordered = types.is_ordered_lock_list(&checker.type_table, expected)
+    actual_ordered = types.is_ordered_lock_list(&checker.type_table, actual)
+    if expected_ordered and not actual_ordered:
         return false
-    if types.is_ordered_lock_list(&checker.type_table, actual):
-        expected_value = types.strip_const(&checker.type_table, expected)
-        if expected_value.index >= 0 and expected_value.index < cast[i32](len(checker.type_table.types)):
-            expected_record = checker.type_table.types[expected_value.index]
-            if expected_record.kind == types.TypeKind.SLICE:
-                expected_element = expected_record.inner
-                if expected_element.index < 0 or expected_element.index >= cast[i32](len(checker.type_table.types)) or checker.type_table.types[expected_element.index].kind != types.TypeKind.CONST:
-                    return false
+    if actual_ordered and not expected_ordered and not ordered_lock_list_readonly_view(&checker.type_table, expected):
+        return false
     if checker.type_table.same(expected, actual):
         return true
     if expected.index < 0 or actual.index < 0:

@@ -666,6 +666,13 @@ def can_assign(target: Type, source: Type) -> bool:
         return True
 
     if isinstance(target, ConstType):
+        source_unqualified = strip_const(source)
+        if (
+            isinstance(target.inner, ListType)
+            and isinstance(source_unqualified, OrderedLockListType)
+            and target.inner.inner == source_unqualified.inner
+        ):
+            return True
         return can_assign(target.inner, strip_const(source))
     if isinstance(source, ConstType) and not isinstance(
         target, (PointerType, ReferenceType, SliceType)
@@ -714,8 +721,10 @@ def can_assign(target: Type, source: Type) -> bool:
         return target == source
 
     if isinstance(target, ListType) and isinstance(source, ListType):
-        if isinstance(target, OrderedLockListType):
-            return isinstance(source, OrderedLockListType)
+        if isinstance(target, OrderedLockListType) or isinstance(source, OrderedLockListType):
+            return isinstance(target, OrderedLockListType) and isinstance(
+                source, OrderedLockListType
+            )
         return target.inner == source.inner
 
     if isinstance(target, OptionType) and isinstance(source, OptionType):
@@ -779,7 +788,13 @@ def can_borrow_elements(target: Type, source: Type) -> bool:
     if source_unqualified == VOID:
         return True
     if isinstance(target, ConstType):
-        return can_assign(target.inner, strip_const(source))
+        if (
+            isinstance(target.inner, ListType)
+            and isinstance(source_unqualified, OrderedLockListType)
+            and target.inner.inner == source_unqualified.inner
+        ):
+            return True
+        return can_assign(target.inner, source_unqualified)
     if isinstance(source, ConstType):
         return False
     return can_assign(target, source)

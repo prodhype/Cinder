@@ -1,8 +1,8 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-09 23:53:08 UTC
+# date:   2026-08-15 10:34:48 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
-# targets: 40 (examples/*.ci + class_project + module_project; excludes large_project)
+# targets: 41 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
 # report mode: both
 #
@@ -13,52 +13,53 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 40 ok, 0 fail
+Summary: 40 ok, 1 fail
 
 ## Status by example
-examples/aggregate_ownership.ci   OK    ok
-examples/algorithm_benchmarks.ci  OK    ok
-examples/anti_examples.ci         OK    ok
-examples/ast_arena.ci             OK    ok
-examples/atomics.ci               OK    ok
-examples/binary_sort.ci           OK    ok
-examples/classes.ci               OK    ok
-examples/closures.ci              OK    ok
-examples/collections.ci           OK    ok
-examples/control_flow.ci          OK    ok
-examples/convert.ci               OK    ok
-examples/defer.ci                 OK    ok
-examples/dijkstra_showcase.ci     OK    ok
-examples/expressive_match.ci      OK    ok
-examples/fizzbuzz.ci              OK    ok
-examples/function_pointers.ci     OK    ok
-examples/funnel_hash.ci           OK    ok
-examples/generics.ci              OK    ok
-examples/hello.ci                 OK    ok
-examples/input.ci                 OK    ok
-examples/interop.ci               OK    ok
-examples/knapsack.ci              OK    ok
-examples/leibniz_pi.ci            OK    ok
-examples/long_string_sort.ci      OK    ok
-examples/owned.ci                 OK    ok
-examples/ownership_edge_cases.ci  OK    ok
-examples/physics.ci               OK    ok
-examples/pointers.ci              OK    ok
-examples/print.ci                 OK    ok
-examples/read_file.ci             OK    ok
-examples/reflection.ci            OK    ok
-examples/slices.ci                OK    ok
-examples/strings.ci               OK    ok
-examples/towers_of_hanoi.ci       OK    ok
-examples/types_and_results.ci     OK    ok
-examples/unsafe.ci                OK    ok
-examples/vectors.ci               OK    ok
-examples/write_jpg.ci             OK    ok
-examples/class_project            OK    ok
-examples/module_project           OK    ok
+examples/aggregate_ownership.ci       OK    ok
+examples/algorithm_benchmarks.ci      OK    ok
+examples/anti_examples.ci             OK    ok
+examples/ast_arena.ci                 OK    ok
+examples/atomics.ci                   OK    ok
+examples/binary_sort.ci               OK    ok
+examples/classes.ci                   OK    ok
+examples/closures.ci                  OK    ok
+examples/collections.ci               OK    ok
+examples/control_flow.ci              OK    ok
+examples/convert.ci                   OK    ok
+examples/defer.ci                     OK    ok
+examples/dijkstra_showcase.ci         OK    ok
+examples/expressive_match.ci          OK    ok
+examples/fizzbuzz.ci                  OK    ok
+examples/function_pointers.ci         OK    ok
+examples/funnel_hash.ci               OK    ok
+examples/generics.ci                  OK    ok
+examples/hello.ci                     OK    ok
+examples/input.ci                     OK    ok
+examples/interop.ci                   OK    ok
+examples/knapsack.ci                  OK    ok
+examples/leibniz_pi.ci                OK    ok
+examples/long_string_sort.ci          OK    ok
+examples/ordered_lock_mutable_ref.ci  FAIL  gen3_toolchain_error
+examples/owned.ci                     OK    ok
+examples/ownership_edge_cases.ci      OK    ok
+examples/physics.ci                   OK    ok
+examples/pointers.ci                  OK    ok
+examples/print.ci                     OK    ok
+examples/read_file.ci                 OK    ok
+examples/reflection.ci                OK    ok
+examples/slices.ci                    OK    ok
+examples/strings.ci                   OK    ok
+examples/towers_of_hanoi.ci           OK    ok
+examples/types_and_results.ci         OK    ok
+examples/unsafe.ci                    OK    ok
+examples/vectors.ci                   OK    ok
+examples/write_jpg.ci                 OK    ok
+examples/class_project                OK    ok
+examples/module_project               OK    ok
 
 ## First non-warning C errors
-(none)
+- examples/ordered_lock_mutable_ref.ci: cinder_gen/ordered_lock_mutable_ref.c:24 [c_error] generated C at function main - subscripted value is not an array, pointer, or vector
 
 ## OK
 - examples/aggregate_ownership.ci
@@ -103,4 +104,15 @@ examples/module_project           OK    ok
 - examples/module_project
 
 ## Failures
-(none)
+### examples/ordered_lock_mutable_ref.ci
+gen3 exit=2
+kind: gen3_toolchain_error
+first C error: cinder_gen/ordered_lock_mutable_ref.c:24 [c_error]
+source feature: generated C at function main
+message: subscripted value is not an array, pointer, or vector
+elapsed: 0.1s
+
+--- gen3 errors ---
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.4f50e6ab/ordered_lock_mutable_ref.ci-build/cinder_gen/ordered_lock_mutable_ref.c:24:19: error: subscripted value is not an array, pointer, or vector
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.4f50e6ab/ordered_lock_mutable_ref.ci-build/cinder_gen/ordered_lock_mutable_ref.c:24:102: error: subscripted value is not an array, pointer, or vector
+/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.4f50e6ab/ordered_lock_mutable_ref.ci-build/cinder_gen/ordered_lock_mutable_ref.c:24:186: error: subscripted value is not an array, pointer, or vector

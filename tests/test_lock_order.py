@@ -243,6 +243,36 @@ def test_sorted_lock_collection_cannot_change_before_acquisition() -> None:
     assert "cannot change a sorted lock collection" in str(captured.value)
 
 
+def test_sorted_lock_collection_cannot_borrow_as_mutable_list_reference() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock first\n"
+            "lock second after first\n"
+            "def scramble(locks: &List[Lock], replacement: Lock) -> void:\n"
+            "    locks[2] = replacement\n"
+            "def main() -> i32:\n"
+            "    locks: List[Lock] = [first, second, second]\n"
+            "    ordered = sorted(locks)\n"
+            "    scramble(ordered, first)\n"
+            "    return 0\n"
+        )
+
+    assert "expected &List[Lock], got List[Lock]" in str(captured.value)
+
+
+def test_sorted_lock_collection_can_borrow_as_const_list_reference() -> None:
+    compile_source(
+        "lock first\n"
+        "lock second after first\n"
+        "def count_locks(locks: &const List[Lock]) -> i32:\n"
+        "    return cast[i32](len(locks))\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [first, second, second]\n"
+        "    ordered = sorted(locks)\n"
+        "    return count_locks(ordered)\n"
+    )
+
+
 def test_unknown_dynamic_lock_cannot_nest() -> None:
     with pytest.raises(CompilationFailed) as captured:
         compile_source(
