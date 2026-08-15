@@ -714,6 +714,36 @@ def declaration_parameter_at(arena: &const syntax.SyntaxArena, declaration: Node
     return syntax.missing_node()
 
 
+def is_mutable_reference_type(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if record.kind != types.TypeKind.REFERENCE:
+        return false
+    if record.inner.index < 0 or record.inner.index >= cast[i32](len(table.types)):
+        return true
+    return table.types[record.inner.index].kind != types.TypeKind.CONST
+
+
+def validate_ordered_lock_element_mutation(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expression: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    if expression.index < 0:
+        return
+    expression_node = arena.nodes[expression.index]
+    if expression_node.kind != syntax.SyntaxKind.EXPR_INDEX:
+        return
+    collection = checker_core.first_child(arena, expression)
+    collection_type = infer_expression_type(checker, arena, collection, source, current_scope)
+    if types.is_ordered_lock_list(&checker.type_table, collection_type):
+        checker_core.emit_error(checker, 419, expression_node.start, expression_node.length, expression_node.line, expression_node.column)
+
+
 def validate_atomic_call_argument_type(
     checker: &checker_core.Checker,
     arena: &const syntax.SyntaxArena,
@@ -757,6 +787,8 @@ def validate_declared_call_move_arguments(
         destination_type = value_type
         if parameter.index >= 0:
             destination_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter, source, value_type)
+        if is_mutable_reference_type(&checker.type_table, destination_type):
+            validate_ordered_lock_element_mutation(checker, arena, value, source, current_scope)
         validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)
         validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
@@ -781,6 +813,8 @@ def validate_callable_call_move_arguments(
         destination_type = generic_actual_argument(checker.type_table, callable_type, argument_index)
         if destination_type.index < 0:
             destination_type = value_type
+        if is_mutable_reference_type(&checker.type_table, destination_type):
+            validate_ordered_lock_element_mutation(checker, arena, value, source, current_scope)
         validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)
         validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
         argument_index += 1
@@ -1130,6 +1164,7 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         operand_type = infer_expression_type(checker, arena, operand, source, current_scope)
         result = operand_type
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
+            validate_ordered_lock_element_mutation(checker, arena, operand, source, current_scope)
             result = checker.type_table.pointer_to(operand_type)
         elif types.is_atomic_type(&checker.type_table, operand_type):
             operand_node = arena.nodes[operand.index]

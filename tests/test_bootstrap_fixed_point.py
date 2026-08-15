@@ -5616,6 +5616,65 @@ def assert_compiler_supports_lock_ordering(
     assert indirect_result.returncode != 0
     assert "cannot call a function with an unknown lock effect while a lock is held" in indirect_result.stdout
 
+    extern_call = tmp_path / "lock_order_extern_call.ci"
+    extern_call.write_text(
+        'extern "C":\n'
+        "    def opaque_operation() -> void\n"
+        "lock root\n"
+        "def main() -> i32:\n"
+        "    CriticalSection root:\n"
+        "        opaque_operation()\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    extern_result = run_gen1(compiler, "check", str(extern_call))
+    assert extern_result.returncode != 0
+    assert (
+        "cannot call a function with an unknown lock effect while a lock is held"
+        in extern_result.stdout
+    )
+
+    ordered_element_address = tmp_path / "lock_order_element_address.ci"
+    ordered_element_address.write_text(
+        "lock first\n"
+        "lock second after first\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [first, second, second]\n"
+        "    ordered = sorted(locks)\n"
+        "    slot = &ordered[2]\n"
+        "    slot[0] = first\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    ordered_element_address_result = run_gen1(
+        compiler,
+        "check",
+        str(ordered_element_address),
+    )
+    assert ordered_element_address_result.returncode != 0
+    assert "E 419 " in ordered_element_address_result.stdout
+
+    ordered_element_borrow = tmp_path / "lock_order_element_borrow.ci"
+    ordered_element_borrow.write_text(
+        "lock first\n"
+        "lock second after first\n"
+        "def retarget(target: &Lock, replacement: Lock) -> void:\n"
+        "    *target = replacement\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [first, second, second]\n"
+        "    ordered = sorted(locks)\n"
+        "    retarget(ordered[2], first)\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    ordered_element_borrow_result = run_gen1(
+        compiler,
+        "check",
+        str(ordered_element_borrow),
+    )
+    assert ordered_element_borrow_result.returncode != 0
+    assert "E 419 " in ordered_element_borrow_result.stdout
+
 
 def test_gen1_supports_lock_ordering(
     gen1_compiler: Path,

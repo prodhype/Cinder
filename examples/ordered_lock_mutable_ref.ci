@@ -9,6 +9,8 @@
 # - independent locks
 # - dynamic lock collections that must be sorted before acquisition
 # - read-only views of ordered lock lists
+# - ordered-list elements cannot escape through mutable pointers or references
+# - external calls have unknown lock effects
 #
 # WRONG: this would let the callee reorder sorted locks while the caller still
 # has the ordered marker. A later CriticalSection would trust stale ordering.
@@ -20,6 +22,15 @@
 #     locks: List[Lock] = [first, second, second]
 #     ordered = sorted(locks)
 #     scramble(ordered, first)
+#
+# WRONG: an element pointer would erase the ordered-list provenance and permit
+# a later store to create non-adjacent duplicates.
+#
+# def invalid_element_pointer() -> void:
+#     locks: List[Lock] = [first, second, second]
+#     ordered = sorted(locks)
+#     slot = &ordered[2]
+#     slot[0] = first
 #
 # WRONG: dynamic lock collections must be sorted before acquisition.
 #
@@ -71,6 +82,16 @@
 # def invalid_indirect_call(callback: def() -> void) -> void:
 #     CriticalSection cache:
 #         callback()
+#
+# WRONG: external implementations have unknown lock effects, so they cannot be
+# called while a lock is held.
+#
+# extern "C":
+#     def opaque_operation() -> void
+#
+# def invalid_extern_call() -> void:
+#     CriticalSection cache:
+#         opaque_operation()
 #
 # WRONG: locals are destroyed before their enclosing critical section releases
 # its lock, so destructor effects must also follow the declared order.
@@ -126,6 +147,10 @@ def count_locks(locks: &const List[Lock]) -> i32:
     return cast[i32](len(locks))
 
 
+def observe_lock(target: &const Lock) -> void:
+    pass
+
+
 def static_hierarchy() -> void:
     CriticalSection root:
         remember(1)
@@ -172,6 +197,7 @@ def acquire_runtime_collection() -> i32:
     # makes them adjacent and CriticalSection acquires each distinct lock once.
     locks: List[Lock] = [audit, root, cache, config, config]
     ordered = sorted(locks)
+    observe_lock(ordered[0])
     if count_locks(ordered) != 5:
         return 1
 

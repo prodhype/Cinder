@@ -256,6 +256,38 @@ def test_indirect_call_while_holding_lock_is_rejected() -> None:
     assert "cannot call a function with an unknown lock effect while a lock is held" in str(captured.value)
 
 
+def test_extern_call_while_holding_lock_is_rejected() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            'extern "C":\n'
+            "    def opaque_operation() -> void\n"
+            "lock root\n"
+            "def main() -> i32:\n"
+            "    CriticalSection root:\n"
+            "        opaque_operation()\n"
+            "    return 0\n"
+        )
+
+    assert "cannot call a function with an unknown lock effect while a lock is held" in str(captured.value)
+
+
+def test_extern_lock_effect_propagates_through_caller() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            'extern "C":\n'
+            "    def opaque_operation() -> void\n"
+            "lock root\n"
+            "def wrapper() -> void:\n"
+            "    opaque_operation()\n"
+            "def main() -> i32:\n"
+            "    CriticalSection root:\n"
+            "        wrapper()\n"
+            "    return 0\n"
+        )
+
+    assert "cannot call a function with an unknown lock effect while a lock is held" in str(captured.value)
+
+
 def test_function_effect_infers_caller_order() -> None:
     generated = compile_source(
         "lock database\n"
@@ -491,6 +523,53 @@ def test_sorted_lock_collection_cannot_change_before_acquisition() -> None:
         )
 
     assert "cannot change a sorted lock collection" in str(captured.value)
+
+
+def test_sorted_lock_collection_element_address_is_rejected() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock first\n"
+            "lock second after first\n"
+            "def main() -> i32:\n"
+            "    locks: List[Lock] = [first, second, second]\n"
+            "    ordered = sorted(locks)\n"
+            "    slot = &ordered[2]\n"
+            "    slot[0] = first\n"
+            "    return 0\n"
+        )
+
+    assert "cannot change a sorted lock collection" in str(captured.value)
+
+
+def test_sorted_lock_collection_element_cannot_borrow_mutably() -> None:
+    with pytest.raises(CompilationFailed) as captured:
+        compile_source(
+            "lock first\n"
+            "lock second after first\n"
+            "def retarget(target: &Lock, replacement: Lock) -> void:\n"
+            "    *target = replacement\n"
+            "def main() -> i32:\n"
+            "    locks: List[Lock] = [first, second, second]\n"
+            "    ordered = sorted(locks)\n"
+            "    retarget(ordered[2], first)\n"
+            "    return 0\n"
+        )
+
+    assert "cannot change a sorted lock collection" in str(captured.value)
+
+
+def test_sorted_lock_collection_element_can_borrow_as_const_reference() -> None:
+    compile_source(
+        "lock first\n"
+        "lock second after first\n"
+        "def inspect(target: &const Lock) -> void:\n"
+        "    pass\n"
+        "def main() -> i32:\n"
+        "    locks: List[Lock] = [first, second, second]\n"
+        "    ordered = sorted(locks)\n"
+        "    inspect(ordered[0])\n"
+        "    return 0\n"
+    )
 
 
 def test_sorted_lock_collection_cannot_borrow_as_mutable_list_reference() -> None:

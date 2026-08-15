@@ -2512,8 +2512,30 @@ class Checker:
                 code="C238",
                 note="bind the class value to a local before borrowing it as &dyn",
             )
+        if (
+            isinstance(target_raw, ReferenceType)
+            and not isinstance(target_raw.inner, ConstType)
+        ):
+            self._validate_ordered_lock_element_mutation(expression)
         if isinstance(target_raw, (ReferenceType, DynType)):
             self._record_direct_value_use(expression, ValueUseKind.BORROW)
+
+    def _validate_ordered_lock_element_mutation(
+        self,
+        expression: ast.Expression,
+    ) -> None:
+        if not isinstance(expression, ast.IndexExpr):
+            return
+        collection_type = value_type(
+            self.expr_types.get(id(expression.value), ERROR)
+        )
+        if isinstance(collection_type, OrderedLockListType):
+            self._error(
+                "cannot change a sorted lock collection",
+                expression.span,
+                code="C419",
+                note="call sorted() again to create a new canonical order",
+            )
 
     def _record_string_borrow(self, expression: ast.Expression, type_: Type) -> None:
         if isinstance(value_type(type_), StringType):
@@ -2684,6 +2706,7 @@ class Checker:
             module=self.module_name if self.module_mode else None,
             is_module_public=self.module_mode and not declaration.is_extern,
             owner_class=owner if isinstance(owner, ClassSymbol) else None,
+            has_unknown_lock_effect=declaration.is_extern,
         )
 
     def _c_type_name(self, name: str) -> str:
@@ -4126,17 +4149,7 @@ class Checker:
 
         effective_target = strip_reference(target_type)
         effective_value = value_type(value_type_)
-        if isinstance(statement.target, ast.IndexExpr):
-            collection_type = value_type(
-                self.expr_types.get(id(statement.target.value), ERROR)
-            )
-            if isinstance(collection_type, OrderedLockListType):
-                self._error(
-                    "cannot change a sorted lock collection",
-                    statement.target.span,
-                    code="C419",
-                    note="call sorted() again to create a new canonical order",
-                )
+        self._validate_ordered_lock_element_mutation(statement.target)
         if isinstance(value_type(effective_target), AtomicType):
             self._error(
                 "ordinary assignment cannot mutate or replace an Atomic cell",
@@ -5476,6 +5489,7 @@ class Checker:
                     "address-of requires an addressable value", expression.operand.span, code="C053"
                 )
                 return ERROR
+            self._validate_ordered_lock_element_mutation(expression.operand)
             self._record_direct_value_use(expression.operand, ValueUseKind.ADDRESS)
             if isinstance(operand_type, ReferenceType):
                 return PointerType(operand_type.inner)
