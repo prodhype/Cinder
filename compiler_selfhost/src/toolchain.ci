@@ -3,6 +3,10 @@ import fs
 import manifest
 
 
+extern "C":
+    def cinder_process_result_drop_raw(value: *void) -> void
+
+
 struct ToolchainResult:
     ok: bool
     command: List[String]
@@ -22,39 +26,136 @@ def compile_c11(
     cflags: &const List[String],
     ldflags: &const List[String],
 ) -> ToolchainResult:
-    command: List[String] = []
-    if len(compiler) == 0:
-        command.append("cc")
-    else:
-        command.append(compiler)
-    command.append("-std=c11")
-    command.append("-Wall")
-    command.append("-Wextra")
-    command.append("-Wpedantic")
-    command.append("-O2")
-    command.append("-I" + runtime_root)
-    command.append("-I" + build_dir)
-    command.append("-I" + source_root)
+    objects_name: String = "objects"
+    object_dir = fs.join_path(&build_dir, &objects_name)
+    if not fs.ensure_dir(&object_dir):
+        failed_command: List[String] = []
+        return ToolchainResult(ok=false, command=failed_command, stdout="", stderr="failed to create object directory: " + object_dir, exit_code=1)
+
+    objects: List[String] = []
     index: usize = 0
-    while index < len(native.include_dirs):
-        command.append("-I" + native.include_dirs[index])
-        index += 1
-    index = 0
-    while index < len(native.cflags):
-        command.append(native.cflags[index][0:len(native.cflags[index])])
-        index += 1
-    index = 0
-    while index < len(cflags):
-        command.append(cflags[index][0:len(cflags[index])])
-        index += 1
-    index = 0
     while index < len(generated_sources):
-        command.append(generated_sources[index][0:len(generated_sources[index])])
+        object_name = "unit_" + decimal(index) + ".o"
+        object_path = fs.join_path(&object_dir, &object_name)
+        compile_command = compile_command_for(
+            compiler[0:len(compiler)],
+            generated_sources[index][0:len(generated_sources[index])],
+            object_path[0:len(object_path)],
+            runtime_root[0:len(runtime_root)],
+            build_dir[0:len(build_dir)],
+            source_root[0:len(source_root)],
+            native,
+            cflags,
+        )
+        result = process.run(compile_command)
+        if result.exit_code != 0:
+            result_stdout = result.stdout[0:len(result.stdout)]
+            result_stderr = result.stderr[0:len(result.stderr)]
+            cinder_process_result_drop_raw(&result)
+            return ToolchainResult(
+                ok=false,
+                command=compile_command,
+                stdout=result_stdout,
+                stderr=result_stderr,
+                exit_code=result.exit_code,
+            )
+        cinder_process_result_drop_raw(&result)
+        objects.append(object_path[0:len(object_path)])
         index += 1
+
     runtime_c_name: String = "cinder_runtime.c"
-    command.append(fs.join_path(&runtime_root, &runtime_c_name))
+    runtime_c = fs.join_path(&runtime_root, &runtime_c_name)
+    runtime_object_name: String = "runtime.o"
+    runtime_object = fs.join_path(&object_dir, &runtime_object_name)
+    runtime_command = compile_command_for(
+        compiler[0:len(compiler)],
+        runtime_c[0:len(runtime_c)],
+        runtime_object[0:len(runtime_object)],
+        runtime_root[0:len(runtime_root)],
+        build_dir[0:len(build_dir)],
+        source_root[0:len(source_root)],
+        native,
+        cflags,
+    )
+    runtime_result = process.run(runtime_command)
+    if runtime_result.exit_code != 0:
+        runtime_stdout = runtime_result.stdout[0:len(runtime_result.stdout)]
+        runtime_stderr = runtime_result.stderr[0:len(runtime_result.stderr)]
+        cinder_process_result_drop_raw(&runtime_result)
+        return ToolchainResult(
+            ok=false,
+            command=runtime_command,
+            stdout=runtime_stdout,
+            stderr=runtime_stderr,
+            exit_code=runtime_result.exit_code,
+        )
+    cinder_process_result_drop_raw(&runtime_result)
+    objects.append(runtime_object[0:len(runtime_object)])
+
+    link_command = link_command_for(
+        compiler[0:len(compiler)],
+        &objects,
+        output[0:len(output)],
+        runtime_root[0:len(runtime_root)],
+        build_dir[0:len(build_dir)],
+        source_root[0:len(source_root)],
+        native,
+        cflags,
+        ldflags,
+    )
+    link_result = process.run(link_command)
+    link_stdout = link_result.stdout[0:len(link_result.stdout)]
+    link_stderr = link_result.stderr[0:len(link_result.stderr)]
+    cinder_process_result_drop_raw(&link_result)
+    return ToolchainResult(
+        ok=link_result.exit_code == 0,
+        command=link_command,
+        stdout=link_stdout,
+        stderr=link_stderr,
+        exit_code=link_result.exit_code,
+    )
+
+
+def compile_command_for(
+    compiler: String,
+    source: String,
+    object: String,
+    runtime_root: String,
+    build_dir: String,
+    source_root: String,
+    native: &const manifest.NativeConfig,
+    cflags: &const List[String],
+) -> List[String]:
+    command: List[String] = []
+    append_compiler(&command, &compiler)
+    append_common_flags(command, &runtime_root, &build_dir, &source_root, native, cflags)
+    command.append("-c")
+    command.append(source[0:len(source)])
     command.append("-o")
-    command.append(output)
+    command.append(object[0:len(object)])
+    return command
+
+
+def link_command_for(
+    compiler: String,
+    objects: &const List[String],
+    output: String,
+    runtime_root: String,
+    build_dir: String,
+    source_root: String,
+    native: &const manifest.NativeConfig,
+    cflags: &const List[String],
+    ldflags: &const List[String],
+) -> List[String]:
+    command: List[String] = []
+    append_compiler(&command, &compiler)
+    append_common_flags(command, &runtime_root, &build_dir, &source_root, native, cflags)
+    index: usize = 0
+    while index < len(objects):
+        command.append(objects[index][0:len(objects[index])])
+        index += 1
+    command.append("-o")
+    command.append(output[0:len(output)])
     index = 0
     while index < len(native.link_files):
         command.append(native.link_files[index][0:len(native.link_files[index])])
@@ -76,15 +177,62 @@ def compile_c11(
         command.append(ldflags[index][0:len(ldflags[index])])
         index += 1
     command.append("-lm")
+    return command
 
-    result = process.run(command)
-    return ToolchainResult(
-        ok=result.exit_code == 0,
-        command=command,
-        stdout=result.stdout[0:len(result.stdout)],
-        stderr=result.stderr[0:len(result.stderr)],
-        exit_code=result.exit_code,
-    )
+
+def append_compiler(command: &List[String], compiler: &const String) -> void:
+    if len(compiler) == 0:
+        command.append("cc")
+    else:
+        command.append(compiler[0:len(compiler)])
+
+
+def append_common_flags(
+    command: &List[String],
+    runtime_root: &const String,
+    build_dir: &const String,
+    source_root: &const String,
+    native: &const manifest.NativeConfig,
+    cflags: &const List[String],
+) -> void:
+    command.append("-std=c11")
+    command.append("-Wall")
+    command.append("-Wextra")
+    command.append("-Wpedantic")
+    command.append("-O2")
+    command.append("-I" + runtime_root)
+    command.append("-I" + build_dir)
+    command.append("-I" + source_root)
+    index: usize = 0
+    while index < len(native.include_dirs):
+        command.append("-I" + native.include_dirs[index])
+        index += 1
+    index = 0
+    while index < len(native.cflags):
+        command.append(native.cflags[index][0:len(native.cflags[index])])
+        index += 1
+    index = 0
+    while index < len(cflags):
+        command.append(cflags[index][0:len(cflags[index])])
+        index += 1
+
+
+def decimal(value: usize) -> String:
+    if value == 0:
+        return "0"
+    divisor: usize = 1
+    remaining = value
+    while remaining >= 10:
+        remaining = remaining / 10
+        divisor = divisor * 10
+    builder = StringBuilder()
+    current = value
+    while divisor > 0:
+        digit = current / divisor
+        builder.append_char(cast[char](48 + digit))
+        current = current - digit * divisor
+        divisor = divisor / 10
+    return builder.finish()
 
 
 def runtime_root(executable_path: &const String) -> String:

@@ -172,6 +172,7 @@ void cinder_string_builder_append_char(
 );
 CinderString cinder_string_builder_finish(CinderStringBuilder *builder);
 void CinderProcessResult__drop(CinderProcessResult *self);
+void cinder_process_result_drop_raw(void *self);
 CinderProcessResult cinder_process_run_argv(
     size_t argc,
     const char *const *argv

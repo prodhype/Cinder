@@ -858,12 +858,33 @@ def context_semantic_name_type(context: &ModuleCodegenContext, source: &const St
     return types.missing_type()
 
 
+def context_semantic_name_type_for_name(context: &ModuleCodegenContext, name: &const String) -> types.TypeId:
+    index = len(context.semantic_name_types)
+    while index > 0:
+        index -= 1
+        binding: &const ModuleSemanticNameTypeBinding = &context.semantic_name_types[index]
+        if context_name_range_equals_string(context.type_source, binding.name_start, binding.name_length, name):
+            return binding.type_id
+    return types.missing_type()
+
+
 def context_name_ranges_equal(left_source: &const String, left_start: usize, left_length: usize, right_source: &const String, right_start: usize, right_length: usize) -> bool:
     if left_length != right_length:
         return false
     offset: usize = 0
     while offset < left_length:
         if left_source.byte_at(left_start + offset) != right_source.byte_at(right_start + offset):
+            return false
+        offset += 1
+    return true
+
+
+def context_name_range_equals_string(source: &const String, start: usize, length: usize, name: &const String) -> bool:
+    if length != len(name):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != name.byte_at(offset):
             return false
         offset += 1
     return true
@@ -1436,7 +1457,7 @@ def emit_context_drops(
     while index > local_start:
         index -= 1
         if not context.local_types[index].moved:
-            emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
+            emit_context_local_drop(arena, context, source, builder, index, prefix, project_name, imports)
 
 
 def emit_context_live_drops(
@@ -1466,20 +1487,46 @@ def emit_context_live_drops_range(
     index = local_end
     while index > local_start:
         index -= 1
-        if not context.local_types[index].moved and context_type_needs_drop(arena, context, context.local_types[index].type_id, source):
-            emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
+        if context_local_needs_drop(arena, context, source, index):
+            emit_context_local_drop(arena, context, source, builder, index, prefix, project_name, imports)
 
 
 def context_has_live_drops(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String) -> bool:
     index = len(context.local_types)
     while index > context.local_start:
         index -= 1
-        if (
-            not context.local_types[index].moved
-            and context_type_needs_drop(arena, context, context.local_types[index].type_id, source)
-        ):
+        if context_local_needs_drop(arena, context, source, index):
             return true
     return false
+
+
+def context_local_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenContext, source: &const String, index: usize) -> bool:
+    if index >= len(context.local_types) or context.local_types[index].moved:
+        return false
+    if context_type_needs_drop(arena, context, context.local_types[index].type_id, source):
+        return true
+    semantic_type = context_semantic_name_type_for_name(context, &context.local_types[index].name)
+    return semantic_type.index >= 0 and ownership.type_needs_drop_for_table(context.type_table, semantic_type)
+
+
+def emit_context_local_drop(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    source: &const String,
+    builder: &StringBuilder,
+    index: usize,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    if index >= len(context.local_types) or context.local_types[index].moved:
+        return
+    if context.local_types[index].type_id.index >= 0:
+        emit_context_drop(arena, context, context.local_types[index].type_id, source, builder, &context.local_types[index].name, prefix, project_name, imports)
+        return
+    semantic_type = context_semantic_name_type_for_name(context, &context.local_types[index].name)
+    if semantic_type.index >= 0 and ownership.type_needs_drop_for_table(context.type_table, semantic_type):
+        emit_context_semantic_drop(context, semantic_type, builder, &context.local_types[index].name, prefix, project_name, imports)
 
 
 def emit_context_semantic_drop(

@@ -54,13 +54,13 @@ def check_and_dump(source: String) -> i32:
         checker_core.dump_diagnostics(checker)
         return 1
 
-    ir = backend_ir.lower(parsed.arena, root, checker.model, checker.type_table)
+    ir: backend_ir.IRModule = backend_ir.lower(parsed.arena, root, checker.model, checker.type_table)
     if not ir.is_valid:
         print("E internal atomic IR validation failed")
         return 1
     summary = backend_ir.summarize_ir(ir)
     backend_ir.dump_summary(summary)
-    c_source = codegen.emit_c_from_ir(ir, parsed.arena, scan.source)
+    c_source: String = codegen.emit_c_from_ir(ir, parsed.arena, scan.source)
     with open("bootstrap_selfhost_output.c", "wb") as output:
         output.write(c_source)
     print("C", len(c_source))

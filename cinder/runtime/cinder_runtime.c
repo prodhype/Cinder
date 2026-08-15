@@ -440,6 +440,11 @@ void CinderProcessResult__drop(CinderProcessResult *self)
     cinder_string_drop(&self->stdout);
 }
 
+void cinder_process_result_drop_raw(void *self)
+{
+    CinderProcessResult__drop((CinderProcessResult *)self);
+}
+
 #if defined(_WIN32)
 CinderProcessResult cinder_process_run_argv(
     size_t argc,

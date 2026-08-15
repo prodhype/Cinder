@@ -1,5 +1,3 @@
-import lexer
-import parser
 import project
 import syntax
 from syntax import NodeId, SyntaxArena, SyntaxKind
@@ -72,6 +70,8 @@ def prepare_project_lock_model(model: &ProjectLockModel, modules: &const List[pr
     if model.prepared:
         return
     model.prepared = true
+    if not project_uses_locks(modules):
+        return
     collect_locks(model, modules)
     collect_explicit_edges(model, modules)
     collect_function_effects(model, modules)
@@ -80,25 +80,39 @@ def prepare_project_lock_model(model: &ProjectLockModel, modules: &const List[pr
     assign_canonical_keys(model)
 
 
+def project_uses_locks(modules: &const List[project.ParsedModule]) -> bool:
+    for module in modules:
+        if node_uses_locks(&module.arena, module.root):
+            return true
+    return false
+
+
+def node_uses_locks(arena: &const SyntaxArena, id: NodeId) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.LOCK_DECL or node.kind == SyntaxKind.LOCK_ORDER_DECL or node.kind == SyntaxKind.CRITICAL_SECTION_STMT:
+        return true
+    for offset in range(0, node.child_count):
+        if node_uses_locks(arena, arena.children[node.first_child + offset]):
+            return true
+    return false
+
+
 def collect_locks(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
     module_index: usize = 0
     while module_index < len(modules):
         module: &const project.ParsedModule = &modules[module_index]
-        module_source = module.source[0:len(module.source)]
-        scan = lexer.new_lexer(module_source[0:len(module_source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        if root.index < 0:
+        if module.root.index < 0:
             module_index += 1
             continue
-        parsed_arena: &const SyntaxArena = &parsed.arena
-        root_node = parsed_arena.nodes[root.index]
+        module_arena: &const SyntaxArena = &module.arena
+        root_node = module_arena.nodes[module.root.index]
         for offset in range(0, root_node.child_count):
-            declaration_id = parsed_arena.children[root_node.first_child + offset]
-            declaration = parsed_arena.nodes[declaration_id.index]
+            declaration_id = module_arena.children[root_node.first_child + offset]
+            declaration = module_arena.nodes[declaration_id.index]
             if declaration.kind == SyntaxKind.LOCK_DECL:
-                name = module_source[declaration.value_start:declaration.value_start + declaration.value_length]
+                name = module.source[declaration.value_start:declaration.value_start + declaration.value_length]
                 if find_lock(model, &module.name, &name) < 0:
                     model.locks.append(
                         ProjectLock(
@@ -112,28 +126,23 @@ def collect_locks(model: &ProjectLockModel, modules: &const List[project.ParsedM
 
 def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
     for module in modules:
-        module_source = module.source[0:len(module.source)]
-        scan = lexer.new_lexer(module_source[0:len(module_source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        if root.index < 0:
+        if module.root.index < 0:
             continue
-        parsed_arena: &const SyntaxArena = &parsed.arena
-        root_node = parsed_arena.nodes[root.index]
+        module_arena: &const SyntaxArena = &module.arena
+        root_node = module_arena.nodes[module.root.index]
         for offset in range(0, root_node.child_count):
-            declaration_id = parsed_arena.children[root_node.first_child + offset]
-            declaration = parsed_arena.nodes[declaration_id.index]
+            declaration_id = module_arena.children[root_node.first_child + offset]
+            declaration = module_arena.nodes[declaration_id.index]
             if declaration.kind == SyntaxKind.LOCK_DECL and declaration.child_count > 0:
-                name = module_source[declaration.value_start:declaration.value_start + declaration.value_length]
+                name = module.source[declaration.value_start:declaration.value_start + declaration.value_length]
                 after = find_lock(model, &module.name, &name)
                 before = resolve_lock_reference(
                     model,
                     &module.name,
                     &module.imports,
-                    parsed_arena,
-                    parsed_arena.children[declaration.first_child],
-                    &module_source,
+                    module_arena,
+                    module_arena.children[declaration.first_child],
+                    &module.source,
                 )
                 if before >= 0 and after >= 0:
                     add_edge(model, before, after, true, &module.name, &declaration)
@@ -144,17 +153,17 @@ def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[projec
                     model,
                     &module.name,
                     &module.imports,
-                    parsed_arena,
-                    parsed_arena.children[declaration.first_child],
-                    &module_source,
+                    module_arena,
+                    module_arena.children[declaration.first_child],
+                    &module.source,
                 )
                 after = resolve_lock_reference(
                     model,
                     &module.name,
                     &module.imports,
-                    parsed_arena,
-                    parsed_arena.children[declaration.first_child + 1],
-                    &module_source,
+                    module_arena,
+                    module_arena.children[declaration.first_child + 1],
+                    &module.source,
                 )
                 if before >= 0 and after >= 0:
                     add_edge(model, before, after, true, &module.name, &declaration)
@@ -166,20 +175,15 @@ def collect_function_effects(model: &ProjectLockModel, modules: &const List[proj
     module_index: usize = 0
     while module_index < len(modules):
         module: &const project.ParsedModule = &modules[module_index]
-        module_source = module.source[0:len(module.source)]
-        scan = lexer.new_lexer(module_source[0:len(module_source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        if root.index < 0:
+        if module.root.index < 0:
             module_index += 1
             continue
-        parsed_arena: &const SyntaxArena = &parsed.arena
-        root_node = parsed_arena.nodes[root.index]
+        module_arena: &const SyntaxArena = &module.arena
+        root_node = module_arena.nodes[module.root.index]
         empty_owner = ""
         for offset in range(0, root_node.child_count):
-            declaration_id = parsed_arena.children[root_node.first_child + offset]
-            collect_function_effect_from_declaration(model, &module.name, &module.imports, parsed_arena, declaration_id, &module_source, &empty_owner)
+            declaration_id = module_arena.children[root_node.first_child + offset]
+            collect_function_effect_from_declaration(model, &module.name, &module.imports, module_arena, declaration_id, &module.source, &empty_owner)
         module_index += 1
 
 
@@ -295,18 +299,13 @@ def infer_function_effects(model: &ProjectLockModel) -> void:
 
 def infer_nested_edges(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
     for module in modules:
-        module_source = module.source[0:len(module.source)]
-        scan = lexer.new_lexer(module_source[0:len(module_source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        if root.index < 0:
+        if module.root.index < 0:
             continue
-        parsed_arena: &const SyntaxArena = &parsed.arena
-        root_node = parsed_arena.nodes[root.index]
+        module_arena: &const SyntaxArena = &module.arena
+        root_node = module_arena.nodes[module.root.index]
         for offset in range(0, root_node.child_count):
-            declaration_id = parsed_arena.children[root_node.first_child + offset]
-            validate_lock_declaration(model, &module.name, &module.imports, parsed_arena, declaration_id, &module_source)
+            declaration_id = module_arena.children[root_node.first_child + offset]
+            validate_lock_declaration(model, &module.name, &module.imports, module_arena, declaration_id, &module.source)
 
 
 def validate_lock_declaration(

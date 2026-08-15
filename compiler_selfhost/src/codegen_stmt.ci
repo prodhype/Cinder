@@ -417,6 +417,11 @@ def emit_module_statement(
             codegen_context.register_context_pointer_name(context, source, node.value_start, node.value_length)
         else:
             inferred_type = codegen_context.context_expression_type(arena, context, expr, source)
+            semantic_type = codegen_context.context_semantic_type(context, expr)
+            if semantic_type.index < 0:
+                semantic_type = codegen_context.context_semantic_type(context, id)
+            if inferred_type.index < 0 and semantic_type.index >= 0:
+                codegen_context.register_context_semantic_name_type(context, source, node.value_start, node.value_length, semantic_type)
             codegen_context.register_context_name_type(arena, context, source, node.value_start, node.value_length, inferred_type)
         return
     if node.kind == SyntaxKind.ASSIGN_STMT:
@@ -502,6 +507,11 @@ def emit_module_statement(
                     codegen_context.register_context_pointer_name(context, source, target_node.value_start, target_node.value_length)
                 else:
                     inferred_type = codegen_context.context_expression_type(arena, context, value, source)
+                    semantic_type = codegen_context.context_semantic_type(context, value)
+                    if semantic_type.index < 0:
+                        semantic_type = codegen_context.context_semantic_type(context, id)
+                    if inferred_type.index < 0 and semantic_type.index >= 0:
+                        codegen_context.register_context_semantic_name_type(context, source, target_node.value_start, target_node.value_length, semantic_type)
                     codegen_context.register_context_name_type(arena, context, source, target_node.value_start, target_node.value_length, inferred_type)
                 return
         value = codegen_names.second_child(arena, id)

@@ -1,9 +1,10 @@
 import fs
 import lexer
 import manifest
-import parser
+import parser_core
+import parser_module
 import syntax
-from syntax import NodeId, SyntaxArena, SyntaxKind
+from syntax import NodeId, ParseDiagnostic, SyntaxArena, SyntaxKind
 
 
 struct ImportBinding:
@@ -16,6 +17,8 @@ struct ParsedModule:
     name: String
     path: String
     source: String
+    arena: SyntaxArena
+    root: NodeId
     dependencies: List[String]
     imports: List[ImportBinding]
 
@@ -186,12 +189,28 @@ def visit_module(
         source = file.read_text()
         scan = lexer.new_lexer(source[0:len(source)])
         scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
+        if len(scan.diagnostics) > 0:
+            scan.dump()
+            error_parts.append("lexing failed: ")
+            error_parts.append(path[0:len(path)])
+            visiting.pop()
+            return false
+        arena = syntax.new_arena()
+        parse_diagnostics: List[ParseDiagnostic] = []
+        parse_failed = false
+        parse_index: usize = 0
+        parse_context = parser_core.new_context(scan, &parse_index, &arena, &parse_diagnostics, &parse_failed)
+        root = parser_module.parse_module(&parse_context)
+        if len(parse_diagnostics) > 0:
+            dump_parse_diagnostics(&parse_diagnostics)
+            error_parts.append("parsing failed: ")
+            error_parts.append(path[0:len(path)])
+            visiting.pop()
+            return false
 
         dependencies: List[String] = []
         imports: List[ImportBinding] = []
-        collect_imports(parsed.arena, root, &source, dependencies, imports)
+        collect_imports(arena, root, &source, dependencies, imports)
         index: usize = 0
         while index < len(dependencies):
             dependency = dependencies[index][0:len(dependencies[index])]
@@ -212,6 +231,8 @@ def visit_module(
                 name=module_name,
                 path=path,
                 source=source,
+                arena=arena,
+                root=root,
                 dependencies=dependencies,
                 imports=imports,
             )
@@ -364,6 +385,11 @@ def join_strings(values: &const List[String]) -> String:
     for value in values:
         builder.append(value)
     return builder.finish()
+
+
+def dump_parse_diagnostics(diagnostics: &const List[ParseDiagnostic]) -> void:
+    for diagnostic in diagnostics:
+        print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
 
 
 def is_builtin_module(module_name: &const String) -> bool:

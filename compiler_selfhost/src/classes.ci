@@ -1,7 +1,5 @@
 import codegen_names
 import codegen_type_names
-import lexer
-import parser
 import project
 import reflection
 import syntax
@@ -137,28 +135,20 @@ def collect_project_class_model(
     graph: &const project.ProjectGraph,
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> ProjectClassModel:
-    model = new_project_class_model()
+    model: ProjectClassModel = new_project_class_model()
     index: usize = 0
     while index < len(graph.modules):
         module: &const project.ParsedModule = &graph.modules[index]
-        scan = lexer.new_lexer(module.source[0:len(module.source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
-        collect_module_class_shells(parsed.arena, root, &module.source, &module.name, &prefix, model)
+        prefix: String = codegen_names.c_prefix(&graph.project_name, &module.name)
+        collect_module_class_shells(module.arena, module.root, &module.source, &module.name, &prefix, model)
         index += 1
     index = 0
     while index < len(graph.modules):
         module: &const project.ParsedModule = &graph.modules[index]
-        scan = lexer.new_lexer(module.source[0:len(module.source)])
-        scan.tokenize()
-        parsed = parser.new_parser(scan)
-        root = parsed.parse_module()
-        prefix = codegen_names.c_prefix(&graph.project_name, &module.name)
+        prefix: String = codegen_names.c_prefix(&graph.project_name, &module.name)
         collect_module_class_details(
-            parsed.arena,
-            root,
+            module.arena,
+            module.root,
             &module.source,
             &module.name,
             &prefix,
@@ -181,8 +171,8 @@ def collect_single_module_class_model(
     imports: &const List[project.ImportBinding],
     registry: &const codegen_names.SpecializationNameRegistry,
 ) -> ProjectClassModel:
-    model = new_project_class_model()
-    prefix = codegen_names.c_prefix(project_name, module_name)
+    model: ProjectClassModel = new_project_class_model()
+    prefix: String = codegen_names.c_prefix(project_name, module_name)
     collect_module_class_shells(arena, root, source, module_name, &prefix, model)
     collect_module_class_details(
         arena,
