@@ -77,6 +77,33 @@ def test_sorted_returns_a_new_list_and_keeps_sort_behavior() -> None:
     assert "CinderSort_i32(" in generated
 
 
+def test_sorted_borrows_addressable_list_fields_without_dropping_source() -> None:
+    generated = compile_source(
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "def main() -> i32:\n"
+        "    bundle = Bundle(items=[3, 1, 2])\n"
+        "    ordered = sorted(bundle.items)\n"
+        "    return ordered[0] + bundle.items[0]\n"
+    )
+
+    assert "CinderSorted_i32(" in generated
+    assert "__cinder_sorted_source_" not in generated
+
+
+def test_sorted_drops_materialized_rvalue_list_source() -> None:
+    generated = compile_source(
+        "def get_values() -> List[i32]:\n"
+        "    return [3, 1, 2]\n"
+        "def main() -> i32:\n"
+        "    ordered = sorted(get_values())\n"
+        "    return ordered[0]\n"
+    )
+
+    assert "CinderList_i32 __cinder_sorted_source_" in generated
+    assert "CinderList_i32_drop(&__cinder_sorted_source_" in generated
+
+
 @pytest.mark.parametrize(
     ("source", "message"),
     [
@@ -167,6 +194,9 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "    low = -4\n"
         "    normal = 7\n"
         "\n"
+        "struct Bundle:\n"
+        "    items: List[i32]\n"
+        "\n"
         "calls: i32 = 0\n"
         "\n"
         "def view(values: []i32) -> []i32:\n"
@@ -208,6 +238,11 @@ def test_sort_runs_stably_for_arrays_slices_enums_and_strings(tmp_path: Path) ->
         "    ordered_words = sorted(word_list)\n"
         '    if ordered_words[0] != "alpha" or word_list[0] != "zeta":\n'
         "        return 7\n"
+        "\n"
+        "    bundle = Bundle(items=[3, 1, 2])\n"
+        "    ordered_items = sorted(bundle.items)\n"
+        "    if ordered_items[0] != 1 or bundle.items[0] != 3 or len(bundle.items) != 3:\n"
+        "        return 8\n"
         "\n"
         "    single: f64[1] = [1.5]\n"
         "    sort(numbers[0:0])\n"

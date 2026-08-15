@@ -5382,12 +5382,16 @@ def assert_compiler_supports_lock_ordering(
     valid.write_text(
         "lock database\n"
         "lock cache after database\n"
+        "def acquire_cache() -> void:\n"
+        "    CriticalSection cache:\n"
+        "        pass\n"
         "def main() -> i32:\n"
         "    locks: List[Lock] = [cache, database, database]\n"
         "    ordered = sorted(locks)\n"
+        "    defer acquire_cache()\n"
         "    CriticalSection ordered:\n"
-        "        pass\n"
-        "    return 0\n",
+        "        return 0\n"
+        "    return 1\n",
         encoding="utf-8",
     )
     emitted = run_gen1(compiler, "emit-c", str(valid))
@@ -5395,6 +5399,8 @@ def assert_compiler_supports_lock_ordering(
     assert "cinder_lock_acquire" in emitted.stdout
     assert "cinder_lock_release" in emitted.stdout
     assert "cinder_sort" in emitted.stdout
+    assert "__auto_type *cinder_lock_source" not in emitted.stdout
+    assert "__auto_type cinder_lock_source" in emitted.stdout
     executable = tmp_path / f"{compiler.name}-lock-order"
     built = run_gen1(
         compiler,
@@ -5406,7 +5412,7 @@ def assert_compiler_supports_lock_ordering(
         str(tmp_path / f"{compiler.name}-lock-build"),
     )
     assert built.returncode == 0, built.stderr
-    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True)
+    ran = subprocess.run([str(executable)], check=False, text=True, capture_output=True, timeout=5)
     assert ran.returncode == 0, ran.stderr
 
     invalid = tmp_path / "lock_order_invalid.ci"

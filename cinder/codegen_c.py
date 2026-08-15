@@ -5625,7 +5625,7 @@ class CGenerator:
             element = strip_const(expected.inner)
             helper = self._sorted_helper_name(element)
             argument_type = value_type(self.semantic.expression_type(argument))
-            if isinstance(argument_type, ListType) and not isinstance(argument, ast.NameExpr):
+            if isinstance(argument_type, ListType) and not self._is_addressable_expression(argument):
                 source = self._new_temp("sorted_source")
                 result = self._new_temp("sorted_result")
                 source_list = ListType(argument_type.inner)
@@ -6618,7 +6618,7 @@ class CGenerator:
             pointer = self._emit_address(expression)
         return f"{name}_value_mut_ptr_or_panic({pointer})"
 
-    def _is_addressable_string_expression(self, expression: ast.Expression) -> bool:
+    def _is_addressable_expression(self, expression: ast.Expression) -> bool:
         if isinstance(expression, ast.NameExpr):
             return True
         if isinstance(expression, ast.UnaryExpr) and expression.operator == "*":
@@ -6640,15 +6640,18 @@ class CGenerator:
                 return False
             base_type = strip_const(self.semantic.expression_type(expression.value))
             return isinstance(base_type, (PointerType, ReferenceType)) or (
-                self._is_addressable_string_expression(expression.value)
+                self._is_addressable_expression(expression.value)
             )
         if isinstance(expression, ast.IndexExpr):
             base = value_type(self.semantic.expression_type(expression.value))
             return isinstance(
                 base,
                 (ArrayType, SliceType, ListType, TupleType, PointerType),
-            ) and self._is_addressable_string_expression(expression.value)
+            ) and self._is_addressable_expression(expression.value)
         return False
+
+    def _is_addressable_string_expression(self, expression: ast.Expression) -> bool:
+        return self._is_addressable_expression(expression)
 
     def _emit_vararg(self, expression: ast.Expression) -> str:
         type_ = value_type(self.semantic.expression_type(expression))

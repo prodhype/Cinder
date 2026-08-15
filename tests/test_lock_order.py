@@ -487,3 +487,55 @@ def test_cleanup_after_return_break_continue_and_propagation(tmp_path: Path) -> 
 
     assert result.returncode == 0, result.stderr
 
+
+@pytestmark_native
+def test_ordered_collection_cleanup_unwinds_before_enclosing_defer(tmp_path: Path) -> None:
+    result = build_and_run(
+        tmp_path,
+        "lock first\n"
+        "lock second after first\n"
+        "enum Failure:\n"
+        "    stopped\n"
+        "deferred_runs: i32 = 0\n"
+        "def fail() -> Result[i32, Failure]:\n"
+        "    return Err(Failure.stopped)\n"
+        "def acquire_second() -> void:\n"
+        "    CriticalSection second:\n"
+        "        deferred_runs += 1\n"
+        "def return_early() -> void:\n"
+        "    locks: List[Lock] = [second, first]\n"
+        "    ordered = sorted(locks)\n"
+        "    defer acquire_second()\n"
+        "    CriticalSection ordered:\n"
+        "        return\n"
+        "def loop_exits() -> void:\n"
+        "    locks: List[Lock] = [second, first]\n"
+        "    for value in range(0, 2):\n"
+        "        ordered = sorted(locks)\n"
+        "        CriticalSection ordered:\n"
+        "            if value == 0:\n"
+        "                continue\n"
+        "            break\n"
+        "def propagate() -> Result[i32, Failure]:\n"
+        "    locks: List[Lock] = [second, first]\n"
+        "    ordered = sorted(locks)\n"
+        "    defer acquire_second()\n"
+        "    CriticalSection ordered:\n"
+        "        value = fail()?\n"
+        "        return Ok(value)\n"
+        "def main() -> i32:\n"
+        "    return_early()\n"
+        "    return_early()\n"
+        "    loop_exits()\n"
+        "    loop_exits()\n"
+        "    propagate()\n"
+        "    if deferred_runs != 3:\n"
+        "        return 1\n"
+        "    locks: List[Lock] = [second, first]\n"
+        "    CriticalSection sorted(locks):\n"
+        "        pass\n"
+        "    return 0\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+

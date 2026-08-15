@@ -1,6 +1,6 @@
 # Gen3 example smoke test (gen3-only)
 # gen3:   .cinder/selfhost-proof/cinder-gen3 run <src> -o <tmp> --build-dir <tmp>
-# date:   2026-08-15 10:34:48 UTC
+# date:   2026-08-15 15:33:18 UTC
 # cwd:    /Volumes/Shelfy/Code/Cinder
 # targets: 41 (examples/*.ci + class_project + module_project; excludes large_project)
 # per-target timeout: 60s
@@ -13,7 +13,7 @@
 # kind values: ok | gen3_checker_error | gen3_toolchain_error |
 #   gen3_project_error | gen3_runtime_nonzero | gen3_timeout
 
-Summary: 40 ok, 1 fail
+Summary: 41 ok, 0 fail
 
 ## Status by example
 examples/aggregate_ownership.ci       OK    ok
@@ -40,7 +40,7 @@ examples/interop.ci                   OK    ok
 examples/knapsack.ci                  OK    ok
 examples/leibniz_pi.ci                OK    ok
 examples/long_string_sort.ci          OK    ok
-examples/ordered_lock_mutable_ref.ci  FAIL  gen3_toolchain_error
+examples/ordered_lock_mutable_ref.ci  OK    ok
 examples/owned.ci                     OK    ok
 examples/ownership_edge_cases.ci      OK    ok
 examples/physics.ci                   OK    ok
@@ -59,7 +59,7 @@ examples/class_project                OK    ok
 examples/module_project               OK    ok
 
 ## First non-warning C errors
-- examples/ordered_lock_mutable_ref.ci: cinder_gen/ordered_lock_mutable_ref.c:24 [c_error] generated C at function main - subscripted value is not an array, pointer, or vector
+(none)
 
 ## OK
 - examples/aggregate_ownership.ci
@@ -86,6 +86,7 @@ examples/module_project               OK    ok
 - examples/knapsack.ci
 - examples/leibniz_pi.ci
 - examples/long_string_sort.ci
+- examples/ordered_lock_mutable_ref.ci
 - examples/owned.ci
 - examples/ownership_edge_cases.ci
 - examples/physics.ci
@@ -104,15 +105,4 @@ examples/module_project               OK    ok
 - examples/module_project
 
 ## Failures
-### examples/ordered_lock_mutable_ref.ci
-gen3 exit=2
-kind: gen3_toolchain_error
-first C error: cinder_gen/ordered_lock_mutable_ref.c:24 [c_error]
-source feature: generated C at function main
-message: subscripted value is not an array, pointer, or vector
-elapsed: 0.1s
-
---- gen3 errors ---
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.4f50e6ab/ordered_lock_mutable_ref.ci-build/cinder_gen/ordered_lock_mutable_ref.c:24:19: error: subscripted value is not an array, pointer, or vector
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.4f50e6ab/ordered_lock_mutable_ref.ci-build/cinder_gen/ordered_lock_mutable_ref.c:24:102: error: subscripted value is not an array, pointer, or vector
-/var/folders/jz/9mr37jqn5rq6qb56br1xv2980000gn/T/cinder-gen3-smoke.4f50e6ab/ordered_lock_mutable_ref.ci-build/cinder_gen/ordered_lock_mutable_ref.c:24:186: error: subscripted value is not an array, pointer, or vector
+(none)
