@@ -1,0 +1,42 @@
+name: Build Gen2 Linux x86_64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build gen2 Linux x86_64
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Bootstrap and test
+        run: ./test.sh
+
+      - name: Bundle compiler and runtime
+        run: |
+          set -euxo pipefail
+          bundle=dist/cinder-gen2-linux-x86_64
+          mkdir -p "$bundle/runtime"
+          cp .cinder/bootstrap/cinder-gen2 "$bundle/cinder"
+          cp runtime/cinder_runtime.c runtime/cinder_runtime.h "$bundle/runtime/"
+          chmod +x "$bundle/cinder"
+          COPYFILE_DISABLE=1 tar -czf "$bundle.tar.gz" -C dist "$(basename "$bundle")"
+          sha256sum "$bundle.tar.gz" > "$bundle.tar.gz.sha256"
+
+      - name: Upload gen2 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinder-gen2-linux-x86_64
+          path: |
+            dist/cinder-gen2-linux-x86_64.tar.gz
+            dist/cinder-gen2-linux-x86_64.tar.gz.sha256
+          if-no-files-found: error

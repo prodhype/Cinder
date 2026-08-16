@@ -5,10 +5,9 @@ Cinder is a statically typed systems programming language with Python-like synta
 It gives you indentation-based blocks, newline-terminated statements, explicit types at public boundaries, deterministic cleanup, and predictable data layout.
 Cinder compiles to readable C11, so the generated code can be inspected, debugged, and built with ordinary native toolchains such as GCC, Clang, and MSVC-compatible compilers.
 
-Cinder is also self-hosted. The current gen3 compiler is a native executable compiled from Cinder source and does not require Python at runtime.
-
-For normal development, download a gen3 compiler from GitHub Actions.
-Python 3.14 is only required to run the complete bootstrap from stage0 to gen3 or to work on the original Python compiler implementation.
+Cinder is self-hosted. The canonical compiler implementation is Cinder source,
+and the repository bootstraps it with a small, checked-in native seed. The
+compiler, build, and test paths have no Python dependency.
 
 ## Project State
 
@@ -20,22 +19,22 @@ The core design goals are unlikely to change: readable generated C, explicit own
 
 ## Installation
 
-Get the gen3 artifact for your platform from GitHub Actions.
+Get the gen2 artifact for your platform from GitHub Actions.
 Each artifact contains the `cinder` executable and the `runtime/` files that it needs to build native programs.
 Keep the extracted directory together.
 
-Current gen3 artifacts are:
+Current gen2 artifacts are:
 
-- `cinder-gen3-macos-arm64`
-- `cinder-gen3-linux-x86_64`
-- `cinder-gen3-linux-arm64`
-- `cinder-gen3-linux-armv7`
+- `cinder-gen2-macos-arm64`
+- `cinder-gen2-linux-x86_64`
+- `cinder-gen2-linux-arm64`
+- `cinder-gen2-linux-armv7`
 
 After you extract the artifact, put the extracted directory on `PATH`, or call the executable by path:
 
 ```sh
-tar -xzf cinder-gen3-linux-x86_64.tar.gz
-./cinder-gen3-linux-x86_64/cinder check examples/module_project
+tar -xzf cinder-gen2-linux-x86_64.tar.gz
+./cinder-gen2-linux-x86_64/cinder check examples/module_project
 ```
 
 Put a C11 compiler on `PATH`.
@@ -43,37 +42,20 @@ Cinder checks `CC` first.
 Then it checks common compiler commands for the host platform.
 Select a specific compiler with `--cc`.
 
-Use Python only when you build the compiler from source.
-Do these steps from the project root:
+To build the compiler from source on macOS ARM64 or Linux x86_64, clone the
+repository, install a C11 compiler, and run:
 
 ```sh
-python3.14 -m venv .venv
-. .venv/bin/activate
-python -m pip install -e .
+./bootstrap.sh
 ```
 
-On Windows PowerShell, set up the Python stage0 compiler with:
+The script verifies the platform seed against `bootstrap/SHA256SUMS`, uses it to
+build gen1, uses gen1 to build gen2, and requires the two generated-C trees to
+match exactly. Outputs are written under `.cinder/bootstrap/`.
 
-```powershell
-py -3.14 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -e .
-```
-
-To build the gen3 compiler from source, build stage0 to gen1, then gen1 to gen2, then gen2 to gen3:
-
-```sh
-mkdir -p build/bootstrap
-cinder build compiler_selfhost \
-  -o build/bootstrap/cinder-gen1 \
-  --build-dir build/gen1
-./build/bootstrap/cinder-gen1 build compiler_selfhost \
-  -o build/bootstrap/cinder-gen2 \
-  --build-dir build/gen2
-./build/bootstrap/cinder-gen2 build compiler_selfhost \
-  -o build/bootstrap/cinder-gen3 \
-  --build-dir build/gen3
-```
+See [`docs/self-hosting.md`](docs/self-hosting.md) and
+[`bootstrap/PROVENANCE.md`](bootstrap/PROVENANCE.md) for the trust boundary and
+seed provenance.
 
 ## Commands
 
@@ -963,26 +945,17 @@ See `examples/unsafe.ci` for a runnable raw-address example.
 The repository layout is:
 
 ```text
-cinder/
-    lexer.py
-    parser.py
-    ast.py
-    types.py
-    symbols.py
-    checker.py
-    ir.py
-    codegen_c.py
-    project.py
-    diagnostics.py
-    compiler.py
-    toolchain.py
-    cli.py
-    runtime/
-        cinder_runtime.h
-        cinder_runtime.c
+bootstrap/
+    darwin-arm64/cinder
+    linux-x86_64/cinder
+    SHA256SUMS
+    PROVENANCE.md
 compiler_selfhost/
     cinder.toml
     src/
+runtime/
+    cinder_runtime.h
+    cinder_runtime.c
 examples/
 tests/
 docs/
@@ -990,39 +963,35 @@ docs/
 
 ## Self-hosting
 
-Python 3.14 remains Cinder's stage0 compiler implementation.
-The `compiler_selfhost/` project builds the native compiler chain.
-Stage0 builds gen1.
-Gen1 builds gen2.
-Gen2 builds gen3.
-GitHub Actions uses that chain to publish gen3 native compiler artifacts.
-Those gen3 binaries do not need Python at run time.
-See [`docs/self-hosting.md`](docs/self-hosting.md) for ownership constraints that still apply.
+The checked-in platform seed builds gen1 from `compiler_selfhost/`; gen1 builds
+gen2 from the same sources. Bootstrap succeeds only when gen1 and gen2 emit
+identical generated-C project trees. The seed is a trusted construction
+artifact; the Cinder source is the compiler implementation. GitHub Actions uses
+the fixed-point gen2 compiler to publish native bundles.
+
+See [`docs/self-hosting.md`](docs/self-hosting.md) for the complete proof and
+ownership constraints that still apply.
 
 ## Development
 
-Development of the Python stage0 implementation and the test suite needs Python 3.14.
-Install the development extras.
-Then compile, test, and check the sources:
+Run the native bootstrap, fixed-point proofs, Cinder test runner, and 41-target
+example smoke suite with:
 
 ```sh
-python -m pip install -e '.[dev]'
-python -m compileall -q cinder tests
-pytest
-ruff check cinder tests
-mypy cinder
+./test.sh
 ```
 
-Integration tests compile generated C and run native programs.
-The test suite also checks:
+The suite compiles generated C and runs native programs. It also checks:
 
-- GCC and Clang builds with warnings as errors
+- seed integrity and the gen1/gen2 generated-C fixed point
+- direct compilation of the generated compiler sources
+- native compiler execution without an external language runtime
 - cross-module class and interface ABI behavior
-- content-stable project emission
-- use of generated headers from C++17
+- deterministic C emission and key generated-C properties
 
-CI tests the Python stage0 implementation on Linux, macOS, and Windows with Python 3.14.
-Separate GitHub Actions jobs build gen3 bundles for macOS ARM64 and Linux x86_64, ARM64, and ARMv7.
+CI runs the native suite on macOS ARM64 and Linux x86_64. Separate workflows
+build gen2 bundles for macOS ARM64 and Linux x86_64, ARM64, and ARMv7; the ARM
+Linux bundles are cross-built from the verified Linux x86_64 compiler.
 
 ## Design constraint
 

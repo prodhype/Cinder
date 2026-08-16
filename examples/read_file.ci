@@ -1,5 +1,18 @@
+import process
+
+
+def ensure_output_dir() -> bool:
+    command: List[String] = ["mkdir", "-p", ".cinder/example-output"]
+    result = process.run(command)
+    return result.exit_code == 0
+
+
 def main() -> i32:
-    path: String = "cinder_sample.txt"
+    if not ensure_output_dir():
+        print("failed to create .cinder/example-output")
+        return 1
+
+    path: String = ".cinder/example-output/cinder_sample.txt"
 
     with open(path, "wb") as out:
         # "hello\nworld\n"

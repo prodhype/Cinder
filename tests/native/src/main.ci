@@ -1,0 +1,243 @@
+import cinder
+import process
+
+
+struct TestState:
+    compiler: String
+    root: String
+    workspace: String
+    passed: i32
+    failed: i32
+
+
+def main(argc: i32, argv: **char) -> i32:
+    if argc != 3:
+        cinder.write_stderr("usage: cinder-native-tests <compiler> <repository-root>\n")
+        return 2
+
+    compiler = String(argv[1])
+    root = String(argv[2])
+    workspace = root + "/.cinder/native-tests"
+    state = TestState(
+        compiler=compiler,
+        root=root,
+        workspace=workspace,
+        passed=0,
+        failed=0,
+    )
+
+    cleanup: List[String] = ["rm", "-rf", state.workspace.clone()]
+    cleanup_result = process.run(cleanup)
+    if cleanup_result.exit_code != 0:
+        cinder.write_stderr(cleanup_result.stderr)
+        return 2
+
+    create: List[String] = ["mkdir", "-p", state.workspace.clone()]
+    create_result = process.run(create)
+    if create_result.exit_code != 0:
+        cinder.write_stderr(create_result.stderr)
+        return 2
+
+    test_check_valid(&state)
+    test_check_diagnostic(&state)
+    test_emit_c(&state)
+    test_emit_c_is_deterministic(&state)
+    test_emit_project(&state)
+    test_build_and_run(&state)
+    test_multi_module_project(&state)
+    test_atomic_codegen(&state)
+
+    print("native compiler tests:", state.passed, "passed,", state.failed, "failed")
+    if state.failed > 0:
+        return 1
+    return 0
+
+
+def test_check_valid(state: &TestState) -> void:
+    source = state.root + "/examples/hello.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        source,
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 0 and contains(&result.stdout, "ok: ")
+    expect(state, "check accepts a valid source file", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_check_diagnostic(state: &TestState) -> void:
+    source_path = state.root + "/tests/cases/invalid_syntax.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        source_path,
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 1 and contains(&result.stderr, "project error: lexing failed")
+    expect(state, "check reports source diagnostics", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_emit_c(state: &TestState) -> void:
+    source = state.root + "/examples/classes.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "int main(void)")
+        and contains(&result.stdout, "typedef struct")
+        and not contains(&result.stdout, "#include \"cinder_gen/")
+    )
+    expect(state, "emit-c produces self-contained C11", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_emit_c_is_deterministic(state: &TestState) -> void:
+    source = state.root + "/examples/reflection.ci"
+    first_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    second_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source,
+    ]
+    first = process.run(first_command)
+    second = process.run(second_command)
+    ok = (
+        first.exit_code == 0
+        and second.exit_code == 0
+        and first.stdout == second.stdout
+    )
+    expect(state, "emit-c is deterministic", ok)
+    if not ok:
+        report_process_failure(&first.stdout, &first.stderr)
+        report_process_failure(&second.stdout, &second.stderr)
+
+
+def test_emit_project(state: &TestState) -> void:
+    source = state.root + "/examples/module_project"
+    output = state.workspace + "/module-project-output"
+    command: List[String] = [
+        state.compiler.clone(),
+        "emit-project",
+        source,
+        "-o",
+        output.clone(),
+    ]
+    result = process.run(command)
+    header = output + "/cinder_gen/model.cinder.h"
+    generated_source = output + "/cinder_gen/main.c"
+    header_test: List[String] = ["test", "-f", header]
+    source_test: List[String] = ["test", "-f", generated_source]
+    has_header = process.run(header_test)
+    has_source = process.run(source_test)
+    ok = (
+        result.exit_code == 0
+        and has_header.exit_code == 0
+        and has_source.exit_code == 0
+    )
+    expect(state, "emit-project writes module headers and sources", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_build_and_run(state: &TestState) -> void:
+    source = state.root + "/examples/hello.ci"
+    output = state.workspace + "/hello"
+    build_dir = state.workspace + "/hello-build"
+    command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        output,
+        "--build-dir",
+        build_dir,
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 0 and result.stdout == "Hello from Cinder!\n"
+    expect(state, "run builds and executes a native program", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_multi_module_project(state: &TestState) -> void:
+    source = state.root + "/examples/module_project"
+    output = state.workspace + "/module-project"
+    build_dir = state.workspace + "/module-project-build"
+    command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        output,
+        "--build-dir",
+        build_dir,
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 0 and result.stdout == "value=42\n"
+    expect(state, "run resolves and links a multi-module project", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_atomic_codegen(state: &TestState) -> void:
+    source = state.root + "/examples/atomics.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "#include <stdatomic.h>")
+        and contains(&result.stdout, "atomic_compare_exchange_strong_explicit")
+        and contains(&result.stdout, "memory_order_seq_cst")
+    )
+    expect(state, "emit-c lowers atomic operations to C11 atomics", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def expect(state: &TestState, name: String, condition: bool) -> void:
+    if condition:
+        state.passed += 1
+        print("PASS", name)
+    else:
+        state.failed += 1
+        print("FAIL", name)
+
+
+def report_process_failure(stdout: &const String, stderr: &const String) -> void:
+    if len(stdout) > 0:
+        cinder.write_stderr("--- stdout ---\n")
+        output = stdout[0:len(stdout)]
+        cinder.write_stderr(output)
+    if len(stderr) > 0:
+        cinder.write_stderr("--- stderr ---\n")
+        error = stderr[0:len(stderr)]
+        cinder.write_stderr(error)
+
+
+def contains(text: &const String, fragment: String) -> bool:
+    if len(fragment) == 0:
+        return true
+    if len(fragment) > len(text):
+        return false
+    limit = len(text) - len(fragment)
+    for start in range(0, limit + 1):
+        if text[start:start + len(fragment)] == fragment:
+            return true
+    return false

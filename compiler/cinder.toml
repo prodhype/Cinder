@@ -1,4 +1,0 @@
-[project]
-name = "bootstrap_lexer"
-source-root = "src"
-entry = "main.ci"

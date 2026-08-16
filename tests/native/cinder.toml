@@ -1,0 +1,4 @@
+[project]
+name = "cinder_native_tests"
+source-root = "src"
+entry = "main.ci"

@@ -15,7 +15,7 @@ The host times that native `-O2` loop against an equivalent pure-Python
 implementation — CPython interprets the series; Cinder runs the same algorithm
 as compiled C.
 
-This example is manual; it is not part of the gen3 smoke suite.
+This example is manual; it is not part of the native smoke suite.
 
 ## Layout
 
@@ -27,7 +27,7 @@ build.sh         # emit → compile -O2 → shared lib → run
 
 ## Prerequisites
 
-- `cinder` on `PATH`, or this repo importable via `PYTHONPATH` (the script falls back to `python3 -m cinder`)
+- `cinder` on `PATH`, or set `CINDER` to a native compiler path
 - A C toolchain (`cc`)
 - Python 3 with the standard library (`ctypes`)
 
@@ -60,7 +60,7 @@ On Linux the shared library ends in `.so` instead of `.dylib`.
 What the script does:
 
 1. `cinder emit-project lib.ci -o generated`
-2. Compile `generated/cinder_gen/lib.c` and `cinder/runtime/cinder_runtime.c` to objects under `build/` with `-O2`
+2. Compile `generated/cinder_gen/lib.c` and `runtime/cinder_runtime.c` to objects under `build/` with `-O2`
 3. Link `build/libcinder_python_host.{dylib,so}` from those objects
 4. Run `python3 host/main.py`
 

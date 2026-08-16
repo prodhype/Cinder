@@ -1,7 +1,7 @@
 package main
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../../cinder/runtime -I${SRCDIR}/../generated
+#cgo CFLAGS: -I${SRCDIR}/../../../runtime -I${SRCDIR}/../generated
 #cgo LDFLAGS: ${SRCDIR}/../build/lib.o ${SRCDIR}/../build/cinder_runtime.o
 #include <stdio.h>
 #include "cinder_gen/lib.cinder.h"
