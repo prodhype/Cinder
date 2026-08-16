@@ -32,6 +32,9 @@ Normal compiler development changes the Cinder sources, not these binaries.
 - Host architecture inside the container: Linux x86_64
 - Python used by stage0: CPython 3.14.7
 - C toolchain: GCC 12.2.0 (`12.2.0-14+deb12u1`)
+- Minimum host C library: glibc 2.34
+- ELF version requirement: `GLIBC_2.34` (verified with
+  `readelf --version-info linux-x86_64/cinder`)
 - Container command:
 
   ```sh
@@ -44,9 +47,11 @@ Normal compiler development changes the Cinder sources, not these binaries.
 ## Verification
 
 `bootstrap.sh` verifies the selected seed against `SHA256SUMS` before executing
-it. The seed then builds gen1, gen1 builds gen2, and the generated C trees from
-those two builds must match exactly. Linked binaries are not compared because
-system linkers may add nondeterministic metadata.
+it. On Linux x86_64 it also requires glibc 2.34 or newer and rejects unsupported
+C libraries before invoking the dynamically linked seed. The seed then builds
+gen1, gen1 builds gen2, and the generated C trees from those two builds must
+match exactly. Linked binaries are not compared because system linkers may add
+nondeterministic metadata.
 
 ## Updating a seed
 

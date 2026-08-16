@@ -5,7 +5,8 @@
 Cinder's compiler implementation lives in `compiler_selfhost/` as a Cinder
 project. A checked-in native seed for macOS ARM64 or Linux x86_64 builds gen1,
 then gen1 builds gen2 from the same sources. No bootstrap, build, or test step
-requires Python.
+requires Python. The Linux x86_64 seed is dynamically linked against glibc and
+requires version 2.34 or newer; musl and older glibc hosts cannot execute it.
 
 The owned `String` type supplies the text ownership the compiler needs: retain
 source text, construct identifiers and diagnostics, and pass text across module
@@ -32,7 +33,8 @@ From the repository root:
 ```
 
 `bootstrap.sh` selects the host seed, verifies it against
-`bootstrap/SHA256SUMS`, writes both generations under
+`bootstrap/SHA256SUMS`, rejects Linux x86_64 hosts below the glibc 2.34 ABI
+baseline before executing the seed, writes both generations under
 `.cinder/bootstrap/`, and compares `gen1-build/cinder_gen` with
 `gen2-build/cinder_gen`. Linked binaries are not compared because system
 linkers may add host-specific metadata.

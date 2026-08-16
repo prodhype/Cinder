@@ -8,7 +8,8 @@ Cinder now bootstraps from checked-in macOS ARM64 and Linux x86_64 native seeds.
 The seed builds gen1, gen1 builds gen2, and bootstrap requires an exact match
 between their generated-C trees. The canonical implementation remains the
 Cinder source under `compiler_selfhost/`; seed checksums and provenance are
-tracked under `bootstrap/`.
+tracked under `bootstrap/`. The Linux x86_64 seed requires glibc 2.34 or newer,
+and bootstrap now rejects older or non-glibc hosts before executing it.
 
 The Python stage0 compiler, its packaging, implementation-specific pytest
 suite, and incremental parity projects have been removed. Native Cinder tests,

@@ -41,8 +41,12 @@ jobs:
           file "$bundle/cinder"
           qemu-aarch64 -L /usr/aarch64-linux-gnu \
             "$bundle/cinder" check examples/module_project
-          COPYFILE_DISABLE=1 tar -czf "$bundle.tar.gz" -C dist "$(basename "$bundle")"
-          sha256sum "$bundle.tar.gz" > "$bundle.tar.gz.sha256"
+          archive="$(basename "$bundle").tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "dist/$archive" -C dist "$(basename "$bundle")"
+          (
+            cd dist
+            sha256sum "$archive" > "$archive.sha256"
+          )
 
       - name: Upload gen2 artifact
         uses: actions/upload-artifact@v7

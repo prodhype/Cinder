@@ -6,11 +6,46 @@ BUILD_ROOT="${CINDER_BOOTSTRAP_DIR:-$ROOT/.cinder/bootstrap}"
 PROJECT="$ROOT/compiler_selfhost"
 SUMS="$ROOT/bootstrap/SHA256SUMS"
 
+require_linux_glibc() {
+  local minimum="2.34"
+  local reported
+  local major
+  local minor
+
+  if ! command -v getconf >/dev/null 2>&1; then
+    printf 'error: the Linux x86_64 seed requires glibc %s or newer\n' \
+      "$minimum" >&2
+    printf 'error: cannot detect glibc because getconf is unavailable\n' >&2
+    exit 1
+  fi
+
+  reported="$(getconf GNU_LIBC_VERSION 2>/dev/null || true)"
+  if [[ ! "$reported" =~ ^glibc[[:space:]]+([0-9]+)\.([0-9]+) ]]; then
+    printf 'error: the Linux x86_64 seed requires glibc %s or newer\n' \
+      "$minimum" >&2
+    printf 'error: detected an unsupported or unrecognized C library: %s\n' \
+      "${reported:-unknown}" >&2
+    exit 1
+  fi
+
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+  if ((major < 2 || (major == 2 && minor < 34))); then
+    printf 'error: the Linux x86_64 seed requires glibc %s or newer' \
+      "$minimum" >&2
+    printf ' (detected glibc %s.%s)\n' "$major" "$minor" >&2
+    printf '%s\n' \
+      'error: use a newer host/container or rebuild the seed for an older baseline' >&2
+    exit 1
+  fi
+}
+
 case "$(uname -s):$(uname -m)" in
   Darwin:arm64)
     PLATFORM="darwin-arm64"
     ;;
   Linux:x86_64 | Linux:amd64)
+    require_linux_glibc
     PLATFORM="linux-x86_64"
     ;;
   *)
