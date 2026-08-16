@@ -2,9 +2,11 @@ import process
 import fs
 import manifest
 
+extern import "stdlib.h"
 
 extern "C":
     def cinder_process_result_drop_raw(value: *void) -> void
+    def getenv(name: const char*) -> *char
 
 
 struct ToolchainResult:
@@ -181,10 +183,18 @@ def link_command_for(
 
 
 def append_compiler(command: &List[String], compiler: &const String) -> void:
-    if len(compiler) == 0:
-        command.append("cc")
-    else:
+    if len(compiler) > 0:
         command.append(compiler[0:len(compiler)])
+        return
+
+    configured = getenv("CC")
+    if configured != null:
+        environment_compiler = String(configured)
+        if len(environment_compiler) > 0:
+            command.append(environment_compiler)
+            return
+
+    command.append("cc")
 
 
 def append_common_flags(
