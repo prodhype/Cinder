@@ -3,13 +3,18 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$ROOT/../.." && pwd)"
-cd "$ROOT"
 
-CINDER="${CINDER:-cinder}"
-command -v "$CINDER" >/dev/null 2>&1 || {
-  echo "error: Cinder compiler not found: $CINDER" >&2
+CINDER_INPUT="${CINDER:-cinder}"
+CINDER="$(command -v "$CINDER_INPUT" 2>/dev/null || true)"
+if [[ -z "$CINDER" ]]; then
+  echo "error: Cinder compiler not found: $CINDER_INPUT" >&2
   exit 1
-}
+fi
+if [[ "$CINDER" != /* ]]; then
+  CINDER="$(cd "$(dirname "$CINDER")" && pwd)/$(basename "$CINDER")"
+fi
+
+cd "$ROOT"
 
 command -v cc >/dev/null 2>&1 || {
   echo "error: cc (C toolchain) is required" >&2
