@@ -30,10 +30,11 @@ trap cleanup_example_outputs EXIT
 run_with_timeout() {
   local timeout_seconds="$1"
   local marker="$2"
-  shift 2
+  local stdin_file="$3"
+  shift 3
 
   rm -f "$marker"
-  "$@" &
+  "$@" <"$stdin_file" &
   local command_pid=$!
 
   (
@@ -85,6 +86,7 @@ for target in "${targets[@]}"; do
   build_dir="$WORK/$name-build"
   stdout="$WORK/$name.stdout"
   stderr="$WORK/$name.stderr"
+  stdin_file="$WORK/$name.stdin"
   timeout_marker="$WORK/$name.timeout"
   expected=0
   input=""
@@ -106,22 +108,13 @@ for target in "${targets[@]}"; do
       ;;
   esac
 
-  if [[ -n "$input" ]]; then
-    printf '%s' "$input" |
-      run_with_timeout "$TIMEOUT_SECONDS" "$timeout_marker" \
-        "$COMPILER" run "$target" \
-        -o "$output" \
-        --build-dir "$build_dir" \
-        >"$stdout" 2>"$stderr"
-    status="${PIPESTATUS[1]}"
-  else
-    run_with_timeout "$TIMEOUT_SECONDS" "$timeout_marker" \
-      "$COMPILER" run "$target" \
-      -o "$output" \
-      --build-dir "$build_dir" \
-      >"$stdout" 2>"$stderr"
-    status=$?
-  fi
+  printf '%s' "$input" >"$stdin_file"
+  run_with_timeout "$TIMEOUT_SECONDS" "$timeout_marker" "$stdin_file" \
+    "$COMPILER" run "$target" \
+    -o "$output" \
+    --build-dir "$build_dir" \
+    >"$stdout" 2>"$stderr"
+  status=$?
 
   if [[ "$status" -eq "$expected" ]]; then
     printf 'PASS [%d/41] %s\n' "$index" "${target#"$ROOT/"}"
