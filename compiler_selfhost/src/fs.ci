@@ -10,6 +10,10 @@ def file_exists(path: &const String) -> bool:
     return access(path, 0) == 0
 
 
+def is_executable(path: &const String) -> bool:
+    return access(path, 1) == 0
+
+
 def ensure_dir(path: &const String) -> bool:
     if len(path) == 0:
         return true

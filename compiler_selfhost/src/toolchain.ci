@@ -7,6 +7,7 @@ extern import "stdlib.h"
 extern "C":
     def cinder_process_result_drop_raw(value: *void) -> void
     def getenv(name: const char*) -> *char
+    def realpath(path: const char*, resolved_path: *char) -> *char
 
 
 struct ToolchainResult:
@@ -250,7 +251,8 @@ def runtime_root(executable_path: &const String) -> String:
     if has_runtime(&runtime):
         return runtime[0:len(runtime)]
 
-    binary_dir = fs.parent_dir(executable_path)
+    resolved_executable = resolve_executable_path(executable_path)
+    binary_dir = fs.parent_dir(&resolved_executable)
     candidate = fs.join_path(&binary_dir, &runtime)
     if has_runtime(&candidate):
         return candidate[0:len(candidate)]
@@ -271,6 +273,44 @@ def runtime_root(executable_path: &const String) -> String:
         return candidate[0:len(candidate)]
 
     return runtime[0:len(runtime)]
+
+
+def resolve_executable_path(executable_path: &const String) -> String:
+    if fs.last_slash(executable_path) >= 0:
+        return canonical_path(executable_path)
+
+    configured = getenv("PATH")
+    if configured == null:
+        return executable_path[0:len(executable_path)]
+
+    search_path = String(configured)
+    start: usize = 0
+    while start <= len(search_path):
+        end = start
+        while end < len(search_path) and search_path.byte_at(end) != 58:
+            end += 1
+
+        directory: String = "."
+        if end > start:
+            directory = search_path[start:end]
+        candidate = fs.join_path(&directory, executable_path)
+        if fs.is_executable(&candidate):
+            return canonical_path(&candidate)
+
+        if end >= len(search_path):
+            break
+        start = end + 1
+
+    return executable_path[0:len(executable_path)]
+
+
+def canonical_path(path: &const String) -> String:
+    resolved = realpath(path, null)
+    if resolved == null:
+        return path[0:len(path)]
+    result = String(resolved)
+    free(resolved)
+    return result
 
 
 def has_runtime(root: &const String) -> bool:
