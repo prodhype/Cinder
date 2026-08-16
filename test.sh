@@ -3,6 +3,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOOTSTRAP_ROOT="${CINDER_BOOTSTRAP_DIR:-$ROOT/.cinder/bootstrap}"
+if [[ "$BOOTSTRAP_ROOT" != /* ]]; then
+  BOOTSTRAP_ROOT="$(pwd)/$BOOTSTRAP_ROOT"
+fi
+export CINDER_BOOTSTRAP_DIR="$BOOTSTRAP_ROOT"
 COMPILER="$BOOTSTRAP_ROOT/cinder-gen2"
 RUNNER="$ROOT/.cinder/cinder-native-tests"
 RUNNER_BUILD="$ROOT/.cinder/native-test-runner-build"

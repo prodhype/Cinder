@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_ROOT="${CINDER_BOOTSTRAP_DIR:-$ROOT/.cinder/bootstrap}"
+if [[ "$BUILD_ROOT" != /* ]]; then
+  BUILD_ROOT="$(pwd)/$BUILD_ROOT"
+fi
 PROJECT="$ROOT/compiler_selfhost"
 SUMS="$ROOT/bootstrap/SHA256SUMS"
 
