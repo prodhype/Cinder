@@ -12,7 +12,11 @@ RUNNER="$ROOT/.cinder/cinder-native-tests"
 RUNNER_BUILD="$ROOT/.cinder/native-test-runner-build"
 
 verify_direct_build() {
+  local direct_cc="${CC:-cc}"
   local sources=()
+  if [[ -n "${CC:-}" ]]; then
+    direct_cc="$BOOTSTRAP_ROOT/cc-wrapper"
+  fi
   while IFS= read -r source; do
     sources+=("$source")
   done < <(
@@ -23,7 +27,7 @@ verify_direct_build() {
     LC_ALL=C sort
   )
 
-  "${CC:-cc}" \
+  "$direct_cc" \
     -std=c11 \
     -w \
     -O2 \

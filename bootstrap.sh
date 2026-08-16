@@ -8,7 +8,6 @@ if [[ "$BUILD_ROOT" != /* ]]; then
 fi
 PROJECT="$ROOT/compiler_selfhost"
 SUMS="$ROOT/bootstrap/SHA256SUMS"
-BOOTSTRAP_CC="${CC:-cc}"
 
 require_macos_version() {
   local minimum="15.4"
@@ -129,11 +128,18 @@ rm -rf "$BUILD_ROOT"
 mkdir -p "$BUILD_ROOT"
 cd "$ROOT"
 
-"$SEED" build --cc "$BOOTSTRAP_CC" "$PROJECT" \
+SEED_CC="${CC:-cc}"
+if [[ -n "${CC:-}" ]]; then
+  SEED_CC="$BUILD_ROOT/cc-wrapper"
+  printf '#!/bin/sh\nexec %s "$@"\n' "$CC" > "$SEED_CC"
+  chmod +x "$SEED_CC"
+fi
+
+"$SEED" build --cc "$SEED_CC" "$PROJECT" \
   -o "$BUILD_ROOT/cinder-gen1" \
   --build-dir "$BUILD_ROOT/gen1-build"
 
-"$BUILD_ROOT/cinder-gen1" build --cc "$BOOTSTRAP_CC" "$PROJECT" \
+"$BUILD_ROOT/cinder-gen1" build "$PROJECT" \
   -o "$BUILD_ROOT/cinder-gen2" \
   --build-dir "$BUILD_ROOT/gen2-build"
 

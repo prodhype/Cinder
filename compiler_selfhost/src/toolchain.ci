@@ -191,11 +191,51 @@ def append_compiler(command: &List[String], compiler: &const String) -> void:
     configured = getenv("CC")
     if configured != null:
         environment_compiler = String(configured)
-        if len(environment_compiler) > 0:
-            command.append(environment_compiler)
+        if append_compiler_command(command, &environment_compiler):
             return
 
     command.append("cc")
+
+
+def append_compiler_command(command: &List[String], value: &const String) -> bool:
+    index: usize = 0
+    appended = false
+    while index < len(value):
+        while index < len(value) and compiler_command_space(value.byte_at(index)):
+            index += 1
+        if index >= len(value):
+            break
+
+        builder = StringBuilder()
+        in_single_quote = false
+        in_double_quote = false
+        while index < len(value):
+            byte = value.byte_at(index)
+            if byte == 39 and not in_double_quote:
+                in_single_quote = not in_single_quote
+                index += 1
+                continue
+            if byte == 34 and not in_single_quote:
+                in_double_quote = not in_double_quote
+                index += 1
+                continue
+            if byte == 92 and not in_single_quote and index + 1 < len(value):
+                index += 1
+                builder.append_char(cast[char](value.byte_at(index)))
+                index += 1
+                continue
+            if compiler_command_space(byte) and not in_single_quote and not in_double_quote:
+                break
+            builder.append_char(cast[char](byte))
+            index += 1
+
+        command.append(builder.finish())
+        appended = true
+    return appended
+
+
+def compiler_command_space(byte: u8) -> bool:
+    return byte == 32 or byte == 9 or byte == 10 or byte == 13
 
 
 def append_common_flags(
