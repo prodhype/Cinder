@@ -19,7 +19,7 @@ jobs:
           - platform: Linux x86_64
             os: ubuntu-latest
           - platform: macOS ARM64
-            os: macos-latest
+            os: macos-15
     runs-on: ${{ matrix.os }}
     defaults:
       run:

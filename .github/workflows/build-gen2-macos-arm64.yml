@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     name: Build gen2 macOS ARM64
-    runs-on: macos-latest
+    runs-on: macos-15
     defaults:
       run:
         shell: bash
