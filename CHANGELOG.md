@@ -9,7 +9,8 @@ The seed builds gen1, gen1 builds gen2, and bootstrap requires an exact match
 between their generated-C trees. The canonical implementation remains the
 Cinder source under `compiler_selfhost/`; seed checksums and provenance are
 tracked under `bootstrap/`. The Linux x86_64 seed requires glibc 2.34 or newer,
-and bootstrap now rejects older or non-glibc hosts before executing it.
+and the macOS ARM64 seed requires macOS 15.4 or newer. Bootstrap rejects older
+or incompatible hosts before executing either binary.
 
 The Python stage0 compiler, its packaging, implementation-specific pytest
 suite, and incremental parity projects have been removed. Native Cinder tests,

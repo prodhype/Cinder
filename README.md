@@ -30,6 +30,8 @@ Current gen2 artifacts are:
 - `cinder-gen2-linux-arm64`
 - `cinder-gen2-linux-armv7`
 
+The macOS ARM64 bootstrap seed requires macOS 15.4 or newer.
+
 The Linux x86_64 seed and compiler bundle require glibc 2.34 or newer. Ubuntu
 22.04, Debian 12, and RHEL 9 meet that baseline; Ubuntu 20.04, Debian 11, and
 RHEL 8 do not. Other C libraries such as musl are not supported by that binary.
@@ -46,8 +48,8 @@ Cinder checks `CC` first.
 Then it checks common compiler commands for the host platform.
 Select a specific compiler with `--cc`.
 
-To build the compiler from source on macOS ARM64 or Linux x86_64 with glibc
-2.34 or newer, clone the repository, install a C11 compiler, and run:
+To build the compiler from source on macOS ARM64 15.4 or newer, or Linux x86_64
+with glibc 2.34 or newer, clone the repository, install a C11 compiler, and run:
 
 ```sh
 ./bootstrap.sh
@@ -55,8 +57,8 @@ To build the compiler from source on macOS ARM64 or Linux x86_64 with glibc
 
 The script verifies the platform seed against `bootstrap/SHA256SUMS`, uses it to
 build gen1, uses gen1 to build gen2, and requires the two generated-C trees to
-match exactly. On Linux it checks the glibc version before executing the seed.
-Outputs are written under `.cinder/bootstrap/`.
+match exactly. Before executing a seed, it checks the macOS deployment baseline
+or Linux glibc version. Outputs are written under `.cinder/bootstrap/`.
 
 See [`docs/self-hosting.md`](docs/self-hosting.md) and
 [`bootstrap/PROVENANCE.md`](bootstrap/PROVENANCE.md) for the trust boundary and

@@ -6,6 +6,40 @@ BUILD_ROOT="${CINDER_BOOTSTRAP_DIR:-$ROOT/.cinder/bootstrap}"
 PROJECT="$ROOT/compiler_selfhost"
 SUMS="$ROOT/bootstrap/SHA256SUMS"
 
+require_macos_version() {
+  local minimum="15.4"
+  local reported
+  local major
+  local minor
+
+  if ! command -v sw_vers >/dev/null 2>&1; then
+    printf 'error: the macOS ARM64 seed requires macOS %s or newer\n' \
+      "$minimum" >&2
+    printf 'error: cannot detect macOS because sw_vers is unavailable\n' >&2
+    exit 1
+  fi
+
+  reported="$(sw_vers -productVersion 2>/dev/null || true)"
+  if [[ ! "$reported" =~ ^([0-9]+)\.([0-9]+) ]]; then
+    printf 'error: the macOS ARM64 seed requires macOS %s or newer\n' \
+      "$minimum" >&2
+    printf 'error: detected an unrecognized macOS version: %s\n' \
+      "${reported:-unknown}" >&2
+    exit 1
+  fi
+
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+  if ((major < 15 || (major == 15 && minor < 4))); then
+    printf 'error: the macOS ARM64 seed requires macOS %s or newer' \
+      "$minimum" >&2
+    printf ' (detected macOS %s)\n' "$reported" >&2
+    printf '%s\n' \
+      'error: use a newer host or rebuild the seed with an older deployment target' >&2
+    exit 1
+  fi
+}
+
 require_linux_glibc() {
   local minimum="2.34"
   local reported
@@ -42,6 +76,7 @@ require_linux_glibc() {
 
 case "$(uname -s):$(uname -m)" in
   Darwin:arm64)
+    require_macos_version
     PLATFORM="darwin-arm64"
     ;;
   Linux:x86_64 | Linux:amd64)

@@ -20,6 +20,9 @@ Normal compiler development changes the Cinder sources, not these binaries.
 - Host: macOS 26.6.1 (25G76), arm64
 - Python used by stage0: CPython 3.14.3
 - C toolchain: Apple clang 17.0.0 (`clang-1700.0.13.3`)
+- Minimum host OS: macOS 15.4
+- Mach-O deployment target: `15.4.0` in `LC_BUILD_VERSION` (verified with
+  `otool -l darwin-arm64/cinder`)
 
 ## linux-x86_64
 
@@ -47,11 +50,11 @@ Normal compiler development changes the Cinder sources, not these binaries.
 ## Verification
 
 `bootstrap.sh` verifies the selected seed against `SHA256SUMS` before executing
-it. On Linux x86_64 it also requires glibc 2.34 or newer and rejects unsupported
-C libraries before invoking the dynamically linked seed. The seed then builds
-gen1, gen1 builds gen2, and the generated C trees from those two builds must
-match exactly. Linked binaries are not compared because system linkers may add
-nondeterministic metadata.
+it. On macOS ARM64 it requires macOS 15.4 or newer. On Linux x86_64 it requires
+glibc 2.34 or newer and rejects unsupported C libraries before invoking the
+dynamically linked seed. The seed then builds gen1, gen1 builds gen2, and the
+generated C trees from those two builds must match exactly. Linked binaries are
+not compared because system linkers may add nondeterministic metadata.
 
 ## Updating a seed
 
