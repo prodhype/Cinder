@@ -14,7 +14,7 @@ The host times that native `-O2` loop against an equivalent Rust `--release`
 implementation — a fair native-vs-native check (often near parity), not a
 CPython-style win.
 
-This example is manual; it is not part of the gen3 smoke suite.
+This example is manual; it is not part of the native smoke suite.
 
 ## Layout
 
@@ -28,7 +28,7 @@ build.sh            # emit → compile -O2 → cargo build --release → run
 
 ## Prerequisites
 
-- `cinder` on `PATH`, or this repo importable via `PYTHONPATH` (the script falls back to `python3 -m cinder`)
+- `cinder` on `PATH`, or set `CINDER` to a native compiler path
 - A C toolchain (`cc`)
 - Rust with `cargo` (edition 2021). If you use rustup, ensure `~/.cargo/bin` is on
   `PATH` (`source "$HOME/.cargo/env"`), or rely on `build.sh`, which adds that
@@ -64,7 +64,7 @@ The fingerprint is `sum(offset + size)` over the three `i32` fields
 What the script does:
 
 1. `cinder emit-project lib.ci -o generated`
-2. Compile `generated/cinder_gen/lib.c` and `cinder/runtime/cinder_runtime.c` to objects under `build/` with `-O2`
+2. Compile `generated/cinder_gen/lib.c` and `runtime/cinder_runtime.c` to objects under `build/` with `-O2`
 3. `cargo build --release` the Rust host (build.rs links `build/lib.o` and `build/cinder_runtime.o`)
 4. Run the binary
 

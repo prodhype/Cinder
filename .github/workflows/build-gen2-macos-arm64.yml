@@ -1,0 +1,47 @@
+name: Build Gen2 macOS ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build gen2 macOS ARM64
+    runs-on: macos-15
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Bootstrap and test
+        run: ./test.sh
+
+      - name: Bundle compiler and runtime
+        run: |
+          set -euxo pipefail
+          bundle=dist/cinder-gen2-macos-arm64
+          mkdir -p "$bundle/runtime"
+          cp .cinder/bootstrap/cinder-gen2 "$bundle/cinder"
+          cp runtime/cinder_runtime.c runtime/cinder_runtime.h "$bundle/runtime/"
+          chmod +x "$bundle/cinder"
+          file "$bundle/cinder"
+          archive="$(basename "$bundle").tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "dist/$archive" -C dist "$(basename "$bundle")"
+          (
+            cd dist
+            shasum -a 256 "$archive" > "$archive.sha256"
+          )
+
+      - name: Upload gen2 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinder-gen2-macos-arm64
+          path: |
+            dist/cinder-gen2-macos-arm64.tar.gz
+            dist/cinder-gen2-macos-arm64.tar.gz.sha256
+          if-no-files-found: error

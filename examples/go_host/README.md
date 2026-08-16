@@ -14,7 +14,7 @@ The host times that native `-O2` loop against an equivalent optimized Go
 implementation — a fair native-vs-native check (often near parity), not a
 CPython-style win.
 
-This example is manual; it is not part of the gen3 smoke suite.
+This example is manual; it is not part of the native smoke suite.
 
 ## Layout
 
@@ -27,7 +27,7 @@ build.sh         # emit → compile -O2 → go build → run
 
 ## Prerequisites
 
-- `cinder` on `PATH`, or this repo importable via `PYTHONPATH` (the script falls back to `python3 -m cinder`)
+- `cinder` on `PATH`, or set `CINDER` to a native compiler path
 - A C toolchain (`cc`)
 - Go 1.22+ with cgo enabled
 
@@ -58,7 +58,7 @@ speedup: 1.2x (go / cinder)
 What the script does:
 
 1. `cinder emit-project lib.ci -o generated`
-2. Compile `generated/cinder_gen/lib.c` and `cinder/runtime/cinder_runtime.c` to objects under `build/` with `-O2`
+2. Compile `generated/cinder_gen/lib.c` and `runtime/cinder_runtime.c` to objects under `build/` with `-O2`
 3. `go build` the cgo host into `build/go_host`
 4. Run the binary
 

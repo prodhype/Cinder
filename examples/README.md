@@ -55,11 +55,12 @@ index rather than carrying a flipped sign across iterations.
 `physics.ci` demonstrates common mechanics formulas with the checked math module: energy,
 momentum, force, kinematics, projectile motion, pendulum period, and centripetal acceleration.
 
-`write_jpg.ci` demonstrates import-free `open`, the `with ... as ...:` statement, and
-`File.write` by creating a small valid JPEG on disk.
+`write_jpg.ci` demonstrates `open`, the `with ... as ...:` statement, and
+`File.write` by creating a small valid JPEG under `.cinder/example-output/`.
 
 `read_file.ci` demonstrates Source-side File I/O: `File.read` into a fixed buffer,
 `File.read_line` with owned string cleanup, and `File.read_all` into a `List[u8]`.
+Its temporary text file also lives under `.cinder/example-output/`.
 
 `defer.ci` demonstrates explicit allocation and cleanup before a returned value leaves scope.
 

@@ -1,4 +1,10 @@
 .PLAN
-__pycache__/
 .DS_Store
 .cinder/
+build/
+dist/
+__pycache__/
+*.pyc
+/cinder_sample.*
+/aggregate_ownership*.txt
+/aggregate_ownership.log

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Native bootstrap
+
+Cinder now bootstraps from checked-in macOS ARM64 and Linux x86_64 native seeds.
+The seed builds gen1, gen1 builds gen2, and bootstrap requires an exact match
+between their generated-C trees. The canonical implementation remains the
+Cinder source under `compiler_selfhost/`; seed checksums and provenance are
+tracked under `bootstrap/`. The Linux x86_64 seed requires glibc 2.34 or newer,
+and the macOS ARM64 seed requires macOS 15.4 or newer. Bootstrap rejects older
+or incompatible hosts before executing either binary.
+
+The Python stage0 compiler, its packaging, implementation-specific pytest
+suite, and incremental parity projects have been removed. Native Cinder tests,
+direct generated-C compilation, runtime-independence checks, and the 41-target
+example smoke suite now run through `./test.sh`. The C runtime has moved to the
+top-level `runtime/` directory.
+
 ### Owned UTF-8 text
 
 `String` becomes Cinder's primary text type. Ordinary literals produce move-only UTF-8 Strings with deterministic drop. Their runtime shape is conceptually data, byte length, and capacity; static literals use copy-on-write storage. Independent copies use explicit `clone`, addressable values support `append`, `reserve`, and `clear`, and `+` borrows its operands to return a fresh String.

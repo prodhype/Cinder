@@ -1,0 +1,58 @@
+name: Build Gen2 Linux ARMv7
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Cross-build gen2 Linux ARMv7
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install ARMv7 toolchain
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y file gcc-arm-linux-gnueabihf qemu-user
+
+      - name: Bootstrap host compiler
+        run: ./bootstrap.sh
+
+      - name: Cross-build compiler
+        run: |
+          set -euxo pipefail
+          bundle=dist/cinder-gen2-linux-armv7
+          mkdir -p "$bundle/runtime"
+          ./.cinder/bootstrap/cinder-gen2 build compiler_selfhost \
+            --cc arm-linux-gnueabihf-gcc \
+            -o "$bundle/cinder" \
+            --build-dir build/gen2-armv7
+          cp runtime/cinder_runtime.c runtime/cinder_runtime.h "$bundle/runtime/"
+          chmod +x "$bundle/cinder"
+          file "$bundle/cinder"
+          qemu-arm -L /usr/arm-linux-gnueabihf \
+            "$bundle/cinder" check examples/module_project
+          archive="$(basename "$bundle").tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "dist/$archive" -C dist "$(basename "$bundle")"
+          (
+            cd dist
+            sha256sum "$archive" > "$archive.sha256"
+          )
+
+      - name: Upload gen2 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinder-gen2-linux-armv7
+          path: |
+            dist/cinder-gen2-linux-armv7.tar.gz
+            dist/cinder-gen2-linux-armv7.tar.gz.sha256
+          if-no-files-found: error

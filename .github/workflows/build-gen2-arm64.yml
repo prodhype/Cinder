@@ -1,0 +1,58 @@
+name: Build Gen2 Linux ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Cross-build gen2 Linux ARM64
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install ARM64 toolchain
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y file gcc-aarch64-linux-gnu qemu-user
+
+      - name: Bootstrap host compiler
+        run: ./bootstrap.sh
+
+      - name: Cross-build compiler
+        run: |
+          set -euxo pipefail
+          bundle=dist/cinder-gen2-linux-arm64
+          mkdir -p "$bundle/runtime"
+          ./.cinder/bootstrap/cinder-gen2 build compiler_selfhost \
+            --cc aarch64-linux-gnu-gcc \
+            -o "$bundle/cinder" \
+            --build-dir build/gen2-arm64
+          cp runtime/cinder_runtime.c runtime/cinder_runtime.h "$bundle/runtime/"
+          chmod +x "$bundle/cinder"
+          file "$bundle/cinder"
+          qemu-aarch64 -L /usr/aarch64-linux-gnu \
+            "$bundle/cinder" check examples/module_project
+          archive="$(basename "$bundle").tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "dist/$archive" -C dist "$(basename "$bundle")"
+          (
+            cd dist
+            sha256sum "$archive" > "$archive.sha256"
+          )
+
+      - name: Upload gen2 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cinder-gen2-linux-arm64
+          path: |
+            dist/cinder-gen2-linux-arm64.tar.gz
+            dist/cinder-gen2-linux-arm64.tar.gz.sha256
+          if-no-files-found: error

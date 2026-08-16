@@ -7,7 +7,9 @@ This extension adds Cinder language support to Cursor and VS Code:
   decorators, and operators
 - bracket pairing, comment toggling, folding, and colon-based indentation
 
-The compiler lexer in `../../cinder/lexer.py` is the source of truth for the grammar.
+The compiler lexer in `../../compiler_selfhost/src/lexer.ci` and token
+definitions in `../../compiler_selfhost/src/token.ci` are the source of truth
+for the grammar.
 
 ## Install in Cursor
 

@@ -1,3 +1,12 @@
+import process
+
+
+def ensure_output_dir() -> bool:
+    command: List[String] = ["mkdir", "-p", ".cinder/example-output"]
+    result = process.run(command)
+    return result.exit_code == 0
+
+
 def write_jpeg(file: &File) -> bool:
     # Minimal valid 1x1 grayscale JFIF image, written in marker order.
     soi: u8[2] = [0xFF, 0xD8]
@@ -65,7 +74,11 @@ def write_jpeg(file: &File) -> bool:
 
 
 def main() -> i32:
-    path: String = "cinder_sample.jpg"
+    if not ensure_output_dir():
+        print("failed to create .cinder/example-output")
+        return 1
+
+    path: String = ".cinder/example-output/cinder_sample.jpg"
 
     with open(path, "wb") as file:
         if not write_jpeg(file):

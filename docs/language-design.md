@@ -851,10 +851,11 @@ C headers remain available through `extern import`.
 
 ## Compiler architecture
 
-The compiler requires Python 3.14+ and emits readable C11.
-Python remains the stage0 implementation. The native self-hosted chain lives in
-`compiler_selfhost/` and bootstraps to gen3. Bootstrap steps and the ownership
-constraints that still apply are documented in
+The compiler is implemented in Cinder and emits readable C11. A checked-in
+native seed builds gen1, then gen1 builds the fixed-point gen2 compiler. The
+bootstrap and test paths require only a supported POSIX host and a C11
+toolchain. Bootstrap steps, seed trust, and the ownership constraints that still
+apply are documented in
 [`docs/self-hosting.md`](self-hosting.md).
 
 ```text
@@ -872,26 +873,22 @@ source
 The implementation has these core components:
 
 ```text
-cinder/
-    __init__.py
-    __main__.py
-    lexer.py
-    parser.py
-    ast.py
-    types.py
-    symbols.py
-    checker.py
-    ir.py
-    codegen_c.py
-    stdlib.py
-    project.py
-    diagnostics.py
-    compiler.py
-    toolchain.py
-    cli.py
-    runtime/
-        cinder_runtime.h
-        cinder_runtime.c
+bootstrap/
+    darwin-arm64/cinder
+    linux-x86_64/cinder
+compiler_selfhost/src/
+    lexer.ci
+    parser.ci
+    types.ci
+    symbols.ci
+    checker.ci
+    project.ci
+    toolchain.ci
+    emit_project.ci
+    compiler_main.ci
+runtime/
+    cinder_runtime.h
+    cinder_runtime.c
 ```
 
 The CLI accepts a source file, project directory, or manifest:

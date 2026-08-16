@@ -2,9 +2,12 @@ import process
 import fs
 import manifest
 
+extern import "stdlib.h"
 
 extern "C":
     def cinder_process_result_drop_raw(value: *void) -> void
+    def getenv(name: const char*) -> *char
+    def realpath(path: const char*, resolved_path: *char) -> *char
 
 
 struct ToolchainResult:
@@ -181,10 +184,58 @@ def link_command_for(
 
 
 def append_compiler(command: &List[String], compiler: &const String) -> void:
-    if len(compiler) == 0:
-        command.append("cc")
-    else:
+    if len(compiler) > 0:
         command.append(compiler[0:len(compiler)])
+        return
+
+    configured = getenv("CC")
+    if configured != null:
+        environment_compiler = String(configured)
+        if append_compiler_command(command, &environment_compiler):
+            return
+
+    command.append("cc")
+
+
+def append_compiler_command(command: &List[String], value: &const String) -> bool:
+    index: usize = 0
+    appended = false
+    while index < len(value):
+        while index < len(value) and compiler_command_space(value.byte_at(index)):
+            index += 1
+        if index >= len(value):
+            break
+
+        builder = StringBuilder()
+        in_single_quote = false
+        in_double_quote = false
+        while index < len(value):
+            byte = value.byte_at(index)
+            if byte == 39 and not in_double_quote:
+                in_single_quote = not in_single_quote
+                index += 1
+                continue
+            if byte == 34 and not in_single_quote:
+                in_double_quote = not in_double_quote
+                index += 1
+                continue
+            if byte == 92 and not in_single_quote and index + 1 < len(value):
+                index += 1
+                builder.append_char(cast[char](value.byte_at(index)))
+                index += 1
+                continue
+            if compiler_command_space(byte) and not in_single_quote and not in_double_quote:
+                break
+            builder.append_char(cast[char](byte))
+            index += 1
+
+        command.append(builder.finish())
+        appended = true
+    return appended
+
+
+def compiler_command_space(byte: u8) -> bool:
+    return byte == 32 or byte == 9 or byte == 10 or byte == 13
 
 
 def append_common_flags(
@@ -236,39 +287,70 @@ def decimal(value: usize) -> String:
 
 
 def runtime_root(executable_path: &const String) -> String:
-    bundled: String = "runtime"
-    if has_runtime(&bundled):
-        return bundled[0:len(bundled)]
+    runtime: String = "runtime"
+    if has_runtime(&runtime):
+        return runtime[0:len(runtime)]
 
-    relative: String = "cinder/runtime"
-    if has_runtime(&relative):
-        return relative[0:len(relative)]
-
-    binary_dir = fs.parent_dir(executable_path)
-    candidate = fs.join_path(&binary_dir, &bundled)
-    if has_runtime(&candidate):
-        return candidate[0:len(candidate)]
-
-    candidate = fs.join_path(&binary_dir, &relative)
+    resolved_executable = resolve_executable_path(executable_path)
+    binary_dir = fs.parent_dir(&resolved_executable)
+    candidate = fs.join_path(&binary_dir, &runtime)
     if has_runtime(&candidate):
         return candidate[0:len(candidate)]
 
     parent = fs.parent_dir(&binary_dir)
-    candidate = fs.join_path(&parent, &relative)
+    candidate = fs.join_path(&parent, &runtime)
     if has_runtime(&candidate):
         return candidate[0:len(candidate)]
 
     grandparent = fs.parent_dir(&parent)
-    candidate = fs.join_path(&grandparent, &relative)
+    candidate = fs.join_path(&grandparent, &runtime)
     if has_runtime(&candidate):
         return candidate[0:len(candidate)]
 
     great_grandparent = fs.parent_dir(&grandparent)
-    candidate = fs.join_path(&great_grandparent, &relative)
+    candidate = fs.join_path(&great_grandparent, &runtime)
     if has_runtime(&candidate):
         return candidate[0:len(candidate)]
 
-    return relative[0:len(relative)]
+    return runtime[0:len(runtime)]
+
+
+def resolve_executable_path(executable_path: &const String) -> String:
+    if fs.last_slash(executable_path) >= 0:
+        return canonical_path(executable_path)
+
+    configured = getenv("PATH")
+    if configured == null:
+        return executable_path[0:len(executable_path)]
+
+    search_path = String(configured)
+    start: usize = 0
+    while start <= len(search_path):
+        end = start
+        while end < len(search_path) and search_path.byte_at(end) != 58:
+            end += 1
+
+        directory: String = "."
+        if end > start:
+            directory = search_path[start:end]
+        candidate = fs.join_path(&directory, executable_path)
+        if fs.is_executable(&candidate):
+            return canonical_path(&candidate)
+
+        if end >= len(search_path):
+            break
+        start = end + 1
+
+    return executable_path[0:len(executable_path)]
+
+
+def canonical_path(path: &const String) -> String:
+    resolved = realpath(path, null)
+    if resolved == null:
+        return path[0:len(path)]
+    result = String(resolved)
+    free(resolved)
+    return result
 
 
 def has_runtime(root: &const String) -> bool:
