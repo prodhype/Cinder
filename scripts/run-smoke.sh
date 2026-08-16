@@ -4,9 +4,14 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPILER="${1:-$ROOT/.cinder/bootstrap/cinder-gen2}"
 WORK="$ROOT/.cinder/native-smoke"
+TIMEOUT_SECONDS="${CINDER_SMOKE_TIMEOUT_SECONDS:-60}"
 
 if [[ ! -x "$COMPILER" ]]; then
   printf 'error: compiler is missing or not executable: %s\n' "$COMPILER" >&2
+  exit 2
+fi
+if [[ ! "$TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'error: CINDER_SMOKE_TIMEOUT_SECONDS must be a positive integer\n' >&2
   exit 2
 fi
 
@@ -21,6 +26,44 @@ cleanup_example_outputs() {
   rm -rf "$ROOT/.cinder/example-output"
 }
 trap cleanup_example_outputs EXIT
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  local marker="$2"
+  shift 2
+
+  rm -f "$marker"
+  "$@" &
+  local command_pid=$!
+
+  (
+    sleep "$timeout_seconds"
+    if kill -0 "$command_pid" 2>/dev/null; then
+      : >"$marker"
+      printf 'smoke target timed out after %s seconds\n' "$timeout_seconds" >&2
+      if command -v pkill >/dev/null 2>&1; then
+        pkill -TERM -P "$command_pid" 2>/dev/null || true
+      fi
+      kill -TERM "$command_pid" 2>/dev/null || true
+      sleep 2
+      if command -v pkill >/dev/null 2>&1; then
+        pkill -KILL -P "$command_pid" 2>/dev/null || true
+      fi
+      kill -KILL "$command_pid" 2>/dev/null || true
+    fi
+  ) &
+  local timer_pid=$!
+
+  wait "$command_pid"
+  local status=$?
+  kill "$timer_pid" 2>/dev/null || true
+  wait "$timer_pid" 2>/dev/null || true
+
+  if [[ -e "$marker" ]]; then
+    return 124
+  fi
+  return "$status"
+}
 
 targets=("$ROOT"/examples/*.ci)
 targets+=(
@@ -42,6 +85,7 @@ for target in "${targets[@]}"; do
   build_dir="$WORK/$name-build"
   stdout="$WORK/$name.stdout"
   stderr="$WORK/$name.stderr"
+  timeout_marker="$WORK/$name.timeout"
   expected=0
   input=""
 
@@ -64,13 +108,15 @@ for target in "${targets[@]}"; do
 
   if [[ -n "$input" ]]; then
     printf '%s' "$input" |
-      "$COMPILER" run "$target" \
+      run_with_timeout "$TIMEOUT_SECONDS" "$timeout_marker" \
+        "$COMPILER" run "$target" \
         -o "$output" \
         --build-dir "$build_dir" \
         >"$stdout" 2>"$stderr"
     status="${PIPESTATUS[1]}"
   else
-    "$COMPILER" run "$target" \
+    run_with_timeout "$TIMEOUT_SECONDS" "$timeout_marker" \
+      "$COMPILER" run "$target" \
       -o "$output" \
       --build-dir "$build_dir" \
       >"$stdout" 2>"$stderr"
