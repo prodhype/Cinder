@@ -261,24 +261,54 @@ def test_context_capsule(state: &TestState) -> void:
 
 
 def test_impact_report(state: &TestState) -> void:
-    target = state.root + "/tests/cases/semantic_context/src/model.ci:2"
-    command: List[String] = [
+    nominal_target = state.root + "/tests/cases/semantic_context/src/model.ci:2"
+    field_target = state.root + "/tests/cases/semantic_context/src/model.ci:3"
+    unrelated_method_target = state.root + "/tests/cases/semantic_context/src/model.ci:14"
+    nominal_command: List[String] = [
         state.compiler.clone(),
         "impact",
-        target,
+        nominal_target,
     ]
-    result = process.run(command)
+    field_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        field_target.clone(),
+    ]
+    field_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        field_target,
+    ]
+    unrelated_method_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        unrelated_method_target,
+    ]
+    nominal = process.run(nominal_command)
+    field_context = process.run(field_context_command)
+    field_impact = process.run(field_impact_command)
+    unrelated_method = process.run(unrelated_method_command)
     ok = (
-        result.exit_code == 0
-        and contains(&result.stdout, "model::struct:CacheEntry")
-        and contains(&result.stdout, "TYPE / MEMBER CONSUMERS")
-        and contains(&result.stdout, "cache::function:cache_get")
-        and contains(&result.stdout, "source-level layout sensitive")
-        and contains(&result.stdout, "emitted runtime reflection metadata")
+        nominal.exit_code == 0
+        and field_context.exit_code == 0
+        and field_impact.exit_code == 0
+        and unrelated_method.exit_code == 0
+        and contains(&nominal.stdout, "model::struct:CacheEntry")
+        and contains(&nominal.stdout, "TYPE / MEMBER CONSUMERS")
+        and contains(&nominal.stdout, "cache::function:cache_get")
+        and contains(&nominal.stdout, "source-level layout sensitive")
+        and contains(&nominal.stdout, "emitted runtime reflection metadata")
+        and contains(&field_context.stdout, "model::field:CacheEntry.value")
+        and contains(&field_context.stdout, "reflected: yes")
+        and contains(&field_impact.stdout, "emitted runtime reflection metadata")
+        and not contains(&unrelated_method.stdout, "emitted runtime reflection metadata")
     )
     expect(state, "impact reports semantic consumers and exposure", ok)
     if not ok:
-        report_process_failure(&result.stdout, &result.stderr)
+        report_process_failure(&nominal.stdout, &nominal.stderr)
+        report_process_failure(&field_context.stdout, &field_context.stderr)
+        report_process_failure(&field_impact.stdout, &field_impact.stderr)
+        report_process_failure(&unrelated_method.stdout, &unrelated_method.stderr)
 
 
 def test_import_call_resolution(state: &TestState) -> void:
@@ -368,6 +398,11 @@ def test_semantic_diff(state: &TestState) -> void:
         source_path[0:len(source_path)],
         semantic_diff_stress_source(96, false),
     )
+    selected_path = source_dir + "/selected.ci"
+    write_test_text(
+        selected_path[0:len(selected_path)],
+        "def selected(value: i32) -> i32:\n    return value\n",
+    )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
     commit: List[String] = [
@@ -390,6 +425,42 @@ def test_semantic_diff(state: &TestState) -> void:
         expect(state, "semantic-diff reports canonical changes", false)
         report_process_failure(&committed.stdout, &committed.stderr)
         return
+    standalone_repository = state.workspace + "/semantic-diff-standalone"
+    standalone_create: List[String] = ["mkdir", "-p", standalone_repository.clone()]
+    if process.run(standalone_create).exit_code != 0:
+        expect(state, "semantic-diff reports canonical changes", false)
+        return
+    standalone_path = standalone_repository + "/selected.ci"
+    write_test_text(
+        standalone_path[0:len(standalone_path)],
+        "def selected(value: i32) -> i32:\n    return value\n",
+    )
+    standalone_init: List[String] = ["git", "-C", standalone_repository.clone(), "init", "-q"]
+    standalone_add: List[String] = ["git", "-C", standalone_repository.clone(), "add", "."]
+    standalone_commit: List[String] = [
+        "git",
+        "-C",
+        standalone_repository.clone(),
+        "-c",
+        "user.name=Cinder Tests",
+        "-c",
+        "user.email=cinder@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "baseline",
+    ]
+    standalone_initialized = process.run(standalone_init)
+    standalone_added = process.run(standalone_add)
+    standalone_committed = process.run(standalone_commit)
+    if (
+        standalone_initialized.exit_code != 0
+        or standalone_added.exit_code != 0
+        or standalone_committed.exit_code != 0
+    ):
+        expect(state, "semantic-diff reports canonical changes", false)
+        report_process_failure(&standalone_committed.stdout, &standalone_committed.stderr)
+        return
     write_test_text(
         source_path,
         semantic_diff_stress_source(97, true),
@@ -402,6 +473,22 @@ def test_semantic_diff(state: &TestState) -> void:
         repository.clone(),
     ]
     result = process.run(command)
+    selected_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        selected_path,
+    ]
+    selected = process.run(selected_command)
+    standalone_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        standalone_path,
+    ]
+    standalone = process.run(standalone_command)
     worktree_command: List[String] = [
         "git",
         "-C",
@@ -413,6 +500,8 @@ def test_semantic_diff(state: &TestState) -> void:
     worktrees = process.run(worktree_command)
     ok = (
         result.exit_code == 0
+        and selected.exit_code == 0
+        and standalone.exit_code == 0
         and worktrees.exit_code == 0
         and contains(&result.stdout, "schema: cinder-semantic-v1")
         and contains(&result.stdout, "+ added main::function:node_96")
@@ -421,12 +510,20 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "~ changed main::struct:LayoutStruct")
         and contains(&result.stdout, "~ changed main::class:LayoutClass")
         and contains(&result.stdout, "~ changed main::union:LayoutUnion")
+        and contains(&result.stdout, "~ changed main::enum:LayoutEnum")
+        and contains(&result.stdout, "~ changed main::variant:LayoutVariant")
         and contains(&result.stdout, "members: main::field:LayoutStruct.first, main::field:LayoutStruct.second -> main::field:LayoutStruct.second, main::field:LayoutStruct.first")
+        and contains(&result.stdout, "members: main::enum-member:LayoutEnum.first, main::enum-member:LayoutEnum.second -> main::enum-member:LayoutEnum.second, main::enum-member:LayoutEnum.first")
+        and contains(&result.stdout, "members: main::variant-case:LayoutVariant.First, main::variant-case:LayoutVariant.Second -> main::variant-case:LayoutVariant.Second, main::variant-case:LayoutVariant.First")
+        and contains(&selected.stdout, "NO SEMANTIC CHANGES")
+        and contains(&standalone.stdout, "NO SEMANTIC CHANGES")
         and not contains(&worktrees.stdout, "cinder-semantic-diff.")
     )
     expect(state, "semantic-diff reports canonical changes", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+        report_process_failure(&selected.stdout, &selected.stderr)
+        report_process_failure(&standalone.stdout, &standalone.stderr)
 
 
 def write_test_text(path: String, content: String) -> void:
@@ -465,6 +562,20 @@ def append_layout_fixture(builder: &StringBuilder, reverse_fields: bool) -> void
     append_layout_fields(builder, reverse_fields)
     builder.append("union LayoutUnion:\n")
     append_layout_fields(builder, reverse_fields)
+    builder.append("enum LayoutEnum:\n")
+    if reverse_fields:
+        builder.append("    second\n")
+        builder.append("    first\n\n\n")
+    else:
+        builder.append("    first\n")
+        builder.append("    second\n\n\n")
+    builder.append("variant LayoutVariant:\n")
+    if reverse_fields:
+        builder.append("    Second\n")
+        builder.append("    First(value: i32)\n\n\n")
+    else:
+        builder.append("    First(value: i32)\n")
+        builder.append("    Second\n\n\n")
 
 
 def append_layout_fields(builder: &StringBuilder, reverse_fields: bool) -> void:

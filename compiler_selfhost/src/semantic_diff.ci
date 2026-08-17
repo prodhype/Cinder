@@ -51,6 +51,23 @@ def semantic_diff_command(args: &const List[String]) -> i32:
         diff_error("failed to resolve project path within the Git repository")
         return 2
     project_prefix = trim_output(&prefix_result.stdout)
+    reference_project_path = project_prefix[0:len(project_prefix)]
+    if fs.ends_with(&options.project_path, ".ci"):
+        source_parent = fs.parent_dir(&options.project_path)
+        source_prefix_command: List[String] = [
+            "git",
+            "-C",
+            source_parent,
+            "rev-parse",
+            "--show-prefix",
+        ]
+        source_prefix_result = process.run(source_prefix_command)
+        if source_prefix_result.exit_code != 0:
+            diff_error("failed to resolve selected source path within the Git repository")
+            return 2
+        source_prefix = trim_output(&source_prefix_result.stdout)
+        source_name = fs.basename(&options.project_path)
+        reference_project_path = fs.join_path(&source_prefix, &source_name)
 
     temporary_command: List[String] = ["mktemp", "-d", "/tmp/cinder-semantic-diff.XXXXXX"]
     temporary_result = process.run(temporary_command)
@@ -82,8 +99,8 @@ def semantic_diff_command(args: &const List[String]) -> i32:
         return 2
 
     reference_path = workspace[0:len(workspace)]
-    if len(project_prefix) > 0:
-        reference_path = fs.join_path(&workspace, &project_prefix)
+    if len(reference_project_path) > 0:
+        reference_path = fs.join_path(&workspace, &reference_project_path)
     reference_result = analyze_diff_side(reference_path)
     cleanup_workspace(&repository_root, &workspace, true)
     if not reference_result.ok:

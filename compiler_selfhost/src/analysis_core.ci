@@ -239,7 +239,12 @@ def make_symbol_fact(
             type_name = declared_type
     signature = declaration_header(&module.source, &node)
     declaration_source = module.source[node.start:node.start + node.length]
-    reflected = has_decorator(arena, symbol.node, &module.source, "reflect")
+    reflected = symbol_is_reflected(
+        arena,
+        &checked.symbols,
+        &symbol,
+        &module.source,
+    )
     exported = has_decorator(arena, symbol.node, &module.source, "export")
     members = ordered_nominal_member_keys(
         module,
@@ -288,6 +293,8 @@ def ordered_nominal_member_keys(
         kind != symbols.SymbolKind.STRUCT
         and kind != symbols.SymbolKind.CLASS
         and kind != symbols.SymbolKind.UNION
+        and kind != symbols.SymbolKind.ENUM
+        and kind != symbols.SymbolKind.VARIANT
     ):
         return ""
     arena: &const syntax.SyntaxArena = &module.arena
@@ -302,11 +309,24 @@ def ordered_nominal_member_keys(
     for offset in range(0, node.child_count):
         child_id = children[node.first_child + offset]
         child = nodes[child_id.index]
-        if child.kind == syntax.SyntaxKind.FIELD_DECL:
+        member_kind = ""
+        if (
+            (
+                kind == symbols.SymbolKind.STRUCT
+                or kind == symbols.SymbolKind.CLASS
+                or kind == symbols.SymbolKind.UNION
+            )
+            and child.kind == syntax.SyntaxKind.FIELD_DECL
+        ):
+            member_kind = "field"
+        elif kind == symbols.SymbolKind.ENUM and child.kind == syntax.SyntaxKind.ENUM_MEMBER_DECL:
+            member_kind = "enum-member"
+        elif kind == symbols.SymbolKind.VARIANT and child.kind == syntax.SyntaxKind.VARIANT_CASE_DECL:
+            member_kind = "variant-case"
+        if len(member_kind) > 0:
             if not first:
                 builder.append(", ")
             member_name = module.source[child.value_start:child.value_start + child.value_length]
-            member_kind = "field"
             member_key = stable_symbol_key(
                 &module.name,
                 &member_kind,
@@ -487,6 +507,32 @@ def has_decorator(
         child = nodes[child_id.index]
         if child.kind == syntax.SyntaxKind.DECORATOR and source[child.value_start:child.value_start + child.value_length] == expected:
             return true
+    return false
+
+
+def symbol_is_reflected(
+    arena: &const syntax.SyntaxArena,
+    table: &const symbols.SymbolTable,
+    symbol: &const symbols.SymbolRecord,
+    source: &const String,
+) -> bool:
+    if has_decorator(arena, symbol.node, source, "reflect"):
+        return true
+    if symbol.kind != symbols.SymbolKind.FIELD and symbol.kind != symbols.SymbolKind.METHOD:
+        return false
+    owner_id = symbol.owner
+    symbol_values: &const List[symbols.SymbolRecord] = &table.symbols
+    while owner_id.index >= 0 and owner_id.index < cast[i32](len(symbol_values)):
+        owner: &const symbols.SymbolRecord = &symbol_values[cast[usize](owner_id.index)]
+        if (
+            owner.kind == symbols.SymbolKind.STRUCT
+            or owner.kind == symbols.SymbolKind.CLASS
+            or owner.kind == symbols.SymbolKind.ENUM
+            or owner.kind == symbols.SymbolKind.UNION
+            or owner.kind == symbols.SymbolKind.VARIANT
+        ):
+            return has_decorator(arena, owner.node, source, "reflect")
+        owner_id = owner.owner
     return false
 
 
