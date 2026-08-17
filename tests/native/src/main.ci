@@ -246,7 +246,7 @@ def test_atomic_codegen(state: &TestState) -> void:
 
 
 def test_context_capsule(state: &TestState) -> void:
-    target = state.root + "/tests/cases/semantic_context/src/cache.ci:14"
+    target = state.root + "/tests/cases/semantic_context/src/cache.ci:15"
     command: List[String] = [
         state.compiler.clone(),
         "context",
@@ -263,25 +263,41 @@ def test_context_capsule(state: &TestState) -> void:
     ]
     first = process.run(command)
     second = process.run(repeated_command)
-    method_target = state.root + "/tests/cases/semantic_context/src/cache.ci:22"
+    method_target = state.root + "/tests/cases/semantic_context/src/cache.ci:23"
     method_command: List[String] = [
         state.compiler.clone(),
         "context",
         method_target,
     ]
     method = process.run(method_command)
-    qualified_target = state.root + "/tests/cases/semantic_context/src/cache.ci:27"
+    qualified_target = state.root + "/tests/cases/semantic_context/src/cache.ci:28"
     qualified_command: List[String] = [
         state.compiler.clone(),
         "context",
         qualified_target,
     ]
     qualified = process.run(qualified_command)
+    lock_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:7"
+    lock_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        lock_target,
+    ]
+    lock_context = process.run(lock_command)
+    collision_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:2"
+    collision_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        collision_target,
+    ]
+    collision = process.run(collision_command)
     ok = (
         first.exit_code == 0
         and second.exit_code == 0
         and method.exit_code == 0
         and qualified.exit_code == 0
+        and lock_context.exit_code == 0
+        and collision.exit_code == 0
         and first.stdout == second.stdout
         and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
         and contains(&first.stdout, "cache::function:hash_key")
@@ -292,11 +308,18 @@ def test_context_capsule(state: &TestState) -> void:
         and contains(&method.stdout, "cache::method:CacheWorker.refresh")
         and contains(&method.stdout, "lock_effect: acquires cache.cache")
         and contains(&qualified.stdout, "DEPENDS ON\n- model::struct:CacheEntry")
+        and contains(&lock_context.stdout, "symbol: lock_collision::lock:cache")
+        and contains(&lock_context.stdout, "lock_collision::lock:database < lock_collision::lock:cache")
+        and contains(&collision.stdout, "symbol: lock_collision::method:Holder.cache")
+        and contains(&collision.stdout, "LOCK IMPACT\n(none)")
     )
     expect(state, "context emits deterministic compiler-derived facts", ok)
     if not ok:
         report_process_failure(&first.stdout, &first.stderr)
+        report_process_failure(&method.stdout, &method.stderr)
         report_process_failure(&qualified.stdout, &qualified.stderr)
+        report_process_failure(&lock_context.stdout, &lock_context.stderr)
+        report_process_failure(&collision.stdout, &collision.stderr)
 
 
 def test_impact_report(state: &TestState) -> void:
@@ -644,6 +667,7 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "~ changed main::enum:LayoutEnum")
         and contains(&result.stdout, "~ changed main::enum:ValueEnum")
         and contains(&result.stdout, "~ changed main::variant:LayoutVariant")
+        and contains(&result.stdout, "~ changed main::constant:multiline_value")
         and contains(&result.stdout, "~ changed main::function:multiline_signature")
         and contains(&result.stdout, "~ changed main::field:ModifierStruct.value")
         and contains(&result.stdout, "~ changed main::method:ModifierBase.apply")
@@ -655,6 +679,7 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "members: main::enum-member:ValueEnum.first=1, main::enum-member:ValueEnum.second=7 -> main::enum-member:ValueEnum.first=3, main::enum-member:ValueEnum.second=7")
         and contains(&result.stdout, "members: main::variant-case:LayoutVariant.First, main::variant-case:LayoutVariant.Second -> main::variant-case:LayoutVariant.Second, main::variant-case:LayoutVariant.First")
         and contains(&result.stdout, "members: main::method:MethodOrder.first, main::method:MethodOrder.second -> main::method:MethodOrder.second, main::method:MethodOrder.first")
+        and contains(&result.stdout, "signature: const multiline_value: i32 = (\n    1\n) -> const multiline_value: i32 = (\n    2\n)")
         and contains(&result.stdout, "signature: def multiline_signature(\n    value: i32,\n) -> i32: -> def multiline_signature(\n    value: i64,\n) -> i32:")
         and contains(&result.stdout, "signature: class MultilineDerived(\n    SpecializedBase[i32],\n): -> class MultilineDerived(\n    SpecializedBase[i64],\n):")
         and contains(&result.stdout, "modifiers: private -> none")
@@ -679,6 +704,12 @@ def write_test_text(path: String, content: String) -> void:
 def semantic_diff_stress_source(function_count: i32, reverse_fields: bool) -> String:
     builder = StringBuilder()
     append_layout_fixture(&builder, reverse_fields)
+    builder.append("const multiline_value: i32 = (\n")
+    if reverse_fields:
+        builder.append("    2\n")
+    else:
+        builder.append("    1\n")
+    builder.append(")\n\n\n")
     builder.append("def multiline_signature(\n")
     if reverse_fields:
         builder.append("    value: i64,\n")

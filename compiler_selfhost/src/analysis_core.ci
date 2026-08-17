@@ -605,16 +605,12 @@ def declaration_header(
                     end = index + 1
                     break
                 index += 1
-        while end > node.start:
-            byte = source.byte_at(end - 1)
-            if byte != 32 and byte != 9 and byte != 10 and byte != 13:
-                break
-            end -= 1
-        return source[node.start:end]
-    index = node.start
-    while index < end and source.byte_at(index) != 10 and source.byte_at(index) != 13:
-        index += 1
-    return source[node.start:index]
+    while end > node.start:
+        byte = source.byte_at(end - 1)
+        if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+            break
+        end -= 1
+    return source[node.start:end]
 
 
 def is_nominal_declaration_kind(kind: syntax.SyntaxKind) -> bool:
@@ -1049,7 +1045,7 @@ def collect_lock_relations(
             if lock_index < 0 or lock_index >= cast[i32](len(locks)):
                 continue
             selected_lock: &const lock_order.ProjectLock = &locks[lock_index]
-            target_index = find_fact_by_module_name(graph, &selected_lock.module_name, &selected_lock.name)
+            target_index = find_lock_fact_by_module_name(graph, &selected_lock.module_name, &selected_lock.name)
             if target_index >= 0:
                 add_relation_unique(
                     graph,
@@ -1073,8 +1069,8 @@ def collect_lock_relations(
             continue
         before: &const lock_order.ProjectLock = &locks[edge.before]
         after: &const lock_order.ProjectLock = &locks[edge.after]
-        before_index = find_fact_by_module_name(graph, &before.module_name, &before.name)
-        after_index = find_fact_by_module_name(graph, &after.module_name, &after.name)
+        before_index = find_lock_fact_by_module_name(graph, &before.module_name, &before.name)
+        after_index = find_lock_fact_by_module_name(graph, &after.module_name, &after.name)
         if before_index >= 0 and after_index >= 0:
             detail = "inferred"
             if edge.explicit:
@@ -1207,7 +1203,7 @@ def find_fact_by_key(
     return -1
 
 
-def find_fact_by_module_name(
+def find_lock_fact_by_module_name(
     graph: &const SemanticFactGraph,
     module_name: &const String,
     name: &const String,
@@ -1216,7 +1212,12 @@ def find_fact_by_module_name(
     index: usize = 0
     while index < len(facts):
         fact: &const SymbolFact = &facts[index]
-        if fact.module_name == module_name and fact.name == name:
+        if (
+            fact.module_name == module_name
+            and fact.name == name
+            and fact.kind == "lock"
+            and len(fact.owner) == 0
+        ):
             return cast[i32](index)
         index += 1
     return -1

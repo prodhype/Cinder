@@ -1,0 +1,7 @@
+class Holder:
+    def cache(self) -> void:
+        pass
+
+
+lock database
+lock cache after database

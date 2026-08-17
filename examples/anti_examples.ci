@@ -34,6 +34,12 @@ def multiline_total() -> i32:
 answer: i32 = 42
 
 
+# CORRECT: delimiters also permit a global initializer to span lines.
+const multiline_answer: i32 = (
+    42
+)
+
+
 # WRONG: a top-level function parameter requires a type annotation.
 # def add(left, right) -> i32:
 #     return left + right
@@ -588,6 +594,8 @@ def main() -> i32:
         return 18
     if const_atomic_pointer_call_example() != 10:
         return 19
+    if multiline_answer != 42:
+        return 20
 
     print_compile_time_fields()
     return 0
