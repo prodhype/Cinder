@@ -1,4 +1,5 @@
 import codegen_type_names
+import codegen_reflection
 import checker_core
 import classes
 import emit_project
@@ -102,6 +103,16 @@ def build_fact_graph(
             relations=relations,
             error=analysis.error[0:len(analysis.error)],
         )
+    specialization_names = emit_project.collect_project_specialization_names(graph)
+    class_model: classes.ProjectClassModel = classes.collect_project_class_model(
+        graph,
+        &specialization_names,
+    )
+    reflection_model: codegen_reflection.ProjectReflectionModel = codegen_reflection.collect_project_reflection_model(
+        graph,
+        &specialization_names,
+        &class_model,
+    )
     module_index: usize = 0
     analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
     project_modules: &const List[project.ParsedModule] = &graph.modules
@@ -121,13 +132,20 @@ def build_fact_graph(
                     &analyzed.checked,
                     analyzed.module_index,
                     cast[i32](symbol_index),
+                    &class_model,
+                    &reflection_model,
                 ))
             symbol_index += 1
         module_index += 1
     graph_value = SemanticFactGraph(facts=facts, relations=relations, error="")
+    mark_effective_reflected_members(
+        &graph_value,
+        &class_model,
+        &reflection_model,
+    )
     collect_member_relations(&graph_value)
     collect_semantic_relations(graph, analysis, &graph_value)
-    collect_import_call_relations(graph, analysis, &graph_value)
+    collect_import_call_relations(graph, analysis, &class_model, &graph_value)
     collect_type_relations(graph, &graph_value)
     collect_lock_relations(analysis, &graph_value)
     return graph_value
@@ -218,6 +236,8 @@ def make_symbol_fact(
     checked: &const checker_core.Checker,
     module_index: usize,
     symbol_index: i32,
+    class_model: &const classes.ProjectClassModel,
+    reflection_model: &const codegen_reflection.ProjectReflectionModel,
 ) -> SymbolFact:
     symbol_values: &const List[symbols.SymbolRecord] = &checked.symbols.symbols
     arena: &const syntax.SyntaxArena = &module.arena
@@ -262,6 +282,8 @@ def make_symbol_fact(
         &owner,
         &name,
         symbol.node,
+        class_model,
+        reflection_model,
     )
     return SymbolFact(
         key=key,
@@ -301,6 +323,8 @@ def ordered_nominal_member_keys(
     owner: &const String,
     name: &const String,
     id: NodeId,
+    class_model: &const classes.ProjectClassModel,
+    reflection_model: &const codegen_reflection.ProjectReflectionModel,
 ) -> String:
     if (
         kind != symbols.SymbolKind.STRUCT
@@ -313,6 +337,21 @@ def ordered_nominal_member_keys(
     arena: &const syntax.SyntaxArena = &module.arena
     nodes: &const List[syntax.SyntaxNode] = &arena.nodes
     children: &const List[NodeId] = &arena.children
+    if (
+        (kind == symbols.SymbolKind.STRUCT or kind == symbols.SymbolKind.CLASS)
+        and has_decorator(arena, id, &module.source, "reflect")
+    ):
+        nominal_index = codegen_reflection.find_nominal(
+            reflection_model,
+            &module.name,
+            name,
+        )
+        if nominal_index >= 0:
+            return ordered_effective_reflected_member_keys(
+                class_model,
+                reflection_model,
+                nominal_index,
+            )
     node = nodes[id.index]
     member_owner = name[0:len(name)]
     if len(owner) > 0:
@@ -384,6 +423,134 @@ def ordered_nominal_member_keys(
             builder.append(method_key[0:len(method_key)])
             first = false
     return builder.finish()
+
+
+def ordered_effective_reflected_member_keys(
+    class_model: &const classes.ProjectClassModel,
+    reflection_model: &const codegen_reflection.ProjectReflectionModel,
+    nominal_index: i32,
+) -> String:
+    builder = StringBuilder()
+    first = true
+    field_count = codegen_reflection.effective_field_count(
+        reflection_model,
+        class_model,
+        nominal_index,
+    )
+    for field_offset in range(0, field_count):
+        field_index = codegen_reflection.effective_field_at(
+            reflection_model,
+            class_model,
+            nominal_index,
+            field_offset,
+        )
+        if field_index < 0:
+            continue
+        field: &const codegen_reflection.ReflectionFieldInfo = &reflection_model.fields[cast[usize](field_index)]
+        field_owner: &const codegen_reflection.ReflectionNominalInfo = &reflection_model.nominals[cast[usize](field.owner)]
+        if not first:
+            builder.append(", ")
+        field_kind = "field"
+        field_key = stable_symbol_key(
+            &field_owner.module_name,
+            &field_kind,
+            &field_owner.name,
+            &field.name,
+        )
+        builder.append(field_key[0:len(field_key)])
+        first = false
+    method_count = codegen_reflection.effective_method_count(
+        reflection_model,
+        class_model,
+        nominal_index,
+    )
+    for method_offset in range(0, method_count):
+        method_index = codegen_reflection.effective_method_at(
+            reflection_model,
+            class_model,
+            nominal_index,
+            method_offset,
+        )
+        if method_index < 0:
+            continue
+        method: &const codegen_reflection.ReflectionMethodInfo = &reflection_model.methods[cast[usize](method_index)]
+        method_owner: &const codegen_reflection.ReflectionNominalInfo = &reflection_model.nominals[cast[usize](method.owner)]
+        if not first:
+            builder.append(", ")
+        method_kind = "method"
+        method_key = stable_symbol_key(
+            &method_owner.module_name,
+            &method_kind,
+            &method_owner.name,
+            &method.name,
+        )
+        builder.append(method_key[0:len(method_key)])
+        first = false
+    return builder.finish()
+
+
+def mark_effective_reflected_members(
+    graph: &SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+    reflection_model: &const codegen_reflection.ProjectReflectionModel,
+) -> void:
+    nominal_index: usize = 0
+    while nominal_index < len(reflection_model.nominals):
+        nominal: &const codegen_reflection.ReflectionNominalInfo = &reflection_model.nominals[nominal_index]
+        if nominal.is_reflected:
+            field_count = codegen_reflection.effective_field_count(
+                reflection_model,
+                class_model,
+                cast[i32](nominal_index),
+            )
+            for field_offset in range(0, field_count):
+                field_index = codegen_reflection.effective_field_at(
+                    reflection_model,
+                    class_model,
+                    cast[i32](nominal_index),
+                    field_offset,
+                )
+                if field_index < 0:
+                    continue
+                field: &const codegen_reflection.ReflectionFieldInfo = &reflection_model.fields[cast[usize](field_index)]
+                owner: &const codegen_reflection.ReflectionNominalInfo = &reflection_model.nominals[cast[usize](field.owner)]
+                kind = "field"
+                key = stable_symbol_key(
+                    &owner.module_name,
+                    &kind,
+                    &owner.name,
+                    &field.name,
+                )
+                fact_index = find_fact_by_key(graph, &key)
+                if fact_index >= 0:
+                    graph.facts[cast[usize](fact_index)].reflected = true
+            method_count = codegen_reflection.effective_method_count(
+                reflection_model,
+                class_model,
+                cast[i32](nominal_index),
+            )
+            for method_offset in range(0, method_count):
+                method_index = codegen_reflection.effective_method_at(
+                    reflection_model,
+                    class_model,
+                    cast[i32](nominal_index),
+                    method_offset,
+                )
+                if method_index < 0:
+                    continue
+                method: &const codegen_reflection.ReflectionMethodInfo = &reflection_model.methods[cast[usize](method_index)]
+                owner: &const codegen_reflection.ReflectionNominalInfo = &reflection_model.nominals[cast[usize](method.owner)]
+                kind = "method"
+                key = stable_symbol_key(
+                    &owner.module_name,
+                    &kind,
+                    &owner.name,
+                    &method.name,
+                )
+                fact_index = find_fact_by_key(graph, &key)
+                if fact_index >= 0:
+                    graph.facts[cast[usize](fact_index)].reflected = true
+        nominal_index += 1
 
 
 def append_canonical_enum_member_value(
@@ -884,13 +1051,9 @@ def collect_import_value_relation(
 def collect_import_call_relations(
     project_graph: &const project.ProjectGraph,
     analysis: &const emit_project.AnalysisResult,
+    class_model: &const classes.ProjectClassModel,
     graph: &SemanticFactGraph,
 ) -> void:
-    specialization_names = emit_project.collect_project_specialization_names(project_graph)
-    class_model: classes.ProjectClassModel = classes.collect_project_class_model(
-        project_graph,
-        &specialization_names,
-    )
     analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
     project_modules: &const List[project.ParsedModule] = &project_graph.modules
     facts: &const List[SymbolFact] = &graph.facts
@@ -906,12 +1069,14 @@ def collect_import_call_relations(
                     fact.kind == "function"
                     or fact.kind == "function-template"
                     or fact.kind == "method"
+                    or fact.kind == "global"
+                    or fact.kind == "constant"
                 )
             ):
                 receiver_bindings: List[lock_order.MethodReceiverBinding] = []
                 collect_import_calls_in_node(
                     project_graph,
-                    &class_model,
+                    class_model,
                     &analyzed.checked,
                     graph,
                     module,
@@ -1020,9 +1185,9 @@ def collect_import_call_relation(
         member_id = children[callee.first_child + 1]
         receiver = nodes[receiver_id.index]
         member = nodes[member_id.index]
+        member_name = module.source[member.value_start:member.value_start + member.value_length]
         if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
             receiver_name = module.source[receiver.value_start:receiver.value_start + receiver.value_length]
-            member_name = module.source[member.value_start:member.value_start + member.value_length]
             binding_index = lock_order.find_method_receiver_binding(receiver_bindings, &receiver_name)
             if binding_index >= 0:
                 binding: &const lock_order.MethodReceiverBinding = &receiver_bindings[cast[usize](binding_index)]
@@ -1054,12 +1219,71 @@ def collect_import_call_relation(
                     )
                 return
             bound_symbol = bound_symbol_for_node(checked, receiver_id)
-            if not symbol_is_import_binding(checked, &module.arena, bound_symbol, false):
+            if symbol_is_import_binding(checked, &module.arena, bound_symbol, false):
+                for imported in module_imports:
+                    if len(imported.member) == 0 and imported.alias == receiver_name:
+                        target_module = imported.module_name[0:len(imported.module_name)]
+                        target_name = member_name
+        if len(target_module) == 0:
+            nominal_fact_index: i32 = -1
+            receiver_type = analysis_value_type(
+                &checked.type_table,
+                semantic_expression_type(checked, &module.arena, receiver_id),
+            )
+            if receiver_type.index >= 0 and receiver_type.index < cast[i32](len(checked.type_table.types)):
+                receiver_record = checked.type_table.types[receiver_type.index]
+                if types.is_nominal_kind(receiver_record.kind) and receiver_record.name_length > 0:
+                    type_builder = StringBuilder()
+                    codegen_type_names.emit_semantic_readable_type_name(
+                        &checked.type_table,
+                        receiver_type,
+                        &module.source,
+                        &type_builder,
+                    )
+                    type_name = type_builder.finish()
+                    nominal_fact_index = resolve_type_fact(
+                        project_graph,
+                        graph,
+                        facts[cast[usize](caller_index)].module_index,
+                        &type_name,
+                    )
+            if nominal_fact_index < 0:
+                nominal_fact_index = receiver_field_nominal_fact(
+                    project_graph,
+                    graph,
+                    module,
+                    receiver_id,
+                    caller_index,
+                )
+            if nominal_fact_index >= 0:
+                nominal: &const SymbolFact = &facts[cast[usize](nominal_fact_index)]
+                target_index = find_effective_method_fact(
+                    graph,
+                    class_model,
+                    &nominal.module_name,
+                    &nominal.name,
+                    &member_name,
+                )
+                if target_index >= 0:
+                    add_relation_unique(
+                        graph,
+                        "calls",
+                        &facts[cast[usize](caller_index)].key,
+                        &facts[cast[usize](target_index)].key,
+                        "import",
+                        true,
+                    )
+                else:
+                    owner_method = nominal.name[0:len(nominal.name)] + "." + member_name[0:len(member_name)]
+                    add_relation_unique(
+                        graph,
+                        "calls",
+                        &facts[cast[usize](caller_index)].key,
+                        &nominal.module_name,
+                        &owner_method,
+                        false,
+                    )
                 return
-            for imported in module_imports:
-                if len(imported.member) == 0 and imported.alias == receiver_name:
-                    target_module = imported.module_name[0:len(imported.module_name)]
-                    target_name = member_name
     if len(target_module) == 0 or len(target_name) == 0:
         return
     target_index = find_top_level_fact_by_module_name(graph, &target_module, &target_name)
@@ -1084,6 +1308,108 @@ def collect_import_call_relation(
             &target_name,
             false,
         )
+
+
+def analysis_value_type(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+) -> types.TypeId:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        kind = table.types[current.index].kind
+        if (
+            kind != types.TypeKind.CONST
+            and kind != types.TypeKind.REFERENCE
+            and kind != types.TypeKind.POINTER
+        ):
+            break
+        current = table.types[current.index].inner
+    return current
+
+
+def semantic_expression_type(
+    checked: &const checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+) -> types.TypeId:
+    resolved = checked.model.expr_type(id)
+    if (
+        resolved.index >= 0
+        and resolved.index < cast[i32](len(checked.type_table.types))
+        and checked.type_table.types[resolved.index].kind != types.TypeKind.ERROR
+    ):
+        return resolved
+    if id.index < 0:
+        return resolved
+    node = arena.nodes[id.index]
+    if node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or node.child_count < 2:
+        return resolved
+    member_id = arena.children[node.first_child + 1]
+    symbol_index = bound_symbol_for_node(checked, member_id)
+    if symbol_index < 0 or symbol_index >= cast[i32](len(checked.symbols.symbols)):
+        return resolved
+    return checked.symbols.symbols[cast[usize](symbol_index)].type_id
+
+
+def receiver_field_nominal_fact(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    module: &const project.ParsedModule,
+    id: NodeId,
+    caller_index: i32,
+) -> i32:
+    if id.index < 0:
+        return -1
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    node = nodes[id.index]
+    facts: &const List[SymbolFact] = &graph.facts
+    caller: &const SymbolFact = &facts[cast[usize](caller_index)]
+    if node.kind == syntax.SyntaxKind.EXPR_NAME:
+        name = module.source[node.value_start:node.value_start + node.value_length]
+        if name == "self" and len(caller.owner) > 0:
+            return find_fact_by_owner_name(
+                graph,
+                &caller.module_name,
+                &caller.owner,
+            )
+        return -1
+    if node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or node.child_count < 2:
+        return -1
+    receiver_id = children[node.first_child]
+    member_id = children[node.first_child + 1]
+    owner_index = receiver_field_nominal_fact(
+        project_graph,
+        graph,
+        module,
+        receiver_id,
+        caller_index,
+    )
+    if owner_index < 0:
+        return -1
+    owner: &const SymbolFact = &facts[cast[usize](owner_index)]
+    field_owner = owner.name[0:len(owner.name)]
+    if len(owner.owner) > 0:
+        field_owner = owner.owner[0:len(owner.owner)] + "." + owner.name[0:len(owner.name)]
+    member = nodes[member_id.index]
+    member_name = module.source[member.value_start:member.value_start + member.value_length]
+    field_kind = "field"
+    field_key = stable_symbol_key(
+        &owner.module_name,
+        &field_kind,
+        &field_owner,
+        &member_name,
+    )
+    field_index = find_fact_by_key(graph, &field_key)
+    if field_index < 0:
+        return -1
+    field: &const SymbolFact = &facts[cast[usize](field_index)]
+    return resolve_type_fact(
+        project_graph,
+        graph,
+        field.module_index,
+        &field.type_name,
+    )
 
 
 def fact_kind_is_callable(kind: &const String) -> bool:

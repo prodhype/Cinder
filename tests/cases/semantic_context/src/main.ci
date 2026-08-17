@@ -59,3 +59,17 @@ def read_imported_limit() -> i32:
 
 def read_shadowed_limit(LIMIT: i32) -> i32:
     return LIMIT
+
+
+IMPORTED_GLOBAL: i32 = action(1)
+const IMPORTED_CONSTANT: i32 = action(2)
+
+
+class ChildHolder:
+    child: Child
+
+    def __init__(self):
+        self.child = Child()
+
+    def call(self, value: i32) -> i32:
+        return self.child.work(value)

@@ -464,10 +464,30 @@ def test_import_call_resolution(state: &TestState) -> void:
         "context",
         state.root + "/tests/cases/semantic_context/src/main.ci:28",
     ]
+    global_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:64",
+    ]
+    constant_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:65",
+    ]
+    field_receiver_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:75",
+    ]
     action_impact: List[String] = [
         state.compiler.clone(),
         "impact",
         state.root + "/tests/cases/semantic_context/src/call_targets.ci:15",
+    ]
+    inherited_method_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:2",
     ]
     inherited_method_impact: List[String] = [
         state.compiler.clone(),
@@ -484,40 +504,69 @@ def test_import_call_resolution(state: &TestState) -> void:
         "impact",
         state.root + "/tests/cases/semantic_context/src/call_targets.ci:6",
     ]
+    overridden_base_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:25",
+    ]
     shadow = process.run(shadow_context)
     top_level = process.run(top_level_context)
     instance = process.run(instance_context)
+    global = process.run(global_context)
+    constant = process.run(constant_context)
+    field_receiver = process.run(field_receiver_context)
     action = process.run(action_impact)
+    inherited_context = process.run(inherited_method_context)
     inherited_method = process.run(inherited_method_impact)
     direct_method = process.run(direct_method_impact)
     child = process.run(child_impact)
+    overridden_base = process.run(overridden_base_impact)
     ok = (
         shadow.exit_code == 0
         and top_level.exit_code == 0
         and instance.exit_code == 0
+        and global.exit_code == 0
+        and constant.exit_code == 0
+        and field_receiver.exit_code == 0
         and action.exit_code == 0
+        and inherited_context.exit_code == 0
         and inherited_method.exit_code == 0
         and direct_method.exit_code == 0
         and child.exit_code == 0
+        and overridden_base.exit_code == 0
         and not contains(&shadow.stdout, "call_targets::function:action")
         and contains(&top_level.stdout, "call_targets::function:run")
         and not contains(&top_level.stdout, "call_targets::method:Child.run")
         and contains(&instance.stdout, "call_targets::method:Base.work")
         and contains(&instance.stdout, "call_targets::method:Child.run")
+        and contains(&global.stdout, "call_targets::function:action")
+        and contains(&constant.stdout, "call_targets::function:action")
+        and contains(&field_receiver.stdout, "call_targets::method:Base.work")
         and not contains(&action.stdout, "main::function:call_shadowed")
+        and contains(&action.stdout, "main::global:IMPORTED_GLOBAL")
+        and contains(&action.stdout, "main::constant:IMPORTED_CONSTANT")
+        and contains(&inherited_context.stdout, "reflected: yes")
         and contains(&inherited_method.stdout, "main::function:call_imported_method")
+        and contains(&inherited_method.stdout, "main::method:ChildHolder.call")
+        and contains(&inherited_method.stdout, "emitted runtime reflection metadata")
         and contains(&direct_method.stdout, "main::function:call_imported_method")
         and contains(&child.stdout, "DIRECT CALLERS\n(none)")
+        and not contains(&overridden_base.stdout, "emitted runtime reflection metadata")
     )
     expect(state, "semantic queries resolve imported calls without false edges", ok)
     if not ok:
         report_process_failure(&shadow.stdout, &shadow.stderr)
         report_process_failure(&top_level.stdout, &top_level.stderr)
         report_process_failure(&instance.stdout, &instance.stderr)
+        report_process_failure(&global.stdout, &global.stderr)
+        report_process_failure(&constant.stdout, &constant.stderr)
+        report_process_failure(&field_receiver.stdout, &field_receiver.stderr)
         report_process_failure(&action.stdout, &action.stderr)
+        report_process_failure(&inherited_context.stdout, &inherited_context.stderr)
         report_process_failure(&inherited_method.stdout, &inherited_method.stderr)
         report_process_failure(&direct_method.stdout, &direct_method.stderr)
         report_process_failure(&child.stdout, &child.stderr)
+        report_process_failure(&overridden_base.stdout, &overridden_base.stderr)
 
 
 def test_import_value_resolution(state: &TestState) -> void:
@@ -837,12 +886,14 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "~ changed main::method:ModifierBase.apply")
         and contains(&result.stdout, "~ changed main::method:ModifierImpl.apply")
         and contains(&result.stdout, "~ changed main::class:MethodOrder")
+        and contains(&result.stdout, "~ changed main::class:ReflectedMethodChild")
         and contains(&result.stdout, "~ changed main::class:MultilineDerived")
         and contains(&result.stdout, "members: main::field:LayoutStruct.first, main::field:LayoutStruct.second -> main::field:LayoutStruct.second, main::field:LayoutStruct.first")
         and contains(&result.stdout, "members: main::enum-member:LayoutEnum.first, main::enum-member:LayoutEnum.second -> main::enum-member:LayoutEnum.second, main::enum-member:LayoutEnum.first")
         and contains(&result.stdout, "members: main::enum-member:ValueEnum.first=1, main::enum-member:ValueEnum.second=7 -> main::enum-member:ValueEnum.first=3, main::enum-member:ValueEnum.second=7")
         and contains(&result.stdout, "members: main::variant-case:LayoutVariant.First, main::variant-case:LayoutVariant.Second -> main::variant-case:LayoutVariant.Second, main::variant-case:LayoutVariant.First")
         and contains(&result.stdout, "members: main::method:MethodOrder.first, main::method:MethodOrder.second -> main::method:MethodOrder.second, main::method:MethodOrder.first")
+        and contains(&result.stdout, "members: main::method:ReflectedMethodChild.own_method, main::method:UnreflectedMethodBase.inherited_first, main::method:UnreflectedMethodBase.inherited_second -> main::method:ReflectedMethodChild.own_method, main::method:UnreflectedMethodBase.inherited_second, main::method:UnreflectedMethodBase.inherited_first")
         and contains(&result.stdout, "signature: const multiline_value: i32 = (\n    1\n) -> const multiline_value: i32 = (\n    2\n)")
         and contains(&result.stdout, "signature: def multiline_signature(\n    value: i32,\n) -> i32: -> def multiline_signature(\n    value: i64,\n) -> i32:")
         and contains(&result.stdout, "signature: class MultilineDerived(\n    SpecializedBase[i32],\n): -> class MultilineDerived(\n    SpecializedBase[i64],\n):")
@@ -981,6 +1032,16 @@ def append_layout_fixture(builder: &StringBuilder, reverse_fields: bool) -> void
     else:
         append_reflected_method(builder, "first", 1)
         append_reflected_method(builder, "second", 2)
+    builder.append("class UnreflectedMethodBase:\n")
+    if reverse_fields:
+        append_reflected_method(builder, "inherited_second", 2)
+        append_reflected_method(builder, "inherited_first", 1)
+    else:
+        append_reflected_method(builder, "inherited_first", 1)
+        append_reflected_method(builder, "inherited_second", 2)
+    builder.append("@reflect\n")
+    builder.append("class ReflectedMethodChild(UnreflectedMethodBase):\n")
+    append_reflected_method(builder, "own_method", 3)
     builder.append("class SpecializedBase[T]:\n")
     builder.append("    value: T\n\n\n")
     builder.append("class MultilineDerived(\n")
