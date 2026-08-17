@@ -557,6 +557,11 @@ def test_semantic_diff(state: &TestState) -> void:
         selected_path[0:len(selected_path)],
         "def selected(value: i32) -> i32:\n    return value\n",
     )
+    implementation_path = source_dir + "/implementation.ci"
+    write_test_text(
+        implementation_path[0:len(implementation_path)],
+        "def implementation_probe() -> i32:\n    return 1\n",
+    )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
     commit: List[String] = [
@@ -616,6 +621,14 @@ def test_semantic_diff(state: &TestState) -> void:
         report_process_failure(&standalone_committed.stdout, &standalone_committed.stderr)
         return
     write_test_text(
+        selected_path[0:len(selected_path)],
+        "def selected(\n    value: i32,\n) -> i32:\n    return value\n",
+    )
+    write_test_text(
+        implementation_path[0:len(implementation_path)],
+        "def implementation_probe() -> i32:\n    return 2\n",
+    )
+    write_test_text(
         source_path,
         semantic_diff_stress_source(97, true),
     )
@@ -635,6 +648,14 @@ def test_semantic_diff(state: &TestState) -> void:
         selected_path,
     ]
     selected = process.run(selected_command)
+    implementation_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        implementation_path,
+    ]
+    implementation = process.run(implementation_command)
     standalone_command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -655,6 +676,7 @@ def test_semantic_diff(state: &TestState) -> void:
     ok = (
         result.exit_code == 0
         and selected.exit_code == 0
+        and implementation.exit_code == 0
         and standalone.exit_code == 0
         and worktrees.exit_code == 0
         and contains(&result.stdout, "schema: cinder-semantic-v1")
@@ -686,6 +708,13 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "modifiers: abstractmethod -> none")
         and contains(&result.stdout, "modifiers: override -> none")
         and contains(&selected.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&selected.stdout, "~ changed selected::function:selected")
+        and contains(
+            &implementation.stdout,
+            "~ changed implementation::function:implementation_probe",
+        )
+        and contains(&implementation.stdout, "implementation: changed")
+        and not contains(&implementation.stdout, "NO SEMANTIC CHANGES")
         and contains(&standalone.stdout, "NO SEMANTIC CHANGES")
         and not contains(&worktrees.stdout, "cinder-semantic-diff.")
     )
@@ -693,6 +722,7 @@ def test_semantic_diff(state: &TestState) -> void:
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
         report_process_failure(&selected.stdout, &selected.stderr)
+        report_process_failure(&implementation.stdout, &implementation.stderr)
         report_process_failure(&standalone.stdout, &standalone.stderr)
 
 

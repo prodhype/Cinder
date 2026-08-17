@@ -214,12 +214,24 @@ def render_semantic_diff(
                 builder.append("~ changed ")
                 builder.append(fact.key[0:len(fact.key)])
                 builder.append("\n")
-                append_changed_property(
-                    &builder,
-                    "signature",
-                    &previous.signature,
-                    &fact.signature,
-                )
+                if not analysis_core.strings_equal(
+                    &previous.canonical_signature,
+                    &fact.canonical_signature,
+                ):
+                    if analysis_core.strings_equal(&previous.signature, &fact.signature):
+                        append_changed_marker(&builder, "signature")
+                    else:
+                        append_changed_property(
+                            &builder,
+                            "signature",
+                            &previous.signature,
+                            &fact.signature,
+                        )
+                if not analysis_core.strings_equal(
+                    &previous.implementation,
+                    &fact.implementation,
+                ):
+                    append_changed_marker(&builder, "implementation")
                 append_changed_property(
                     &builder,
                     "modifiers",
@@ -302,7 +314,11 @@ def diff_facts_equal(
     right: &const analysis_core.DiffSymbolFact,
 ) -> bool:
     return (
-        analysis_core.strings_equal(&left.signature, &right.signature)
+        analysis_core.strings_equal(
+            &left.canonical_signature,
+            &right.canonical_signature,
+        )
+        and analysis_core.strings_equal(&left.implementation, &right.implementation)
         and analysis_core.strings_equal(&left.modifiers, &right.modifiers)
         and analysis_core.strings_equal(&left.type_name, &right.type_name)
         and analysis_core.strings_equal(&left.ownership, &right.ownership)
@@ -329,6 +345,15 @@ def append_changed_property(
     builder.append(" -> ")
     builder.append(after[0:len(after)])
     builder.append("\n")
+
+
+def append_changed_marker(
+    builder: &StringBuilder,
+    name: String,
+) -> void:
+    builder.append("  ")
+    builder.append(name)
+    builder.append(": changed\n")
 
 
 def append_reachable_callers(

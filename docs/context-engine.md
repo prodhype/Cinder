@@ -63,13 +63,16 @@ removes the worktree. It then analyzes the working tree and compares the two
 snapshots. It never checks out, resets, or modifies the user's index or working
 tree.
 
-The report covers added, removed, and changed declarations; signatures and
-semantic types; private field and abstract/override method modifiers; ownership
-classifications; source-level nominal layout, including ordered struct, class,
-and union fields, enum members, variant cases, and reflected struct/class
-methods; inheritance and interfaces; calls and callers; lock effects and order;
-reflection; and C exports/externs. Generated C and raw per-run symbol/type IDs
-are not diffed.
+The report covers added, removed, and changed declarations; canonical
+signatures and function implementations; semantic types; private field and
+abstract/override method modifiers; ownership classifications; source-level
+nominal layout, including ordered struct, class, and union fields, enum members,
+variant cases, and reflected struct/class methods; inheritance and interfaces;
+calls and callers; lock effects and order; reflection; and C exports/externs.
+Declaration signatures and function bodies are compared from parsed syntax
+without source positions or whitespace, so formatting-only edits do not count
+as semantic changes. Generated C and raw per-run symbol/type IDs are not
+diffed.
 
 The referenced source must parse and type-check with the current compiler. This
 keeps both sides on one semantic schema. If a historical revision uses
