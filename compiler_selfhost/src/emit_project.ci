@@ -15,6 +15,17 @@ struct CompiledModule:
     ir: backend_ir.IRModule
 
 
+struct AnalyzedModule:
+    module_index: usize
+    checked: checker_core.Checker
+
+
+struct AnalysisResult:
+    ok: bool
+    modules: List[AnalyzedModule]
+    error: String
+
+
 struct CompileResult:
     ok: bool
     modules: List[CompiledModule]
@@ -47,18 +58,52 @@ def compile_ok(modules: List[CompiledModule]) -> CompileResult:
     return CompileResult(ok=true, modules=modules, error="")
 
 
+def analysis_error(message: String) -> AnalysisResult:
+    modules: List[AnalyzedModule] = []
+    return AnalysisResult(ok=false, modules=modules, error=message)
+
+
+def analysis_ok(modules: List[AnalyzedModule]) -> AnalysisResult:
+    return AnalysisResult(ok=true, modules=modules, error="")
+
+
+def analyze_module(
+    checked: &checker_core.Checker,
+    module: &const project.ParsedModule,
+    modules: &const List[project.ParsedModule],
+) -> String:
+    checker.collect_symbols(checked, module.arena, module.root, module.source, modules)
+    checker.validate_import_member_calls(checked, module.arena, module.root, module.source, &module.imports, modules)
+    checker.validate_names(checked, module.arena, module.root, module.source)
+    if len(checked.diagnostics) > 0:
+        checker_core.dump_diagnostics(checked)
+        return "semantic check failed"
+    return ""
+
+
+def analyze_project(graph: &const project.ProjectGraph) -> AnalysisResult:
+    analyzed: List[AnalyzedModule] = []
+    index: usize = 0
+    while index < len(graph.modules):
+        module: &const project.ParsedModule = &graph.modules[index]
+        checked: checker_core.Checker = checker.new_checker()
+        error = analyze_module(&checked, module, &graph.modules)
+        if len(error) > 0:
+            return analysis_error(error[0:len(error)])
+        analyzed.append(AnalyzedModule(module_index=index, checked=checked))
+        index += 1
+    return analysis_ok(analyzed)
+
+
 def compile_project(graph: &const project.ProjectGraph) -> CompileResult:
     compiled: List[CompiledModule] = []
     index: usize = 0
     while index < len(graph.modules):
         module: &const project.ParsedModule = &graph.modules[index]
         checked: checker_core.Checker = checker.new_checker()
-        checker.collect_symbols(checked, module.arena, module.root, module.source, &graph.modules)
-        checker.validate_import_member_calls(checked, module.arena, module.root, module.source, &module.imports, &graph.modules)
-        checker.validate_names(checked, module.arena, module.root, module.source)
-        if len(checked.diagnostics) > 0:
-            checker_core.dump_diagnostics(checked)
-            return compile_error("semantic check failed")
+        error = analyze_module(&checked, module, &graph.modules)
+        if len(error) > 0:
+            return compile_error(error[0:len(error)])
         ir: backend_ir.IRModule = backend_ir.lower(module.arena, module.root, checked.model, checked.type_table)
         if not ir.is_valid:
             return compile_error("internal atomic IR validation failed")
@@ -68,21 +113,8 @@ def compile_project(graph: &const project.ProjectGraph) -> CompileResult:
 
 
 def check_project(graph: &const project.ProjectGraph) -> String:
-    index: usize = 0
-    while index < len(graph.modules):
-        module: &const project.ParsedModule = &graph.modules[index]
-        checked: checker_core.Checker = checker.new_checker()
-        checker.collect_symbols(checked, module.arena, module.root, module.source, &graph.modules)
-        checker.validate_import_member_calls(checked, module.arena, module.root, module.source, &module.imports, &graph.modules)
-        checker.validate_names(checked, module.arena, module.root, module.source)
-        if len(checked.diagnostics) > 0:
-            checker_core.dump_diagnostics(checked)
-            return "semantic check failed"
-        ir: backend_ir.IRModule = backend_ir.lower(module.arena, module.root, checked.model, checked.type_table)
-        if not ir.is_valid:
-            return "internal atomic IR validation failed"
-        index += 1
-    return ""
+    analyzed = analyze_project(graph)
+    return analyzed.error[0:len(analyzed.error)]
 
 
 def write_project(graph: &const project.ProjectGraph, output_dir: String) -> EmitResult:
@@ -105,12 +137,9 @@ def write_project(graph: &const project.ProjectGraph, output_dir: String) -> Emi
         if not fs.ensure_dir(&header_parent) or not fs.ensure_dir(&source_parent):
             return emit_error("failed to create generated directory")
         checked: checker_core.Checker = checker.new_checker()
-        checker.collect_symbols(checked, module.arena, module.root, module.source, &graph.modules)
-        checker.validate_import_member_calls(checked, module.arena, module.root, module.source, &module.imports, &graph.modules)
-        checker.validate_names(checked, module.arena, module.root, module.source)
-        if len(checked.diagnostics) > 0:
-            checker_core.dump_diagnostics(checked)
-            return emit_error("semantic check failed")
+        error = analyze_module(&checked, module, &graph.modules)
+        if len(error) > 0:
+            return emit_error(error[0:len(error)])
         ir: backend_ir.IRModule = backend_ir.lower(module.arena, module.root, checked.model, checked.type_table)
         if not ir.is_valid:
             return emit_error("internal atomic IR validation failed")

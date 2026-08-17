@@ -46,6 +46,10 @@ def main(argc: i32, argv: **char) -> i32:
     test_build_and_run(&state)
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
+    test_context_capsule(&state)
+    test_impact_report(&state)
+    test_semantic_query_diagnostics(&state)
+    test_semantic_diff(&state)
 
     print("native compiler tests:", state.passed, "passed,", state.failed, "failed")
     if state.failed > 0:
@@ -209,6 +213,190 @@ def test_atomic_codegen(state: &TestState) -> void:
     expect(state, "emit-c lowers atomic operations to C11 atomics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_context_capsule(state: &TestState) -> void:
+    target = state.root + "/tests/cases/semantic_context/src/cache.ci:14"
+    command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        target.clone(),
+        "--depth",
+        "2",
+    ]
+    repeated_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        target,
+        "--depth",
+        "2",
+    ]
+    first = process.run(command)
+    second = process.run(repeated_command)
+    method_target = state.root + "/tests/cases/semantic_context/src/cache.ci:22"
+    method_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        method_target,
+    ]
+    method = process.run(method_command)
+    ok = (
+        first.exit_code == 0
+        and second.exit_code == 0
+        and method.exit_code == 0
+        and first.stdout == second.stdout
+        and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
+        and contains(&first.stdout, "cache::function:hash_key")
+        and contains(&first.stdout, "main::function:lookup_twice")
+        and contains(&first.stdout, "lock_effect: unknown (unresolved callee)")
+        and contains(&first.stdout, "cache::lock:database < cache::lock:cache")
+        and contains(&first.stdout, "allocation: unknown")
+        and contains(&method.stdout, "cache::method:CacheWorker.refresh")
+        and contains(&method.stdout, "lock_effect: acquires cache.cache")
+    )
+    expect(state, "context emits deterministic compiler-derived facts", ok)
+    if not ok:
+        report_process_failure(&first.stdout, &first.stderr)
+
+
+def test_impact_report(state: &TestState) -> void:
+    target = state.root + "/tests/cases/semantic_context/src/model.ci:2"
+    command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        target,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "model::struct:CacheEntry")
+        and contains(&result.stdout, "TYPE / MEMBER CONSUMERS")
+        and contains(&result.stdout, "cache::function:cache_get")
+        and contains(&result.stdout, "source-level layout sensitive")
+        and contains(&result.stdout, "emitted runtime reflection metadata")
+    )
+    expect(state, "impact reports semantic consumers and exposure", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_semantic_query_diagnostics(state: &TestState) -> void:
+    target = state.root + "/tests/cases/semantic_context/src/cache.ci:999"
+    command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        target,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 2
+        and len(result.stdout) == 0
+        and contains(&result.stderr, "line is outside the source file")
+    )
+    expect(state, "semantic queries reject invalid locations", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_semantic_diff(state: &TestState) -> void:
+    repository = state.workspace + "/semantic-diff-project"
+    source_dir = repository + "/src"
+    create: List[String] = ["mkdir", "-p", source_dir.clone()]
+    if process.run(create).exit_code != 0:
+        expect(state, "semantic-diff reports canonical changes", false)
+        return
+    write_test_text(
+        repository + "/cinder.toml",
+        "[project]\nname = \"semantic_diff_fixture\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+    )
+    source_path = source_dir + "/main.ci"
+    write_test_text(
+        source_path[0:len(source_path)],
+        semantic_diff_stress_source(96),
+    )
+    init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
+    add: List[String] = ["git", "-C", repository.clone(), "add", "."]
+    commit: List[String] = [
+        "git",
+        "-C",
+        repository.clone(),
+        "-c",
+        "user.name=Cinder Tests",
+        "-c",
+        "user.email=cinder@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "baseline",
+    ]
+    initialized = process.run(init)
+    added = process.run(add)
+    committed = process.run(commit)
+    if initialized.exit_code != 0 or added.exit_code != 0 or committed.exit_code != 0:
+        expect(state, "semantic-diff reports canonical changes", false)
+        report_process_failure(&committed.stdout, &committed.stderr)
+        return
+    write_test_text(
+        source_path,
+        semantic_diff_stress_source(97),
+    )
+    command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        repository.clone(),
+    ]
+    result = process.run(command)
+    worktree_command: List[String] = [
+        "git",
+        "-C",
+        repository,
+        "worktree",
+        "list",
+        "--porcelain",
+    ]
+    worktrees = process.run(worktree_command)
+    ok = (
+        result.exit_code == 0
+        and worktrees.exit_code == 0
+        and contains(&result.stdout, "schema: cinder-semantic-v1")
+        and contains(&result.stdout, "+ added main::function:node_96")
+        and contains(&result.stdout, "- calls: main::function:main -> main::function:node_95")
+        and contains(&result.stdout, "+ calls: main::function:main -> main::function:node_96")
+        and not contains(&worktrees.stdout, "cinder-semantic-diff.")
+    )
+    expect(state, "semantic-diff reports canonical changes", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def write_test_text(path: String, content: String) -> void:
+    with open(path, "wb") as file:
+        file.write(content)
+
+
+def semantic_diff_stress_source(function_count: i32) -> String:
+    builder = StringBuilder()
+    builder.append("def node_0(value: i32) -> i32:\n")
+    builder.append("    return value\n\n\n")
+    index: i32 = 1
+    while index < function_count:
+        current = to_string(index)
+        previous = to_string(index - 1)
+        builder.append("def node_")
+        builder.append(current)
+        builder.append("(value: i32) -> i32:\n")
+        builder.append("    return node_")
+        builder.append(previous)
+        builder.append("(value) + 1\n\n\n")
+        index += 1
+    final_index = to_string(function_count - 1)
+    builder.append("def main() -> i32:\n")
+    builder.append("    return node_")
+    builder.append(final_index)
+    builder.append("(0)\n")
+    return builder.finish()
 
 
 def expect(state: &TestState, name: String, condition: bool) -> void:

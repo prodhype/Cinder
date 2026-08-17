@@ -1,0 +1,1033 @@
+import codegen_type_names
+import checker_core
+import emit_project
+import lock_order
+import ownership
+import project
+import semantic
+import symbols
+import syntax
+import types
+from syntax import NodeId
+
+
+struct SymbolFact:
+    key: String
+    module_name: String
+    name: String
+    kind: String
+    owner: String
+    signature: String
+    type_name: String
+    ownership: String
+    parameter_ownership: String
+    abi: String
+    reflected: bool
+    exported: bool
+    path: String
+    source: String
+    line: i32
+    column: i32
+    module_index: usize
+    symbol_index: i32
+    node: NodeId
+
+
+struct RelationFact:
+    kind: String
+    from_key: String
+    to_key: String
+    detail: String
+    resolved: bool
+
+
+struct SemanticFactGraph:
+    facts: List[SymbolFact]
+    relations: List[RelationFact]
+    error: String
+
+
+struct DiffSymbolFact:
+    key: String
+    signature: String
+    type_name: String
+    ownership: String
+    parameter_ownership: String
+    abi: String
+    reflected: bool
+    exported: bool
+
+
+struct DiffRelationFact:
+    kind: String
+    from_key: String
+    to_key: String
+    detail: String
+    resolved: bool
+
+
+struct DiffFactGraph:
+    facts: List[DiffSymbolFact]
+    relations: List[DiffRelationFact]
+    error: String
+
+
+struct LocationResult:
+    ok: bool
+    fact_index: i32
+    module_index: i32
+    node: NodeId
+    error: String
+
+
+def build_fact_graph(
+    graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+) -> SemanticFactGraph:
+    facts: List[SymbolFact] = []
+    relations: List[RelationFact] = []
+    if not analysis.ok:
+        return SemanticFactGraph(
+            facts=facts,
+            relations=relations,
+            error=analysis.error[0:len(analysis.error)],
+        )
+    module_index: usize = 0
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &graph.modules
+    while module_index < len(analyzed_modules):
+        analyzed: &const emit_project.AnalyzedModule = &analyzed_modules[module_index]
+        source_module: &const project.ParsedModule = &project_modules[analyzed.module_index]
+        symbol_index: usize = 0
+        while symbol_index < len(analyzed.checked.symbols.symbols):
+            symbol: &const symbols.SymbolRecord = &analyzed.checked.symbols.symbols[symbol_index]
+            if symbol_is_fact(
+                cast[i32](symbol_index),
+                &analyzed.checked.symbols,
+                &source_module.arena,
+            ):
+                facts.append(make_symbol_fact(
+                    source_module,
+                    &analyzed.checked,
+                    analyzed.module_index,
+                    cast[i32](symbol_index),
+                ))
+            symbol_index += 1
+        module_index += 1
+    graph_value = SemanticFactGraph(facts=facts, relations=relations, error="")
+    collect_member_relations(&graph_value)
+    collect_semantic_relations(graph, analysis, &graph_value)
+    collect_import_call_relations(graph, &graph_value)
+    collect_type_relations(graph, &graph_value)
+    collect_lock_relations(analysis, &graph_value)
+    return graph_value
+
+
+def compact_diff_graph(graph: &const SemanticFactGraph) -> DiffFactGraph:
+    facts: List[DiffSymbolFact] = []
+    relations: List[DiffRelationFact] = []
+    source_facts: &const List[SymbolFact] = &graph.facts
+    source_relations: &const List[RelationFact] = &graph.relations
+    for fact in source_facts:
+        facts.append(
+            DiffSymbolFact(
+                key=owned_text(&fact.key),
+                signature=owned_text(&fact.signature),
+                type_name=owned_text(&fact.type_name),
+                ownership=owned_text(&fact.ownership),
+                parameter_ownership=owned_text(&fact.parameter_ownership),
+                abi=owned_text(&fact.abi),
+                reflected=fact.reflected,
+                exported=fact.exported,
+            )
+        )
+    for relation in source_relations:
+        relations.append(
+            DiffRelationFact(
+                kind=owned_text(&relation.kind),
+                from_key=owned_text(&relation.from_key),
+                to_key=owned_text(&relation.to_key),
+                detail=owned_text(&relation.detail),
+                resolved=relation.resolved,
+            )
+        )
+    return DiffFactGraph(
+        facts=facts,
+        relations=relations,
+        error=owned_text(&graph.error),
+    )
+
+
+def owned_text(value: &const String) -> String:
+    builder = StringBuilder()
+    builder.append(value[0:len(value)])
+    return builder.finish()
+
+
+def symbol_is_fact(
+    symbol_index: i32,
+    table: &const symbols.SymbolTable,
+    arena: &const syntax.SyntaxArena,
+) -> bool:
+    symbol_values: &const List[symbols.SymbolRecord] = &table.symbols
+    symbol: &const symbols.SymbolRecord = &symbol_values[symbol_index]
+    if symbol.node.index < 0:
+        return false
+    if symbol.kind == symbols.SymbolKind.FUNCTION or symbol.kind == symbols.SymbolKind.FUNCTION_TEMPLATE:
+        for candidate: symbols.SymbolRecord in symbol_values:
+            if candidate.node.index == symbol.node.index and candidate.kind == symbols.SymbolKind.METHOD:
+                return false
+    node = arena.nodes[symbol.node.index]
+    if node.kind == syntax.SyntaxKind.IMPORT_DECL or node.kind == syntax.SyntaxKind.IMPORT_NAME or node.kind == syntax.SyntaxKind.FROM_IMPORT_DECL:
+        return false
+    return (
+        symbol.kind == symbols.SymbolKind.FUNCTION
+        or symbol.kind == symbols.SymbolKind.FUNCTION_TEMPLATE
+        or symbol.kind == symbols.SymbolKind.STRUCT
+        or symbol.kind == symbols.SymbolKind.CLASS
+        or symbol.kind == symbols.SymbolKind.ENUM
+        or symbol.kind == symbols.SymbolKind.UNION
+        or symbol.kind == symbols.SymbolKind.VARIANT
+        or symbol.kind == symbols.SymbolKind.VARIANT_CASE
+        or symbol.kind == symbols.SymbolKind.FIELD
+        or symbol.kind == symbols.SymbolKind.METHOD
+        or symbol.kind == symbols.SymbolKind.GLOBAL
+        or symbol.kind == symbols.SymbolKind.CONSTANT
+        or symbol.kind == symbols.SymbolKind.EXTERN_FUNCTION
+        or symbol.kind == symbols.SymbolKind.EXTERN_TYPE
+        or symbol.kind == symbols.SymbolKind.LOCK
+    )
+
+
+def make_symbol_fact(
+    module: &const project.ParsedModule,
+    checked: &const checker_core.Checker,
+    module_index: usize,
+    symbol_index: i32,
+) -> SymbolFact:
+    symbol_values: &const List[symbols.SymbolRecord] = &checked.symbols.symbols
+    arena: &const syntax.SyntaxArena = &module.arena
+    node_values: &const List[syntax.SyntaxNode] = &arena.nodes
+    symbol = symbol_values[symbol_index]
+    node = node_values[symbol.node.index]
+    name = module.source[symbol.name_start:symbol.name_start + symbol.name_length]
+    kind = symbol_kind_name(symbol.kind)
+    owner = symbol_owner_path(&checked.symbols, symbol.owner, &module.source)
+    key = stable_symbol_key(&module.name, &kind, &owner, &name)
+    type_builder = StringBuilder()
+    codegen_type_names.emit_semantic_readable_type_name(
+        &checked.type_table,
+        symbol.type_id,
+        &module.source,
+        &type_builder,
+    )
+    type_name = type_builder.finish()
+    if (
+        symbol.kind == symbols.SymbolKind.FUNCTION
+        or symbol.kind == symbols.SymbolKind.FUNCTION_TEMPLATE
+        or symbol.kind == symbols.SymbolKind.METHOD
+        or symbol.kind == symbols.SymbolKind.FIELD
+        or symbol.kind == symbols.SymbolKind.GLOBAL
+        or symbol.kind == symbols.SymbolKind.CONSTANT
+        or symbol.kind == symbols.SymbolKind.EXTERN_FUNCTION
+    ):
+        declared_type = declared_type_text(arena, symbol.node, &module.source)
+        if len(declared_type) > 0:
+            type_name = declared_type
+    signature = declaration_header(&module.source, &node)
+    declaration_source = module.source[node.start:node.start + node.length]
+    reflected = has_decorator(arena, symbol.node, &module.source, "reflect")
+    exported = has_decorator(arena, symbol.node, &module.source, "export")
+    return SymbolFact(
+        key=key,
+        module_name=module.name[0:len(module.name)],
+        name=name,
+        kind=kind,
+        owner=owner,
+        signature=signature,
+        type_name=type_name,
+        ownership=ownership_name(&checked.type_table, symbol.type_id),
+        parameter_ownership=parameter_ownership_summary(
+            arena,
+            symbol.node,
+            &module.source,
+            checked,
+        ),
+        abi=abi_name(symbol.kind, &node, exported),
+        reflected=reflected,
+        exported=exported,
+        path=module.path[0:len(module.path)],
+        source=declaration_source,
+        line=node.line,
+        column=node.column,
+        module_index=module_index,
+        symbol_index=symbol_index,
+        node=symbol.node,
+    )
+
+
+def stable_symbol_key(
+    module_name: &const String,
+    kind: &const String,
+    owner: &const String,
+    name: &const String,
+) -> String:
+    builder = StringBuilder()
+    builder.append(module_name[0:len(module_name)])
+    builder.append("::")
+    builder.append(kind[0:len(kind)])
+    builder.append(":")
+    if len(owner) > 0:
+        builder.append(owner[0:len(owner)])
+        builder.append(".")
+    builder.append(name[0:len(name)])
+    return builder.finish()
+
+
+def symbol_owner_path(
+    table: &const symbols.SymbolTable,
+    owner_id: symbols.SymbolId,
+    source: &const String,
+) -> String:
+    if owner_id.index < 0 or owner_id.index >= cast[i32](len(table.symbols)):
+        return ""
+    owner = table.symbols[owner_id.index]
+    name = source[owner.name_start:owner.name_start + owner.name_length]
+    prefix = symbol_owner_path(table, owner.owner, source)
+    if len(prefix) == 0:
+        return name
+    return prefix + "." + name
+
+
+def symbol_kind_name(kind: symbols.SymbolKind) -> String:
+    if kind == symbols.SymbolKind.FUNCTION:
+        return "function"
+    if kind == symbols.SymbolKind.FUNCTION_TEMPLATE:
+        return "function-template"
+    if kind == symbols.SymbolKind.STRUCT:
+        return "struct"
+    if kind == symbols.SymbolKind.CLASS:
+        return "class"
+    if kind == symbols.SymbolKind.ENUM:
+        return "enum"
+    if kind == symbols.SymbolKind.UNION:
+        return "union"
+    if kind == symbols.SymbolKind.VARIANT:
+        return "variant"
+    if kind == symbols.SymbolKind.VARIANT_CASE:
+        return "variant-case"
+    if kind == symbols.SymbolKind.FIELD:
+        return "field"
+    if kind == symbols.SymbolKind.METHOD:
+        return "method"
+    if kind == symbols.SymbolKind.GLOBAL:
+        return "global"
+    if kind == symbols.SymbolKind.CONSTANT:
+        return "constant"
+    if kind == symbols.SymbolKind.EXTERN_FUNCTION:
+        return "extern-function"
+    if kind == symbols.SymbolKind.EXTERN_TYPE:
+        return "extern-type"
+    if kind == symbols.SymbolKind.LOCK:
+        return "lock"
+    return "symbol"
+
+
+def ownership_name(
+    table: &const types.TypeTable,
+    type_id: types.TypeId,
+) -> String:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return "unknown"
+    type_values: &const List[types.TypeRecord] = &table.types
+    if type_values[type_id.index].kind == types.TypeKind.NAMED:
+        return "unknown"
+    kind = ownership.ownership_kind(table, type_id)
+    if kind == ownership.OwnershipKind.MOVE_ONLY:
+        return "owned"
+    if kind == ownership.OwnershipKind.BORROWED:
+        return "borrowed"
+    if kind == ownership.OwnershipKind.IMMOBILE:
+        return "immobile"
+    return "copy"
+
+
+def parameter_ownership_summary(
+    arena: &const syntax.SyntaxArena,
+    declaration: NodeId,
+    source: &const String,
+    checked: &const checker_core.Checker,
+) -> String:
+    if declaration.index < 0:
+        return "(not applicable)"
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    node = nodes[declaration.index]
+    if node.kind != syntax.SyntaxKind.FUNCTION_DECL:
+        return "(not applicable)"
+    builder = StringBuilder()
+    count: i32 = 0
+    for offset in range(0, node.child_count):
+        parameter_id = children[node.first_child + offset]
+        parameter = nodes[parameter_id.index]
+        if parameter.kind != syntax.SyntaxKind.PARAMETER:
+            continue
+        if count > 0:
+            builder.append(", ")
+        if parameter.value_length > 0:
+            builder.append(source[parameter.value_start:parameter.value_start + parameter.value_length])
+        else:
+            builder.append("...")
+        builder.append("=")
+        parameter_type = types.missing_type()
+        for child_offset in range(0, parameter.child_count):
+            child_id = children[parameter.first_child + child_offset]
+            child = nodes[child_id.index]
+            if is_type_node_kind(child.kind):
+                parameter_type = checked.model.type_node(child_id)
+        builder.append(ownership_name(&checked.type_table, parameter_type))
+        count += 1
+    if count == 0:
+        return "(none)"
+    return builder.finish()
+
+
+def is_type_node_kind(kind: syntax.SyntaxKind) -> bool:
+    return (
+        kind == syntax.SyntaxKind.TYPE_NAME
+        or kind == syntax.SyntaxKind.TYPE_GENERIC
+        or kind == syntax.SyntaxKind.TYPE_CONST
+        or kind == syntax.SyntaxKind.TYPE_POINTER
+        or kind == syntax.SyntaxKind.TYPE_REFERENCE
+        or kind == syntax.SyntaxKind.TYPE_ARRAY
+        or kind == syntax.SyntaxKind.TYPE_SLICE
+        or kind == syntax.SyntaxKind.TYPE_DYN
+        or kind == syntax.SyntaxKind.TYPE_FUNCTION
+        or kind == syntax.SyntaxKind.TYPE_CLOSURE
+    )
+
+
+def abi_name(
+    kind: symbols.SymbolKind,
+    node: &const syntax.SyntaxNode,
+    exported: bool,
+) -> String:
+    if exported or kind == symbols.SymbolKind.EXTERN_FUNCTION or kind == symbols.SymbolKind.EXTERN_TYPE:
+        return "C"
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL and node.flags == 1:
+        return "C"
+    return "Cinder"
+
+
+def has_decorator(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    expected: String,
+) -> bool:
+    if id.index < 0:
+        return false
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    node = nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = children[node.first_child + offset]
+        child = nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.DECORATOR and source[child.value_start:child.value_start + child.value_length] == expected:
+            return true
+    return false
+
+
+def declaration_header(
+    source: &const String,
+    node: &const syntax.SyntaxNode,
+) -> String:
+    end = node.start + node.length
+    index = node.start
+    while index < end and source.byte_at(index) != 10 and source.byte_at(index) != 13:
+        index += 1
+    return source[node.start:index]
+
+
+def declared_type_text(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> String:
+    if id.index < 0:
+        return ""
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    node = nodes[id.index]
+    for offset in range(0, node.child_count):
+        child_id = children[node.first_child + offset]
+        child = nodes[child_id.index]
+        if is_type_node_kind(child.kind):
+            return source[child.start:child.start + child.length]
+    return ""
+
+
+def collect_member_relations(graph: &SemanticFactGraph) -> void:
+    facts: &const List[SymbolFact] = &graph.facts
+    for fact in facts:
+        if len(fact.owner) == 0:
+            continue
+        owner_index = find_fact_by_owner_name(
+            graph,
+            &fact.module_name,
+            &fact.owner,
+        )
+        if owner_index >= 0:
+            add_relation_unique(
+                graph,
+                "member",
+                &facts[cast[usize](owner_index)].key,
+                &fact.key,
+                "",
+                true,
+            )
+
+
+def collect_semantic_relations(
+    project_graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    module_index: usize = 0
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    facts: &const List[SymbolFact] = &graph.facts
+    while module_index < len(analyzed_modules):
+        analyzed: &const emit_project.AnalyzedModule = &analyzed_modules[module_index]
+        module: &const project.ParsedModule = &project_modules[analyzed.module_index]
+        name_bindings: &const List[semantic.NodeSymbolBinding] = &analyzed.checked.model.name_symbols
+        for binding: semantic.NodeSymbolBinding in name_bindings:
+            source_index = enclosing_fact_index(graph, analyzed.module_index, binding.node, &module.arena)
+            target_index = fact_index_for_symbol(graph, analyzed.module_index, binding.symbol.index)
+            if source_index >= 0 and target_index >= 0 and source_index != target_index:
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](source_index)].key,
+                    &facts[cast[usize](target_index)].key,
+                    "",
+                    true,
+                )
+        call_resolutions: &const List[semantic.CallResolution] = &analyzed.checked.model.call_resolutions
+        for call: semantic.CallResolution in call_resolutions:
+            source_index = enclosing_fact_index(graph, analyzed.module_index, call.node, &module.arena)
+            target_index = fact_index_for_symbol(graph, analyzed.module_index, call.callee.index)
+            if source_index >= 0 and target_index >= 0:
+                add_relation_unique(
+                    graph,
+                    "calls",
+                    &facts[cast[usize](source_index)].key,
+                    &facts[cast[usize](target_index)].key,
+                    "",
+                    true,
+                )
+        module_index += 1
+
+
+def collect_import_call_relations(
+    project_graph: &const project.ProjectGraph,
+    graph: &SemanticFactGraph,
+) -> void:
+    module_index: usize = 0
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    while module_index < len(project_modules):
+        module: &const project.ParsedModule = &project_modules[module_index]
+        nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+        node_index: usize = 0
+        while node_index < len(nodes):
+            node = nodes[node_index]
+            if node.kind == syntax.SyntaxKind.EXPR_CALL:
+                call_id = NodeId(index=cast[i32](node_index))
+                caller = enclosing_fact_index(graph, module_index, call_id, &module.arena)
+                if caller >= 0:
+                    collect_import_call_relation(project_graph, graph, module_index, call_id, caller)
+            node_index += 1
+        module_index += 1
+
+
+def collect_import_call_relation(
+    project_graph: &const project.ProjectGraph,
+    graph: &SemanticFactGraph,
+    module_index: usize,
+    call_id: NodeId,
+    caller_index: i32,
+) -> void:
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    module: &const project.ParsedModule = &project_modules[module_index]
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    facts: &const List[SymbolFact] = &graph.facts
+    call = nodes[call_id.index]
+    if call.child_count <= 0:
+        return
+    callee_id = children[call.first_child]
+    callee = nodes[callee_id.index]
+    target_module = ""
+    target_name = ""
+    if callee.kind == syntax.SyntaxKind.EXPR_NAME:
+        callee_name = module.source[callee.value_start:callee.value_start + callee.value_length]
+        for imported in module_imports:
+            if len(imported.member) > 0 and imported.alias == callee_name:
+                target_module = imported.module_name[0:len(imported.module_name)]
+                target_name = imported.member[0:len(imported.member)]
+    elif callee.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE and callee.child_count >= 2:
+        receiver_id = children[callee.first_child]
+        member_id = children[callee.first_child + 1]
+        receiver = nodes[receiver_id.index]
+        member = nodes[member_id.index]
+        if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
+            receiver_name = module.source[receiver.value_start:receiver.value_start + receiver.value_length]
+            for imported in module_imports:
+                if len(imported.member) == 0 and imported.alias == receiver_name:
+                    target_module = imported.module_name[0:len(imported.module_name)]
+                    target_name = module.source[member.value_start:member.value_start + member.value_length]
+    if len(target_module) == 0 or len(target_name) == 0:
+        return
+    target_index = find_fact_by_module_name(graph, &target_module, &target_name)
+    if target_index >= 0:
+        add_relation_unique(
+            graph,
+            "calls",
+            &facts[cast[usize](caller_index)].key,
+            &facts[cast[usize](target_index)].key,
+            "import",
+            true,
+        )
+    else:
+        add_relation_unique(
+            graph,
+            "calls",
+            &facts[cast[usize](caller_index)].key,
+            &target_module,
+            &target_name,
+            false,
+        )
+
+
+def collect_type_relations(
+    project_graph: &const project.ProjectGraph,
+    graph: &SemanticFactGraph,
+) -> void:
+    module_index: usize = 0
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    facts: &const List[SymbolFact] = &graph.facts
+    while module_index < len(project_modules):
+        module: &const project.ParsedModule = &project_modules[module_index]
+        nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+        node_index: usize = 0
+        while node_index < len(nodes):
+            node = nodes[node_index]
+            if node.kind == syntax.SyntaxKind.TYPE_NAME:
+                type_id = NodeId(index=cast[i32](node_index))
+                source_index = enclosing_fact_index(graph, module_index, type_id, &module.arena)
+                if source_index >= 0:
+                    type_text = module.source[node.value_start:node.value_start + node.value_length]
+                    target_index = resolve_type_fact(project_graph, graph, module_index, &type_text)
+                    if target_index >= 0 and target_index != source_index:
+                        add_relation_unique(
+                            graph,
+                            "type",
+                            &facts[cast[usize](source_index)].key,
+                            &facts[cast[usize](target_index)].key,
+                            "",
+                            true,
+                        )
+            node_index += 1
+        module_index += 1
+
+
+def resolve_type_fact(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    type_text: &const String,
+) -> i32:
+    dot = last_dot(type_text)
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    module: &const project.ParsedModule = &project_modules[module_index]
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    if dot >= 0:
+        prefix = type_text[0:cast[usize](dot)]
+        leaf = type_text[cast[usize](dot + 1):len(type_text)]
+        for imported in module_imports:
+            if len(imported.member) == 0 and imported.alias == prefix:
+                return find_fact_by_module_name(graph, &imported.module_name, &leaf)
+    for imported in module_imports:
+        if len(imported.member) > 0 and imported.alias == type_text:
+            return find_fact_by_module_name(graph, &imported.module_name, &imported.member)
+    local = find_fact_by_module_name(graph, &module.name, type_text)
+    if local >= 0:
+        return local
+    return -1
+
+
+def collect_lock_relations(
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    if len(analyzed_modules) == 0:
+        return
+    model: &const lock_order.ProjectLockModel = &analyzed_modules[0].checked.lock_model
+    functions: &const List[lock_order.FunctionLockEffect] = &model.functions
+    locks: &const List[lock_order.ProjectLock] = &model.locks
+    edges: &const List[lock_order.LockEdge] = &model.edges
+    facts: &const List[SymbolFact] = &graph.facts
+    for effect in functions:
+        function_index = find_fact_for_lock_effect(graph, &effect)
+        if function_index < 0:
+            continue
+        for lock_index in effect.locks:
+            if lock_index < 0 or lock_index >= cast[i32](len(locks)):
+                continue
+            selected_lock: &const lock_order.ProjectLock = &locks[lock_index]
+            target_index = find_fact_by_module_name(graph, &selected_lock.module_name, &selected_lock.name)
+            if target_index >= 0:
+                add_relation_unique(
+                    graph,
+                    "acquires",
+                    &facts[cast[usize](function_index)].key,
+                    &facts[cast[usize](target_index)].key,
+                    "",
+                    true,
+                )
+        if effect.unknown:
+            add_relation_unique(
+                graph,
+                "lock-effect",
+                &facts[cast[usize](function_index)].key,
+                "unknown",
+                "unresolved callee",
+                false,
+            )
+    for edge in edges:
+        if edge.before < 0 or edge.after < 0 or edge.before >= cast[i32](len(locks)) or edge.after >= cast[i32](len(locks)):
+            continue
+        before: &const lock_order.ProjectLock = &locks[edge.before]
+        after: &const lock_order.ProjectLock = &locks[edge.after]
+        before_index = find_fact_by_module_name(graph, &before.module_name, &before.name)
+        after_index = find_fact_by_module_name(graph, &after.module_name, &after.name)
+        if before_index >= 0 and after_index >= 0:
+            detail = "inferred"
+            if edge.explicit:
+                detail = "explicit"
+            add_relation_unique(
+                graph,
+                "lock-before",
+                &facts[cast[usize](before_index)].key,
+                &facts[cast[usize](after_index)].key,
+                &detail,
+                true,
+            )
+
+
+def find_fact_for_lock_effect(
+    graph: &const SemanticFactGraph,
+    effect: &const lock_order.FunctionLockEffect,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    index: usize = 0
+    while index < len(facts):
+        if lock_effect_matches_fact(effect, &facts[index]):
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def lock_effect_matches_fact(
+    effect: &const lock_order.FunctionLockEffect,
+    fact: &const SymbolFact,
+) -> bool:
+    if fact.kind != "function" and fact.kind != "function-template" and fact.kind != "method":
+        return false
+    builder = StringBuilder()
+    builder.append(fact.module_name[0:len(fact.module_name)])
+    builder.append("::")
+    if len(fact.owner) > 0:
+        for index in range(0, len(fact.owner)):
+            byte = fact.owner.byte_at(index)
+            if byte == 46:
+                builder.append("::")
+            else:
+                builder.append_char(cast[char](byte))
+        builder.append("::")
+    builder.append(fact.name[0:len(fact.name)])
+    expected = builder.finish()
+    return strings_equal(&expected, &effect.qualified_name)
+
+
+def strings_equal(left: &const String, right: &const String) -> bool:
+    return left == right
+
+
+def add_relation_unique(
+    graph: &SemanticFactGraph,
+    kind: String,
+    from_key: &const String,
+    to_key: &const String,
+    detail: &const String,
+    resolved: bool,
+) -> void:
+    relations: &const List[RelationFact] = &graph.relations
+    for relation in relations:
+        if relation.kind == kind and relation.from_key == from_key and relation.to_key == to_key:
+            return
+    graph.relations.append(
+        RelationFact(
+            kind=kind,
+            from_key=from_key[0:len(from_key)],
+            to_key=to_key[0:len(to_key)],
+            detail=detail[0:len(detail)],
+            resolved=resolved,
+        )
+    )
+
+
+def fact_index_for_symbol(
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    symbol_index: i32,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    index: usize = 0
+    while index < len(facts):
+        fact: &const SymbolFact = &facts[index]
+        if fact.module_index == module_index and fact.symbol_index == symbol_index:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def enclosing_fact_index(
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    node_id: NodeId,
+    arena: &const syntax.SyntaxArena,
+) -> i32:
+    if node_id.index < 0:
+        return -1
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    facts: &const List[SymbolFact] = &graph.facts
+    target = nodes[node_id.index]
+    target_end = target.start + target.length
+    best: i32 = -1
+    best_length: usize = 0
+    index: usize = 0
+    while index < len(facts):
+        fact: &const SymbolFact = &facts[index]
+        if fact.module_index == module_index and fact.node.index >= 0:
+            candidate = nodes[fact.node.index]
+            candidate_end = candidate.start + candidate.length
+            if candidate.start <= target.start and candidate_end >= target_end:
+                if best < 0 or candidate.length < best_length:
+                    best = cast[i32](index)
+                    best_length = candidate.length
+        index += 1
+    return best
+
+
+def find_fact_by_key(
+    graph: &const SemanticFactGraph,
+    key: &const String,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    index: usize = 0
+    while index < len(facts):
+        if facts[index].key == key:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def find_fact_by_module_name(
+    graph: &const SemanticFactGraph,
+    module_name: &const String,
+    name: &const String,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    index: usize = 0
+    while index < len(facts):
+        fact: &const SymbolFact = &facts[index]
+        if fact.module_name == module_name and fact.name == name:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def find_fact_by_owner_name(
+    graph: &const SemanticFactGraph,
+    module_name: &const String,
+    owner: &const String,
+) -> i32:
+    dot = last_dot(owner)
+    leaf = owner[0:len(owner)]
+    parent = ""
+    if dot >= 0:
+        leaf = owner[cast[usize](dot + 1):len(owner)]
+        parent = owner[0:cast[usize](dot)]
+    facts: &const List[SymbolFact] = &graph.facts
+    index: usize = 0
+    while index < len(facts):
+        fact: &const SymbolFact = &facts[index]
+        if fact.module_name == module_name and fact.name == leaf and fact.owner == parent:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def locate_symbol(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    requested_path: &const String,
+    requested_line: i32,
+) -> LocationResult:
+    if requested_line <= 0:
+        return location_error("line must be a positive integer")
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    matched_module: i32 = -1
+    module_index: usize = 0
+    while module_index < len(project_modules):
+        if paths_match(&project_modules[module_index].path, requested_path):
+            if matched_module >= 0:
+                return location_error("source path is ambiguous in the project graph")
+            matched_module = cast[i32](module_index)
+        module_index += 1
+    if matched_module < 0:
+        return location_error("source file is not part of the loaded project graph")
+    module: &const project.ParsedModule = &project_modules[cast[usize](matched_module)]
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    facts: &const List[SymbolFact] = &graph.facts
+    span = line_span(&module.source, requested_line)
+    if span[0] < 0:
+        return location_error("line is outside the source file")
+    line_start = cast[usize](span[0])
+    line_end = cast[usize](span[1])
+    best: i32 = -1
+    best_length: usize = 0
+    fact_index: usize = 0
+    while fact_index < len(facts):
+        fact: &const SymbolFact = &facts[fact_index]
+        if fact.module_index == cast[usize](matched_module) and fact.node.index >= 0:
+            node = nodes[fact.node.index]
+            node_end = node.start + node.length
+            if node.start < line_end and node_end > line_start:
+                if best < 0 or node.length < best_length:
+                    best = cast[i32](fact_index)
+                    best_length = node.length
+        fact_index += 1
+    if best < 0:
+        return location_error("line is not inside a semantic declaration")
+    return LocationResult(
+        ok=true,
+        fact_index=best,
+        module_index=matched_module,
+        node=facts[cast[usize](best)].node,
+        error="",
+    )
+
+
+def location_error(message: String) -> LocationResult:
+    return LocationResult(
+        ok=false,
+        fact_index=-1,
+        module_index=-1,
+        node=syntax.missing_node(),
+        error=message,
+    )
+
+
+def line_span(source: &const String, requested_line: i32) -> List[i32]:
+    result: List[i32] = []
+    current_line: i32 = 1
+    start: usize = 0
+    index: usize = 0
+    while current_line < requested_line and index < len(source):
+        if source.byte_at(index) == 10:
+            current_line += 1
+            start = index + 1
+        index += 1
+    if current_line != requested_line or start > len(source):
+        result.append(-1)
+        result.append(-1)
+        return result
+    end = start
+    while end < len(source) and source.byte_at(end) != 10:
+        end += 1
+    result.append(cast[i32](start))
+    result.append(cast[i32](end))
+    return result
+
+
+def paths_match(
+    candidate: &const String,
+    requested: &const String,
+) -> bool:
+    if candidate == requested:
+        return true
+    if len(requested) >= 2 and requested.byte_at(0) == 46 and requested.byte_at(1) == 47:
+        stripped = requested[2:len(requested)]
+        if candidate == stripped:
+            return true
+    if len(candidate) > len(requested):
+        start = len(candidate) - len(requested)
+        if candidate[start:len(candidate)] == requested and start > 0 and candidate.byte_at(start - 1) == 47:
+            return true
+    return false
+
+
+def last_dot(value: &const String) -> i32:
+    index = cast[i32](len(value)) - 1
+    while index >= 0:
+        if value.byte_at(cast[usize](index)) == 46:
+            return index
+        index -= 1
+    return -1
+
+
+def fact_snapshot(fact: &const SymbolFact) -> String:
+    return (
+        fact.key[0:len(fact.key)]
+        + "|signature="
+        + fact.signature[0:len(fact.signature)]
+        + "|type="
+        + fact.type_name[0:len(fact.type_name)]
+        + "|ownership="
+        + fact.ownership[0:len(fact.ownership)]
+        + "|parameters="
+        + fact.parameter_ownership[0:len(fact.parameter_ownership)]
+        + "|abi="
+        + fact.abi[0:len(fact.abi)]
+        + "|reflected="
+        + bool_text(fact.reflected)
+        + "|exported="
+        + bool_text(fact.exported)
+    )
+
+
+def relation_snapshot(relation: &const RelationFact) -> String:
+    resolved = "unresolved"
+    if relation.resolved:
+        resolved = "resolved"
+    return (
+        relation.kind[0:len(relation.kind)]
+        + "|"
+        + relation.from_key[0:len(relation.from_key)]
+        + "|"
+        + relation.to_key[0:len(relation.to_key)]
+        + "|"
+        + relation.detail[0:len(relation.detail)]
+        + "|"
+        + resolved
+    )
+
+
+def bool_text(value: bool) -> String:
+    if value:
+        return "yes"
+    return "no"

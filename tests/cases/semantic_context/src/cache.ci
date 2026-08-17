@@ -1,0 +1,24 @@
+import model
+
+
+lock database
+lock cache after database
+
+request_count: i32 = 0
+
+
+def hash_key(key: i32) -> i32:
+    return key + 1
+
+
+def cache_get(key: i32) -> model.CacheEntry:
+    hashed = hash_key(key)
+    CriticalSection cache:
+        request_count += 1
+    return model.CacheEntry(value=hashed)
+
+
+struct CacheWorker:
+    def refresh(self) -> void:
+        CriticalSection cache:
+            request_count += 1

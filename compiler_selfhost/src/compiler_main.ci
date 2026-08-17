@@ -3,6 +3,8 @@ import emit_project
 import fs
 import project
 import process
+import semantic_context
+import semantic_diff
 import toolchain
 
 
@@ -18,13 +20,20 @@ struct DriverOptions:
 
 def main(argc: i32, argv: **char) -> i32:
     if argc < 3:
-        stderr("usage: cinder <check|emit-c|emit-project|build|run> <source>\n")
+        stderr("usage: cinder <check|emit-c|emit-project|build|run|context|impact|semantic-diff> <source-or-target>\n")
         return 2
 
     command = String(argv[1])
     args: List[String] = []
     for index in range(2, argc):
         args.append(String(argv[index]))
+
+    if command == "context":
+        return semantic_context.context_command(args)
+    if command == "impact":
+        return semantic_context.impact_command(args)
+    if command == "semantic-diff":
+        return semantic_diff.semantic_diff_command(args)
 
     executable_path = String(argv[0])
     options = parse_options(args)

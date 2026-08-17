@@ -1,0 +1,15 @@
+@reflect
+struct CacheEntry:
+    value: i32
+
+
+abstract class Store:
+    @abstractmethod
+    def lookup(self, key: i32) -> CacheEntry:
+        pass
+
+
+class MemoryStore(Store):
+    @override
+    def lookup(self, key: i32) -> CacheEntry:
+        return CacheEntry(value=key)

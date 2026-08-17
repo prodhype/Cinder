@@ -1,0 +1,469 @@
+import analysis_core
+import cinder
+import emit_project
+import fs
+import manifest
+import process
+import project
+
+
+struct DiffOptions:
+    ok: bool
+    reference: String
+    project_path: String
+    error: String
+
+
+struct DiffGraphResult:
+    ok: bool
+    graph: analysis_core.DiffFactGraph
+    error: String
+
+
+def semantic_diff_command(args: &const List[String]) -> i32:
+    options = parse_diff_options(args)
+    if not options.ok:
+        diff_error(options.error[0:len(options.error)])
+        return 2
+
+    current_config: manifest.ProjectConfig = project.resolve_project(options.project_path[0:len(options.project_path)])
+    repository_command: List[String] = [
+        "git",
+        "-C",
+        current_config.root[0:len(current_config.root)],
+        "rev-parse",
+        "--show-toplevel",
+    ]
+    repository_result = process.run(repository_command)
+    if repository_result.exit_code != 0:
+        diff_error("semantic-diff requires a Git working tree: " + repository_result.stderr)
+        return 2
+    repository_root = trim_output(&repository_result.stdout)
+    prefix_command: List[String] = [
+        "git",
+        "-C",
+        current_config.root[0:len(current_config.root)],
+        "rev-parse",
+        "--show-prefix",
+    ]
+    prefix_result = process.run(prefix_command)
+    if prefix_result.exit_code != 0:
+        diff_error("failed to resolve project path within the Git repository")
+        return 2
+    project_prefix = trim_output(&prefix_result.stdout)
+
+    temporary_command: List[String] = ["mktemp", "-d", "/tmp/cinder-semantic-diff.XXXXXX"]
+    temporary_result = process.run(temporary_command)
+    if temporary_result.exit_code != 0:
+        diff_error("failed to create a semantic-diff workspace: " + temporary_result.stderr)
+        return 2
+    workspace = trim_output(&temporary_result.stdout)
+    remove_empty_command: List[String] = ["rmdir", workspace[0:len(workspace)]]
+    remove_empty = process.run(remove_empty_command)
+    if remove_empty.exit_code != 0:
+        cleanup_workspace(&repository_root, &workspace, false)
+        diff_error("failed to prepare the semantic-diff workspace")
+        return 2
+
+    add_command: List[String] = [
+        "git",
+        "-C",
+        repository_root[0:len(repository_root)],
+        "worktree",
+        "add",
+        "--detach",
+        workspace[0:len(workspace)],
+        options.reference[0:len(options.reference)],
+    ]
+    add_result = process.run(add_command)
+    if add_result.exit_code != 0:
+        cleanup_workspace(&repository_root, &workspace, false)
+        diff_error("failed to materialize Git ref '" + options.reference + "': " + add_result.stderr)
+        return 2
+
+    reference_path = workspace[0:len(workspace)]
+    if len(project_prefix) > 0:
+        reference_path = fs.join_path(&workspace, &project_prefix)
+    reference_result = analyze_diff_side(reference_path)
+    cleanup_workspace(&repository_root, &workspace, true)
+    if not reference_result.ok:
+        diff_error("reference analysis error: " + reference_result.error)
+        return 1
+
+    current_result = analyze_diff_side(options.project_path[0:len(options.project_path)])
+    if not current_result.ok:
+        diff_error("analysis error: " + current_result.error)
+        return 1
+    output = render_semantic_diff(
+        &options.reference,
+        &reference_result.graph,
+        &current_result.graph,
+    )
+    cinder.write_stdout(output)
+    return 0
+
+
+def analyze_diff_side(path: String) -> DiffGraphResult:
+    loaded: project.ProjectGraph = project.load_project(path)
+    if len(loaded.error) > 0:
+        return diff_graph_error("project error: " + loaded.error)
+    analyzed: emit_project.AnalysisResult = emit_project.analyze_project(&loaded)
+    if not analyzed.ok:
+        return diff_graph_error("project error: " + analyzed.error)
+    full_graph: analysis_core.SemanticFactGraph = analysis_core.build_fact_graph(&loaded, &analyzed)
+    if len(full_graph.error) > 0:
+        return diff_graph_error(full_graph.error[0:len(full_graph.error)])
+    compact: analysis_core.DiffFactGraph = analysis_core.compact_diff_graph(&full_graph)
+    return DiffGraphResult(ok=true, graph=compact, error="")
+
+
+def diff_graph_error(message: String) -> DiffGraphResult:
+    facts: List[analysis_core.DiffSymbolFact] = []
+    relations: List[analysis_core.DiffRelationFact] = []
+    graph = analysis_core.DiffFactGraph(
+        facts=facts,
+        relations=relations,
+        error="",
+    )
+    return DiffGraphResult(ok=false, graph=graph, error=message)
+
+
+def parse_diff_options(args: &const List[String]) -> DiffOptions:
+    if len(args) == 0:
+        return DiffOptions(
+            ok=false,
+            reference="",
+            project_path=".",
+            error="usage: cinder semantic-diff <git-ref> [--project <path>]",
+        )
+    reference = args[0][0:len(args[0])]
+    project_path = "."
+    index: usize = 1
+    while index < len(args):
+        if args[index] == "--project" and index + 1 < len(args):
+            project_path = args[index + 1][0:len(args[index + 1])]
+            index += 2
+        else:
+            return DiffOptions(
+                ok=false,
+                reference=reference,
+                project_path=project_path,
+                error="usage: cinder semantic-diff <git-ref> [--project <path>]",
+            )
+    return DiffOptions(
+        ok=true,
+        reference=reference,
+        project_path=project_path,
+        error="",
+    )
+
+
+def render_semantic_diff(
+    reference: &const String,
+    before: &const analysis_core.DiffFactGraph,
+    after: &const analysis_core.DiffFactGraph,
+) -> String:
+    builder = StringBuilder()
+    builder.append("SEMANTIC DIFF\n")
+    builder.append("schema: cinder-semantic-v1\n")
+    builder.append("base: ")
+    builder.append(reference[0:len(reference)])
+    builder.append("\n")
+    builder.append("current: working-tree\n")
+    builder.append("target: source-level (physical ABI layout unavailable)\n\n")
+
+    changed = false
+    builder.append("SYMBOLS\n")
+    before_facts: &const List[analysis_core.DiffSymbolFact] = &before.facts
+    after_facts: &const List[analysis_core.DiffSymbolFact] = &after.facts
+    before_index = build_fact_index(before_facts)
+    after_index = build_fact_index(after_facts)
+    for fact in before_facts:
+        if not (fact.key in after_index):
+            builder.append("- removed ")
+            builder.append(fact.key[0:len(fact.key)])
+            builder.append("\n")
+            changed = true
+    for fact in after_facts:
+        if not (fact.key in before_index):
+            builder.append("+ added ")
+            builder.append(fact.key[0:len(fact.key)])
+            builder.append("\n")
+            changed = true
+        else:
+            previous_index = before_index[fact.key]
+            previous: &const analysis_core.DiffSymbolFact = &before_facts[cast[usize](previous_index)]
+            if not diff_facts_equal(previous, &fact):
+                builder.append("~ changed ")
+                builder.append(fact.key[0:len(fact.key)])
+                builder.append("\n")
+                append_changed_property(
+                    &builder,
+                    "signature",
+                    &previous.signature,
+                    &fact.signature,
+                )
+                append_changed_property(
+                    &builder,
+                    "type",
+                    &previous.type_name,
+                    &fact.type_name,
+                )
+                append_changed_property(
+                    &builder,
+                    "ownership",
+                    &previous.ownership,
+                    &fact.ownership,
+                )
+                append_changed_property(
+                    &builder,
+                    "parameter ownership",
+                    &previous.parameter_ownership,
+                    &fact.parameter_ownership,
+                )
+                append_changed_property(
+                    &builder,
+                    "abi",
+                    &previous.abi,
+                    &fact.abi,
+                )
+                previous_reflected = analysis_core.bool_text(previous.reflected)
+                current_reflected = analysis_core.bool_text(fact.reflected)
+                append_changed_property(
+                    &builder,
+                    "reflected",
+                    &previous_reflected,
+                    &current_reflected,
+                )
+                previous_exported = analysis_core.bool_text(previous.exported)
+                current_exported = analysis_core.bool_text(fact.exported)
+                append_changed_property(
+                    &builder,
+                    "exported",
+                    &previous_exported,
+                    &current_exported,
+                )
+                append_reachable_callers(&builder, after, &fact.key)
+                changed = true
+    if not changed:
+        builder.append("(unchanged)\n")
+    builder.append("\n")
+
+    relation_changed = append_relation_diff(&builder, before, after)
+    if relation_changed:
+        changed = true
+    if not changed:
+        builder.append("NO SEMANTIC CHANGES\n")
+    return builder.finish()
+
+
+def build_fact_index(
+    facts: &const List[analysis_core.DiffSymbolFact],
+) -> Map[String, i32]:
+    result: Map[String, i32] = {}
+    index: usize = 0
+    while index < len(facts):
+        result[facts[index].key] = cast[i32](index)
+        index += 1
+    return result
+
+
+def diff_facts_equal(
+    left: &const analysis_core.DiffSymbolFact,
+    right: &const analysis_core.DiffSymbolFact,
+) -> bool:
+    return (
+        analysis_core.strings_equal(&left.signature, &right.signature)
+        and analysis_core.strings_equal(&left.type_name, &right.type_name)
+        and analysis_core.strings_equal(&left.ownership, &right.ownership)
+        and analysis_core.strings_equal(&left.parameter_ownership, &right.parameter_ownership)
+        and analysis_core.strings_equal(&left.abi, &right.abi)
+        and left.reflected == right.reflected
+        and left.exported == right.exported
+    )
+
+
+def append_changed_property(
+    builder: &StringBuilder,
+    name: String,
+    before: &const String,
+    after: &const String,
+) -> void:
+    if before == after:
+        return
+    builder.append("  ")
+    builder.append(name)
+    builder.append(": ")
+    builder.append(before[0:len(before)])
+    builder.append(" -> ")
+    builder.append(after[0:len(after)])
+    builder.append("\n")
+
+
+def append_reachable_callers(
+    builder: &StringBuilder,
+    graph: &const analysis_core.DiffFactGraph,
+    target: &const String,
+) -> void:
+    callers: List[String] = []
+    relations: &const List[analysis_core.DiffRelationFact] = &graph.relations
+    for relation in relations:
+        if relation.kind == "calls" and relation.to_key == target and relation.resolved:
+            if not contains_string(&callers, &relation.from_key):
+                callers.append(relation.from_key[0:len(relation.from_key)])
+    if len(callers) == 0:
+        return
+    builder.append("  reachable callers:\n")
+    for caller in callers:
+        builder.append("    - ")
+        builder.append(caller[0:len(caller)])
+        builder.append("\n")
+
+
+def append_relation_diff(
+    builder: &StringBuilder,
+    before: &const analysis_core.DiffFactGraph,
+    after: &const analysis_core.DiffFactGraph,
+) -> bool:
+    changed = false
+    builder.append("RELATIONS\n")
+    before_relations: &const List[analysis_core.DiffRelationFact] = &before.relations
+    after_relations: &const List[analysis_core.DiffRelationFact] = &after.relations
+    before_index = build_relation_index(before_relations)
+    after_index = build_relation_index(after_relations)
+    for relation in before_relations:
+        identity = relation_identity(&relation)
+        if not (identity in after_index):
+            builder.append("- ")
+            append_relation(builder, &relation)
+            changed = true
+    for relation in after_relations:
+        identity = relation_identity(&relation)
+        if not (identity in before_index):
+            builder.append("+ ")
+            append_relation(builder, &relation)
+            changed = true
+    if not changed:
+        builder.append("(unchanged)\n")
+    builder.append("\n")
+    return changed
+
+
+def build_relation_index(
+    relations: &const List[analysis_core.DiffRelationFact],
+) -> Set[String]:
+    result: Set[String] = {""}
+    result.clear()
+    for relation in relations:
+        identity = relation_identity(&relation)
+        result.add(identity)
+    return result
+
+
+def relation_identity(
+    relation: &const analysis_core.DiffRelationFact,
+) -> String:
+    builder = StringBuilder()
+    append_identity_field(&builder, &relation.kind)
+    append_identity_field(&builder, &relation.from_key)
+    append_identity_field(&builder, &relation.to_key)
+    append_identity_field(&builder, &relation.detail)
+    if relation.resolved:
+        builder.append("1")
+    else:
+        builder.append("0")
+    return builder.finish()
+
+
+def append_identity_field(
+    builder: &StringBuilder,
+    value: &const String,
+) -> void:
+    append_usize(builder, len(value))
+    builder.append(":")
+    builder.append(value[0:len(value)])
+
+
+def append_usize(builder: &StringBuilder, value: usize) -> void:
+    if value == 0:
+        builder.append("0")
+        return
+    current = value
+    digits: List[u8] = []
+    while current > 0:
+        digits.append(cast[u8](current % 10))
+        current = current / 10
+    index = len(digits)
+    while index > 0:
+        index -= 1
+        builder.append_char(cast[char](48 + digits[index]))
+
+
+def append_relation(
+    builder: &StringBuilder,
+    relation: &const analysis_core.DiffRelationFact,
+) -> void:
+    builder.append(relation.kind[0:len(relation.kind)])
+    builder.append(": ")
+    builder.append(relation.from_key[0:len(relation.from_key)])
+    builder.append(" -> ")
+    builder.append(relation.to_key[0:len(relation.to_key)])
+    if len(relation.detail) > 0:
+        builder.append(" (")
+        builder.append(relation.detail[0:len(relation.detail)])
+        builder.append(")")
+    if not relation.resolved:
+        builder.append(" [unresolved]")
+    builder.append("\n")
+
+
+def cleanup_workspace(
+    repository_root: &const String,
+    workspace: &const String,
+    registered: bool,
+) -> void:
+    if registered:
+        remove_command: List[String] = [
+            "git",
+            "-C",
+            repository_root[0:len(repository_root)],
+            "worktree",
+            "remove",
+            "--force",
+            workspace[0:len(workspace)],
+        ]
+        ignored_remove = process.run(remove_command)
+        ignored_remove_code = ignored_remove.exit_code
+    files_command: List[String] = ["rm", "-rf", workspace[0:len(workspace)]]
+    ignored_files = process.run(files_command)
+    ignored_files_code = ignored_files.exit_code
+
+
+def trim_output(value: &const String) -> String:
+    start: usize = 0
+    end = len(value)
+    while start < end and is_space(value.byte_at(start)):
+        start += 1
+    while end > start and is_space(value.byte_at(end - 1)):
+        end -= 1
+    return value[start:end]
+
+
+def is_space(byte: u8) -> bool:
+    return byte == 32 or byte == 9 or byte == 10 or byte == 13
+
+
+def contains_string(
+    values: &const List[String],
+    expected: &const String,
+) -> bool:
+    for value in values:
+        if value == expected:
+            return true
+    return false
+
+
+def diff_error(message: String) -> void:
+    cinder.write_stderr(message)
+    if len(message) == 0 or message.byte_at(len(message) - 1) != 10:
+        cinder.write_stderr("\n")

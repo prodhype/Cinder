@@ -1,0 +1,633 @@
+import analysis_core
+import cinder
+import emit_project
+import fs
+import lock_order
+import project
+import semantic
+import syntax
+
+
+struct TargetSpec:
+    ok: bool
+    path: String
+    line: i32
+    error: String
+
+
+struct ContextOptions:
+    ok: bool
+    target: TargetSpec
+    depth: i32
+    error: String
+
+
+def context_command(args: &const List[String]) -> i32:
+    options = parse_context_options(args)
+    if not options.ok:
+        command_error(options.error[0:len(options.error)])
+        return 2
+    load_path = project_path_for_target(&options.target.path)
+    loaded = project.load_project(load_path)
+    if len(loaded.error) > 0:
+        command_error("project error: " + loaded.error)
+        return 1
+    analyzed = emit_project.analyze_project(&loaded)
+    if not analyzed.ok:
+        command_error("project error: " + analyzed.error)
+        return 1
+    graph = analysis_core.build_fact_graph(&loaded, &analyzed)
+    if len(graph.error) > 0:
+        command_error("analysis error: " + graph.error)
+        return 1
+    located = analysis_core.locate_symbol(
+        &loaded,
+        &graph,
+        &options.target.path,
+        options.target.line,
+    )
+    if not located.ok:
+        command_error("context error: " + located.error)
+        return 2
+    output = render_context(
+        &loaded,
+        &analyzed,
+        &graph,
+        located.fact_index,
+        options.depth,
+    )
+    cinder.write_stdout(output)
+    return 0
+
+
+def impact_command(args: &const List[String]) -> i32:
+    if len(args) != 1:
+        command_error("usage: cinder impact <file>:<line>")
+        return 2
+    target = parse_target_spec(&args[0])
+    if not target.ok:
+        command_error(target.error[0:len(target.error)])
+        return 2
+    load_path = project_path_for_target(&target.path)
+    loaded = project.load_project(load_path)
+    if len(loaded.error) > 0:
+        command_error("project error: " + loaded.error)
+        return 1
+    analyzed = emit_project.analyze_project(&loaded)
+    if not analyzed.ok:
+        command_error("project error: " + analyzed.error)
+        return 1
+    graph = analysis_core.build_fact_graph(&loaded, &analyzed)
+    if len(graph.error) > 0:
+        command_error("analysis error: " + graph.error)
+        return 1
+    located = analysis_core.locate_symbol(&loaded, &graph, &target.path, target.line)
+    if not located.ok:
+        command_error("impact error: " + located.error)
+        return 2
+    output = render_impact(&loaded, &graph, located.fact_index)
+    cinder.write_stdout(output)
+    return 0
+
+
+def parse_context_options(args: &const List[String]) -> ContextOptions:
+    empty_target = TargetSpec(ok=false, path="", line=0, error="")
+    if len(args) == 0:
+        return ContextOptions(
+            ok=false,
+            target=empty_target,
+            depth=1,
+            error="usage: cinder context <file>:<line> [--depth N]",
+        )
+    target = parse_target_spec(&args[0])
+    if not target.ok:
+        return ContextOptions(
+            ok=false,
+            target=target,
+            depth=1,
+            error="invalid context target",
+        )
+    depth: i32 = 1
+    index: usize = 1
+    while index < len(args):
+        if args[index] == "--depth" and index + 1 < len(args):
+            parsed = parse_nonnegative_i32(&args[index + 1])
+            if parsed < 0:
+                return ContextOptions(
+                    ok=false,
+                    target=target,
+                    depth=1,
+                    error="context error: --depth requires a non-negative integer",
+                )
+            depth = parsed
+            index += 2
+        else:
+            return ContextOptions(
+                ok=false,
+                target=target,
+                depth=1,
+                error="usage: cinder context <file>:<line> [--depth N]",
+            )
+    return ContextOptions(ok=true, target=target, depth=depth, error="")
+
+
+def parse_target_spec(value: &const String) -> TargetSpec:
+    colon = last_colon(value)
+    if colon <= 0 or colon + 1 >= cast[i32](len(value)):
+        return TargetSpec(
+            ok=false,
+            path="",
+            line=0,
+            error="location must use <file>:<line>",
+        )
+    path = value[0:cast[usize](colon)]
+    line_text = value[cast[usize](colon + 1):len(value)]
+    line = parse_nonnegative_i32(&line_text)
+    if line <= 0:
+        return TargetSpec(
+            ok=false,
+            path=path,
+            line=0,
+            error="location line must be a positive integer",
+        )
+    return TargetSpec(ok=true, path=path, line=line, error="")
+
+
+def project_path_for_target(path: &const String) -> String:
+    parent = fs.parent_dir(path)
+    manifest = project.find_manifest(parent)
+    if len(manifest) > 0:
+        return manifest[0:len(manifest)]
+    return path[0:len(path)]
+
+
+def render_context(
+    loaded: &const project.ProjectGraph,
+    analyzed: &const emit_project.AnalysisResult,
+    graph: &const analysis_core.SemanticFactGraph,
+    target_index: i32,
+    depth: i32,
+) -> String:
+    facts: &const List[analysis_core.SymbolFact] = &graph.facts
+    target: &const analysis_core.SymbolFact = &facts[cast[usize](target_index)]
+    builder = StringBuilder()
+    builder.append("TARGET\n")
+    builder.append(target.signature[0:len(target.signature)])
+    builder.append("\n")
+    builder.append("symbol: ")
+    builder.append(target.key[0:len(target.key)])
+    builder.append("\n\n")
+
+    builder.append("SEMANTICS\n")
+    append_property(&builder, "kind", &target.kind)
+    append_property(&builder, "module", &target.module_name)
+    append_property(&builder, "type", &target.type_name)
+    append_property(&builder, "ownership", &target.ownership)
+    append_property(&builder, "abi", &target.abi)
+    reflected = analysis_core.bool_text(target.reflected)
+    exported = analysis_core.bool_text(target.exported)
+    append_property(&builder, "reflected", &reflected)
+    append_property(&builder, "exported", &exported)
+    builder.append("location: ")
+    builder.append(target.path[0:len(target.path)])
+    builder.append(":")
+    append_i32(&builder, target.line)
+    builder.append("\n")
+    append_lock_effect(&builder, analyzed, target)
+    builder.append("allocation: unknown (no compiler effect model)\n")
+    builder.append("thread_affinity: unknown (not modeled)\n")
+    builder.append("control_flow: unknown (no retained CFG facts)\n\n")
+
+    append_relation_section(
+        &builder,
+        "DEPENDS ON",
+        graph,
+        &target.key,
+        depth,
+        false,
+        0,
+    )
+    append_relation_section(
+        &builder,
+        "CALLS",
+        graph,
+        &target.key,
+        depth,
+        false,
+        1,
+    )
+    append_relation_section(
+        &builder,
+        "CALLED BY",
+        graph,
+        &target.key,
+        depth,
+        true,
+        1,
+    )
+    append_lock_order(&builder, graph, target)
+    append_ownership_uses(&builder, loaded, analyzed, target)
+
+    builder.append("RELEVANT SOURCE\n")
+    builder.append(target.source[0:len(target.source)])
+    if len(target.source) == 0 or target.source.byte_at(len(target.source) - 1) != 10:
+        builder.append("\n")
+    return builder.finish()
+
+
+def render_impact(
+    loaded: &const project.ProjectGraph,
+    graph: &const analysis_core.SemanticFactGraph,
+    target_index: i32,
+) -> String:
+    facts: &const List[analysis_core.SymbolFact] = &graph.facts
+    target: &const analysis_core.SymbolFact = &facts[cast[usize](target_index)]
+    builder = StringBuilder()
+    builder.append("TARGET\n")
+    builder.append(target.signature[0:len(target.signature)])
+    builder.append("\n")
+    builder.append("symbol: ")
+    builder.append(target.key[0:len(target.key)])
+    builder.append("\n\n")
+
+    append_relation_section(
+        &builder,
+        "DIRECT CALLERS",
+        graph,
+        &target.key,
+        1,
+        true,
+        1,
+    )
+    append_indirect_callers(&builder, graph, &target.key)
+    append_consumer_section(&builder, graph, target)
+    append_module_dependents(&builder, loaded, &target.module_name)
+    append_lock_impact(&builder, graph, target)
+
+    builder.append("ABI / EXTERNAL SURFACE\n")
+    if target.exported or target.abi == "C" or target.kind == "extern-type" or target.kind == "extern-function":
+        builder.append("- C ABI sensitive\n")
+    elif target.kind == "struct" or target.kind == "class" or target.kind == "union" or target.kind == "variant" or target.kind == "field":
+        builder.append("- source-level layout sensitive; physical offsets are not modeled\n")
+    else:
+        builder.append("- no explicit C ABI exposure recorded\n")
+    if target.reflected:
+        builder.append("- emitted runtime reflection metadata is affected\n")
+    builder.append("\n")
+
+    unresolved: i32 = 0
+    relations: &const List[analysis_core.RelationFact] = &graph.relations
+    for relation in relations:
+        if not relation.resolved:
+            unresolved += 1
+    builder.append("ANALYSIS LIMITS\n")
+    builder.append("- unresolved project edges: ")
+    append_i32(&builder, unresolved)
+    builder.append("\n")
+    builder.append("- dynamic dispatch targets and function-value calls are reported only when resolved\n")
+    builder.append("- allocation, thread/core affinity, physical ABI layout, and CFG guarantees are not modeled\n")
+    return builder.finish()
+
+
+def append_property(
+    builder: &StringBuilder,
+    name: String,
+    value: &const String,
+) -> void:
+    builder.append(name)
+    builder.append(": ")
+    builder.append(value[0:len(value)])
+    builder.append("\n")
+
+
+def append_relation_section(
+    builder: &StringBuilder,
+    title: String,
+    graph: &const analysis_core.SemanticFactGraph,
+    start_key: &const String,
+    depth: i32,
+    reverse: bool,
+    filter: i32,
+) -> void:
+    builder.append(title)
+    builder.append("\n")
+    keys = collect_relation_keys(graph, start_key, depth, reverse, filter)
+    if len(keys) == 0:
+        builder.append("(none)\n\n")
+        return
+    for key in keys:
+        builder.append("- ")
+        builder.append(key[0:len(key)])
+        builder.append("\n")
+    builder.append("\n")
+
+
+def append_indirect_callers(
+    builder: &StringBuilder,
+    graph: &const analysis_core.SemanticFactGraph,
+    target: &const String,
+) -> void:
+    direct = collect_relation_keys(graph, target, 1, true, 1)
+    all_callers = collect_relation_keys(graph, target, 64, true, 1)
+    builder.append("TRANSITIVE / INDIRECT CALLERS\n")
+    wrote = false
+    for caller in all_callers:
+        if not string_list_contains(&direct, &caller):
+            builder.append("- ")
+            builder.append(caller[0:len(caller)])
+            builder.append("\n")
+            wrote = true
+    if not wrote:
+        builder.append("(none)\n")
+    builder.append("\n")
+
+
+def collect_relation_keys(
+    graph: &const analysis_core.SemanticFactGraph,
+    start_key: &const String,
+    max_depth: i32,
+    reverse: bool,
+    filter: i32,
+) -> List[String]:
+    discovered: List[String] = [start_key[0:len(start_key)]]
+    depths: List[i32] = [0]
+    result: List[String] = []
+    relations: &const List[analysis_core.RelationFact] = &graph.relations
+    cursor: usize = 0
+    while cursor < len(discovered):
+        current = discovered[cursor][0:len(discovered[cursor])]
+        current_depth = depths[cursor]
+        if current_depth < max_depth:
+            for relation in relations:
+                if not relation.resolved or not relation_matches_filter(&relation.kind, filter):
+                    continue
+                next = ""
+                if not reverse and relation.from_key == current:
+                    next = relation.to_key[0:len(relation.to_key)]
+                elif reverse and relation.to_key == current:
+                    next = relation.from_key[0:len(relation.from_key)]
+                if len(next) > 0 and not string_list_contains(&discovered, &next):
+                    discovered.append(next[0:len(next)])
+                    depths.append(current_depth + 1)
+                    result.append(next)
+        cursor += 1
+    return result
+
+
+def relation_matches_filter(kind: &const String, filter: i32) -> bool:
+    if filter == 1:
+        return kind == "calls"
+    if filter == 2:
+        return kind == "lock-before" or kind == "acquires" or kind == "lock-effect"
+    return kind == "type" or kind == "uses" or kind == "member" or kind == "acquires"
+
+
+def append_lock_effect(
+    builder: &StringBuilder,
+    analyzed: &const emit_project.AnalysisResult,
+    target: &const analysis_core.SymbolFact,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analyzed.modules
+    if len(analyzed_modules) == 0:
+        builder.append("lock_effect: unknown\n")
+        return
+    model = &analyzed_modules[0].checked.lock_model
+    functions: &const List[lock_order.FunctionLockEffect] = &model.functions
+    locks: &const List[lock_order.ProjectLock] = &model.locks
+    found = false
+    for effect in functions:
+        if analysis_core.lock_effect_matches_fact(&effect, target):
+            found = true
+            if effect.unknown:
+                builder.append("lock_effect: unknown (unresolved callee)\n")
+            elif len(effect.locks) == 0:
+                builder.append("lock_effect: none\n")
+            else:
+                builder.append("lock_effect: acquires ")
+                effect_locks: &const List[i32] = &effect.locks
+                offset: usize = 0
+                while offset < len(effect_locks):
+                    if offset > 0:
+                        builder.append(", ")
+                    lock_index = effect_locks[offset]
+                    if lock_index >= 0 and lock_index < cast[i32](len(locks)):
+                        selected: &const lock_order.ProjectLock = &locks[lock_index]
+                        builder.append(selected.module_name[0:len(selected.module_name)])
+                        builder.append(".")
+                        builder.append(selected.name[0:len(selected.name)])
+                    offset += 1
+                builder.append("\n")
+    if not found:
+        builder.append("lock_effect: not applicable\n")
+
+
+def append_lock_order(
+    builder: &StringBuilder,
+    graph: &const analysis_core.SemanticFactGraph,
+    target: &const analysis_core.SymbolFact,
+) -> void:
+    builder.append("LOCK ORDER\n")
+    lock_keys: List[String] = []
+    relations: &const List[analysis_core.RelationFact] = &graph.relations
+    if target.kind == "lock":
+        lock_keys.append(target.key[0:len(target.key)])
+    for relation in relations:
+        if relation.kind == "acquires" and text_equal(&relation.from_key, &target.key) and relation.resolved:
+            if not string_list_contains(&lock_keys, &relation.to_key):
+                lock_keys.append(relation.to_key[0:len(relation.to_key)])
+    wrote = false
+    for relation in relations:
+        if relation.kind == "lock-before" and (string_list_contains(&lock_keys, &relation.from_key) or string_list_contains(&lock_keys, &relation.to_key)):
+            builder.append("- ")
+            builder.append(relation.from_key[0:len(relation.from_key)])
+            builder.append(" < ")
+            builder.append(relation.to_key[0:len(relation.to_key)])
+            builder.append(" (")
+            builder.append(relation.detail[0:len(relation.detail)])
+            builder.append(")\n")
+            wrote = true
+    if not wrote:
+        builder.append("(none)\n")
+    builder.append("\n")
+
+
+def append_ownership_uses(
+    builder: &StringBuilder,
+    loaded: &const project.ProjectGraph,
+    analyzed: &const emit_project.AnalysisResult,
+    target: &const analysis_core.SymbolFact,
+) -> void:
+    copy_count: i32 = 0
+    move_count: i32 = 0
+    borrow_count: i32 = 0
+    address_count: i32 = 0
+    project_modules: &const List[project.ParsedModule] = &loaded.modules
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analyzed.modules
+    module: &const project.ParsedModule = &project_modules[target.module_index]
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    target_node = nodes[target.node.index]
+    checked = &analyzed_modules[target.module_index].checked
+    uses: &const List[semantic.ValueUseResolution] = &checked.model.value_use_resolutions
+    for use in uses:
+        if use.node.index < 0:
+            continue
+        node = nodes[use.node.index]
+        if node.start < target_node.start or node.start + node.length > target_node.start + target_node.length:
+            continue
+        if use.kind == semantic.ValueUseKind.COPY:
+            copy_count += 1
+        elif use.kind == semantic.ValueUseKind.MOVE:
+            move_count += 1
+        elif use.kind == semantic.ValueUseKind.BORROW:
+            borrow_count += 1
+        elif use.kind == semantic.ValueUseKind.ADDRESS:
+            address_count += 1
+    builder.append("OWNERSHIP\n")
+    append_property(builder, "return/value", &target.ownership)
+    append_property(builder, "parameters", &target.parameter_ownership)
+    builder.append("uses: copy=")
+    append_i32(builder, copy_count)
+    builder.append(", move=")
+    append_i32(builder, move_count)
+    builder.append(", borrow=")
+    append_i32(builder, borrow_count)
+    builder.append(", address=")
+    append_i32(builder, address_count)
+    builder.append("\n\n")
+
+
+def append_consumer_section(
+    builder: &StringBuilder,
+    graph: &const analysis_core.SemanticFactGraph,
+    target: &const analysis_core.SymbolFact,
+) -> void:
+    builder.append("TYPE / MEMBER CONSUMERS\n")
+    consumers: List[String] = []
+    relations: &const List[analysis_core.RelationFact] = &graph.relations
+    for relation in relations:
+        if text_equal(&relation.to_key, &target.key) and (relation.kind == "type" or relation.kind == "uses" or relation.kind == "member"):
+            if not string_list_contains(&consumers, &relation.from_key):
+                consumers.append(relation.from_key[0:len(relation.from_key)])
+    if len(consumers) == 0:
+        builder.append("(none)\n\n")
+        return
+    for consumer in consumers:
+        builder.append("- ")
+        builder.append(consumer[0:len(consumer)])
+        builder.append("\n")
+    builder.append("\n")
+
+
+def append_module_dependents(
+    builder: &StringBuilder,
+    loaded: &const project.ProjectGraph,
+    module_name: &const String,
+) -> void:
+    builder.append("MODULE DEPENDENTS\n")
+    discovered: List[String] = [module_name[0:len(module_name)]]
+    result: List[String] = []
+    project_modules: &const List[project.ParsedModule] = &loaded.modules
+    cursor: usize = 0
+    while cursor < len(discovered):
+        current = discovered[cursor][0:len(discovered[cursor])]
+        for module in project_modules:
+            if string_list_contains(&module.dependencies, &current) and not string_list_contains(&discovered, &module.name):
+                discovered.append(module.name[0:len(module.name)])
+                result.append(module.name[0:len(module.name)])
+        cursor += 1
+    if len(result) == 0:
+        builder.append("(none)\n\n")
+        return
+    for dependent in result:
+        builder.append("- ")
+        builder.append(dependent[0:len(dependent)])
+        builder.append("\n")
+    builder.append("\n")
+
+
+def append_lock_impact(
+    builder: &StringBuilder,
+    graph: &const analysis_core.SemanticFactGraph,
+    target: &const analysis_core.SymbolFact,
+) -> void:
+    builder.append("LOCK IMPACT\n")
+    wrote = false
+    relations: &const List[analysis_core.RelationFact] = &graph.relations
+    for relation in relations:
+        if (relation.kind == "lock-before" or relation.kind == "acquires") and (text_equal(&relation.from_key, &target.key) or text_equal(&relation.to_key, &target.key)):
+            builder.append("- ")
+            builder.append(relation.kind[0:len(relation.kind)])
+            builder.append(": ")
+            builder.append(relation.from_key[0:len(relation.from_key)])
+            builder.append(" -> ")
+            builder.append(relation.to_key[0:len(relation.to_key)])
+            builder.append("\n")
+            wrote = true
+    if not wrote:
+        builder.append("(none)\n")
+    builder.append("\n")
+
+
+def parse_nonnegative_i32(value: &const String) -> i32:
+    if len(value) == 0:
+        return -1
+    result: i32 = 0
+    for index in range(0, len(value)):
+        byte = value.byte_at(index)
+        if byte < 48 or byte > 57:
+            return -1
+        digit = cast[i32](byte - 48)
+        if result > 214748364 or (result == 214748364 and digit > 7):
+            return -1
+        result = result * 10 + digit
+    return result
+
+
+def last_colon(value: &const String) -> i32:
+    index = cast[i32](len(value)) - 1
+    while index >= 0:
+        if value.byte_at(cast[usize](index)) == 58:
+            return index
+        index -= 1
+    return -1
+
+
+def append_i32(builder: &StringBuilder, value: i32) -> void:
+    if value == 0:
+        builder.append("0")
+        return
+    current = value
+    if current < 0:
+        builder.append("-")
+        current = -current
+    digits: List[i32] = []
+    while current > 0:
+        digits.append(current % 10)
+        current = current / 10
+    index = len(digits)
+    while index > 0:
+        index -= 1
+        builder.append_char(cast[char](48 + digits[index]))
+
+
+def string_list_contains(
+    values: &const List[String],
+    expected: &const String,
+) -> bool:
+    for value in values:
+        if value == expected:
+            return true
+    return false
+
+
+def text_equal(
+    left: &const String,
+    right: &const String,
+) -> bool:
+    return left == right
+
+
+def command_error(message: String) -> void:
+    cinder.write_stderr(message)
+    if len(message) == 0 or message.byte_at(len(message) - 1) != 10:
+        cinder.write_stderr("\n")

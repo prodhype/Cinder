@@ -124,7 +124,10 @@ def validate_partial_move_source(
     source: &const String,
     current_scope: symbols.ScopeId,
 ) -> void:
-    if expression.index < 0 or type_is_borrowed_for_transfer(checker.type_table, destination_type):
+    if expression.index < 0:
+        return
+    record_transfer_value_use(checker, expression, value_type, destination_type)
+    if type_is_borrowed_for_transfer(checker.type_table, destination_type):
         return
     if ownership.type_contains_atomic_storage(&checker.type_table, value_type):
         node = arena.nodes[expression.index]
@@ -173,6 +176,34 @@ def validate_partial_move_source(
         return
     node = arena.nodes[expression.index]
     checker_core.emit_error(checker, 254, node.start, node.length, node.line, node.column)
+
+
+def record_transfer_value_use(
+    checker: &checker_core.Checker,
+    expression: NodeId,
+    value_type: types.TypeId,
+    destination_type: types.TypeId,
+) -> void:
+    kind = semantic.ValueUseKind.COPY
+    if type_is_borrowed_for_transfer(checker.type_table, destination_type):
+        kind = semantic.ValueUseKind.BORROW
+    else:
+        if value_type.index < 0 or value_type.index >= cast[i32](len(checker.type_table.types)):
+            return
+        type_values: &const List[types.TypeRecord] = &checker.type_table.types
+        if type_values[value_type.index].kind == types.TypeKind.NAMED:
+            return
+        ownership_kind = ownership.ownership_kind(&checker.type_table, value_type)
+        if ownership_kind == ownership.OwnershipKind.MOVE_ONLY:
+            kind = semantic.ValueUseKind.MOVE
+        elif ownership_kind == ownership.OwnershipKind.BORROWED:
+            kind = semantic.ValueUseKind.BORROW
+    symbol = symbols.missing_symbol()
+    name_bindings: &const List[semantic.NodeSymbolBinding] = &checker.model.name_symbols
+    for binding: semantic.NodeSymbolBinding in name_bindings:
+        if binding.node.index == expression.index:
+            symbol = binding.symbol
+    checker.model.record_value_use(expression, kind, symbol, value_type)
 
 
 def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:

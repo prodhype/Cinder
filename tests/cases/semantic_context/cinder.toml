@@ -1,0 +1,4 @@
+[project]
+name = "semantic_context_fixture"
+source-root = "src"
+entry = "main.ci"
