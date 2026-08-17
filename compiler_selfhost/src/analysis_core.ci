@@ -332,12 +332,13 @@ def collect_static_assert_facts(
         return
     arena: &const syntax.SyntaxArena = &module.arena
     root = arena.nodes[module.root.index]
+    assertion_index: i32 = 0
     for offset in range(0, root.child_count):
         declaration = arena.children[root.first_child + offset]
         node = arena.nodes[declaration.index]
         if node.kind != syntax.SyntaxKind.STATIC_ASSERT_DECL:
             continue
-        name = "line_" + to_string(node.line)
+        name = "assertion_" + to_string(assertion_index)
         kind = "static-assert"
         facts.append(
             SymbolFact(
@@ -370,6 +371,7 @@ def collect_static_assert_facts(
                 node=declaration,
             )
         )
+        assertion_index += 1
 
 
 def ordered_nominal_member_keys(

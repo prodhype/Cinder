@@ -361,19 +361,26 @@ def append_reachable_callers(
     graph: &const analysis_core.DiffFactGraph,
     target: &const String,
 ) -> void:
-    callers: List[String] = []
+    discovered: List[String] = [target[0:len(target)]]
     relations: &const List[analysis_core.DiffRelationFact] = &graph.relations
-    for relation in relations:
-        if relation.kind == "calls" and relation.to_key == target and relation.resolved:
-            if not contains_string(&callers, &relation.from_key):
-                callers.append(relation.from_key[0:len(relation.from_key)])
-    if len(callers) == 0:
+    cursor: usize = 0
+    while cursor < len(discovered):
+        current = discovered[cursor][0:len(discovered[cursor])]
+        for relation in relations:
+            if relation.kind == "calls" and relation.to_key == current and relation.resolved:
+                if not contains_string(&discovered, &relation.from_key):
+                    discovered.append(relation.from_key[0:len(relation.from_key)])
+        cursor += 1
+    if len(discovered) == 1:
         return
     builder.append("  reachable callers:\n")
-    for caller in callers:
+    caller_index: usize = 1
+    while caller_index < len(discovered):
+        caller: &const String = &discovered[caller_index]
         builder.append("    - ")
         builder.append(caller[0:len(caller)])
         builder.append("\n")
+        caller_index += 1
 
 
 def append_relation_diff(

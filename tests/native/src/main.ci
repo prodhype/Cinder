@@ -739,6 +739,11 @@ def test_semantic_diff(state: &TestState) -> void:
         assertion_path[0:len(assertion_path)],
         "struct Pair:\n    first: i32\n    second: i32\n\nstatic_assert(size_of(Pair) >= 8)\n",
     )
+    assertion_format_path = source_dir + "/assertion_format.ci"
+    write_test_text(
+        assertion_format_path[0:len(assertion_format_path)],
+        "static_assert(true)\n",
+    )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
     commit: List[String] = [
@@ -821,6 +826,10 @@ def test_semantic_diff(state: &TestState) -> void:
         assertion_path[0:len(assertion_path)],
         "struct Pair:\n    first: i32\n    second: i32\n\nstatic_assert(size_of(Pair) >= 4)\n",
     )
+    write_test_text(
+        assertion_format_path[0:len(assertion_format_path)],
+        "# formatting-only comment\n\nstatic_assert(true)\n",
+    )
     command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -869,6 +878,14 @@ def test_semantic_diff(state: &TestState) -> void:
         assertion_path.clone(),
     ]
     assertion = process.run(assertion_command)
+    assertion_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        assertion_format_path,
+    ]
+    assertion_format = process.run(assertion_format_command)
     write_test_text(
         type_format_path[0:len(type_format_path)],
         "struct Holder:\n    items: List[\n        i64\n    ]\n",
@@ -905,6 +922,7 @@ def test_semantic_diff(state: &TestState) -> void:
         and type_format.exit_code == 0
         and enum_format.exit_code == 0
         and assertion.exit_code == 0
+        and assertion_format.exit_code == 0
         and type_change.exit_code == 0
         and standalone.exit_code == 0
         and worktrees.exit_code == 0
@@ -938,6 +956,13 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "modifiers: private -> none")
         and contains(&result.stdout, "modifiers: abstractmethod -> none")
         and contains(&result.stdout, "modifiers: override -> none")
+        and contains(&result.stdout, "~ changed main::function:node_0")
+        and contains(
+            &result.stdout,
+            "  reachable callers:\n    - main::function:node_1\n",
+        )
+        and contains(&result.stdout, "    - main::function:node_96\n")
+        and contains(&result.stdout, "    - main::function:main\n")
         and contains(&selected.stdout, "NO SEMANTIC CHANGES")
         and not contains(&selected.stdout, "~ changed selected::function:selected")
         and contains(
@@ -950,12 +975,15 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(&type_format.stdout, "~ changed type_format::field:Holder.items")
         and contains(&enum_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(&enum_format.stdout, "~ changed enum_format::enum:FormatEnum")
-        and contains(&assertion.stdout, "~ changed assertion::static-assert:line_5")
+        and contains(&assertion.stdout, "~ changed assertion::static-assert:assertion_0")
         and contains(
             &assertion.stdout,
             "signature: static_assert(size_of(Pair) >= 8) -> static_assert(size_of(Pair) >= 4)",
         )
         and not contains(&assertion.stdout, "NO SEMANTIC CHANGES")
+        and contains(&assertion_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&assertion_format.stdout, "- removed assertion_format::static-assert:")
+        and not contains(&assertion_format.stdout, "+ added assertion_format::static-assert:")
         and contains(&type_change.stdout, "~ changed type_format::field:Holder.items")
         and contains(&type_change.stdout, "type: CinderList_i32 -> CinderList_i64")
         and not contains(&type_change.stdout, "NO SEMANTIC CHANGES")
@@ -970,6 +998,7 @@ def test_semantic_diff(state: &TestState) -> void:
         report_process_failure(&type_format.stdout, &type_format.stderr)
         report_process_failure(&enum_format.stdout, &enum_format.stderr)
         report_process_failure(&assertion.stdout, &assertion.stderr)
+        report_process_failure(&assertion_format.stdout, &assertion_format.stderr)
         report_process_failure(&type_change.stdout, &type_change.stderr)
         report_process_failure(&standalone.stdout, &standalone.stderr)
 
@@ -995,19 +1024,26 @@ def semantic_diff_stress_source(function_count: i32, reverse_fields: bool) -> St
         builder.append("    value: i32,\n")
     builder.append(") -> i32:\n")
     builder.append("    return 0\n\n\n")
-    append_caller_chain(&builder, function_count)
+    append_caller_chain(&builder, function_count, reverse_fields)
     return builder.finish()
 
 
 def caller_chain_source(function_count: i32) -> String:
     builder = StringBuilder()
-    append_caller_chain(&builder, function_count)
+    append_caller_chain(&builder, function_count, false)
     return builder.finish()
 
 
-def append_caller_chain(builder: &StringBuilder, function_count: i32) -> void:
+def append_caller_chain(
+    builder: &StringBuilder,
+    function_count: i32,
+    change_leaf: bool,
+) -> void:
     builder.append("def node_0(value: i32) -> i32:\n")
-    builder.append("    return value\n\n\n")
+    if change_leaf:
+        builder.append("    return value + 1\n\n\n")
+    else:
+        builder.append("    return value\n\n\n")
     index: i32 = 1
     while index < function_count:
         current = to_string(index)
