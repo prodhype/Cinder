@@ -1,12 +1,12 @@
 import cache
 import call_targets
 import type_targets
+import value_targets
 from call_targets import Child
 from call_targets import action
 from model import CacheEntry
 from type_targets import Target
 from value_targets import LIMIT
-
 extern import "stdlib.h"
 extern "C":
     def abs(value: c_int) -> c_int
@@ -73,3 +73,15 @@ class ChildHolder:
 
     def call(self, value: i32) -> i32:
         return self.child.work(value)
+
+
+def read_qualified_limit() -> i32:
+    return value_targets.LIMIT
+
+
+struct LocalValues:
+    LIMIT: i32
+
+
+def read_shadowed_qualified_limit(value_targets: LocalValues) -> i32:
+    return value_targets.LIMIT

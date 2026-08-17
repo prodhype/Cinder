@@ -575,6 +575,16 @@ def test_import_value_resolution(state: &TestState) -> void:
         "context",
         state.root + "/tests/cases/semantic_context/src/main.ci:56",
     ]
+    qualified_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:78",
+    ]
+    shadowed_qualified_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:86",
+    ]
     shadowed_context: List[String] = [
         state.compiler.clone(),
         "context",
@@ -586,20 +596,30 @@ def test_import_value_resolution(state: &TestState) -> void:
         state.root + "/tests/cases/semantic_context/src/value_targets.ci:1",
     ]
     imported = process.run(imported_context)
+    qualified = process.run(qualified_context)
+    shadowed_qualified = process.run(shadowed_qualified_context)
     shadowed = process.run(shadowed_context)
     target = process.run(target_impact)
     ok = (
         imported.exit_code == 0
+        and qualified.exit_code == 0
+        and shadowed_qualified.exit_code == 0
         and shadowed.exit_code == 0
         and target.exit_code == 0
         and contains(&imported.stdout, "DEPENDS ON\n- value_targets::constant:LIMIT")
+        and contains(&qualified.stdout, "DEPENDS ON\n- value_targets::constant:LIMIT")
+        and not contains(&shadowed_qualified.stdout, "value_targets::constant:LIMIT")
         and not contains(&shadowed.stdout, "value_targets::constant:LIMIT")
         and contains(&target.stdout, "main::function:read_imported_limit")
+        and contains(&target.stdout, "main::function:read_qualified_limit")
+        and not contains(&target.stdout, "main::function:read_shadowed_qualified_limit")
         and not contains(&target.stdout, "main::function:read_shadowed_limit")
     )
     expect(state, "semantic queries resolve imported values without false edges", ok)
     if not ok:
         report_process_failure(&imported.stdout, &imported.stderr)
+        report_process_failure(&qualified.stdout, &qualified.stderr)
+        report_process_failure(&shadowed_qualified.stdout, &shadowed_qualified.stderr)
         report_process_failure(&shadowed.stdout, &shadowed.stderr)
         report_process_failure(&target.stdout, &target.stderr)
 
@@ -714,6 +734,11 @@ def test_semantic_diff(state: &TestState) -> void:
         enum_format_path[0:len(enum_format_path)],
         "enum FormatEnum:\n    neg = -1\n    pos = 42\n",
     )
+    assertion_path = source_dir + "/assertion.ci"
+    write_test_text(
+        assertion_path[0:len(assertion_path)],
+        "struct Pair:\n    first: i32\n    second: i32\n\nstatic_assert(size_of(Pair) >= 8)\n",
+    )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
     commit: List[String] = [
@@ -792,6 +817,10 @@ def test_semantic_diff(state: &TestState) -> void:
         enum_format_path[0:len(enum_format_path)],
         "enum FormatEnum:\n    neg = - 1\n    pos = 42\n",
     )
+    write_test_text(
+        assertion_path[0:len(assertion_path)],
+        "struct Pair:\n    first: i32\n    second: i32\n\nstatic_assert(size_of(Pair) >= 4)\n",
+    )
     command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -832,6 +861,14 @@ def test_semantic_diff(state: &TestState) -> void:
         enum_format_path,
     ]
     enum_format = process.run(enum_format_command)
+    assertion_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        assertion_path.clone(),
+    ]
+    assertion = process.run(assertion_command)
     write_test_text(
         type_format_path[0:len(type_format_path)],
         "struct Holder:\n    items: List[\n        i64\n    ]\n",
@@ -867,6 +904,7 @@ def test_semantic_diff(state: &TestState) -> void:
         and implementation.exit_code == 0
         and type_format.exit_code == 0
         and enum_format.exit_code == 0
+        and assertion.exit_code == 0
         and type_change.exit_code == 0
         and standalone.exit_code == 0
         and worktrees.exit_code == 0
@@ -912,6 +950,12 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(&type_format.stdout, "~ changed type_format::field:Holder.items")
         and contains(&enum_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(&enum_format.stdout, "~ changed enum_format::enum:FormatEnum")
+        and contains(&assertion.stdout, "~ changed assertion::static-assert:line_5")
+        and contains(
+            &assertion.stdout,
+            "signature: static_assert(size_of(Pair) >= 8) -> static_assert(size_of(Pair) >= 4)",
+        )
+        and not contains(&assertion.stdout, "NO SEMANTIC CHANGES")
         and contains(&type_change.stdout, "~ changed type_format::field:Holder.items")
         and contains(&type_change.stdout, "type: CinderList_i32 -> CinderList_i64")
         and not contains(&type_change.stdout, "NO SEMANTIC CHANGES")
@@ -925,6 +969,7 @@ def test_semantic_diff(state: &TestState) -> void:
         report_process_failure(&implementation.stdout, &implementation.stderr)
         report_process_failure(&type_format.stdout, &type_format.stderr)
         report_process_failure(&enum_format.stdout, &enum_format.stderr)
+        report_process_failure(&assertion.stdout, &assertion.stderr)
         report_process_failure(&type_change.stdout, &type_change.stderr)
         report_process_failure(&standalone.stdout, &standalone.stderr)
 

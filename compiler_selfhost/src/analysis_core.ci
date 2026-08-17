@@ -136,6 +136,11 @@ def build_fact_graph(
                     &reflection_model,
                 ))
             symbol_index += 1
+        collect_static_assert_facts(
+            source_module,
+            analyzed.module_index,
+            &facts,
+        )
         module_index += 1
     graph_value = SemanticFactGraph(facts=facts, relations=relations, error="")
     mark_effective_reflected_members(
@@ -145,6 +150,7 @@ def build_fact_graph(
     )
     collect_member_relations(&graph_value)
     collect_semantic_relations(graph, analysis, &graph_value)
+    collect_import_value_relations(graph, analysis, &graph_value)
     collect_import_call_relations(graph, analysis, &class_model, &graph_value)
     collect_type_relations(graph, &graph_value)
     collect_lock_relations(analysis, &graph_value)
@@ -315,6 +321,55 @@ def make_symbol_fact(
         symbol_index=symbol_index,
         node=symbol.node,
     )
+
+
+def collect_static_assert_facts(
+    module: &const project.ParsedModule,
+    module_index: usize,
+    facts: &List[SymbolFact],
+) -> void:
+    if module.root.index < 0:
+        return
+    arena: &const syntax.SyntaxArena = &module.arena
+    root = arena.nodes[module.root.index]
+    for offset in range(0, root.child_count):
+        declaration = arena.children[root.first_child + offset]
+        node = arena.nodes[declaration.index]
+        if node.kind != syntax.SyntaxKind.STATIC_ASSERT_DECL:
+            continue
+        name = "line_" + to_string(node.line)
+        kind = "static-assert"
+        facts.append(
+            SymbolFact(
+                key=stable_symbol_key(&module.name, &kind, "", &name),
+                module_name=module.name[0:len(module.name)],
+                name=name,
+                kind=kind,
+                owner="",
+                signature=declaration_header(arena, declaration, &module.source),
+                canonical_signature=canonical_declaration_snapshot(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
+                implementation="",
+                modifiers="none",
+                type_name="not applicable",
+                ownership="not applicable",
+                parameter_ownership="(not applicable)",
+                abi="not applicable",
+                members="",
+                reflected=false,
+                exported=false,
+                path=module.path[0:len(module.path)],
+                source=module.source[node.start:node.start + node.length],
+                line=node.line,
+                column=node.column,
+                module_index=module_index,
+                symbol_index=-1,
+                node=declaration,
+            )
+        )
 
 
 def ordered_nominal_member_keys(
@@ -1043,6 +1098,136 @@ def collect_import_value_relation(
                     &facts[cast[usize](source_index)].key,
                     &imported.module_name,
                     &imported.member,
+                    false,
+                )
+            return
+
+
+def collect_import_value_relations(
+    project_graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    facts: &const List[SymbolFact] = &graph.facts
+    for analyzed in analyzed_modules:
+        module_index = analyzed.module_index
+        module: &const project.ParsedModule = &project_modules[module_index]
+        fact_index: usize = 0
+        while fact_index < len(facts):
+            fact: &const SymbolFact = &facts[fact_index]
+            if (
+                fact.module_index == module_index
+                and (
+                    fact.kind == "function"
+                    or fact.kind == "function-template"
+                    or fact.kind == "method"
+                    or fact.kind == "global"
+                    or fact.kind == "constant"
+                    or fact.kind == "static-assert"
+                )
+            ):
+                collect_import_values_in_node(
+                    &analyzed.checked,
+                    graph,
+                    module,
+                    fact.node,
+                    cast[i32](fact_index),
+                    false,
+                )
+            fact_index += 1
+
+
+def collect_import_values_in_node(
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    id: NodeId,
+    source_index: i32,
+    skip_attribute: bool,
+) -> void:
+    if id.index < 0:
+        return
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    node = nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE and not skip_attribute:
+        collect_import_attribute_value_relation(
+            checked,
+            graph,
+            module,
+            id,
+            source_index,
+        )
+    for offset in range(0, node.child_count):
+        child_id = children[node.first_child + offset]
+        child = nodes[child_id.index]
+        child_is_callee_attribute = (
+            node.kind == syntax.SyntaxKind.EXPR_CALL
+            and offset == 0
+            and child.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE
+        )
+        collect_import_values_in_node(
+            checked,
+            graph,
+            module,
+            child_id,
+            source_index,
+            child_is_callee_attribute,
+        )
+
+
+def collect_import_attribute_value_relation(
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    attribute_id: NodeId,
+    source_index: i32,
+) -> void:
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    attribute = nodes[attribute_id.index]
+    if attribute.child_count < 2:
+        return
+    receiver_id = children[attribute.first_child]
+    member_id = children[attribute.first_child + 1]
+    receiver = nodes[receiver_id.index]
+    member = nodes[member_id.index]
+    if receiver.kind != syntax.SyntaxKind.EXPR_NAME:
+        return
+    bound_symbol = bound_symbol_for_node(checked, receiver_id)
+    if not symbol_is_import_binding(checked, &module.arena, bound_symbol, false):
+        return
+    receiver_name = module.source[
+        receiver.value_start:receiver.value_start + receiver.value_length
+    ]
+    member_name = module.source[member.value_start:member.value_start + member.value_length]
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    facts: &const List[SymbolFact] = &graph.facts
+    for imported in module_imports:
+        if len(imported.member) == 0 and imported.alias == receiver_name:
+            target_index = find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &member_name,
+            )
+            if target_index >= 0:
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](source_index)].key,
+                    &facts[cast[usize](target_index)].key,
+                    "",
+                    true,
+                )
+            else:
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](source_index)].key,
+                    &imported.module_name,
+                    &member_name,
                     false,
                 )
             return
