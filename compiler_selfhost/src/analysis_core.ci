@@ -18,6 +18,7 @@ struct SymbolFact:
     kind: String
     owner: String
     signature: String
+    modifiers: String
     type_name: String
     ownership: String
     parameter_ownership: String
@@ -51,6 +52,7 @@ struct SemanticFactGraph:
 struct DiffSymbolFact:
     key: String
     signature: String
+    modifiers: String
     type_name: String
     ownership: String
     parameter_ownership: String
@@ -135,6 +137,7 @@ def compact_diff_graph(graph: &const SemanticFactGraph) -> DiffFactGraph:
             DiffSymbolFact(
                 key=owned_text(&fact.key),
                 signature=owned_text(&fact.signature),
+                modifiers=owned_text(&fact.modifiers),
                 type_name=owned_text(&fact.type_name),
                 ownership=owned_text(&fact.ownership),
                 parameter_ownership=owned_text(&fact.parameter_ownership),
@@ -238,6 +241,7 @@ def make_symbol_fact(
         if len(declared_type) > 0:
             type_name = declared_type
     signature = declaration_header(arena, symbol.node, &module.source)
+    modifiers = semantic_modifiers(arena, symbol.node, &module.source)
     declaration_source = module.source[node.start:node.start + node.length]
     reflected = symbol_is_reflected(
         arena,
@@ -260,6 +264,7 @@ def make_symbol_fact(
         kind=kind,
         owner=owner,
         signature=signature,
+        modifiers=modifiers,
         type_name=type_name,
         ownership=ownership_name(&checked.type_table, symbol.type_id),
         parameter_ownership=parameter_ownership_summary(
@@ -339,6 +344,32 @@ def ordered_nominal_member_keys(
                 value = nodes[value_id.index]
                 builder.append("=")
                 builder.append(module.source[value.start:value.start + value.length])
+            first = false
+    if (
+        (kind == symbols.SymbolKind.STRUCT or kind == symbols.SymbolKind.CLASS)
+        and has_decorator(arena, id, &module.source, "reflect")
+    ):
+        for offset in range(0, node.child_count):
+            child_id = children[node.first_child + offset]
+            child = nodes[child_id.index]
+            if child.kind != syntax.SyntaxKind.FUNCTION_DECL:
+                continue
+            method_name = module.source[child.value_start:child.value_start + child.value_length]
+            if (
+                kind == symbols.SymbolKind.CLASS
+                and (method_name == "__init__" or method_name == "__del__")
+            ):
+                continue
+            if not first:
+                builder.append(", ")
+            method_kind = "method"
+            method_key = stable_symbol_key(
+                &module.name,
+                &method_kind,
+                &member_owner,
+                &method_name,
+            )
+            builder.append(method_key[0:len(method_key)])
             first = false
     return builder.finish()
 
@@ -569,6 +600,29 @@ def declaration_header(
     while index < end and source.byte_at(index) != 10 and source.byte_at(index) != 13:
         index += 1
     return source[node.start:index]
+
+
+def semantic_modifiers(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> String:
+    if id.index < 0:
+        return "none"
+    node = arena.nodes[id.index]
+    modifiers = ""
+    if node.kind == syntax.SyntaxKind.FIELD_DECL and node.flags == 1:
+        modifiers = "private"
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
+        if has_decorator(arena, id, source, "abstractmethod"):
+            modifiers = "abstractmethod"
+        if has_decorator(arena, id, source, "override"):
+            if len(modifiers) > 0:
+                modifiers = modifiers + ", "
+            modifiers = modifiers + "override"
+    if len(modifiers) == 0:
+        return "none"
+    return modifiers
 
 
 def declared_type_text(
@@ -1256,6 +1310,8 @@ def fact_snapshot(fact: &const SymbolFact) -> String:
         fact.key[0:len(fact.key)]
         + "|signature="
         + fact.signature[0:len(fact.signature)]
+        + "|modifiers="
+        + fact.modifiers[0:len(fact.modifiers)]
         + "|type="
         + fact.type_name[0:len(fact.type_name)]
         + "|ownership="

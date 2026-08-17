@@ -22,6 +22,11 @@ struct ContextOptions:
     error: String
 
 
+struct RelationKeyResult:
+    keys: List[String]
+    truncated: bool
+
+
 def context_command(args: &const List[String]) -> i32:
     options = parse_context_options(args)
     if not options.ok:
@@ -182,6 +187,7 @@ def render_context(
     append_property(&builder, "kind", &target.kind)
     append_property(&builder, "module", &target.module_name)
     append_property(&builder, "type", &target.type_name)
+    append_property(&builder, "modifiers", &target.modifiers)
     append_property(&builder, "ownership", &target.ownership)
     append_property(&builder, "abi", &target.abi)
     reflected = analysis_core.bool_text(target.reflected)
@@ -259,7 +265,13 @@ def render_impact(
         true,
         1,
     )
-    append_indirect_callers(&builder, graph, &target.key)
+    caller_depth_limit: i32 = 64
+    caller_search_truncated = append_indirect_callers(
+        &builder,
+        graph,
+        &target.key,
+        caller_depth_limit,
+    )
     append_consumer_section(&builder, graph, target)
     append_module_dependents(&builder, loaded, &target.module_name)
     append_lock_impact(&builder, graph, target)
@@ -284,6 +296,10 @@ def render_impact(
     builder.append("- unresolved project edges: ")
     append_i32(&builder, unresolved)
     builder.append("\n")
+    if caller_search_truncated:
+        builder.append("- transitive caller search truncated at ")
+        append_i32(&builder, caller_depth_limit)
+        builder.append(" hops; additional callers may exist\n")
     builder.append("- dynamic dispatch targets and function-value calls are reported only when resolved\n")
     builder.append("- allocation, thread/core affinity, physical ABI layout, and CFG guarantees are not modeled\n")
     return builder.finish()
@@ -311,11 +327,11 @@ def append_relation_section(
 ) -> void:
     builder.append(title)
     builder.append("\n")
-    keys = collect_relation_keys(graph, start_key, depth, reverse, filter)
-    if len(keys) == 0:
+    collected = collect_relation_keys(graph, start_key, depth, reverse, filter)
+    if len(collected.keys) == 0:
         builder.append("(none)\n\n")
         return
-    for key in keys:
+    for key in collected.keys:
         builder.append("- ")
         builder.append(key[0:len(key)])
         builder.append("\n")
@@ -326,13 +342,14 @@ def append_indirect_callers(
     builder: &StringBuilder,
     graph: &const analysis_core.SemanticFactGraph,
     target: &const String,
-) -> void:
+    max_depth: i32,
+) -> bool:
     direct = collect_relation_keys(graph, target, 1, true, 1)
-    all_callers = collect_relation_keys(graph, target, 64, true, 1)
+    all_callers = collect_relation_keys(graph, target, max_depth, true, 1)
     builder.append("TRANSITIVE / INDIRECT CALLERS\n")
     wrote = false
-    for caller in all_callers:
-        if not string_list_contains(&direct, &caller):
+    for caller in all_callers.keys:
+        if not string_list_contains(&direct.keys, &caller):
             builder.append("- ")
             builder.append(caller[0:len(caller)])
             builder.append("\n")
@@ -340,6 +357,7 @@ def append_indirect_callers(
     if not wrote:
         builder.append("(none)\n")
     builder.append("\n")
+    return all_callers.truncated
 
 
 def collect_relation_keys(
@@ -348,30 +366,33 @@ def collect_relation_keys(
     max_depth: i32,
     reverse: bool,
     filter: i32,
-) -> List[String]:
+) -> RelationKeyResult:
     discovered: List[String] = [start_key[0:len(start_key)]]
     depths: List[i32] = [0]
     result: List[String] = []
+    truncated = false
     relations: &const List[analysis_core.RelationFact] = &graph.relations
     cursor: usize = 0
     while cursor < len(discovered):
         current = discovered[cursor][0:len(discovered[cursor])]
         current_depth = depths[cursor]
-        if current_depth < max_depth:
-            for relation in relations:
-                if not relation.resolved or not relation_matches_filter(&relation.kind, filter):
-                    continue
-                next = ""
-                if not reverse and relation.from_key == current:
-                    next = relation.to_key[0:len(relation.to_key)]
-                elif reverse and relation.to_key == current:
-                    next = relation.from_key[0:len(relation.from_key)]
-                if len(next) > 0 and not string_list_contains(&discovered, &next):
+        for relation in relations:
+            if not relation.resolved or not relation_matches_filter(&relation.kind, filter):
+                continue
+            next = ""
+            if not reverse and relation.from_key == current:
+                next = relation.to_key[0:len(relation.to_key)]
+            elif reverse and relation.to_key == current:
+                next = relation.from_key[0:len(relation.from_key)]
+            if len(next) > 0 and not string_list_contains(&discovered, &next):
+                if current_depth < max_depth:
                     discovered.append(next[0:len(next)])
                     depths.append(current_depth + 1)
                     result.append(next)
+                else:
+                    truncated = true
         cursor += 1
-    return result
+    return RelationKeyResult(keys=result, truncated=truncated)
 
 
 def relation_matches_filter(kind: &const String, filter: i32) -> bool:

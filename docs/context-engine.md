@@ -64,9 +64,10 @@ snapshots. It never checks out, resets, or modifies the user's index or working
 tree.
 
 The report covers added, removed, and changed declarations; signatures and
-semantic types; ownership classifications; source-level nominal layout,
-including ordered struct, class, and union fields, enum members, and variant cases;
-inheritance and interfaces; calls and callers; lock effects and order;
+semantic types; private field and abstract/override method modifiers; ownership
+classifications; source-level nominal layout, including ordered struct, class,
+and union fields, enum members, variant cases, and reflected struct/class
+methods; inheritance and interfaces; calls and callers; lock effects and order;
 reflection; and C exports/externs. Generated C and raw per-run symbol/type IDs
 are not diffed.
 
@@ -96,6 +97,8 @@ a model. In particular:
 - imported nominal types whose ownership cannot be classified locally are
   unknown
 - indirect and dynamic calls can remain unresolved
+- transitive caller search in `impact` is capped at 64 hops; reports that reach
+  the cap explicitly say that additional callers may exist
 - allocation, IO, and exception effects do not have a general effect model
 - thread and core affinity are not language concepts yet
 - physical size, alignment, and field offsets are finalized by the target C

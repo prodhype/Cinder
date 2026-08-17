@@ -222,6 +222,12 @@ def render_semantic_diff(
                 )
                 append_changed_property(
                     &builder,
+                    "modifiers",
+                    &previous.modifiers,
+                    &fact.modifiers,
+                )
+                append_changed_property(
+                    &builder,
                     "type",
                     &previous.type_name,
                     &fact.type_name,
@@ -297,6 +303,7 @@ def diff_facts_equal(
 ) -> bool:
     return (
         analysis_core.strings_equal(&left.signature, &right.signature)
+        and analysis_core.strings_equal(&left.modifiers, &right.modifiers)
         and analysis_core.strings_equal(&left.type_name, &right.type_name)
         and analysis_core.strings_equal(&left.ownership, &right.ownership)
         and analysis_core.strings_equal(&left.parameter_ownership, &right.parameter_ownership)
