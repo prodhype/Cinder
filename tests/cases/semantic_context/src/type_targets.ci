@@ -1,0 +1,7 @@
+class Holder:
+    def Target(self) -> i32:
+        return 0
+
+
+struct Target:
+    value: i32

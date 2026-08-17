@@ -1,6 +1,7 @@
 import codegen_type_names
 import checker_core
 import emit_project
+import generics
 import lock_order
 import ownership
 import project
@@ -583,13 +584,27 @@ def declaration_header(
     children: &const List[NodeId] = &arena.children
     node = nodes[id.index]
     end = node.start + node.length
-    if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
-        for offset in range(0, node.child_count):
-            child_id = children[node.first_child + offset]
-            child = nodes[child_id.index]
-            if child.kind == syntax.SyntaxKind.BLOCK:
-                end = child.start
-                break
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL or is_nominal_declaration_kind(node.kind):
+        if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
+            for offset in range(0, node.child_count):
+                child_id = children[node.first_child + offset]
+                child = nodes[child_id.index]
+                if child.kind == syntax.SyntaxKind.BLOCK:
+                    end = child.start
+                    break
+        else:
+            index = node.start
+            delimiter_depth: i32 = 0
+            while index < end:
+                byte = source.byte_at(index)
+                if byte == 40 or byte == 91:
+                    delimiter_depth += 1
+                elif byte == 41 or byte == 93:
+                    delimiter_depth -= 1
+                elif byte == 58 and delimiter_depth == 0:
+                    end = index + 1
+                    break
+                index += 1
         while end > node.start:
             byte = source.byte_at(end - 1)
             if byte != 32 and byte != 9 and byte != 10 and byte != 13:
@@ -600,6 +615,16 @@ def declaration_header(
     while index < end and source.byte_at(index) != 10 and source.byte_at(index) != 13:
         index += 1
     return source[node.start:index]
+
+
+def is_nominal_declaration_kind(kind: syntax.SyntaxKind) -> bool:
+    return (
+        kind == syntax.SyntaxKind.STRUCT_DECL
+        or kind == syntax.SyntaxKind.CLASS_DECL
+        or kind == syntax.SyntaxKind.ENUM_DECL
+        or kind == syntax.SyntaxKind.UNION_DECL
+        or kind == syntax.SyntaxKind.VARIANT_DECL
+    )
 
 
 def semantic_modifiers(
@@ -926,7 +951,13 @@ def collect_type_relations(
             if node.kind == syntax.SyntaxKind.TYPE_NAME:
                 type_id = NodeId(index=cast[i32](node_index))
                 source_index = enclosing_fact_index(graph, module_index, type_id, &module.arena)
-                if source_index >= 0:
+                if source_index >= 0 and not type_name_is_enclosing_parameter(
+                    graph,
+                    module_index,
+                    type_id,
+                    &module.arena,
+                    &module.source,
+                ):
                     type_text = module.source[node.start:node.start + node.length]
                     target_index = resolve_type_fact(project_graph, graph, module_index, &type_text)
                     if target_index >= 0 and target_index != source_index:
@@ -940,6 +971,37 @@ def collect_type_relations(
                         )
             node_index += 1
         module_index += 1
+
+
+def type_name_is_enclosing_parameter(
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    type_id: NodeId,
+    arena: &const syntax.SyntaxArena,
+    source: &const String,
+) -> bool:
+    if type_id.index < 0:
+        return false
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    type_node = nodes[type_id.index]
+    type_end = type_node.start + type_node.length
+    facts: &const List[SymbolFact] = &graph.facts
+    for fact in facts:
+        if fact.module_index != module_index or fact.node.index < 0:
+            continue
+        declaration = nodes[fact.node.index]
+        declaration_end = declaration.start + declaration.length
+        if declaration.start <= type_node.start and declaration_end >= type_end:
+            parameter = generics.type_parameter_index(
+                arena,
+                fact.node,
+                source,
+                type_node.value_start,
+                type_node.value_length,
+            )
+            if parameter >= 0:
+                return true
+    return false
 
 
 def resolve_type_fact(
@@ -957,11 +1019,11 @@ def resolve_type_fact(
         leaf = type_text[cast[usize](dot + 1):len(type_text)]
         for imported in module_imports:
             if len(imported.member) == 0 and imported.alias == prefix:
-                return find_fact_by_module_name(graph, &imported.module_name, &leaf)
+                return find_top_level_fact_by_module_name(graph, &imported.module_name, &leaf)
     for imported in module_imports:
         if len(imported.member) > 0 and imported.alias == type_text:
-            return find_fact_by_module_name(graph, &imported.module_name, &imported.member)
-    local = find_fact_by_module_name(graph, &module.name, type_text)
+            return find_top_level_fact_by_module_name(graph, &imported.module_name, &imported.member)
+    local = find_top_level_fact_by_module_name(graph, &module.name, type_text)
     if local >= 0:
         return local
     return -1

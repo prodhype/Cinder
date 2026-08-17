@@ -51,6 +51,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_impact_report(&state)
     test_impact_caller_truncation(&state)
     test_import_call_resolution(&state)
+    test_import_type_resolution(&state)
     test_semantic_query_diagnostics(&state)
     test_semantic_diff(&state)
 
@@ -389,17 +390,17 @@ def test_import_call_resolution(state: &TestState) -> void:
     shadow_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:17",
+        state.root + "/tests/cases/semantic_context/src/main.ci:19",
     ]
     top_level_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:21",
+        state.root + "/tests/cases/semantic_context/src/main.ci:23",
     ]
     instance_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:25",
+        state.root + "/tests/cases/semantic_context/src/main.ci:27",
     ]
     action_impact: List[String] = [
         state.compiler.clone(),
@@ -435,6 +436,62 @@ def test_import_call_resolution(state: &TestState) -> void:
         report_process_failure(&top_level.stdout, &top_level.stderr)
         report_process_failure(&instance.stdout, &instance.stderr)
         report_process_failure(&action.stdout, &action.stderr)
+        report_process_failure(&method.stdout, &method.stderr)
+
+
+def test_import_type_resolution(state: &TestState) -> void:
+    qualified_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:43",
+    ]
+    shadowed_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:47",
+    ]
+    imported_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:51",
+    ]
+    target_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/type_targets.ci:6",
+    ]
+    method_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/type_targets.ci:2",
+    ]
+    qualified = process.run(qualified_context)
+    shadowed = process.run(shadowed_context)
+    imported = process.run(imported_context)
+    target = process.run(target_impact)
+    method = process.run(method_impact)
+    ok = (
+        qualified.exit_code == 0
+        and shadowed.exit_code == 0
+        and imported.exit_code == 0
+        and target.exit_code == 0
+        and method.exit_code == 0
+        and contains(&qualified.stdout, "DEPENDS ON\n- type_targets::struct:Target")
+        and not contains(&qualified.stdout, "type_targets::method:Holder.Target")
+        and not contains(&shadowed.stdout, "type_targets::struct:Target")
+        and not contains(&shadowed.stdout, "type_targets::method:Holder.Target")
+        and contains(&imported.stdout, "DEPENDS ON\n- type_targets::struct:Target")
+        and contains(&target.stdout, "main::function:use_qualified_target")
+        and contains(&target.stdout, "main::function:use_imported_target")
+        and not contains(&target.stdout, "main::function-template:identity")
+        and not contains(&method.stdout, "main::function:use_qualified_target")
+    )
+    expect(state, "semantic queries resolve imported types without false edges", ok)
+    if not ok:
+        report_process_failure(&qualified.stdout, &qualified.stderr)
+        report_process_failure(&shadowed.stdout, &shadowed.stderr)
+        report_process_failure(&imported.stdout, &imported.stderr)
+        report_process_failure(&target.stdout, &target.stderr)
         report_process_failure(&method.stdout, &method.stderr)
 
 
@@ -592,12 +649,14 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "~ changed main::method:ModifierBase.apply")
         and contains(&result.stdout, "~ changed main::method:ModifierImpl.apply")
         and contains(&result.stdout, "~ changed main::class:MethodOrder")
+        and contains(&result.stdout, "~ changed main::class:MultilineDerived")
         and contains(&result.stdout, "members: main::field:LayoutStruct.first, main::field:LayoutStruct.second -> main::field:LayoutStruct.second, main::field:LayoutStruct.first")
         and contains(&result.stdout, "members: main::enum-member:LayoutEnum.first, main::enum-member:LayoutEnum.second -> main::enum-member:LayoutEnum.second, main::enum-member:LayoutEnum.first")
         and contains(&result.stdout, "members: main::enum-member:ValueEnum.first=1, main::enum-member:ValueEnum.second=7 -> main::enum-member:ValueEnum.first=3, main::enum-member:ValueEnum.second=7")
         and contains(&result.stdout, "members: main::variant-case:LayoutVariant.First, main::variant-case:LayoutVariant.Second -> main::variant-case:LayoutVariant.Second, main::variant-case:LayoutVariant.First")
         and contains(&result.stdout, "members: main::method:MethodOrder.first, main::method:MethodOrder.second -> main::method:MethodOrder.second, main::method:MethodOrder.first")
         and contains(&result.stdout, "signature: def multiline_signature(\n    value: i32,\n) -> i32: -> def multiline_signature(\n    value: i64,\n) -> i32:")
+        and contains(&result.stdout, "signature: class MultilineDerived(\n    SpecializedBase[i32],\n): -> class MultilineDerived(\n    SpecializedBase[i64],\n):")
         and contains(&result.stdout, "modifiers: private -> none")
         and contains(&result.stdout, "modifiers: abstractmethod -> none")
         and contains(&result.stdout, "modifiers: override -> none")
@@ -709,6 +768,15 @@ def append_layout_fixture(builder: &StringBuilder, reverse_fields: bool) -> void
     else:
         append_reflected_method(builder, "first", 1)
         append_reflected_method(builder, "second", 2)
+    builder.append("class SpecializedBase[T]:\n")
+    builder.append("    value: T\n\n\n")
+    builder.append("class MultilineDerived(\n")
+    if reverse_fields:
+        builder.append("    SpecializedBase[i64],\n")
+    else:
+        builder.append("    SpecializedBase[i32],\n")
+    builder.append("):\n")
+    builder.append("    pass\n\n\n")
 
 
 def append_reflected_method(
