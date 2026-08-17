@@ -51,6 +51,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_impact_report(&state)
     test_impact_caller_truncation(&state)
     test_import_call_resolution(&state)
+    test_import_value_resolution(&state)
     test_import_type_resolution(&state)
     test_semantic_query_diagnostics(&state)
     test_semantic_diff(&state)
@@ -413,17 +414,17 @@ def test_import_call_resolution(state: &TestState) -> void:
     shadow_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:19",
+        state.root + "/tests/cases/semantic_context/src/main.ci:20",
     ]
     top_level_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:23",
+        state.root + "/tests/cases/semantic_context/src/main.ci:24",
     ]
     instance_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:27",
+        state.root + "/tests/cases/semantic_context/src/main.ci:28",
     ]
     action_impact: List[String] = [
         state.compiler.clone(),
@@ -462,21 +463,56 @@ def test_import_call_resolution(state: &TestState) -> void:
         report_process_failure(&method.stdout, &method.stderr)
 
 
-def test_import_type_resolution(state: &TestState) -> void:
-    qualified_context: List[String] = [
+def test_import_value_resolution(state: &TestState) -> void:
+    imported_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:43",
+        state.root + "/tests/cases/semantic_context/src/main.ci:56",
     ]
     shadowed_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:47",
+        state.root + "/tests/cases/semantic_context/src/main.ci:60",
+    ]
+    target_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/value_targets.ci:1",
+    ]
+    imported = process.run(imported_context)
+    shadowed = process.run(shadowed_context)
+    target = process.run(target_impact)
+    ok = (
+        imported.exit_code == 0
+        and shadowed.exit_code == 0
+        and target.exit_code == 0
+        and contains(&imported.stdout, "DEPENDS ON\n- value_targets::constant:LIMIT")
+        and not contains(&shadowed.stdout, "value_targets::constant:LIMIT")
+        and contains(&target.stdout, "main::function:read_imported_limit")
+        and not contains(&target.stdout, "main::function:read_shadowed_limit")
+    )
+    expect(state, "semantic queries resolve imported values without false edges", ok)
+    if not ok:
+        report_process_failure(&imported.stdout, &imported.stderr)
+        report_process_failure(&shadowed.stdout, &shadowed.stderr)
+        report_process_failure(&target.stdout, &target.stderr)
+
+
+def test_import_type_resolution(state: &TestState) -> void:
+    qualified_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:44",
+    ]
+    shadowed_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:48",
     ]
     imported_context: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:51",
+        state.root + "/tests/cases/semantic_context/src/main.ci:52",
     ]
     target_impact: List[String] = [
         state.compiler.clone(),
@@ -562,6 +598,11 @@ def test_semantic_diff(state: &TestState) -> void:
         implementation_path[0:len(implementation_path)],
         "def implementation_probe() -> i32:\n    return 1\n",
     )
+    type_format_path = source_dir + "/type_format.ci"
+    write_test_text(
+        type_format_path[0:len(type_format_path)],
+        "struct Holder:\n    items: List[i32]\n",
+    )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
     commit: List[String] = [
@@ -632,6 +673,10 @@ def test_semantic_diff(state: &TestState) -> void:
         source_path,
         semantic_diff_stress_source(97, true),
     )
+    write_test_text(
+        type_format_path[0:len(type_format_path)],
+        "struct Holder:\n    items: List[\n        i32\n    ]\n",
+    )
     command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -656,6 +701,26 @@ def test_semantic_diff(state: &TestState) -> void:
         implementation_path,
     ]
     implementation = process.run(implementation_command)
+    type_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        type_format_path.clone(),
+    ]
+    type_format = process.run(type_format_command)
+    write_test_text(
+        type_format_path[0:len(type_format_path)],
+        "struct Holder:\n    items: List[\n        i64\n    ]\n",
+    )
+    type_change_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        type_format_path,
+    ]
+    type_change = process.run(type_change_command)
     standalone_command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -677,6 +742,8 @@ def test_semantic_diff(state: &TestState) -> void:
         result.exit_code == 0
         and selected.exit_code == 0
         and implementation.exit_code == 0
+        and type_format.exit_code == 0
+        and type_change.exit_code == 0
         and standalone.exit_code == 0
         and worktrees.exit_code == 0
         and contains(&result.stdout, "schema: cinder-semantic-v1")
@@ -715,6 +782,11 @@ def test_semantic_diff(state: &TestState) -> void:
         )
         and contains(&implementation.stdout, "implementation: changed")
         and not contains(&implementation.stdout, "NO SEMANTIC CHANGES")
+        and contains(&type_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.items")
+        and contains(&type_change.stdout, "~ changed type_format::field:Holder.items")
+        and contains(&type_change.stdout, "type: CinderList_i32 -> CinderList_i64")
+        and not contains(&type_change.stdout, "NO SEMANTIC CHANGES")
         and contains(&standalone.stdout, "NO SEMANTIC CHANGES")
         and not contains(&worktrees.stdout, "cinder-semantic-diff.")
     )
@@ -723,6 +795,8 @@ def test_semantic_diff(state: &TestState) -> void:
         report_process_failure(&result.stdout, &result.stderr)
         report_process_failure(&selected.stdout, &selected.stderr)
         report_process_failure(&implementation.stdout, &implementation.stderr)
+        report_process_failure(&type_format.stdout, &type_format.stderr)
+        report_process_failure(&type_change.stdout, &type_change.stderr)
         report_process_failure(&standalone.stdout, &standalone.stderr)
 
 

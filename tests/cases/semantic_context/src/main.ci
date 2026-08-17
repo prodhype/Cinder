@@ -5,6 +5,7 @@ from call_targets import Worker
 from call_targets import action
 from model import CacheEntry
 from type_targets import Target
+from value_targets import LIMIT
 
 extern import "stdlib.h"
 extern "C":
@@ -50,3 +51,11 @@ def identity[Target](value: Target) -> Target:
 
 def use_imported_target(value: Target) -> Target:
     return value
+
+
+def read_imported_limit() -> i32:
+    return LIMIT
+
+
+def read_shadowed_limit(LIMIT: i32) -> i32:
+    return LIMIT

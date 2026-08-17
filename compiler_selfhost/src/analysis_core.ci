@@ -235,18 +235,6 @@ def make_symbol_fact(
         &type_builder,
     )
     type_name = type_builder.finish()
-    if (
-        symbol.kind == symbols.SymbolKind.FUNCTION
-        or symbol.kind == symbols.SymbolKind.FUNCTION_TEMPLATE
-        or symbol.kind == symbols.SymbolKind.METHOD
-        or symbol.kind == symbols.SymbolKind.FIELD
-        or symbol.kind == symbols.SymbolKind.GLOBAL
-        or symbol.kind == symbols.SymbolKind.CONSTANT
-        or symbol.kind == symbols.SymbolKind.EXTERN_FUNCTION
-    ):
-        declared_type = declared_type_text(arena, symbol.node, &module.source)
-        if len(declared_type) > 0:
-            type_name = declared_type
     signature = declaration_header(arena, symbol.node, &module.source)
     canonical_signature = canonical_declaration_snapshot(
         arena,
@@ -751,24 +739,6 @@ def semantic_modifiers(
     return modifiers
 
 
-def declared_type_text(
-    arena: &const syntax.SyntaxArena,
-    id: NodeId,
-    source: &const String,
-) -> String:
-    if id.index < 0:
-        return ""
-    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
-    children: &const List[NodeId] = &arena.children
-    node = nodes[id.index]
-    for offset in range(0, node.child_count):
-        child_id = children[node.first_child + offset]
-        child = nodes[child_id.index]
-        if is_type_node_kind(child.kind):
-            return source[child.start:child.start + child.length]
-    return ""
-
-
 def collect_member_relations(graph: &SemanticFactGraph) -> void:
     facts: &const List[SymbolFact] = &graph.facts
     for fact in facts:
@@ -815,6 +785,14 @@ def collect_semantic_relations(
                     "",
                     true,
                 )
+            elif source_index >= 0 and target_index < 0:
+                collect_import_value_relation(
+                    &analyzed.checked,
+                    graph,
+                    module,
+                    source_index,
+                    binding.symbol.index,
+                )
         call_resolutions: &const List[semantic.CallResolution] = &analyzed.checked.model.call_resolutions
         for call: semantic.CallResolution in call_resolutions:
             source_index = enclosing_fact_index(graph, analyzed.module_index, call.node, &module.arena)
@@ -829,6 +807,48 @@ def collect_semantic_relations(
                     true,
                 )
         module_index += 1
+
+
+def collect_import_value_relation(
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    source_index: i32,
+    symbol_index: i32,
+) -> void:
+    if not symbol_is_import_binding(checked, &module.arena, symbol_index, true):
+        return
+    symbol_values: &const List[symbols.SymbolRecord] = &checked.symbols.symbols
+    symbol: &const symbols.SymbolRecord = &symbol_values[cast[usize](symbol_index)]
+    alias = module.source[symbol.name_start:symbol.name_start + symbol.name_length]
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    facts: &const List[SymbolFact] = &graph.facts
+    for imported in module_imports:
+        if len(imported.member) > 0 and imported.alias == alias:
+            target_index = find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &imported.member,
+            )
+            if target_index >= 0:
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](source_index)].key,
+                    &facts[cast[usize](target_index)].key,
+                    "",
+                    true,
+                )
+            else:
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](source_index)].key,
+                    &imported.module_name,
+                    &imported.member,
+                    false,
+                )
+            return
 
 
 def collect_import_call_relations(
