@@ -1,7 +1,7 @@
 import cache
 import call_targets
 import type_targets
-from call_targets import Worker
+from call_targets import Child
 from call_targets import action
 from model import CacheEntry
 from type_targets import Target
@@ -26,8 +26,8 @@ def call_top_level(value: i32) -> i32:
 
 
 def call_imported_method(value: i32) -> i32:
-    worker = Worker()
-    return worker.work(value)
+    child = Child()
+    return child.work(value) + child.run(value)
 
 
 @export

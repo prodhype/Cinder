@@ -1,5 +1,6 @@
 import codegen_type_names
 import checker_core
+import classes
 import emit_project
 import generics
 import lock_order
@@ -348,9 +349,13 @@ def ordered_nominal_member_keys(
             builder.append(member_key[0:len(member_key)])
             if child.kind == syntax.SyntaxKind.ENUM_MEMBER_DECL and child.child_count > 0:
                 value_id = children[child.first_child]
-                value = nodes[value_id.index]
                 builder.append("=")
-                builder.append(module.source[value.start:value.start + value.length])
+                append_canonical_enum_member_value(
+                    &builder,
+                    arena,
+                    value_id,
+                    &module.source,
+                )
             first = false
     if (
         (kind == symbols.SymbolKind.STRUCT or kind == symbols.SymbolKind.CLASS)
@@ -379,6 +384,31 @@ def ordered_nominal_member_keys(
             builder.append(method_key[0:len(method_key)])
             first = false
     return builder.finish()
+
+
+def append_canonical_enum_member_value(
+    builder: &StringBuilder,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_LITERAL:
+        builder.append(source[node.value_start:node.value_start + node.value_length])
+        return
+    if node.kind == syntax.SyntaxKind.EXPR_UNARY:
+        builder.append(source[node.value_start:node.value_start + node.value_length])
+        index = node.value_start + node.value_length
+        end = node.start + node.length
+        while index < end:
+            byte = source.byte_at(index)
+            if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+                builder.append(source[index:index + 1])
+            index += 1
+        return
+    builder.append(source[node.value_start:node.value_start + node.value_length])
 
 
 def stable_symbol_key(
@@ -856,6 +886,11 @@ def collect_import_call_relations(
     analysis: &const emit_project.AnalysisResult,
     graph: &SemanticFactGraph,
 ) -> void:
+    specialization_names = emit_project.collect_project_specialization_names(project_graph)
+    class_model: classes.ProjectClassModel = classes.collect_project_class_model(
+        project_graph,
+        &specialization_names,
+    )
     analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
     project_modules: &const List[project.ParsedModule] = &project_graph.modules
     facts: &const List[SymbolFact] = &graph.facts
@@ -876,6 +911,7 @@ def collect_import_call_relations(
                 receiver_bindings: List[lock_order.MethodReceiverBinding] = []
                 collect_import_calls_in_node(
                     project_graph,
+                    &class_model,
                     &analyzed.checked,
                     graph,
                     module,
@@ -888,6 +924,7 @@ def collect_import_call_relations(
 
 def collect_import_calls_in_node(
     project_graph: &const project.ProjectGraph,
+    class_model: &const classes.ProjectClassModel,
     checked: &const checker_core.Checker,
     graph: &SemanticFactGraph,
     module: &const project.ParsedModule,
@@ -905,6 +942,7 @@ def collect_import_calls_in_node(
         for offset in range(0, node.child_count):
             collect_import_calls_in_node(
                 project_graph,
+                class_model,
                 checked,
                 graph,
                 module,
@@ -926,6 +964,7 @@ def collect_import_calls_in_node(
     if node.kind == syntax.SyntaxKind.EXPR_CALL:
         collect_import_call_relation(
             project_graph,
+            class_model,
             checked,
             graph,
             module,
@@ -936,6 +975,7 @@ def collect_import_calls_in_node(
     for offset in range(0, node.child_count):
         collect_import_calls_in_node(
             project_graph,
+            class_model,
             checked,
             graph,
             module,
@@ -947,6 +987,7 @@ def collect_import_calls_in_node(
 
 def collect_import_call_relation(
     project_graph: &const project.ProjectGraph,
+    class_model: &const classes.ProjectClassModel,
     checked: &const checker_core.Checker,
     graph: &SemanticFactGraph,
     module: &const project.ParsedModule,
@@ -986,7 +1027,13 @@ def collect_import_call_relation(
             if binding_index >= 0:
                 binding: &const lock_order.MethodReceiverBinding = &receiver_bindings[cast[usize](binding_index)]
                 owner_method = binding.owner_name[0:len(binding.owner_name)] + "." + member_name
-                target_index = find_fact_by_owner_name(graph, &binding.module_name, &owner_method)
+                target_index = find_effective_method_fact(
+                    graph,
+                    class_model,
+                    &binding.module_name,
+                    &binding.owner_name,
+                    &member_name,
+                )
                 if target_index >= 0:
                     add_relation_unique(
                         graph,
@@ -995,6 +1042,15 @@ def collect_import_call_relation(
                         &facts[cast[usize](target_index)].key,
                         "import",
                         true,
+                    )
+                else:
+                    add_relation_unique(
+                        graph,
+                        "calls",
+                        &facts[cast[usize](caller_index)].key,
+                        &binding.module_name,
+                        &owner_method,
+                        false,
                     )
                 return
             bound_symbol = bound_symbol_for_node(checked, receiver_id)
@@ -1008,6 +1064,9 @@ def collect_import_call_relation(
         return
     target_index = find_top_level_fact_by_module_name(graph, &target_module, &target_name)
     if target_index >= 0:
+        target: &const SymbolFact = &facts[cast[usize](target_index)]
+        if not fact_kind_is_callable(&target.kind):
+            return
         add_relation_unique(
             graph,
             "calls",
@@ -1025,6 +1084,14 @@ def collect_import_call_relation(
             &target_name,
             false,
         )
+
+
+def fact_kind_is_callable(kind: &const String) -> bool:
+    return (
+        kind == "function"
+        or kind == "function-template"
+        or kind == "extern-function"
+    )
 
 
 def bound_symbol_for_node(
@@ -1384,6 +1451,39 @@ def find_fact_by_owner_name(
     return -1
 
 
+def find_effective_method_fact(
+    graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+    module_name: &const String,
+    owner_name: &const String,
+    method_name: &const String,
+) -> i32:
+    class_index = classes.find_class(class_model, module_name, owner_name)
+    if class_index < 0:
+        return -1
+    method_index = classes.find_effective_method(class_model, class_index, method_name)
+    if method_index < 0:
+        return -1
+    method: &const classes.ClassMethodInfo = &class_model.methods[cast[usize](method_index)]
+    owner: &const classes.ClassInfo = &class_model.classes[cast[usize](method.owner)]
+    qualified_name = owner.name[0:len(owner.name)] + "." + method.name[0:len(method.name)]
+    return find_fact_by_owner_name(graph, &owner.module_name, &qualified_name)
+
+
+def declaration_location_start(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+) -> usize:
+    node = arena.nodes[id.index]
+    start = node.start
+    for offset in range(0, node.child_count):
+        child_id = arena.children[node.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.DECORATOR and child.start < start:
+            start = child.start
+    return start
+
+
 def locate_symbol(
     project_graph: &const project.ProjectGraph,
     graph: &const SemanticFactGraph,
@@ -1418,11 +1518,13 @@ def locate_symbol(
         fact: &const SymbolFact = &facts[fact_index]
         if fact.module_index == cast[usize](matched_module) and fact.node.index >= 0:
             node = nodes[fact.node.index]
+            node_start = declaration_location_start(&module.arena, fact.node)
             node_end = node.start + node.length
-            if node.start < line_end and node_end > line_start:
-                if best < 0 or node.length < best_length:
+            node_length = node_end - node_start
+            if node_start < line_end and node_end > line_start:
+                if best < 0 or node_length < best_length:
                     best = cast[i32](fact_index)
-                    best_length = node.length
+                    best_length = node_length
         fact_index += 1
     if best < 0:
         return location_error("line is not inside a semantic declaration")

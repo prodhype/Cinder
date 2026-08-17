@@ -49,6 +49,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_atomic_codegen(&state)
     test_context_capsule(&state)
     test_impact_report(&state)
+    test_decorator_line_resolution(&state)
     test_impact_caller_truncation(&state)
     test_import_call_resolution(&state)
     test_import_value_resolution(&state)
@@ -376,6 +377,43 @@ def test_impact_report(state: &TestState) -> void:
         report_process_failure(&unrelated_method.stdout, &unrelated_method.stderr)
 
 
+def test_decorator_line_resolution(state: &TestState) -> void:
+    reflected_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/model.ci:1",
+    ]
+    abstract_method_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/model.ci:7",
+    ]
+    exported_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:33",
+    ]
+    reflected = process.run(reflected_command)
+    abstract_method = process.run(abstract_method_command)
+    exported = process.run(exported_command)
+    ok = (
+        reflected.exit_code == 0
+        and abstract_method.exit_code == 0
+        and exported.exit_code == 0
+        and contains(&reflected.stdout, "symbol: model::struct:CacheEntry")
+        and contains(&reflected.stdout, "reflected: yes")
+        and contains(&abstract_method.stdout, "symbol: model::method:Store.lookup")
+        and contains(&abstract_method.stdout, "modifiers: abstractmethod")
+        and contains(&exported.stdout, "symbol: main::function:cinder_cache_lookup")
+        and contains(&exported.stdout, "exported: yes")
+    )
+    expect(state, "semantic queries locate declarations from decorator lines", ok)
+    if not ok:
+        report_process_failure(&reflected.stdout, &reflected.stderr)
+        report_process_failure(&abstract_method.stdout, &abstract_method.stderr)
+        report_process_failure(&exported.stdout, &exported.stderr)
+
+
 def test_impact_caller_truncation(state: &TestState) -> void:
     project_dir = state.workspace + "/impact-caller-project"
     source_dir = project_dir + "/src"
@@ -429,30 +467,47 @@ def test_import_call_resolution(state: &TestState) -> void:
     action_impact: List[String] = [
         state.compiler.clone(),
         "impact",
-        state.root + "/tests/cases/semantic_context/src/call_targets.ci:13",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:15",
     ]
-    method_impact: List[String] = [
+    inherited_method_impact: List[String] = [
         state.compiler.clone(),
         "impact",
-        state.root + "/tests/cases/semantic_context/src/call_targets.ci:5",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:2",
+    ]
+    direct_method_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:7",
+    ]
+    child_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:6",
     ]
     shadow = process.run(shadow_context)
     top_level = process.run(top_level_context)
     instance = process.run(instance_context)
     action = process.run(action_impact)
-    method = process.run(method_impact)
+    inherited_method = process.run(inherited_method_impact)
+    direct_method = process.run(direct_method_impact)
+    child = process.run(child_impact)
     ok = (
         shadow.exit_code == 0
         and top_level.exit_code == 0
         and instance.exit_code == 0
         and action.exit_code == 0
-        and method.exit_code == 0
+        and inherited_method.exit_code == 0
+        and direct_method.exit_code == 0
+        and child.exit_code == 0
         and not contains(&shadow.stdout, "call_targets::function:action")
         and contains(&top_level.stdout, "call_targets::function:run")
-        and not contains(&top_level.stdout, "call_targets::method:Worker.run")
-        and contains(&instance.stdout, "call_targets::method:Worker.work")
+        and not contains(&top_level.stdout, "call_targets::method:Child.run")
+        and contains(&instance.stdout, "call_targets::method:Base.work")
+        and contains(&instance.stdout, "call_targets::method:Child.run")
         and not contains(&action.stdout, "main::function:call_shadowed")
-        and contains(&method.stdout, "main::function:call_imported_method")
+        and contains(&inherited_method.stdout, "main::function:call_imported_method")
+        and contains(&direct_method.stdout, "main::function:call_imported_method")
+        and contains(&child.stdout, "DIRECT CALLERS\n(none)")
     )
     expect(state, "semantic queries resolve imported calls without false edges", ok)
     if not ok:
@@ -460,7 +515,9 @@ def test_import_call_resolution(state: &TestState) -> void:
         report_process_failure(&top_level.stdout, &top_level.stderr)
         report_process_failure(&instance.stdout, &instance.stderr)
         report_process_failure(&action.stdout, &action.stderr)
-        report_process_failure(&method.stdout, &method.stderr)
+        report_process_failure(&inherited_method.stdout, &inherited_method.stderr)
+        report_process_failure(&direct_method.stdout, &direct_method.stderr)
+        report_process_failure(&child.stdout, &child.stderr)
 
 
 def test_import_value_resolution(state: &TestState) -> void:
@@ -603,6 +660,11 @@ def test_semantic_diff(state: &TestState) -> void:
         type_format_path[0:len(type_format_path)],
         "struct Holder:\n    items: List[i32]\n",
     )
+    enum_format_path = source_dir + "/enum_format.ci"
+    write_test_text(
+        enum_format_path[0:len(enum_format_path)],
+        "enum FormatEnum:\n    neg = -1\n    pos = 42\n",
+    )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
     commit: List[String] = [
@@ -677,6 +739,10 @@ def test_semantic_diff(state: &TestState) -> void:
         type_format_path[0:len(type_format_path)],
         "struct Holder:\n    items: List[\n        i32\n    ]\n",
     )
+    write_test_text(
+        enum_format_path[0:len(enum_format_path)],
+        "enum FormatEnum:\n    neg = - 1\n    pos = 42\n",
+    )
     command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -709,6 +775,14 @@ def test_semantic_diff(state: &TestState) -> void:
         type_format_path.clone(),
     ]
     type_format = process.run(type_format_command)
+    enum_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        enum_format_path,
+    ]
+    enum_format = process.run(enum_format_command)
     write_test_text(
         type_format_path[0:len(type_format_path)],
         "struct Holder:\n    items: List[\n        i64\n    ]\n",
@@ -743,6 +817,7 @@ def test_semantic_diff(state: &TestState) -> void:
         and selected.exit_code == 0
         and implementation.exit_code == 0
         and type_format.exit_code == 0
+        and enum_format.exit_code == 0
         and type_change.exit_code == 0
         and standalone.exit_code == 0
         and worktrees.exit_code == 0
@@ -784,6 +859,8 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(&implementation.stdout, "NO SEMANTIC CHANGES")
         and contains(&type_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(&type_format.stdout, "~ changed type_format::field:Holder.items")
+        and contains(&enum_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&enum_format.stdout, "~ changed enum_format::enum:FormatEnum")
         and contains(&type_change.stdout, "~ changed type_format::field:Holder.items")
         and contains(&type_change.stdout, "type: CinderList_i32 -> CinderList_i64")
         and not contains(&type_change.stdout, "NO SEMANTIC CHANGES")
@@ -796,6 +873,7 @@ def test_semantic_diff(state: &TestState) -> void:
         report_process_failure(&selected.stdout, &selected.stderr)
         report_process_failure(&implementation.stdout, &implementation.stderr)
         report_process_failure(&type_format.stdout, &type_format.stderr)
+        report_process_failure(&enum_format.stdout, &enum_format.stderr)
         report_process_failure(&type_change.stdout, &type_change.stderr)
         report_process_failure(&standalone.stdout, &standalone.stderr)
 

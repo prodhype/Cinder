@@ -1,9 +1,11 @@
-class Worker:
-    def run(self, value: i32) -> i32:
-        return value + 100
-
+class Base:
     def work(self, value: i32) -> i32:
         return value + 1
+
+
+class Child(Base):
+    def run(self, value: i32) -> i32:
+        return value + 100
 
 
 def run(value: i32) -> i32:
