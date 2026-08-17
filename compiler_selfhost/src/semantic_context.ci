@@ -277,7 +277,13 @@ def render_impact(
     append_lock_impact(&builder, graph, target)
 
     builder.append("ABI / EXTERNAL SURFACE\n")
-    if target.exported or target.abi == "C" or target.kind == "extern-type" or target.kind == "extern-function":
+    if (
+        target.exported
+        or target.abi == "C"
+        or target.kind == "extern-type"
+        or target.kind == "extern-function"
+        or has_c_abi_surface_exposure(graph, &target.key)
+    ):
         builder.append("- C ABI sensitive\n")
     elif target.kind == "struct" or target.kind == "class" or target.kind == "union" or target.kind == "variant" or target.kind == "field":
         builder.append("- source-level layout sensitive; physical offsets are not modeled\n")
@@ -303,6 +309,21 @@ def render_impact(
     builder.append("- dynamic dispatch targets and function-value calls are reported only when resolved\n")
     builder.append("- allocation, thread/core affinity, physical ABI layout, and CFG guarantees are not modeled\n")
     return builder.finish()
+
+
+def has_c_abi_surface_exposure(
+    graph: &const analysis_core.SemanticFactGraph,
+    target_key: &const String,
+) -> bool:
+    relations: &const List[analysis_core.RelationFact] = &graph.relations
+    for relation in relations:
+        if (
+            relation.kind == "abi-surface"
+            and relation.to_key == target_key
+            and relation.resolved
+        ):
+            return true
+    return false
 
 
 def append_property(

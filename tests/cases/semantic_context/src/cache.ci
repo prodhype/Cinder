@@ -27,3 +27,17 @@ struct CacheWorker:
 
 def cache_entry_value(entry: model.CacheEntry) -> i32:
     return entry.value
+
+
+@export
+def export_cache_entry(key: i32) -> model.CacheEntry:
+    return cache_get(key)
+
+
+@export
+def export_borrowed_entry_value(entry: &model.BorrowedEntry) -> i32:
+    return entry.value
+
+
+extern "C":
+    def consume_cache_entry(entry: model.CacheEntry) -> i32

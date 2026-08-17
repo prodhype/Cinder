@@ -13,3 +13,7 @@ class MemoryStore(Store):
     @override
     def lookup(self, key: i32) -> CacheEntry:
         return CacheEntry(value=key)
+
+
+struct BorrowedEntry:
+    value: i32

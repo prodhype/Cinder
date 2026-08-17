@@ -141,6 +141,11 @@ def build_fact_graph(
             analyzed.module_index,
             &facts,
         )
+        collect_extern_import_facts(
+            source_module,
+            analyzed.module_index,
+            &facts,
+        )
         module_index += 1
     graph_value = SemanticFactGraph(facts=facts, relations=relations, error="")
     mark_effective_reflected_members(
@@ -153,6 +158,7 @@ def build_fact_graph(
     collect_import_value_relations(graph, analysis, &graph_value)
     collect_import_call_relations(graph, analysis, &class_model, &graph_value)
     collect_type_relations(graph, &graph_value)
+    collect_abi_surface_relations(graph, analysis, &graph_value)
     collect_lock_relations(analysis, &graph_value)
     return graph_value
 
@@ -372,6 +378,57 @@ def collect_static_assert_facts(
             )
         )
         assertion_index += 1
+
+
+def collect_extern_import_facts(
+    module: &const project.ParsedModule,
+    module_index: usize,
+    facts: &List[SymbolFact],
+) -> void:
+    if module.root.index < 0:
+        return
+    arena: &const syntax.SyntaxArena = &module.arena
+    root = arena.nodes[module.root.index]
+    import_index: i32 = 0
+    for offset in range(0, root.child_count):
+        declaration = arena.children[root.first_child + offset]
+        node = arena.nodes[declaration.index]
+        if node.kind != syntax.SyntaxKind.EXTERN_IMPORT_DECL:
+            continue
+        name = "import_" + to_string(import_index)
+        kind = "extern-import"
+        facts.append(
+            SymbolFact(
+                key=stable_symbol_key(&module.name, &kind, "", &name),
+                module_name=module.name[0:len(module.name)],
+                name=name,
+                kind=kind,
+                owner="",
+                signature=declaration_header(arena, declaration, &module.source),
+                canonical_signature=canonical_declaration_snapshot(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
+                implementation="",
+                modifiers="none",
+                type_name="not applicable",
+                ownership="not applicable",
+                parameter_ownership="(not applicable)",
+                abi="C",
+                members="",
+                reflected=false,
+                exported=false,
+                path=module.path[0:len(module.path)],
+                source=module.source[node.start:node.start + node.length],
+                line=node.line,
+                column=node.column,
+                module_index=module_index,
+                symbol_index=-1,
+                node=declaration,
+            )
+        )
+        import_index += 1
 
 
 def ordered_nominal_member_keys(
@@ -1672,6 +1729,119 @@ def collect_type_relations(
                         )
             node_index += 1
         module_index += 1
+
+
+def collect_abi_surface_relations(
+    project_graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    facts: &const List[SymbolFact] = &graph.facts
+    for analyzed in analyzed_modules:
+        module_index = analyzed.module_index
+        module: &const project.ParsedModule = &project_modules[module_index]
+        nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+        children: &const List[NodeId] = &module.arena.children
+        fact_index: usize = 0
+        while fact_index < len(facts):
+            fact: &const SymbolFact = &facts[fact_index]
+            if (
+                fact.module_index == module_index
+                and fact.node.index >= 0
+                and fact.abi == "C"
+                and fact_kind_is_callable(&fact.kind)
+            ):
+                declaration = nodes[fact.node.index]
+                if declaration.kind == syntax.SyntaxKind.FUNCTION_DECL:
+                    for offset in range(0, declaration.child_count):
+                        child_id = children[declaration.first_child + offset]
+                        child = nodes[child_id.index]
+                        if child.kind == syntax.SyntaxKind.PARAMETER:
+                            for parameter_offset in range(0, child.child_count):
+                                type_id = children[child.first_child + parameter_offset]
+                                type_node = nodes[type_id.index]
+                                if is_type_node_kind(type_node.kind):
+                                    collect_abi_surface_type_relation(
+                                        project_graph,
+                                        module,
+                                        graph,
+                                        module_index,
+                                        cast[i32](fact_index),
+                                        type_id,
+                                    )
+                        elif is_type_node_kind(child.kind):
+                            collect_abi_surface_type_relation(
+                                project_graph,
+                                module,
+                                graph,
+                                module_index,
+                                cast[i32](fact_index),
+                                child_id,
+                            )
+            fact_index += 1
+
+
+def collect_abi_surface_type_relation(
+    project_graph: &const project.ProjectGraph,
+    module: &const project.ParsedModule,
+    graph: &SemanticFactGraph,
+    module_index: usize,
+    source_index: i32,
+    type_node_id: NodeId,
+) -> void:
+    name_id = abi_surface_nominal_name_node(&module.arena, type_node_id)
+    if name_id.index < 0:
+        return
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    name_node = nodes[name_id.index]
+    type_text = module.source[name_node.start:name_node.start + name_node.length]
+    target_index = resolve_type_fact(
+        project_graph,
+        graph,
+        module_index,
+        &type_text,
+    )
+    if target_index < 0 or target_index == source_index:
+        return
+    facts: &const List[SymbolFact] = &graph.facts
+    target: &const SymbolFact = &facts[cast[usize](target_index)]
+    if (
+        target.kind != "struct"
+        and target.kind != "class"
+        and target.kind != "union"
+        and target.kind != "variant"
+    ):
+        return
+    add_relation_unique(
+        graph,
+        "abi-surface",
+        &facts[cast[usize](source_index)].key,
+        &facts[cast[usize](target_index)].key,
+        "by-value",
+        true,
+    )
+
+
+def abi_surface_nominal_name_node(
+    arena: &const syntax.SyntaxArena,
+    type_node: NodeId,
+) -> NodeId:
+    if type_node.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[type_node.index]
+    if node.kind == syntax.SyntaxKind.TYPE_NAME:
+        return type_node
+    if (
+        node.kind == syntax.SyntaxKind.TYPE_CONST
+        or node.kind == syntax.SyntaxKind.TYPE_GENERIC
+    ) and node.child_count > 0:
+        return abi_surface_nominal_name_node(
+            arena,
+            arena.children[node.first_child],
+        )
+    return syntax.missing_node()
 
 
 def type_name_is_enclosing_parameter(
