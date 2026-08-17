@@ -1,4 +1,7 @@
 import cache
+import call_targets
+from call_targets import Worker
+from call_targets import action
 from model import CacheEntry
 
 extern import "stdlib.h"
@@ -9,6 +12,19 @@ extern "C":
 def lookup_twice(key: i32) -> CacheEntry:
     first = cache.cache_get(key)
     return cache.cache_get(first.value)
+
+
+def call_shadowed(action: def(i32) -> i32, value: i32) -> i32:
+    return action(value)
+
+
+def call_top_level(value: i32) -> i32:
+    return call_targets.run(value)
+
+
+def call_imported_method(value: i32) -> i32:
+    worker = Worker()
+    return worker.work(value)
 
 
 @export

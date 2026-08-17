@@ -227,6 +227,12 @@ def render_semantic_diff(
                     &previous.abi,
                     &fact.abi,
                 )
+                append_changed_property(
+                    &builder,
+                    "members",
+                    &previous.members,
+                    &fact.members,
+                )
                 previous_reflected = analysis_core.bool_text(previous.reflected)
                 current_reflected = analysis_core.bool_text(fact.reflected)
                 append_changed_property(
@@ -278,6 +284,7 @@ def diff_facts_equal(
         and analysis_core.strings_equal(&left.ownership, &right.ownership)
         and analysis_core.strings_equal(&left.parameter_ownership, &right.parameter_ownership)
         and analysis_core.strings_equal(&left.abi, &right.abi)
+        and analysis_core.strings_equal(&left.members, &right.members)
         and left.reflected == right.reflected
         and left.exported == right.exported
     )

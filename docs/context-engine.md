@@ -64,7 +64,8 @@ snapshots. It never checks out, resets, or modifies the user's index or working
 tree.
 
 The report covers added, removed, and changed declarations; signatures and
-semantic types; ownership classifications; source-level nominal layout;
+semantic types; ownership classifications; source-level nominal layout,
+including ordered struct, class, and union fields;
 inheritance and interfaces; calls and callers; lock effects and order;
 reflection; and C exports/externs. Generated C and raw per-run symbol/type IDs
 are not diffed.

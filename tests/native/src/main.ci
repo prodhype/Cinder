@@ -48,6 +48,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_atomic_codegen(&state)
     test_context_capsule(&state)
     test_impact_report(&state)
+    test_import_call_resolution(&state)
     test_semantic_query_diagnostics(&state)
     test_semantic_diff(&state)
 
@@ -280,6 +281,59 @@ def test_impact_report(state: &TestState) -> void:
         report_process_failure(&result.stdout, &result.stderr)
 
 
+def test_import_call_resolution(state: &TestState) -> void:
+    shadow_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:17",
+    ]
+    top_level_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:21",
+    ]
+    instance_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:25",
+    ]
+    action_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:13",
+    ]
+    method_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:5",
+    ]
+    shadow = process.run(shadow_context)
+    top_level = process.run(top_level_context)
+    instance = process.run(instance_context)
+    action = process.run(action_impact)
+    method = process.run(method_impact)
+    ok = (
+        shadow.exit_code == 0
+        and top_level.exit_code == 0
+        and instance.exit_code == 0
+        and action.exit_code == 0
+        and method.exit_code == 0
+        and not contains(&shadow.stdout, "call_targets::function:action")
+        and contains(&top_level.stdout, "call_targets::function:run")
+        and not contains(&top_level.stdout, "call_targets::method:Worker.run")
+        and contains(&instance.stdout, "call_targets::method:Worker.work")
+        and not contains(&action.stdout, "main::function:call_shadowed")
+        and contains(&method.stdout, "main::function:call_imported_method")
+    )
+    expect(state, "semantic queries resolve imported calls without false edges", ok)
+    if not ok:
+        report_process_failure(&shadow.stdout, &shadow.stderr)
+        report_process_failure(&top_level.stdout, &top_level.stderr)
+        report_process_failure(&instance.stdout, &instance.stderr)
+        report_process_failure(&action.stdout, &action.stderr)
+        report_process_failure(&method.stdout, &method.stderr)
+
+
 def test_semantic_query_diagnostics(state: &TestState) -> void:
     target = state.root + "/tests/cases/semantic_context/src/cache.ci:999"
     command: List[String] = [
@@ -312,7 +366,7 @@ def test_semantic_diff(state: &TestState) -> void:
     source_path = source_dir + "/main.ci"
     write_test_text(
         source_path[0:len(source_path)],
-        semantic_diff_stress_source(96),
+        semantic_diff_stress_source(96, false),
     )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
@@ -338,7 +392,7 @@ def test_semantic_diff(state: &TestState) -> void:
         return
     write_test_text(
         source_path,
-        semantic_diff_stress_source(97),
+        semantic_diff_stress_source(97, true),
     )
     command: List[String] = [
         state.compiler.clone(),
@@ -364,6 +418,10 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "+ added main::function:node_96")
         and contains(&result.stdout, "- calls: main::function:main -> main::function:node_95")
         and contains(&result.stdout, "+ calls: main::function:main -> main::function:node_96")
+        and contains(&result.stdout, "~ changed main::struct:LayoutStruct")
+        and contains(&result.stdout, "~ changed main::class:LayoutClass")
+        and contains(&result.stdout, "~ changed main::union:LayoutUnion")
+        and contains(&result.stdout, "members: main::field:LayoutStruct.first, main::field:LayoutStruct.second -> main::field:LayoutStruct.second, main::field:LayoutStruct.first")
         and not contains(&worktrees.stdout, "cinder-semantic-diff.")
     )
     expect(state, "semantic-diff reports canonical changes", ok)
@@ -376,8 +434,9 @@ def write_test_text(path: String, content: String) -> void:
         file.write(content)
 
 
-def semantic_diff_stress_source(function_count: i32) -> String:
+def semantic_diff_stress_source(function_count: i32, reverse_fields: bool) -> String:
     builder = StringBuilder()
+    append_layout_fixture(&builder, reverse_fields)
     builder.append("def node_0(value: i32) -> i32:\n")
     builder.append("    return value\n\n\n")
     index: i32 = 1
@@ -397,6 +456,24 @@ def semantic_diff_stress_source(function_count: i32) -> String:
     builder.append(final_index)
     builder.append("(0)\n")
     return builder.finish()
+
+
+def append_layout_fixture(builder: &StringBuilder, reverse_fields: bool) -> void:
+    builder.append("struct LayoutStruct:\n")
+    append_layout_fields(builder, reverse_fields)
+    builder.append("class LayoutClass:\n")
+    append_layout_fields(builder, reverse_fields)
+    builder.append("union LayoutUnion:\n")
+    append_layout_fields(builder, reverse_fields)
+
+
+def append_layout_fields(builder: &StringBuilder, reverse_fields: bool) -> void:
+    if reverse_fields:
+        builder.append("    second: i64\n")
+        builder.append("    first: i32\n\n\n")
+    else:
+        builder.append("    first: i32\n")
+        builder.append("    second: i64\n\n\n")
 
 
 def expect(state: &TestState, name: String, condition: bool) -> void:

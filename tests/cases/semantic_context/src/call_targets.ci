@@ -1,0 +1,14 @@
+class Worker:
+    def run(self, value: i32) -> i32:
+        return value + 100
+
+    def work(self, value: i32) -> i32:
+        return value + 1
+
+
+def run(value: i32) -> i32:
+    return value + 10
+
+
+def action(value: i32) -> i32:
+    return value
