@@ -40,6 +40,7 @@ def main(argc: i32, argv: **char) -> i32:
 
     test_check_valid(&state)
     test_check_diagnostic(&state)
+    test_check_ir_validation(&state)
     test_emit_c(&state)
     test_emit_c_is_deterministic(&state)
     test_emit_project(&state)
@@ -84,6 +85,32 @@ def test_check_diagnostic(state: &TestState) -> void:
     expect(state, "check reports source diagnostics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_check_ir_validation(state: &TestState) -> void:
+    source_path = state.root + "/examples/atomics.ci"
+    check_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        source_path,
+    ]
+    context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/compiler_selfhost/src/emit_project.ci:115",
+    ]
+    checked = process.run(check_command)
+    context = process.run(context_command)
+    ok = (
+        checked.exit_code == 0
+        and context.exit_code == 0
+        and contains(&checked.stdout, "ok: ")
+        and contains(&context.stdout, "CALLS\n- emit_project::function:compile_project")
+    )
+    expect(state, "check retains backend atomic IR validation", ok)
+    if not ok:
+        report_process_failure(&checked.stdout, &checked.stderr)
+        report_process_failure(&context.stdout, &context.stderr)
 
 
 def test_emit_c(state: &TestState) -> void:
@@ -241,10 +268,18 @@ def test_context_capsule(state: &TestState) -> void:
         method_target,
     ]
     method = process.run(method_command)
+    qualified_target = state.root + "/tests/cases/semantic_context/src/cache.ci:27"
+    qualified_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        qualified_target,
+    ]
+    qualified = process.run(qualified_command)
     ok = (
         first.exit_code == 0
         and second.exit_code == 0
         and method.exit_code == 0
+        and qualified.exit_code == 0
         and first.stdout == second.stdout
         and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
         and contains(&first.stdout, "cache::function:hash_key")
@@ -254,10 +289,12 @@ def test_context_capsule(state: &TestState) -> void:
         and contains(&first.stdout, "allocation: unknown")
         and contains(&method.stdout, "cache::method:CacheWorker.refresh")
         and contains(&method.stdout, "lock_effect: acquires cache.cache")
+        and contains(&qualified.stdout, "DEPENDS ON\n- model::struct:CacheEntry")
     )
     expect(state, "context emits deterministic compiler-derived facts", ok)
     if not ok:
         report_process_failure(&first.stdout, &first.stderr)
+        report_process_failure(&qualified.stdout, &qualified.stderr)
 
 
 def test_impact_report(state: &TestState) -> void:
@@ -296,6 +333,7 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&nominal.stdout, "model::struct:CacheEntry")
         and contains(&nominal.stdout, "TYPE / MEMBER CONSUMERS")
         and contains(&nominal.stdout, "cache::function:cache_get")
+        and contains(&nominal.stdout, "cache::function:cache_entry_value")
         and contains(&nominal.stdout, "source-level layout sensitive")
         and contains(&nominal.stdout, "emitted runtime reflection metadata")
         and contains(&field_context.stdout, "model::field:CacheEntry.value")
@@ -511,10 +549,14 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&result.stdout, "~ changed main::class:LayoutClass")
         and contains(&result.stdout, "~ changed main::union:LayoutUnion")
         and contains(&result.stdout, "~ changed main::enum:LayoutEnum")
+        and contains(&result.stdout, "~ changed main::enum:ValueEnum")
         and contains(&result.stdout, "~ changed main::variant:LayoutVariant")
+        and contains(&result.stdout, "~ changed main::function:multiline_signature")
         and contains(&result.stdout, "members: main::field:LayoutStruct.first, main::field:LayoutStruct.second -> main::field:LayoutStruct.second, main::field:LayoutStruct.first")
         and contains(&result.stdout, "members: main::enum-member:LayoutEnum.first, main::enum-member:LayoutEnum.second -> main::enum-member:LayoutEnum.second, main::enum-member:LayoutEnum.first")
+        and contains(&result.stdout, "members: main::enum-member:ValueEnum.first=1, main::enum-member:ValueEnum.second=7 -> main::enum-member:ValueEnum.first=3, main::enum-member:ValueEnum.second=7")
         and contains(&result.stdout, "members: main::variant-case:LayoutVariant.First, main::variant-case:LayoutVariant.Second -> main::variant-case:LayoutVariant.Second, main::variant-case:LayoutVariant.First")
+        and contains(&result.stdout, "signature: def multiline_signature(\n    value: i32,\n) -> i32: -> def multiline_signature(\n    value: i64,\n) -> i32:")
         and contains(&selected.stdout, "NO SEMANTIC CHANGES")
         and contains(&standalone.stdout, "NO SEMANTIC CHANGES")
         and not contains(&worktrees.stdout, "cinder-semantic-diff.")
@@ -534,6 +576,13 @@ def write_test_text(path: String, content: String) -> void:
 def semantic_diff_stress_source(function_count: i32, reverse_fields: bool) -> String:
     builder = StringBuilder()
     append_layout_fixture(&builder, reverse_fields)
+    builder.append("def multiline_signature(\n")
+    if reverse_fields:
+        builder.append("    value: i64,\n")
+    else:
+        builder.append("    value: i32,\n")
+    builder.append(") -> i32:\n")
+    builder.append("    return 0\n\n\n")
     builder.append("def node_0(value: i32) -> i32:\n")
     builder.append("    return value\n\n\n")
     index: i32 = 1
@@ -569,6 +618,12 @@ def append_layout_fixture(builder: &StringBuilder, reverse_fields: bool) -> void
     else:
         builder.append("    first\n")
         builder.append("    second\n\n\n")
+    builder.append("enum ValueEnum:\n")
+    if reverse_fields:
+        builder.append("    first = 3\n")
+    else:
+        builder.append("    first = 1\n")
+    builder.append("    second = 7\n\n\n")
     builder.append("variant LayoutVariant:\n")
     if reverse_fields:
         builder.append("    Second\n")

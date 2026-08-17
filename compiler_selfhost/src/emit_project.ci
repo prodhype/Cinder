@@ -113,8 +113,8 @@ def compile_project(graph: &const project.ProjectGraph) -> CompileResult:
 
 
 def check_project(graph: &const project.ProjectGraph) -> String:
-    analyzed = analyze_project(graph)
-    return analyzed.error[0:len(analyzed.error)]
+    compiled = compile_project(graph)
+    return compiled.error[0:len(compiled.error)]
 
 
 def write_project(graph: &const project.ProjectGraph, output_dir: String) -> EmitResult:

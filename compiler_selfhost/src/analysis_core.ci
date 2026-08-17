@@ -237,7 +237,7 @@ def make_symbol_fact(
         declared_type = declared_type_text(arena, symbol.node, &module.source)
         if len(declared_type) > 0:
             type_name = declared_type
-    signature = declaration_header(&module.source, &node)
+    signature = declaration_header(arena, symbol.node, &module.source)
     declaration_source = module.source[node.start:node.start + node.length]
     reflected = symbol_is_reflected(
         arena,
@@ -334,6 +334,11 @@ def ordered_nominal_member_keys(
                 &member_name,
             )
             builder.append(member_key[0:len(member_key)])
+            if child.kind == syntax.SyntaxKind.ENUM_MEMBER_DECL and child.child_count > 0:
+                value_id = children[child.first_child]
+                value = nodes[value_id.index]
+                builder.append("=")
+                builder.append(module.source[value.start:value.start + value.length])
             first = false
     return builder.finish()
 
@@ -537,10 +542,29 @@ def symbol_is_reflected(
 
 
 def declaration_header(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
     source: &const String,
-    node: &const syntax.SyntaxNode,
 ) -> String:
+    if id.index < 0:
+        return ""
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    node = nodes[id.index]
     end = node.start + node.length
+    if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
+        for offset in range(0, node.child_count):
+            child_id = children[node.first_child + offset]
+            child = nodes[child_id.index]
+            if child.kind == syntax.SyntaxKind.BLOCK:
+                end = child.start
+                break
+        while end > node.start:
+            byte = source.byte_at(end - 1)
+            if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+                break
+            end -= 1
+        return source[node.start:end]
     index = node.start
     while index < end and source.byte_at(index) != 10 and source.byte_at(index) != 13:
         index += 1
@@ -849,7 +873,7 @@ def collect_type_relations(
                 type_id = NodeId(index=cast[i32](node_index))
                 source_index = enclosing_fact_index(graph, module_index, type_id, &module.arena)
                 if source_index >= 0:
-                    type_text = module.source[node.value_start:node.value_start + node.value_length]
+                    type_text = module.source[node.start:node.start + node.length]
                     target_index = resolve_type_fact(project_graph, graph, module_index, &type_text)
                     if target_index >= 0 and target_index != source_index:
                         add_relation_unique(

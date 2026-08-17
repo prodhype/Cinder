@@ -22,3 +22,7 @@ struct CacheWorker:
     def refresh(self) -> void:
         CriticalSection cache:
             request_count += 1
+
+
+def cache_entry_value(entry: model.CacheEntry) -> i32:
+    return entry.value
