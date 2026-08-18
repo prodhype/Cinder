@@ -294,9 +294,15 @@ def test_context_capsule(state: &TestState) -> void:
     lock_order_command: List[String] = [
         state.compiler.clone(),
         "context",
-        lock_order_target,
+        lock_order_target.clone(),
     ]
     lock_order_context = process.run(lock_order_command)
+    lock_order_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        lock_order_target,
+    ]
+    lock_order_impact = process.run(lock_order_impact_command)
     collision_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:2"
     collision_command: List[String] = [
         state.compiler.clone(),
@@ -310,6 +316,18 @@ def test_context_capsule(state: &TestState) -> void:
         state.root + "/tests/cases/semantic_context/src/main.ci:10",
     ]
     extern_import = process.run(extern_import_command)
+    extern_block_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:11",
+    ]
+    extern_block = process.run(extern_block_command)
+    extern_child_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:12",
+    ]
+    extern_child = process.run(extern_child_command)
     import_command: List[String] = [
         state.compiler.clone(),
         "context",
@@ -323,8 +341,11 @@ def test_context_capsule(state: &TestState) -> void:
         and qualified.exit_code == 0
         and lock_context.exit_code == 0
         and lock_order_context.exit_code == 0
+        and lock_order_impact.exit_code == 0
         and collision.exit_code == 0
         and extern_import.exit_code == 0
+        and extern_block.exit_code == 0
+        and extern_child.exit_code == 0
         and import_context.exit_code == 0
         and first.stdout == second.stdout
         and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
@@ -336,17 +357,31 @@ def test_context_capsule(state: &TestState) -> void:
         and contains(&first.stdout, "allocation: unknown")
         and contains(&method.stdout, "cache::method:CacheWorker.refresh")
         and contains(&method.stdout, "lock_effect: acquires cache.cache")
-        and contains(&qualified.stdout, "DEPENDS ON\n- model::struct:CacheEntry")
+        and contains(&qualified.stdout, "model::struct:CacheEntry")
         and contains(&lock_context.stdout, "symbol: lock_collision::lock:cache")
         and contains(&lock_context.stdout, "lock_collision::lock:database < lock_collision::lock:cache")
         and contains(&lock_order_context.stdout, "lockorder cache before metrics")
         and contains(&lock_order_context.stdout, "symbol: lock_collision::lock-order:order_0")
         and contains(&lock_order_context.stdout, "kind: lock-order")
+        and contains(
+            &lock_order_context.stdout,
+            "lock_collision::lock:cache < lock_collision::lock:metrics (explicit)",
+        )
+        and not contains(&lock_order_context.stdout, "LOCK ORDER\n(none)")
+        and contains(
+            &lock_order_impact.stdout,
+            "lock-before: lock_collision::lock:cache -> lock_collision::lock:metrics",
+        )
         and contains(&collision.stdout, "symbol: lock_collision::method:Holder.cache")
         and contains(&collision.stdout, "LOCK IMPACT\n(none)")
         and contains(&extern_import.stdout, "extern import \"stdlib.h\"")
         and contains(&extern_import.stdout, "symbol: main::extern-import:import_0")
         and contains(&extern_import.stdout, "abi: C")
+        and contains(&extern_block.stdout, "extern \"C\":")
+        and contains(&extern_block.stdout, "symbol: main::extern-block:block_0")
+        and contains(&extern_block.stdout, "kind: extern-block")
+        and contains(&extern_block.stdout, "abi: C")
+        and contains(&extern_child.stdout, "symbol: main::function:abs")
         and contains(&import_context.stdout, "import cache")
         and contains(&import_context.stdout, "symbol: main::import:import_0")
         and contains(&import_context.stdout, "abi: not applicable")
@@ -358,8 +393,11 @@ def test_context_capsule(state: &TestState) -> void:
         report_process_failure(&qualified.stdout, &qualified.stderr)
         report_process_failure(&lock_context.stdout, &lock_context.stderr)
         report_process_failure(&lock_order_context.stdout, &lock_order_context.stderr)
+        report_process_failure(&lock_order_impact.stdout, &lock_order_impact.stderr)
         report_process_failure(&collision.stdout, &collision.stderr)
         report_process_failure(&extern_import.stdout, &extern_import.stderr)
+        report_process_failure(&extern_block.stdout, &extern_block.stderr)
+        report_process_failure(&extern_child.stdout, &extern_child.stderr)
         report_process_failure(&import_context.stdout, &import_context.stderr)
 
 
@@ -440,6 +478,9 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&nominal.stdout, "emitted runtime reflection metadata")
         and contains(&field_context.stdout, "model::field:CacheEntry.value")
         and contains(&field_context.stdout, "reflected: yes")
+        and contains(&field_impact.stdout, "cache::function:cache_entry_value")
+        and contains(&field_impact.stdout, "main::function:lookup_twice")
+        and contains(&field_impact.stdout, "main::function:cinder_cache_lookup")
         and contains(&field_impact.stdout, "emitted runtime reflection metadata")
         and contains(&field_impact.stdout, "C ABI sensitive")
         and not contains(&field_impact.stdout, "source-level layout sensitive")

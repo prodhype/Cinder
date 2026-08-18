@@ -479,6 +479,31 @@ def append_lock_order(
     builder.append("LOCK ORDER\n")
     lock_keys: List[String] = []
     relations: &const List[analysis_core.RelationFact] = &graph.relations
+    if target.kind == "lock-order":
+        before_key = lock_order_endpoint(
+            graph,
+            &target.key,
+            "lock-order-before",
+        )
+        after_key = lock_order_endpoint(
+            graph,
+            &target.key,
+            "lock-order-after",
+        )
+        wrote_order = false
+        for relation in relations:
+            if (
+                relation.kind == "lock-before"
+                and relation.resolved
+                and relation.from_key == before_key
+                and relation.to_key == after_key
+            ):
+                append_lock_order_relation(builder, &relation)
+                wrote_order = true
+        if not wrote_order:
+            builder.append("(none)\n")
+        builder.append("\n")
+        return
     if target.kind == "lock":
         lock_keys.append(target.key[0:len(target.key)])
     for relation in relations:
@@ -488,17 +513,40 @@ def append_lock_order(
     wrote = false
     for relation in relations:
         if relation.kind == "lock-before" and (string_list_contains(&lock_keys, &relation.from_key) or string_list_contains(&lock_keys, &relation.to_key)):
-            builder.append("- ")
-            builder.append(relation.from_key[0:len(relation.from_key)])
-            builder.append(" < ")
-            builder.append(relation.to_key[0:len(relation.to_key)])
-            builder.append(" (")
-            builder.append(relation.detail[0:len(relation.detail)])
-            builder.append(")\n")
+            append_lock_order_relation(builder, &relation)
             wrote = true
     if not wrote:
         builder.append("(none)\n")
     builder.append("\n")
+
+
+def lock_order_endpoint(
+    graph: &const analysis_core.SemanticFactGraph,
+    target_key: &const String,
+    relation_kind: String,
+) -> String:
+    relations: &const List[analysis_core.RelationFact] = &graph.relations
+    for relation in relations:
+        if (
+            relation.kind == relation_kind
+            and relation.from_key == target_key
+            and relation.resolved
+        ):
+            return relation.to_key[0:len(relation.to_key)]
+    return ""
+
+
+def append_lock_order_relation(
+    builder: &StringBuilder,
+    relation: &const analysis_core.RelationFact,
+) -> void:
+    builder.append("- ")
+    builder.append(relation.from_key[0:len(relation.from_key)])
+    builder.append(" < ")
+    builder.append(relation.to_key[0:len(relation.to_key)])
+    builder.append(" (")
+    builder.append(relation.detail[0:len(relation.detail)])
+    builder.append(")\n")
 
 
 def append_ownership_uses(
@@ -603,8 +651,35 @@ def append_lock_impact(
     builder.append("LOCK IMPACT\n")
     wrote = false
     relations: &const List[analysis_core.RelationFact] = &graph.relations
+    before_key = ""
+    after_key = ""
+    if target.kind == "lock-order":
+        before_key = lock_order_endpoint(
+            graph,
+            &target.key,
+            "lock-order-before",
+        )
+        after_key = lock_order_endpoint(
+            graph,
+            &target.key,
+            "lock-order-after",
+        )
     for relation in relations:
-        if (relation.kind == "lock-before" or relation.kind == "acquires") and (text_equal(&relation.from_key, &target.key) or text_equal(&relation.to_key, &target.key)):
+        matches_target = (
+            target.kind != "lock-order"
+            and (text_equal(&relation.from_key, &target.key) or text_equal(&relation.to_key, &target.key))
+        )
+        matches_order = (
+            target.kind == "lock-order"
+            and relation.kind == "lock-before"
+            and relation.from_key == before_key
+            and relation.to_key == after_key
+        )
+        if (
+            (relation.kind == "lock-before" or relation.kind == "acquires")
+            and relation.resolved
+            and (matches_target or matches_order)
+        ):
             builder.append("- ")
             builder.append(relation.kind[0:len(relation.kind)])
             builder.append(": ")

@@ -164,6 +164,11 @@ def build_fact_graph(
             analyzed.module_index,
             &facts,
         )
+        collect_extern_block_facts(
+            source_module,
+            analyzed.module_index,
+            &facts,
+        )
         collect_lock_order_facts(
             source_module,
             analyzed.module_index,
@@ -179,6 +184,7 @@ def build_fact_graph(
     collect_member_relations(&graph_value)
     collect_semantic_relations(graph, analysis, &graph_value)
     collect_enum_member_use_relations(graph, analysis, &graph_value)
+    collect_nominal_field_use_relations(graph, analysis, &graph_value)
     collect_import_value_relations(graph, analysis, &graph_value)
     collect_import_call_relations(graph, analysis, &class_model, &graph_value)
     collect_type_relations(graph, &graph_value)
@@ -658,6 +664,66 @@ def collect_extern_import_facts(
             )
         )
         import_index += 1
+
+
+def collect_extern_block_facts(
+    module: &const project.ParsedModule,
+    module_index: usize,
+    facts: &List[SymbolFact],
+) -> void:
+    if module.root.index < 0:
+        return
+    arena: &const syntax.SyntaxArena = &module.arena
+    root = arena.nodes[module.root.index]
+    block_index: i32 = 0
+    for offset in range(0, root.child_count):
+        declaration = arena.children[root.first_child + offset]
+        node = arena.nodes[declaration.index]
+        if node.kind != syntax.SyntaxKind.EXTERN_BLOCK:
+            continue
+        name = "block_" + to_string(block_index)
+        kind = "extern-block"
+        abi = "C"
+        if node.value_length >= 2:
+            abi = module.source[
+                node.value_start + 1:node.value_start + node.value_length - 1
+            ]
+        facts.append(
+            SymbolFact(
+                key=stable_symbol_key(&module.name, &kind, "", &name),
+                module_name=module.name[0:len(module.name)],
+                name=name,
+                kind=kind,
+                owner="",
+                signature=declaration_header(arena, declaration, &module.source),
+                canonical_signature=canonical_declaration_snapshot(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
+                implementation="",
+                modifiers="none",
+                type_name="not applicable",
+                ownership="not applicable",
+                parameter_ownership="(not applicable)",
+                abi=abi,
+                members="",
+                reflected=false,
+                exported=false,
+                path=module.path[0:len(module.path)],
+                source=declaration_source_slice(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
+                line=node.line,
+                column=node.column,
+                module_index=module_index,
+                symbol_index=-1,
+                node=declaration,
+            )
+        )
+        block_index += 1
 
 
 def collect_lock_order_facts(
@@ -1200,7 +1266,11 @@ def declaration_header(
     node = nodes[id.index]
     start = declaration_location_start(arena, id)
     end = node.start + node.length
-    if node.kind == syntax.SyntaxKind.FUNCTION_DECL or is_nominal_declaration_kind(node.kind):
+    if (
+        node.kind == syntax.SyntaxKind.FUNCTION_DECL
+        or is_nominal_declaration_kind(node.kind)
+        or node.kind == syntax.SyntaxKind.EXTERN_BLOCK
+    ):
         if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
             for offset in range(0, node.child_count):
                 child_id = children[node.first_child + offset]
@@ -1257,6 +1327,14 @@ def canonical_declaration_snapshot(
         if node.kind == syntax.SyntaxKind.FUNCTION_DECL and child.kind == syntax.SyntaxKind.BLOCK:
             continue
         if is_nominal_declaration_kind(node.kind) and is_nominal_member_node_kind(child.kind):
+            continue
+        if (
+            node.kind == syntax.SyntaxKind.EXTERN_BLOCK
+            and (
+                child.kind == syntax.SyntaxKind.FUNCTION_DECL
+                or child.kind == syntax.SyntaxKind.EXTERN_TYPE_DECL
+            )
+        ):
             continue
         append_syntax_snapshot(&builder, arena, child_id, source)
     builder.append(")")
@@ -1601,6 +1679,392 @@ def collect_enum_member_use_relations(
                         true,
                     )
             node_index += 1
+
+
+def collect_nominal_field_use_relations(
+    project_graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    facts: &const List[SymbolFact] = &graph.facts
+    for analyzed in analyzed_modules:
+        module_index = analyzed.module_index
+        module: &const project.ParsedModule = &project_modules[module_index]
+        nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+        node_index: usize = 0
+        while node_index < len(nodes):
+            node = nodes[node_index]
+            if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE and node.child_count >= 2:
+                attribute_id = NodeId(index=cast[i32](node_index))
+                source_index = enclosing_fact_index(
+                    graph,
+                    module_index,
+                    attribute_id,
+                    &module.arena,
+                )
+                target_index = nominal_field_fact_for_attribute(
+                    project_graph,
+                    graph,
+                    &analyzed.checked,
+                    module,
+                    attribute_id,
+                    module_index,
+                    source_index,
+                )
+                if (
+                    source_index >= 0
+                    and target_index >= 0
+                    and source_index != target_index
+                ):
+                    add_relation_unique(
+                        graph,
+                        "uses",
+                        &facts[cast[usize](source_index)].key,
+                        &facts[cast[usize](target_index)].key,
+                        "",
+                        true,
+                    )
+            node_index += 1
+
+
+def nominal_field_fact_for_attribute(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    attribute_id: NodeId,
+    module_index: usize,
+    source_index: i32,
+) -> i32:
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    attribute = nodes[attribute_id.index]
+    if attribute.child_count < 2:
+        return -1
+    receiver_id = children[attribute.first_child]
+    member_id = children[attribute.first_child + 1]
+    nominal_index = nominal_fact_for_expression(
+        project_graph,
+        graph,
+        checked,
+        module,
+        receiver_id,
+        module_index,
+        source_index,
+        0,
+    )
+    if nominal_index < 0 and source_index >= 0:
+        nominal_index = receiver_field_nominal_fact(
+            project_graph,
+            graph,
+            module,
+            receiver_id,
+            source_index,
+        )
+    if nominal_index < 0:
+        return -1
+    member = nodes[member_id.index]
+    member_name = module.source[
+        member.value_start:member.value_start + member.value_length
+    ]
+    return field_fact_for_nominal(graph, nominal_index, &member_name)
+
+
+def field_fact_for_nominal(
+    graph: &const SemanticFactGraph,
+    nominal_index: i32,
+    member_name: &const String,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    if nominal_index < 0 or nominal_index >= cast[i32](len(facts)):
+        return -1
+    nominal: &const SymbolFact = &facts[cast[usize](nominal_index)]
+    owner = nominal.name[0:len(nominal.name)]
+    if len(nominal.owner) > 0:
+        owner = nominal.owner[0:len(nominal.owner)] + "." + nominal.name[0:len(nominal.name)]
+    field_kind = "field"
+    field_key = stable_symbol_key(
+        &nominal.module_name,
+        &field_kind,
+        &owner,
+        member_name,
+    )
+    return find_fact_by_key(graph, &field_key)
+
+
+def nominal_fact_for_expression(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    id: NodeId,
+    module_index: usize,
+    source_index: i32,
+    depth: i32,
+) -> i32:
+    if id.index < 0 or depth > 8:
+        return -1
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    node = nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_NAME:
+        name = module.source[node.value_start:node.value_start + node.value_length]
+        if name == "self" and source_index >= 0:
+            facts: &const List[SymbolFact] = &graph.facts
+            source: &const SymbolFact = &facts[cast[usize](source_index)]
+            if len(source.owner) > 0:
+                return find_fact_by_owner_name(
+                    graph,
+                    &source.module_name,
+                    &source.owner,
+                )
+        symbol_index = bound_symbol_for_node(checked, id)
+        resolved = declared_nominal_fact_for_symbol(
+            project_graph,
+            graph,
+            checked,
+            module,
+            module_index,
+            symbol_index,
+        )
+        if resolved >= 0:
+            return resolved
+        initializer = initializer_for_symbol(
+            &module.arena,
+            symbol_index,
+            checked,
+        )
+        if initializer.index >= 0:
+            return nominal_fact_for_expression(
+                project_graph,
+                graph,
+                checked,
+                module,
+                initializer,
+                module_index,
+                source_index,
+                depth + 1,
+            )
+        return -1
+    if node.kind == syntax.SyntaxKind.EXPR_CALL:
+        target_index = fact_for_call_expression(
+            graph,
+            checked,
+            module,
+            id,
+            module_index,
+        )
+        return nominal_fact_for_call_target(
+            project_graph,
+            graph,
+            target_index,
+        )
+    if node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or node.child_count < 2:
+        return -1
+    receiver_id = children[node.first_child]
+    member_id = children[node.first_child + 1]
+    owner_index = nominal_fact_for_expression(
+        project_graph,
+        graph,
+        checked,
+        module,
+        receiver_id,
+        module_index,
+        source_index,
+        depth + 1,
+    )
+    if owner_index < 0:
+        return -1
+    member = nodes[member_id.index]
+    member_name = module.source[
+        member.value_start:member.value_start + member.value_length
+    ]
+    field_index = field_fact_for_nominal(graph, owner_index, &member_name)
+    if field_index < 0:
+        return -1
+    field: &const SymbolFact = &graph.facts[cast[usize](field_index)]
+    return resolve_type_fact(
+        project_graph,
+        graph,
+        field.module_index,
+        &field.type_name,
+    )
+
+
+def declared_nominal_fact_for_symbol(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    symbol_index: i32,
+) -> i32:
+    symbols_list: &const List[symbols.SymbolRecord] = &checked.symbols.symbols
+    if symbol_index < 0 or symbol_index >= cast[i32](len(symbols_list)):
+        return -1
+    declaration = symbols_list[cast[usize](symbol_index)].node
+    type_id = codegen_type_names.find_child_type(&module.arena, declaration)
+    nominal_type_id = nominal_name_type_node(&module.arena, type_id)
+    return resolve_type_fact_from_node(
+        project_graph,
+        graph,
+        module_index,
+        &module.arena,
+        &module.source,
+        nominal_type_id,
+    )
+
+
+def nominal_name_type_node(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.TYPE_NAME:
+        return id
+    if (
+        node.kind == syntax.SyntaxKind.TYPE_GENERIC
+        or node.kind == syntax.SyntaxKind.TYPE_CONST
+        or node.kind == syntax.SyntaxKind.TYPE_POINTER
+        or node.kind == syntax.SyntaxKind.TYPE_REFERENCE
+        or node.kind == syntax.SyntaxKind.TYPE_ARRAY
+        or node.kind == syntax.SyntaxKind.TYPE_SLICE
+        or node.kind == syntax.SyntaxKind.TYPE_DYN
+    ) and node.child_count > 0:
+        return nominal_name_type_node(
+            arena,
+            arena.children[node.first_child],
+        )
+    return syntax.missing_node()
+
+
+def initializer_for_symbol(
+    arena: &const syntax.SyntaxArena,
+    symbol_index: i32,
+    checked: &const checker_core.Checker,
+) -> NodeId:
+    symbol_values: &const List[symbols.SymbolRecord] = &checked.symbols.symbols
+    if symbol_index < 0 or symbol_index >= cast[i32](len(symbol_values)):
+        return syntax.missing_node()
+    declaration = symbol_values[cast[usize](symbol_index)].node
+    if declaration.index < 0:
+        return syntax.missing_node()
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    declaration_node = nodes[declaration.index]
+    if (
+        declaration_node.kind == syntax.SyntaxKind.VAR_DECL_STMT
+        and declaration_node.child_count > 0
+    ):
+        return children[
+            declaration_node.first_child + declaration_node.child_count - 1
+        ]
+    for candidate in nodes:
+        if (
+            candidate.kind == syntax.SyntaxKind.ASSIGN_STMT
+            and candidate.child_count >= 2
+            and children[candidate.first_child].index == declaration.index
+        ):
+            return children[candidate.first_child + 1]
+    return syntax.missing_node()
+
+
+def fact_for_call_expression(
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    call_id: NodeId,
+    module_index: usize,
+) -> i32:
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    call = nodes[call_id.index]
+    if call.child_count <= 0:
+        return -1
+    callee_id = children[call.first_child]
+    callee = nodes[callee_id.index]
+    if callee.kind == syntax.SyntaxKind.EXPR_NAME:
+        symbol_index = bound_symbol_for_node(checked, callee_id)
+        local_index = fact_index_for_symbol(graph, module_index, symbol_index)
+        if local_index >= 0:
+            return local_index
+        callee_name = module.source[
+            callee.value_start:callee.value_start + callee.value_length
+        ]
+        if symbol_is_import_binding(
+            checked,
+            &module.arena,
+            symbol_index,
+            true,
+        ):
+            module_imports: &const List[project.ImportBinding] = &module.imports
+            for imported in module_imports:
+                if len(imported.member) > 0 and imported.alias == callee_name:
+                    return find_top_level_fact_by_module_name(
+                        graph,
+                        &imported.module_name,
+                        &imported.member,
+                    )
+        return -1
+    if callee.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or callee.child_count < 2:
+        return -1
+    receiver_id = children[callee.first_child]
+    member_id = children[callee.first_child + 1]
+    receiver = nodes[receiver_id.index]
+    member = nodes[member_id.index]
+    if receiver.kind != syntax.SyntaxKind.EXPR_NAME:
+        return -1
+    symbol_index = bound_symbol_for_node(checked, receiver_id)
+    if not symbol_is_import_binding(
+        checked,
+        &module.arena,
+        symbol_index,
+        false,
+    ):
+        return -1
+    receiver_name = module.source[
+        receiver.value_start:receiver.value_start + receiver.value_length
+    ]
+    member_name = module.source[
+        member.value_start:member.value_start + member.value_length
+    ]
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    for imported in module_imports:
+        if len(imported.member) == 0 and imported.alias == receiver_name:
+            return find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &member_name,
+            )
+    return -1
+
+
+def nominal_fact_for_call_target(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    target_index: i32,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    if target_index < 0 or target_index >= cast[i32](len(facts)):
+        return -1
+    target: &const SymbolFact = &facts[cast[usize](target_index)]
+    if fact_kind_is_nominal_constructor(&target.kind):
+        return target_index
+    if (
+        not fact_kind_is_callable(&target.kind)
+        and target.kind != "method"
+    ):
+        return -1
+    return resolve_type_fact(
+        project_graph,
+        graph,
+        target.module_index,
+        &target.type_name,
+    )
 
 
 def enum_member_fact_for_attribute(
@@ -3491,6 +3955,29 @@ def collect_lock_relations(
                 &detail,
                 true,
             )
+            order_index = find_lock_order_fact_by_location(
+                graph,
+                &edge.module_name,
+                edge.line,
+                edge.column,
+            )
+            if order_index >= 0:
+                add_relation_unique(
+                    graph,
+                    "lock-order-before",
+                    &facts[cast[usize](order_index)].key,
+                    &facts[cast[usize](before_index)].key,
+                    "",
+                    true,
+                )
+                add_relation_unique(
+                    graph,
+                    "lock-order-after",
+                    &facts[cast[usize](order_index)].key,
+                    &facts[cast[usize](after_index)].key,
+                    "",
+                    true,
+                )
 
 
 def find_fact_for_lock_effect(
@@ -3625,6 +4112,27 @@ def find_lock_fact_by_module_name(
             and fact.name == name
             and fact.kind == "lock"
             and len(fact.owner) == 0
+        ):
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def find_lock_order_fact_by_location(
+    graph: &const SemanticFactGraph,
+    module_name: &const String,
+    line: i32,
+    column: i32,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    index: usize = 0
+    while index < len(facts):
+        fact: &const SymbolFact = &facts[index]
+        if (
+            fact.module_name == module_name
+            and fact.kind == "lock-order"
+            and fact.line == line
+            and fact.column == column
         ):
             return cast[i32](index)
         index += 1

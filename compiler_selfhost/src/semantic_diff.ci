@@ -336,7 +336,13 @@ def build_fact_matches(
             )
         after_position += 1
 
-    ordered_kinds: List[String] = ["static-assert", "import", "extern-import", "lock-order"]
+    ordered_kinds: List[String] = [
+        "static-assert",
+        "import",
+        "extern-import",
+        "extern-block",
+        "lock-order",
+    ]
     for kind in ordered_kinds:
         modules: List[String] = []
         for fact in before:
@@ -363,6 +369,7 @@ def ordered_fact_kind(kind: &const String) -> bool:
         kind == "static-assert"
         or kind == "import"
         or kind == "extern-import"
+        or kind == "extern-block"
         or kind == "lock-order"
     )
 
