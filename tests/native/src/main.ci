@@ -356,6 +356,8 @@ def test_impact_report(state: &TestState) -> void:
     unrelated_method_target = state.root + "/tests/cases/semantic_context/src/model.ci:14"
     borrowed_target = state.root + "/tests/cases/semantic_context/src/model.ci:18"
     status_target = state.root + "/tests/cases/semantic_context/src/model.ci:22"
+    abi_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:27"
+    abi_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:35"
     nominal_command: List[String] = [
         state.compiler.clone(),
         "impact",
@@ -386,12 +388,24 @@ def test_impact_report(state: &TestState) -> void:
         "impact",
         status_target,
     ]
+    abi_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_payload_target,
+    ]
+    abi_indirect_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_indirect_payload_target,
+    ]
     nominal = process.run(nominal_command)
     field_context = process.run(field_context_command)
     field_impact = process.run(field_impact_command)
     unrelated_method = process.run(unrelated_method_command)
     borrowed = process.run(borrowed_command)
     status = process.run(status_command)
+    abi_payload = process.run(abi_payload_command)
+    abi_indirect_payload = process.run(abi_indirect_payload_command)
     ok = (
         nominal.exit_code == 0
         and field_context.exit_code == 0
@@ -399,6 +413,8 @@ def test_impact_report(state: &TestState) -> void:
         and unrelated_method.exit_code == 0
         and borrowed.exit_code == 0
         and status.exit_code == 0
+        and abi_payload.exit_code == 0
+        and abi_indirect_payload.exit_code == 0
         and contains(&nominal.stdout, "model::struct:CacheEntry")
         and contains(&nominal.stdout, "TYPE / MEMBER CONSUMERS")
         and contains(&nominal.stdout, "cache::function:cache_get")
@@ -422,6 +438,17 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&status.stdout, "cache::function:export_status")
         and contains(&status.stdout, "C ABI sensitive")
         and not contains(&status.stdout, "no explicit C ABI exposure recorded")
+        and contains(&abi_payload.stdout, "model::struct:AbiPayload")
+        and contains(&abi_payload.stdout, "cache::function:export_abi_box")
+        and contains(&abi_payload.stdout, "C ABI sensitive")
+        and not contains(&abi_payload.stdout, "source-level layout sensitive")
+        and contains(&abi_indirect_payload.stdout, "model::struct:AbiIndirectPayload")
+        and contains(
+            &abi_indirect_payload.stdout,
+            "cache::function:export_abi_ref_box",
+        )
+        and contains(&abi_indirect_payload.stdout, "source-level layout sensitive")
+        and not contains(&abi_indirect_payload.stdout, "C ABI sensitive")
     )
     expect(state, "impact reports semantic consumers and exposure", ok)
     if not ok:
@@ -431,6 +458,11 @@ def test_impact_report(state: &TestState) -> void:
         report_process_failure(&unrelated_method.stdout, &unrelated_method.stderr)
         report_process_failure(&borrowed.stdout, &borrowed.stderr)
         report_process_failure(&status.stdout, &status.stderr)
+        report_process_failure(&abi_payload.stdout, &abi_payload.stderr)
+        report_process_failure(
+            &abi_indirect_payload.stdout,
+            &abi_indirect_payload.stderr,
+        )
 
 
 def test_decorator_line_resolution(state: &TestState) -> void:
@@ -985,6 +1017,16 @@ def test_semantic_diff(state: &TestState) -> void:
         implementation_path[0:len(implementation_path)],
         "def implementation_probe() -> i32:\n    return 1\n",
     )
+    literal_format_path = source_dir + "/literal_format.ci"
+    write_test_text(
+        literal_format_path[0:len(literal_format_path)],
+        "def literal_format_probe() -> i32:\n    return 1_000\n",
+    )
+    literal_change_path = source_dir + "/literal_change.ci"
+    write_test_text(
+        literal_change_path[0:len(literal_change_path)],
+        "def literal_change_probe() -> i32:\n    return 1_000\n",
+    )
     fstring_format_path = source_dir + "/fstring_format.ci"
     write_test_text(
         fstring_format_path[0:len(fstring_format_path)],
@@ -1137,6 +1179,14 @@ def test_semantic_diff(state: &TestState) -> void:
         "def implementation_probe() -> i32:\n    return 2\n",
     )
     write_test_text(
+        literal_format_path[0:len(literal_format_path)],
+        "def literal_format_probe() -> i32:\n    return 1000\n",
+    )
+    write_test_text(
+        literal_change_path[0:len(literal_change_path)],
+        "def literal_change_probe() -> i32:\n    return 1_001\n",
+    )
+    write_test_text(
         fstring_format_path[0:len(fstring_format_path)],
         "const LIMIT: i32 = 42\n\n\ndef fstring_format_probe() -> i32:\n    print(f\"limit={ LIMIT : d }\")\n    return 0\n",
     )
@@ -1212,6 +1262,22 @@ def test_semantic_diff(state: &TestState) -> void:
         implementation_path,
     ]
     implementation = process.run(implementation_command)
+    literal_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        literal_format_path,
+    ]
+    literal_format = process.run(literal_format_command)
+    literal_change_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        literal_change_path,
+    ]
+    literal_change = process.run(literal_change_command)
     fstring_format_command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -1341,6 +1407,8 @@ def test_semantic_diff(state: &TestState) -> void:
         result.exit_code == 0
         and selected.exit_code == 0
         and implementation.exit_code == 0
+        and literal_format.exit_code == 0
+        and literal_change.exit_code == 0
         and fstring_format.exit_code == 0
         and fstring_change.exit_code == 0
         and type_format.exit_code == 0
@@ -1401,6 +1469,17 @@ def test_semantic_diff(state: &TestState) -> void:
         )
         and contains(&implementation.stdout, "implementation: changed")
         and not contains(&implementation.stdout, "NO SEMANTIC CHANGES")
+        and contains(&literal_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:literal_format_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:literal_change_probe",
+        )
+        and contains(&literal_change.stdout, "implementation: changed")
+        and not contains(&literal_change.stdout, "NO SEMANTIC CHANGES")
         and contains(&fstring_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(
             &fstring_format.stdout,
@@ -1500,6 +1579,8 @@ def test_semantic_diff(state: &TestState) -> void:
         report_process_failure(&result.stdout, &result.stderr)
         report_process_failure(&selected.stdout, &selected.stderr)
         report_process_failure(&implementation.stdout, &implementation.stderr)
+        report_process_failure(&literal_format.stdout, &literal_format.stderr)
+        report_process_failure(&literal_change.stdout, &literal_change.stderr)
         report_process_failure(&fstring_format.stdout, &fstring_format.stderr)
         report_process_failure(&fstring_change.stdout, &fstring_change.stderr)
         report_process_failure(&type_format.stdout, &type_format.stderr)

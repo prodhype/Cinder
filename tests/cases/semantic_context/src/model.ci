@@ -22,3 +22,19 @@ struct BorrowedEntry:
 enum Status:
     Ready
     Failed
+
+
+struct AbiPayload:
+    value: i32
+
+
+struct AbiBox[T]:
+    value: T
+
+
+struct AbiIndirectPayload:
+    value: i32
+
+
+struct AbiRefBox[T]:
+    value: &T

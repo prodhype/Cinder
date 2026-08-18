@@ -55,3 +55,13 @@ def construct_entry_only(key: i32) -> void:
 
 struct QualifiedHolder:
     entry: model.CacheEntry
+
+
+@export
+def export_abi_box(value: model.AbiBox[model.AbiPayload]) -> i32:
+    return value.value.value
+
+
+@export
+def export_abi_ref_box(value: model.AbiRefBox[model.AbiIndirectPayload]) -> i32:
+    return 0

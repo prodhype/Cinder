@@ -1,3 +1,4 @@
+import codegen_names
 import codegen_type_names
 import codegen_reflection
 import codegen_model
@@ -13,6 +14,7 @@ import project
 import semantic
 import symbols
 import syntax
+import token
 import types
 from syntax import NodeId
 
@@ -800,7 +802,15 @@ def append_canonical_enum_member_value(
         return
     node = arena.nodes[id.index]
     if node.kind == syntax.SyntaxKind.EXPR_LITERAL:
-        builder.append(source[node.value_start:node.value_start + node.value_length])
+        if snapshot_node_value_is_numeric(&node):
+            codegen_names.append_numeric_literal(
+                builder,
+                source,
+                node.value_start,
+                node.value_length,
+            )
+        else:
+            builder.append(source[node.value_start:node.value_start + node.value_length])
         return
     if node.kind == syntax.SyntaxKind.EXPR_UNARY:
         builder.append(source[node.value_start:node.value_start + node.value_length])
@@ -808,7 +818,13 @@ def append_canonical_enum_member_value(
         end = node.start + node.length
         while index < end:
             byte = source.byte_at(index)
-            if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+            if (
+                byte != 32
+                and byte != 9
+                and byte != 10
+                and byte != 13
+                and byte != 95
+            ):
                 builder.append(source[index:index + 1])
             index += 1
         return
@@ -1134,7 +1150,9 @@ def append_snapshot_node_start(
     source: &const String,
 ) -> void:
     value = source[node.value_start:node.value_start + node.value_length]
-    if snapshot_node_value_is_fstring(node, source):
+    if snapshot_node_value_is_numeric(node):
+        value = canonical_numeric_snapshot_value(node, source)
+    elif snapshot_node_value_is_fstring(node, source):
         value = canonical_fstring_snapshot_value(node, source)
     builder.append("(")
     builder.append(to_string(cast[i32](node.kind)))
@@ -1144,6 +1162,32 @@ def append_snapshot_node_start(
     builder.append(to_string(len(value)))
     builder.append(":")
     builder.append(value)
+
+
+def snapshot_node_value_is_numeric(
+    node: &const syntax.SyntaxNode,
+) -> bool:
+    return (
+        node.kind == syntax.SyntaxKind.EXPR_LITERAL
+        and (
+            node.flags == cast[i32](token.TokenKind.INTEGER)
+            or node.flags == cast[i32](token.TokenKind.FLOAT)
+        )
+    )
+
+
+def canonical_numeric_snapshot_value(
+    node: &const syntax.SyntaxNode,
+    source: &const String,
+) -> String:
+    builder = StringBuilder()
+    codegen_names.append_numeric_literal(
+        &builder,
+        source,
+        node.value_start,
+        node.value_length,
+    )
+    return builder.finish()
 
 
 def snapshot_node_value_is_fstring(
@@ -2575,36 +2619,305 @@ def collect_abi_surface_type_relation(
     type_node_id: NodeId,
 ) -> void:
     name_id = abi_surface_nominal_name_node(&module.arena, type_node_id)
-    if name_id.index < 0:
+    target_index: i32 = -1
+    if name_id.index >= 0:
+        target_index = resolve_type_fact_from_node(
+            project_graph,
+            graph,
+            module_index,
+            &module.arena,
+            &module.source,
+            name_id,
+        )
+    facts: &const List[SymbolFact] = &graph.facts
+    if (
+        target_index >= 0
+        and target_index != source_index
+        and fact_kind_is_abi_aggregate(
+            &facts[cast[usize](target_index)].kind,
+        )
+    ):
+        add_relation_unique(
+            graph,
+            "abi-surface",
+            &facts[cast[usize](source_index)].key,
+            &facts[cast[usize](target_index)].key,
+            "by-value",
+            true,
+        )
+    generic_id = abi_surface_generic_type_node(&module.arena, type_node_id)
+    if generic_id.index < 0:
         return
-    target_index = resolve_type_fact_from_node(
+    collect_abi_surface_generic_argument_relations(
+        project_graph,
+        graph,
+        module,
+        module_index,
+        source_index,
+        generic_id,
+        target_index,
+    )
+
+
+def collect_abi_surface_generic_argument_relations(
+    project_graph: &const project.ProjectGraph,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    source_index: i32,
+    generic_id: NodeId,
+    target_index: i32,
+) -> void:
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    generic = nodes[generic_id.index]
+    if generic.child_count <= 1:
+        return
+    base_id = children[generic.first_child]
+    base = nodes[base_id.index]
+    if abi_surface_is_pointer_backed_runtime_generic(&module.source, &base):
+        return
+    if abi_surface_is_value_runtime_generic(&module.source, &base):
+        argument_offset: i32 = 1
+        while argument_offset < generic.child_count:
+            collect_abi_surface_type_relation(
+                project_graph,
+                module,
+                graph,
+                module_index,
+                source_index,
+                children[generic.first_child + argument_offset],
+            )
+            argument_offset += 1
+        return
+    facts: &const List[SymbolFact] = &graph.facts
+    if (
+        target_index < 0
+        or target_index >= cast[i32](len(facts))
+        or not fact_kind_is_abi_aggregate(
+            &facts[cast[usize](target_index)].kind,
+        )
+    ):
+        return
+    target: &const SymbolFact = &facts[cast[usize](target_index)]
+    if target.node.index < 0:
+        return
+    target_module: &const project.ParsedModule = &project_graph.modules[target.module_index]
+    parameter_count = generics.type_param_count(
+        &target_module.arena,
+        target.node,
+    )
+    argument_offset: i32 = 1
+    while argument_offset < generic.child_count and argument_offset <= parameter_count:
+        if abi_surface_declaration_embeds_parameter(
+            project_graph,
+            graph,
+            target.module_index,
+            &target_module.arena,
+            target.node,
+            &target_module.source,
+            argument_offset - 1,
+            0,
+        ):
+            collect_abi_surface_type_relation(
+                project_graph,
+                module,
+                graph,
+                module_index,
+                source_index,
+                children[generic.first_child + argument_offset],
+            )
+        argument_offset += 1
+
+
+def abi_surface_declaration_embeds_parameter(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    arena: &const syntax.SyntaxArena,
+    declaration_id: NodeId,
+    source: &const String,
+    parameter_index: i32,
+    depth: i32,
+) -> bool:
+    if declaration_id.index < 0 or depth >= 32:
+        return false
+    declaration = arena.nodes[declaration_id.index]
+    for offset in range(0, declaration.child_count):
+        child_id = arena.children[declaration.first_child + offset]
+        child = arena.nodes[child_id.index]
+        if child.kind == syntax.SyntaxKind.FIELD_DECL:
+            field_type = codegen_type_names.find_child_type(arena, child_id)
+            if abi_surface_type_embeds_parameter(
+                project_graph,
+                graph,
+                module_index,
+                arena,
+                field_type,
+                source,
+                declaration_id,
+                parameter_index,
+                depth,
+            ):
+                return true
+        elif child.kind == syntax.SyntaxKind.VARIANT_CASE_DECL:
+            for field_offset in range(0, child.child_count):
+                field_id = arena.children[child.first_child + field_offset]
+                field = arena.nodes[field_id.index]
+                if field.kind != syntax.SyntaxKind.FIELD_DECL:
+                    continue
+                field_type = codegen_type_names.find_child_type(arena, field_id)
+                if abi_surface_type_embeds_parameter(
+                    project_graph,
+                    graph,
+                    module_index,
+                    arena,
+                    field_type,
+                    source,
+                    declaration_id,
+                    parameter_index,
+                    depth,
+                ):
+                    return true
+    return false
+
+
+def abi_surface_type_embeds_parameter(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    arena: &const syntax.SyntaxArena,
+    type_id: NodeId,
+    source: &const String,
+    declaration_id: NodeId,
+    parameter_index: i32,
+    depth: i32,
+) -> bool:
+    if type_id.index < 0 or depth >= 32:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.kind == syntax.SyntaxKind.TYPE_NAME:
+        return (
+            generics.type_parameter_index(
+                arena,
+                declaration_id,
+                source,
+                node.value_start,
+                node.value_length,
+            )
+            == parameter_index
+        )
+    if (
+        node.kind == syntax.SyntaxKind.TYPE_CONST
+        or node.kind == syntax.SyntaxKind.TYPE_ARRAY
+    ) and node.child_count > 0:
+        return abi_surface_type_embeds_parameter(
+            project_graph,
+            graph,
+            module_index,
+            arena,
+            arena.children[node.first_child],
+            source,
+            declaration_id,
+            parameter_index,
+            depth,
+        )
+    if node.kind != syntax.SyntaxKind.TYPE_GENERIC or node.child_count <= 1:
+        return false
+    base_id = arena.children[node.first_child]
+    base = arena.nodes[base_id.index]
+    if abi_surface_is_pointer_backed_runtime_generic(source, &base):
+        return false
+    if abi_surface_is_value_runtime_generic(source, &base):
+        argument_offset: i32 = 1
+        while argument_offset < node.child_count:
+            if abi_surface_type_embeds_parameter(
+                project_graph,
+                graph,
+                module_index,
+                arena,
+                arena.children[node.first_child + argument_offset],
+                source,
+                declaration_id,
+                parameter_index,
+                depth + 1,
+            ):
+                return true
+            argument_offset += 1
+        return false
+    nested_index = resolve_type_fact_from_node(
         project_graph,
         graph,
         module_index,
-        &module.arena,
-        &module.source,
-        name_id,
+        arena,
+        source,
+        base_id,
     )
-    if target_index < 0 or target_index == source_index:
-        return
     facts: &const List[SymbolFact] = &graph.facts
-    target: &const SymbolFact = &facts[cast[usize](target_index)]
     if (
-        target.kind != "struct"
-        and target.kind != "class"
-        and target.kind != "enum"
-        and target.kind != "union"
-        and target.kind != "variant"
+        nested_index < 0
+        or nested_index >= cast[i32](len(facts))
+        or not fact_kind_is_abi_aggregate(
+            &facts[cast[usize](nested_index)].kind,
+        )
     ):
-        return
-    add_relation_unique(
-        graph,
-        "abi-surface",
-        &facts[cast[usize](source_index)].key,
-        &facts[cast[usize](target_index)].key,
-        "by-value",
-        true,
+        return false
+    nested: &const SymbolFact = &facts[cast[usize](nested_index)]
+    if nested.node.index < 0:
+        return false
+    nested_module: &const project.ParsedModule = &project_graph.modules[nested.module_index]
+    nested_parameter_count = generics.type_param_count(
+        &nested_module.arena,
+        nested.node,
     )
+    argument_offset: i32 = 1
+    while argument_offset < node.child_count and argument_offset <= nested_parameter_count:
+        if (
+            abi_surface_declaration_embeds_parameter(
+                project_graph,
+                graph,
+                nested.module_index,
+                &nested_module.arena,
+                nested.node,
+                &nested_module.source,
+                argument_offset - 1,
+                depth + 1,
+            )
+            and abi_surface_type_embeds_parameter(
+                project_graph,
+                graph,
+                module_index,
+                arena,
+                arena.children[node.first_child + argument_offset],
+                source,
+                declaration_id,
+                parameter_index,
+                depth + 1,
+            )
+        ):
+            return true
+        argument_offset += 1
+    return false
+
+
+def abi_surface_generic_type_node(
+    arena: &const syntax.SyntaxArena,
+    type_node: NodeId,
+) -> NodeId:
+    if type_node.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[type_node.index]
+    if node.kind == syntax.SyntaxKind.TYPE_GENERIC:
+        return type_node
+    if (
+        node.kind == syntax.SyntaxKind.TYPE_CONST
+        or node.kind == syntax.SyntaxKind.TYPE_ARRAY
+    ) and node.child_count > 0:
+        return abi_surface_generic_type_node(
+            arena,
+            arena.children[node.first_child],
+        )
+    return syntax.missing_node()
 
 
 def abi_surface_nominal_name_node(
@@ -2618,6 +2931,7 @@ def abi_surface_nominal_name_node(
         return type_node
     if (
         node.kind == syntax.SyntaxKind.TYPE_CONST
+        or node.kind == syntax.SyntaxKind.TYPE_ARRAY
         or node.kind == syntax.SyntaxKind.TYPE_GENERIC
     ) and node.child_count > 0:
         return abi_surface_nominal_name_node(
@@ -2625,6 +2939,42 @@ def abi_surface_nominal_name_node(
             arena.children[node.first_child],
         )
     return syntax.missing_node()
+
+
+def fact_kind_is_abi_aggregate(kind: &const String) -> bool:
+    return (
+        kind == "struct"
+        or kind == "class"
+        or kind == "enum"
+        or kind == "union"
+        or kind == "variant"
+    )
+
+
+def abi_surface_is_pointer_backed_runtime_generic(
+    source: &const String,
+    base: &const syntax.SyntaxNode,
+) -> bool:
+    return (
+        codegen_type_names.is_runtime_generic_name(source, base, "List")
+        or codegen_type_names.is_runtime_generic_name(source, base, "Set")
+        or codegen_type_names.is_runtime_generic_name(source, base, "Map")
+        or codegen_type_names.is_runtime_generic_name(source, base, "MapKeys")
+        or codegen_type_names.is_runtime_generic_name(source, base, "MapValues")
+        or codegen_type_names.is_runtime_generic_name(source, base, "MapItems")
+        or codegen_type_names.is_runtime_generic_name(source, base, "Owned")
+    )
+
+
+def abi_surface_is_value_runtime_generic(
+    source: &const String,
+    base: &const syntax.SyntaxNode,
+) -> bool:
+    return (
+        codegen_type_names.is_runtime_generic_name(source, base, "Option")
+        or codegen_type_names.is_runtime_generic_name(source, base, "Result")
+        or codegen_type_names.is_runtime_generic_name(source, base, "Tuple")
+    )
 
 
 def type_name_is_enclosing_parameter(
