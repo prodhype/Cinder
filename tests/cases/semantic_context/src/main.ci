@@ -85,3 +85,23 @@ struct LocalValues:
 
 def read_shadowed_qualified_limit(value_targets: LocalValues) -> i32:
     return value_targets.LIMIT
+
+
+def read_imported_limit_fstring() -> i32:
+    print(f"limit={LIMIT}")
+    return 0
+
+
+def read_shadowed_limit_fstring(LIMIT: i32) -> i32:
+    print(f"limit={LIMIT}")
+    return 0
+
+
+def read_qualified_limit_fstring() -> i32:
+    print(f"limit={value_targets.LIMIT}")
+    return 0
+
+
+def read_shadowed_qualified_limit_fstring(value_targets: LocalValues) -> i32:
+    print(f"limit={value_targets.LIMIT}")
+    return 0

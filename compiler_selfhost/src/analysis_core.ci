@@ -1099,14 +1099,112 @@ def append_snapshot_node_start(
     node: &const syntax.SyntaxNode,
     source: &const String,
 ) -> void:
+    value = source[node.value_start:node.value_start + node.value_length]
+    if snapshot_node_value_is_fstring(node, source):
+        value = canonical_fstring_snapshot_value(node, source)
     builder.append("(")
     builder.append(to_string(cast[i32](node.kind)))
     builder.append(":")
     builder.append(to_string(node.flags))
     builder.append(":")
-    builder.append(to_string(node.value_length))
+    builder.append(to_string(len(value)))
     builder.append(":")
-    builder.append(source[node.value_start:node.value_start + node.value_length])
+    builder.append(value)
+
+
+def snapshot_node_value_is_fstring(
+    node: &const syntax.SyntaxNode,
+    source: &const String,
+) -> bool:
+    if node.value_length < 3:
+        return false
+    quote = source.byte_at(node.value_start + 1)
+    return (
+        source.byte_at(node.value_start) == 102
+        and (quote == 34 or quote == 39)
+        and source.byte_at(node.value_start + node.value_length - 1) == quote
+    )
+
+
+def canonical_fstring_snapshot_value(
+    node: &const syntax.SyntaxNode,
+    source: &const String,
+) -> String:
+    raw = source[node.value_start:node.value_start + node.value_length]
+    if node.value_length < 3:
+        return raw
+    content_start = node.value_start + 2
+    content_end = node.value_start + node.value_length - 1
+    builder = StringBuilder()
+    builder.append(source[node.value_start:content_start])
+    literal_start = content_start
+    index = content_start
+    while index < content_end:
+        byte = source.byte_at(index)
+        if byte == 92:
+            if index + 1 < content_end:
+                index += 2
+            else:
+                index += 1
+            continue
+        if byte == 123:
+            if index + 1 < content_end and source.byte_at(index + 1) == 123:
+                index += 2
+                continue
+            field = codegen_model.scan_fstring_field(source, index + 1, content_end)
+            if not field.valid:
+                return raw
+            expression_start = codegen_model.trim_left(
+                source,
+                index + 1,
+                field.expression_end,
+            )
+            expression_end = codegen_model.trim_right(
+                source,
+                expression_start,
+                field.expression_end,
+            )
+            if expression_end <= expression_start:
+                return raw
+            expression_source = source[expression_start:expression_end]
+            scan = lexer.new_lexer(expression_source)
+            scan.tokenize()
+            parsed = parser.new_parser(&scan)
+            expression = parsed.parse_expression(0)
+            if (
+                len(scan.diagnostics) > 0
+                or len(parsed.diagnostics) > 0
+                or expression.index < 0
+            ):
+                return raw
+            builder.append(source[literal_start:index])
+            builder.append("{")
+            append_syntax_snapshot(
+                &builder,
+                &parsed.arena,
+                expression,
+                &scan.source,
+            )
+            if field.format_start < field.close:
+                format_start = codegen_model.trim_left(
+                    source,
+                    field.format_start + 1,
+                    field.close,
+                )
+                format_end = codegen_model.trim_right(
+                    source,
+                    format_start,
+                    field.close,
+                )
+                builder.append(":")
+                builder.append(source[format_start:format_end])
+            builder.append("}")
+            index = field.close + 1
+            literal_start = index
+            continue
+        index += 1
+    builder.append(source[literal_start:node.value_start + node.value_length])
+    return builder.finish()
 
 
 def is_nominal_member_node_kind(kind: syntax.SyntaxKind) -> bool:
@@ -1484,7 +1582,7 @@ def collect_import_calls_in_node(
             receiver_bindings,
         )
     elif node.kind == syntax.SyntaxKind.EXPR_FSTRING:
-        collect_fstring_call_relations(
+        collect_fstring_relations(
             project_graph,
             class_model,
             checked,
@@ -1510,7 +1608,7 @@ def collect_import_calls_in_node(
         )
 
 
-def collect_fstring_call_relations(
+def collect_fstring_relations(
     project_graph: &const project.ProjectGraph,
     class_model: &const classes.ProjectClassModel,
     checked: &const checker_core.Checker,
@@ -1555,7 +1653,7 @@ def collect_fstring_call_relations(
                 parsed = parser.new_parser(&scan)
                 expression = parsed.parse_expression(0)
                 if len(scan.diagnostics) == 0 and len(parsed.diagnostics) == 0 and expression.index >= 0:
-                    collect_reparsed_calls_in_node(
+                    collect_reparsed_relations_in_node(
                         project_graph,
                         class_model,
                         checked,
@@ -1567,13 +1665,14 @@ def collect_fstring_call_relations(
                         caller_index,
                         current_scope,
                         receiver_bindings,
+                        false,
                     )
             index = field.close + 1
             continue
         index += 1
 
 
-def collect_reparsed_calls_in_node(
+def collect_reparsed_relations_in_node(
     project_graph: &const project.ProjectGraph,
     class_model: &const classes.ProjectClassModel,
     checked: &const checker_core.Checker,
@@ -1585,6 +1684,7 @@ def collect_reparsed_calls_in_node(
     caller_index: i32,
     current_scope: symbols.ScopeId,
     receiver_bindings: &const List[lock_order.MethodReceiverBinding],
+    skip_value: bool,
 ) -> void:
     if id.index < 0:
         return
@@ -1604,7 +1704,7 @@ def collect_reparsed_calls_in_node(
             receiver_bindings,
         )
     elif node.kind == syntax.SyntaxKind.EXPR_FSTRING:
-        collect_fstring_call_relations(
+        collect_fstring_relations(
             project_graph,
             class_model,
             checked,
@@ -1618,8 +1718,35 @@ def collect_reparsed_calls_in_node(
             receiver_bindings,
         )
         return
+    if not skip_value:
+        if node.kind == syntax.SyntaxKind.EXPR_NAME:
+            collect_reparsed_name_value_relation(
+                checked,
+                graph,
+                module,
+                arena,
+                id,
+                source,
+                caller_index,
+                current_scope,
+            )
+        elif node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+            collect_reparsed_attribute_value_relation(
+                checked,
+                graph,
+                module,
+                arena,
+                id,
+                source,
+                caller_index,
+                current_scope,
+            )
     for offset in range(0, node.child_count):
-        collect_reparsed_calls_in_node(
+        child_skip_value = (
+            (node.kind == syntax.SyntaxKind.EXPR_CALL and offset == 0)
+            or (node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE and offset > 0)
+        )
+        collect_reparsed_relations_in_node(
             project_graph,
             class_model,
             checked,
@@ -1631,7 +1758,106 @@ def collect_reparsed_calls_in_node(
             caller_index,
             current_scope,
             receiver_bindings,
+            child_skip_value,
         )
+
+
+def collect_reparsed_name_value_relation(
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    name_id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+) -> void:
+    name_node = arena.nodes[name_id.index]
+    name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    found = checked.symbols.find_name_in_scope(&module.source, current_scope, &name)
+    if found.index < 0:
+        return
+    facts: &const List[SymbolFact] = &graph.facts
+    caller: &const SymbolFact = &facts[cast[usize](caller_index)]
+    target_index = fact_index_for_symbol(graph, caller.module_index, found.index)
+    if target_index >= 0 and target_index != caller_index:
+        add_relation_unique(
+            graph,
+            "uses",
+            &caller.key,
+            &facts[cast[usize](target_index)].key,
+            "",
+            true,
+        )
+        return
+    if target_index < 0:
+        collect_import_value_relation(
+            checked,
+            graph,
+            module,
+            caller_index,
+            found.index,
+        )
+
+
+def collect_reparsed_attribute_value_relation(
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    attribute_id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+) -> void:
+    attribute = arena.nodes[attribute_id.index]
+    if attribute.child_count < 2:
+        return
+    receiver_id = arena.children[attribute.first_child]
+    member_id = arena.children[attribute.first_child + 1]
+    receiver = arena.nodes[receiver_id.index]
+    member = arena.nodes[member_id.index]
+    if receiver.kind != syntax.SyntaxKind.EXPR_NAME:
+        return
+    receiver_name = source[
+        receiver.value_start:receiver.value_start + receiver.value_length
+    ]
+    found = checked.symbols.find_name_in_scope(
+        &module.source,
+        current_scope,
+        &receiver_name,
+    )
+    if not symbol_is_import_binding(checked, &module.arena, found.index, false):
+        return
+    member_name = source[member.value_start:member.value_start + member.value_length]
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    facts: &const List[SymbolFact] = &graph.facts
+    for imported in module_imports:
+        if len(imported.member) == 0 and imported.alias == receiver_name:
+            target_index = find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &member_name,
+            )
+            if target_index >= 0:
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](caller_index)].key,
+                    &facts[cast[usize](target_index)].key,
+                    "",
+                    true,
+                )
+            else:
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](caller_index)].key,
+                    &imported.module_name,
+                    &member_name,
+                    false,
+                )
+            return
 
 
 def collect_reparsed_call_relation(
