@@ -299,6 +299,12 @@ def test_context_capsule(state: &TestState) -> void:
         state.root + "/tests/cases/semantic_context/src/main.ci:10",
     ]
     extern_import = process.run(extern_import_command)
+    import_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:1",
+    ]
+    import_context = process.run(import_command)
     ok = (
         first.exit_code == 0
         and second.exit_code == 0
@@ -307,6 +313,7 @@ def test_context_capsule(state: &TestState) -> void:
         and lock_context.exit_code == 0
         and collision.exit_code == 0
         and extern_import.exit_code == 0
+        and import_context.exit_code == 0
         and first.stdout == second.stdout
         and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
         and contains(&first.stdout, "cache::function:hash_key")
@@ -324,6 +331,9 @@ def test_context_capsule(state: &TestState) -> void:
         and contains(&extern_import.stdout, "extern import \"stdlib.h\"")
         and contains(&extern_import.stdout, "symbol: main::extern-import:import_0")
         and contains(&extern_import.stdout, "abi: C")
+        and contains(&import_context.stdout, "import cache")
+        and contains(&import_context.stdout, "symbol: main::import:import_0")
+        and contains(&import_context.stdout, "abi: not applicable")
     )
     expect(state, "context emits deterministic compiler-derived facts", ok)
     if not ok:
@@ -333,6 +343,7 @@ def test_context_capsule(state: &TestState) -> void:
         report_process_failure(&lock_context.stdout, &lock_context.stderr)
         report_process_failure(&collision.stdout, &collision.stderr)
         report_process_failure(&extern_import.stdout, &extern_import.stderr)
+        report_process_failure(&import_context.stdout, &import_context.stderr)
 
 
 def test_impact_report(state: &TestState) -> void:
@@ -340,6 +351,7 @@ def test_impact_report(state: &TestState) -> void:
     field_target = state.root + "/tests/cases/semantic_context/src/model.ci:3"
     unrelated_method_target = state.root + "/tests/cases/semantic_context/src/model.ci:14"
     borrowed_target = state.root + "/tests/cases/semantic_context/src/model.ci:18"
+    status_target = state.root + "/tests/cases/semantic_context/src/model.ci:22"
     nominal_command: List[String] = [
         state.compiler.clone(),
         "impact",
@@ -365,17 +377,24 @@ def test_impact_report(state: &TestState) -> void:
         "impact",
         borrowed_target,
     ]
+    status_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        status_target,
+    ]
     nominal = process.run(nominal_command)
     field_context = process.run(field_context_command)
     field_impact = process.run(field_impact_command)
     unrelated_method = process.run(unrelated_method_command)
     borrowed = process.run(borrowed_command)
+    status = process.run(status_command)
     ok = (
         nominal.exit_code == 0
         and field_context.exit_code == 0
         and field_impact.exit_code == 0
         and unrelated_method.exit_code == 0
         and borrowed.exit_code == 0
+        and status.exit_code == 0
         and contains(&nominal.stdout, "model::struct:CacheEntry")
         and contains(&nominal.stdout, "TYPE / MEMBER CONSUMERS")
         and contains(&nominal.stdout, "cache::function:cache_get")
@@ -394,6 +413,10 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&borrowed.stdout, "cache::function:export_borrowed_entry_value")
         and contains(&borrowed.stdout, "source-level layout sensitive")
         and not contains(&borrowed.stdout, "C ABI sensitive")
+        and contains(&status.stdout, "model::enum:Status")
+        and contains(&status.stdout, "cache::function:export_status")
+        and contains(&status.stdout, "C ABI sensitive")
+        and not contains(&status.stdout, "no explicit C ABI exposure recorded")
     )
     expect(state, "impact reports semantic consumers and exposure", ok)
     if not ok:
@@ -402,6 +425,7 @@ def test_impact_report(state: &TestState) -> void:
         report_process_failure(&field_impact.stdout, &field_impact.stderr)
         report_process_failure(&unrelated_method.stdout, &unrelated_method.stderr)
         report_process_failure(&borrowed.stdout, &borrowed.stderr)
+        report_process_failure(&status.stdout, &status.stderr)
 
 
 def test_decorator_line_resolution(state: &TestState) -> void:
@@ -791,6 +815,36 @@ def test_semantic_diff(state: &TestState) -> void:
         extern_import_format_path[0:len(extern_import_format_path)],
         "extern import \"stdlib.h\"\n",
     )
+    extern_import_insert_path = source_dir + "/extern_import_insert.ci"
+    write_test_text(
+        extern_import_insert_path[0:len(extern_import_insert_path)],
+        "extern import \"ctype.h\"\nextern import \"math.h\"\n",
+    )
+    extern_import_reorder_path = source_dir + "/extern_import_reorder.ci"
+    write_test_text(
+        extern_import_reorder_path[0:len(extern_import_reorder_path)],
+        "extern import \"ctype.h\"\nextern import \"math.h\"\n",
+    )
+    ordinary_import_a_path = source_dir + "/ordinary_import_a.ci"
+    write_test_text(
+        ordinary_import_a_path[0:len(ordinary_import_a_path)],
+        "def value() -> i32:\n    return 1\n",
+    )
+    ordinary_import_b_path = source_dir + "/ordinary_import_b.ci"
+    write_test_text(
+        ordinary_import_b_path[0:len(ordinary_import_b_path)],
+        "def value() -> i32:\n    return 2\n",
+    )
+    ordinary_import_router_path = source_dir + "/ordinary_import_router.ci"
+    write_test_text(
+        ordinary_import_router_path[0:len(ordinary_import_router_path)],
+        "import ordinary_import_a\nimport ordinary_import_b\n\n\ndef route() -> i32:\n    return ordinary_import_a.value() + ordinary_import_b.value()\n",
+    )
+    ordinary_import_path = source_dir + "/ordinary_import.ci"
+    write_test_text(
+        ordinary_import_path[0:len(ordinary_import_path)],
+        "import ordinary_import_a\nimport ordinary_import_router\n\n\ndef probe() -> i32:\n    return ordinary_import_router.route()\n",
+    )
     init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
     add: List[String] = ["git", "-C", repository.clone(), "add", "."]
     commit: List[String] = [
@@ -889,6 +943,18 @@ def test_semantic_diff(state: &TestState) -> void:
         extern_import_format_path[0:len(extern_import_format_path)],
         "# formatting-only comment\n\nextern import \"stdlib.h\"\n",
     )
+    write_test_text(
+        extern_import_insert_path[0:len(extern_import_insert_path)],
+        "extern import \"assert.h\"\nextern import \"ctype.h\"\nextern import \"math.h\"\n",
+    )
+    write_test_text(
+        extern_import_reorder_path[0:len(extern_import_reorder_path)],
+        "extern import \"math.h\"\nextern import \"ctype.h\"\n",
+    )
+    write_test_text(
+        ordinary_import_path[0:len(ordinary_import_path)],
+        "import ordinary_import_b\nimport ordinary_import_router\n\n\ndef probe() -> i32:\n    return ordinary_import_router.route()\n",
+    )
     command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -969,6 +1035,30 @@ def test_semantic_diff(state: &TestState) -> void:
         extern_import_format_path,
     ]
     extern_import_format = process.run(extern_import_format_command)
+    extern_import_insert_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        extern_import_insert_path,
+    ]
+    extern_import_insert = process.run(extern_import_insert_command)
+    extern_import_reorder_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        extern_import_reorder_path,
+    ]
+    extern_import_reorder = process.run(extern_import_reorder_command)
+    ordinary_import_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        ordinary_import_path,
+    ]
+    ordinary_import = process.run(ordinary_import_command)
     write_test_text(
         type_format_path[0:len(type_format_path)],
         "struct Holder:\n    items: List[\n        i64\n    ]\n",
@@ -1009,6 +1099,9 @@ def test_semantic_diff(state: &TestState) -> void:
         and assertion_insert.exit_code == 0
         and extern_import.exit_code == 0
         and extern_import_format.exit_code == 0
+        and extern_import_insert.exit_code == 0
+        and extern_import_reorder.exit_code == 0
+        and ordinary_import.exit_code == 0
         and type_change.exit_code == 0
         and standalone.exit_code == 0
         and worktrees.exit_code == 0
@@ -1094,6 +1187,44 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(&extern_import_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(&extern_import_format.stdout, "- removed extern_import_format::extern-import:")
         and not contains(&extern_import_format.stdout, "+ added extern_import_format::extern-import:")
+        and contains(
+            &extern_import_insert.stdout,
+            "+ added extern_import_insert::extern-import:import_0",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "~ changed extern_import_insert::extern-import:",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "- removed extern_import_insert::extern-import:",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "+ added extern_import_insert::extern-import:import_1",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "+ added extern_import_insert::extern-import:import_2",
+        )
+        and contains(
+            &extern_import_reorder.stdout,
+            "- removed extern_import_reorder::extern-import:import_0",
+        )
+        and contains(
+            &extern_import_reorder.stdout,
+            "+ added extern_import_reorder::extern-import:import_1",
+        )
+        and not contains(&extern_import_reorder.stdout, "NO SEMANTIC CHANGES")
+        and contains(
+            &ordinary_import.stdout,
+            "~ changed ordinary_import::import:import_0",
+        )
+        and contains(
+            &ordinary_import.stdout,
+            "signature: import ordinary_import_a -> import ordinary_import_b",
+        )
+        and not contains(&ordinary_import.stdout, "NO SEMANTIC CHANGES")
         and contains(&type_change.stdout, "~ changed type_format::field:Holder.items")
         and contains(&type_change.stdout, "type: CinderList_i32 -> CinderList_i64")
         and not contains(&type_change.stdout, "NO SEMANTIC CHANGES")
@@ -1115,6 +1246,15 @@ def test_semantic_diff(state: &TestState) -> void:
             &extern_import_format.stdout,
             &extern_import_format.stderr,
         )
+        report_process_failure(
+            &extern_import_insert.stdout,
+            &extern_import_insert.stderr,
+        )
+        report_process_failure(
+            &extern_import_reorder.stdout,
+            &extern_import_reorder.stderr,
+        )
+        report_process_failure(&ordinary_import.stdout, &ordinary_import.stderr)
         report_process_failure(&type_change.stdout, &type_change.stderr)
         report_process_failure(&standalone.stdout, &standalone.stderr)
 

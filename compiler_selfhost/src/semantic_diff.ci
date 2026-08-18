@@ -327,7 +327,7 @@ def build_fact_matches(
     after_position: usize = 0
     while after_position < len(after):
         fact: &const analysis_core.DiffSymbolFact = &after[after_position]
-        if fact.kind != "static-assert" and fact.key in before_index:
+        if not ordered_fact_kind(&fact.kind) and fact.key in before_index:
             before_position = before_index[fact.key]
             set_fact_match(
                 &matches,
@@ -336,24 +336,34 @@ def build_fact_matches(
             )
         after_position += 1
 
-    modules: List[String] = []
-    for fact in before:
-        if fact.kind == "static-assert" and not contains_string(&modules, &fact.module_name):
-            modules.append(fact.module_name[0:len(fact.module_name)])
-    for fact in after:
-        if fact.kind == "static-assert" and not contains_string(&modules, &fact.module_name):
-            modules.append(fact.module_name[0:len(fact.module_name)])
-    for module_name in modules:
-        before_assertions = static_assertion_indexes(before, &module_name)
-        after_assertions = static_assertion_indexes(after, &module_name)
-        align_static_assertions(
-            before,
-            after,
-            &before_assertions,
-            &after_assertions,
-            &matches,
-        )
+    ordered_kinds: List[String] = ["static-assert", "import", "extern-import"]
+    for kind in ordered_kinds:
+        modules: List[String] = []
+        for fact in before:
+            if fact.kind == kind and not contains_string(&modules, &fact.module_name):
+                modules.append(fact.module_name[0:len(fact.module_name)])
+        for fact in after:
+            if fact.kind == kind and not contains_string(&modules, &fact.module_name):
+                modules.append(fact.module_name[0:len(fact.module_name)])
+        for module_name in modules:
+            before_indexes = ordered_fact_indexes(before, &module_name, &kind)
+            after_indexes = ordered_fact_indexes(after, &module_name, &kind)
+            align_ordered_facts(
+                before,
+                after,
+                &before_indexes,
+                &after_indexes,
+                &matches,
+            )
     return matches
+
+
+def ordered_fact_kind(kind: &const String) -> bool:
+    return (
+        kind == "static-assert"
+        or kind == "import"
+        or kind == "extern-import"
+    )
 
 
 def set_fact_match(
@@ -371,21 +381,22 @@ def set_fact_match(
     matches.after_to_before[after_index] = before_position
 
 
-def static_assertion_indexes(
+def ordered_fact_indexes(
     facts: &const List[analysis_core.DiffSymbolFact],
     module_name: &const String,
+    kind: &const String,
 ) -> List[i32]:
     result: List[i32] = []
     index: usize = 0
     while index < len(facts):
         fact: &const analysis_core.DiffSymbolFact = &facts[index]
-        if fact.kind == "static-assert" and fact.module_name == module_name:
+        if fact.kind == kind and fact.module_name == module_name:
             result.append(cast[i32](index))
         index += 1
     return result
 
 
-def align_static_assertions(
+def align_ordered_facts(
     before: &const List[analysis_core.DiffSymbolFact],
     after: &const List[analysis_core.DiffSymbolFact],
     before_indexes: &const List[i32],
@@ -462,7 +473,7 @@ def align_static_assertions(
     while anchor_index < len(before_anchors):
         before_end = cast[usize](before_anchors[anchor_index])
         after_end = cast[usize](after_anchors[anchor_index])
-        pair_static_assertion_gap(
+        pair_ordered_fact_gap(
             before_indexes,
             after_indexes,
             before_start,
@@ -474,7 +485,7 @@ def align_static_assertions(
         before_start = before_end + 1
         after_start = after_end + 1
         anchor_index += 1
-    pair_static_assertion_gap(
+    pair_ordered_fact_gap(
         before_indexes,
         after_indexes,
         before_start,
@@ -485,7 +496,7 @@ def align_static_assertions(
     )
 
 
-def pair_static_assertion_gap(
+def pair_ordered_fact_gap(
     before_indexes: &const List[i32],
     after_indexes: &const List[i32],
     before_start: usize,

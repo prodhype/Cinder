@@ -17,3 +17,8 @@ class MemoryStore(Store):
 
 struct BorrowedEntry:
     value: i32
+
+
+enum Status:
+    Ready
+    Failed

@@ -68,7 +68,8 @@ signatures and function implementations; semantic types; private field and
 abstract/override method modifiers; ownership classifications; source-level
 nominal layout, including ordered struct, class, and union fields, enum members,
 variant cases, and reflected struct/class methods; inheritance and interfaces;
-calls and callers; lock effects and order; reflection; and C exports/externs.
+ordinary and `from` imports; calls and callers; lock effects and order;
+reflection; and C exports/externs.
 Declaration signatures and function bodies are compared from parsed syntax
 without source positions or whitespace, so formatting-only edits do not count
 as semantic changes. Generated C and raw per-run symbol/type IDs are not
@@ -84,12 +85,14 @@ back to a text diff.
 Facts use a key composed from module, owner path, symbol kind, and name. This
 avoids exposing transient `SymbolId`, `TypeId`, or AST indexes. Collection
 follows deterministic module and source order, and duplicate edges are removed.
-Unnamed top-level static assertions keep deterministic `assertion_N` keys within
-each snapshot. Across snapshots, `semantic-diff` sequence-aligns them by
-canonical parsed signature and uses the same matches for relation comparison,
-so inserting an assertion does not make later unchanged assertions appear
-changed. Unmatched one-to-one gaps remain changes, preserving useful reports
-for edited assertions.
+Ordered top-level imports, extern imports, and static assertions keep
+deterministic `import_N` or `assertion_N` keys within each snapshot. Across
+snapshots, `semantic-diff` sequence-aligns each module-and-kind sequence by
+canonical parsed signature and uses the same matches for relation comparison.
+Inserting one declaration therefore does not make later unchanged declarations
+appear changed, while source reordering remains observable. Unmatched
+one-to-one gaps remain changes, preserving useful reports for edited
+declarations.
 The first output schema is identified as `cinder-semantic-v1`.
 
 The query model is currently in memory. There is no semantic cache or database;

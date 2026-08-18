@@ -39,5 +39,10 @@ def export_borrowed_entry_value(entry: &model.BorrowedEntry) -> i32:
     return entry.value
 
 
+@export
+def export_status(status: model.Status) -> i32:
+    return 0
+
+
 extern "C":
     def consume_cache_entry(entry: model.CacheEntry) -> i32

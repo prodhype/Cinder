@@ -143,6 +143,11 @@ def build_fact_graph(
             analyzed.module_index,
             &facts,
         )
+        collect_import_facts(
+            source_module,
+            analyzed.module_index,
+            &facts,
+        )
         collect_extern_import_facts(
             source_module,
             analyzed.module_index,
@@ -382,6 +387,60 @@ def collect_static_assert_facts(
             )
         )
         assertion_index += 1
+
+
+def collect_import_facts(
+    module: &const project.ParsedModule,
+    module_index: usize,
+    facts: &List[SymbolFact],
+) -> void:
+    if module.root.index < 0:
+        return
+    arena: &const syntax.SyntaxArena = &module.arena
+    root = arena.nodes[module.root.index]
+    import_index: i32 = 0
+    for offset in range(0, root.child_count):
+        declaration = arena.children[root.first_child + offset]
+        node = arena.nodes[declaration.index]
+        if (
+            node.kind != syntax.SyntaxKind.IMPORT_DECL
+            and node.kind != syntax.SyntaxKind.FROM_IMPORT_DECL
+        ):
+            continue
+        name = "import_" + to_string(import_index)
+        kind = "import"
+        facts.append(
+            SymbolFact(
+                key=stable_symbol_key(&module.name, &kind, "", &name),
+                module_name=module.name[0:len(module.name)],
+                name=name,
+                kind=kind,
+                owner="",
+                signature=declaration_header(arena, declaration, &module.source),
+                canonical_signature=canonical_declaration_snapshot(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
+                implementation="",
+                modifiers="none",
+                type_name="not applicable",
+                ownership="not applicable",
+                parameter_ownership="(not applicable)",
+                abi="not applicable",
+                members="",
+                reflected=false,
+                exported=false,
+                path=module.path[0:len(module.path)],
+                source=module.source[node.start:node.start + node.length],
+                line=node.line,
+                column=node.column,
+                module_index=module_index,
+                symbol_index=-1,
+                node=declaration,
+            )
+        )
+        import_index += 1
 
 
 def collect_extern_import_facts(
@@ -1814,6 +1873,7 @@ def collect_abi_surface_type_relation(
     if (
         target.kind != "struct"
         and target.kind != "class"
+        and target.kind != "enum"
         and target.kind != "union"
         and target.kind != "variant"
     ):
