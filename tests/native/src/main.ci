@@ -114,9 +114,11 @@ def test_check_ir_validation(state: &TestState) -> void:
         checked.exit_code == 0
         and context.exit_code == 0
         and contains(&checked.stdout, "ok: ")
-        and contains(&context.stdout, "CALLS\n- emit_project::function:compile_project")
+        and contains(&context.stdout, "CALLS")
+        and contains(&context.stdout, "backend_ir::function:lower")
+        and not contains(&context.stdout, "emit_project::function:compile_project")
     )
-    expect(state, "check retains backend atomic IR validation", ok)
+    expect(state, "check validates atomic IR without retaining compiled modules", ok)
     if not ok:
         report_process_failure(&checked.stdout, &checked.stderr)
         report_process_failure(&context.stdout, &context.stderr)
@@ -405,6 +407,7 @@ def test_context_capsule(state: &TestState) -> void:
 def test_impact_report(state: &TestState) -> void:
     nominal_target = state.root + "/tests/cases/semantic_context/src/model.ci:2"
     field_target = state.root + "/tests/cases/semantic_context/src/model.ci:3"
+    indexed_context_target = state.root + "/tests/cases/semantic_context/src/cache.ci:79"
     unrelated_method_target = state.root + "/tests/cases/semantic_context/src/model.ci:14"
     borrowed_target = state.root + "/tests/cases/semantic_context/src/model.ci:18"
     status_target = state.root + "/tests/cases/semantic_context/src/model.ci:22"
@@ -421,6 +424,13 @@ def test_impact_report(state: &TestState) -> void:
         state.compiler.clone(),
         "context",
         field_target.clone(),
+    ]
+    indexed_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        indexed_context_target,
+        "--depth",
+        "1",
     ]
     field_impact_command: List[String] = [
         state.compiler.clone(),
@@ -464,6 +474,7 @@ def test_impact_report(state: &TestState) -> void:
     ]
     nominal = process.run(nominal_command)
     field_context = process.run(field_context_command)
+    indexed_context = process.run(indexed_context_command)
     field_impact = process.run(field_impact_command)
     unrelated_method = process.run(unrelated_method_command)
     borrowed = process.run(borrowed_command)
@@ -475,6 +486,7 @@ def test_impact_report(state: &TestState) -> void:
     ok = (
         nominal.exit_code == 0
         and field_context.exit_code == 0
+        and indexed_context.exit_code == 0
         and field_impact.exit_code == 0
         and unrelated_method.exit_code == 0
         and borrowed.exit_code == 0
@@ -495,8 +507,11 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&nominal.stdout, "emitted runtime reflection metadata")
         and contains(&field_context.stdout, "model::field:CacheEntry.value")
         and contains(&field_context.stdout, "reflected: yes")
+        and contains(&indexed_context.stdout, "DEPENDS ON")
+        and contains(&indexed_context.stdout, "model::field:CacheEntry.value")
         and contains(&field_impact.stdout, "cache::function:cache_entry_value")
         and contains(&field_impact.stdout, "cache::function:format_cache_entry")
+        and contains(&field_impact.stdout, "cache::function:indexed_cache_entry_value")
         and contains(&field_impact.stdout, "main::function:lookup_twice")
         and contains(&field_impact.stdout, "main::function:cinder_cache_lookup")
         and contains(&field_impact.stdout, "emitted runtime reflection metadata")
@@ -534,6 +549,7 @@ def test_impact_report(state: &TestState) -> void:
     if not ok:
         report_process_failure(&nominal.stdout, &nominal.stderr)
         report_process_failure(&field_context.stdout, &field_context.stderr)
+        report_process_failure(&indexed_context.stdout, &indexed_context.stderr)
         report_process_failure(&field_impact.stdout, &field_impact.stderr)
         report_process_failure(&unrelated_method.stdout, &unrelated_method.stderr)
         report_process_failure(&borrowed.stdout, &borrowed.stderr)

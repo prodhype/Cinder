@@ -74,3 +74,8 @@ def export_memory_store(value: model.MemoryStore) -> i32:
 
 def format_cache_entry(entry: model.CacheEntry) -> void:
     print(f"value={entry.value}")
+
+
+def indexed_cache_entry_value() -> i32:
+    items: model.CacheEntry[1] = [model.CacheEntry(value=7)]
+    return items[0].value

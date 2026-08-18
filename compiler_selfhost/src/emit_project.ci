@@ -113,8 +113,23 @@ def compile_project(graph: &const project.ProjectGraph) -> CompileResult:
 
 
 def check_project(graph: &const project.ProjectGraph) -> String:
-    compiled = compile_project(graph)
-    return compiled.error[0:len(compiled.error)]
+    index: usize = 0
+    while index < len(graph.modules):
+        module: &const project.ParsedModule = &graph.modules[index]
+        checked: checker_core.Checker = checker.new_checker()
+        error = analyze_module(&checked, module, &graph.modules)
+        if len(error) > 0:
+            return error[0:len(error)]
+        ir: backend_ir.IRModule = backend_ir.lower(
+            module.arena,
+            module.root,
+            checked.model,
+            checked.type_table,
+        )
+        if not ir.is_valid:
+            return "internal atomic IR validation failed"
+        index += 1
+    return ""
 
 
 def write_project(graph: &const project.ProjectGraph, output_dir: String) -> EmitResult:

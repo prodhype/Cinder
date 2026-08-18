@@ -1991,8 +1991,37 @@ def nominal_fact_for_expression(
             graph,
             target_index,
         )
+    if node.kind == syntax.SyntaxKind.EXPR_INDEX and node.child_count > 0:
+        resolved = nominal_fact_for_checked_type(
+            project_graph,
+            graph,
+            checked,
+            module,
+            module_index,
+            semantic_expression_type(checked, &module.arena, id),
+        )
+        if resolved >= 0:
+            return resolved
+        return nominal_fact_for_expression(
+            project_graph,
+            graph,
+            class_model,
+            checked,
+            module,
+            children[node.first_child],
+            module_index,
+            source_index,
+            depth + 1,
+        )
     if node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or node.child_count < 2:
-        return -1
+        return nominal_fact_for_checked_type(
+            project_graph,
+            graph,
+            checked,
+            module,
+            module_index,
+            semantic_expression_type(checked, &module.arena, id),
+        )
     receiver_id = children[node.first_child]
     member_id = children[node.first_child + 1]
     owner_index = nominal_fact_for_expression(
@@ -2963,22 +2992,17 @@ def collect_reparsed_attribute_value_relation(
         )
 
 
-def nominal_fact_for_typed_symbol(
+def nominal_fact_for_checked_type(
     project_graph: &const project.ProjectGraph,
     graph: &const SemanticFactGraph,
     checked: &const checker_core.Checker,
     module: &const project.ParsedModule,
     module_index: usize,
-    symbol_index: i32,
+    type_id: types.TypeId,
 ) -> i32:
-    if (
-        symbol_index < 0
-        or symbol_index >= cast[i32](len(checked.symbols.symbols))
-    ):
-        return -1
     receiver_type = analysis_value_type(
         &checked.type_table,
-        checked.symbols.symbols[symbol_index].type_id,
+        type_id,
     )
     if (
         receiver_type.index < 0
@@ -3004,6 +3028,29 @@ def nominal_fact_for_typed_symbol(
         graph,
         module_index,
         &type_name,
+    )
+
+
+def nominal_fact_for_typed_symbol(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    symbol_index: i32,
+) -> i32:
+    if (
+        symbol_index < 0
+        or symbol_index >= cast[i32](len(checked.symbols.symbols))
+    ):
+        return -1
+    return nominal_fact_for_checked_type(
+        project_graph,
+        graph,
+        checked,
+        module,
+        module_index,
+        checked.symbols.symbols[symbol_index].type_id,
     )
 
 
