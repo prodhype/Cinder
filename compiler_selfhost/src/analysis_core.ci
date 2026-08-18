@@ -269,14 +269,12 @@ def make_symbol_fact(
     kind = symbol_kind_name(symbol.kind)
     owner = symbol_owner_path(&checked.symbols, symbol.owner, &module.source)
     key = stable_symbol_key(&module.name, &kind, &owner, &name)
-    type_builder = StringBuilder()
-    codegen_type_names.emit_semantic_readable_type_name(
+    type_name = symbol_fact_type_name(
+        arena,
         &checked.type_table,
-        symbol.type_id,
+        &symbol,
         &module.source,
-        &type_builder,
     )
-    type_name = type_builder.finish()
     signature = declaration_header(arena, symbol.node, &module.source)
     canonical_signature = canonical_declaration_snapshot(
         arena,
@@ -336,6 +334,44 @@ def make_symbol_fact(
         symbol_index=symbol_index,
         node=symbol.node,
     )
+
+
+def symbol_fact_type_name(
+    arena: &const syntax.SyntaxArena,
+    table: &const types.TypeTable,
+    symbol: &const symbols.SymbolRecord,
+    source: &const String,
+) -> String:
+    type_node_id = codegen_type_names.find_child_type(arena, symbol.node)
+    if type_node_contains_qualified_name(arena, type_node_id):
+        type_node = arena.nodes[type_node_id.index]
+        return source[type_node.start:type_node.start + type_node.length]
+    type_builder = StringBuilder()
+    codegen_type_names.emit_semantic_readable_type_name(
+        table,
+        symbol.type_id,
+        source,
+        &type_builder,
+    )
+    return type_builder.finish()
+
+
+def type_node_contains_qualified_name(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.TYPE_NAME and node.child_count > 1:
+        return true
+    for offset in range(0, node.child_count):
+        if type_node_contains_qualified_name(
+            arena,
+            arena.children[node.first_child + offset],
+        ):
+            return true
+    return false
 
 
 def collect_static_assert_facts(
@@ -1597,6 +1633,15 @@ def collect_import_call_relation(
     if target_index >= 0:
         target: &const SymbolFact = &facts[cast[usize](target_index)]
         if not fact_kind_is_callable(&target.kind):
+            if fact_kind_is_nominal_constructor(&target.kind):
+                add_relation_unique(
+                    graph,
+                    "uses",
+                    &facts[cast[usize](caller_index)].key,
+                    &target.key,
+                    "",
+                    true,
+                )
             return
         add_relation_unique(
             graph,
@@ -1724,6 +1769,17 @@ def fact_kind_is_callable(kind: &const String) -> bool:
         kind == "function"
         or kind == "function-template"
         or kind == "extern-function"
+    )
+
+
+def fact_kind_is_nominal_constructor(kind: &const String) -> bool:
+    return (
+        kind == "struct"
+        or kind == "class"
+        or kind == "enum"
+        or kind == "union"
+        or kind == "variant"
+        or kind == "extern-type"
     )
 
 

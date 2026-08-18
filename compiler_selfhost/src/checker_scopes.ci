@@ -264,7 +264,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         expression = checker_core.first_child(arena, id)
         if expression.index >= 0:
             expression_type = checker_types.infer_expression_type(checker, arena, expression, source, current_scope)
-            checker_types.validate_partial_move_source(checker, arena, expression, expression_type, expression_type, source, current_scope)
+            checker_types.validate_discarded_expression(checker, arena, expression, expression_type, source, current_scope)
     elif node.kind == syntax.SyntaxKind.CRITICAL_SECTION_STMT:
         expression = checker_core.first_child(arena, id)
         expression_type = types.strip_const(&checker.type_table, checker_types.infer_expression_type(checker, arena, expression, source, current_scope))

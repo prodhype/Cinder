@@ -1,5 +1,6 @@
 import model
 import lock_collision
+import ownership_uses
 
 
 lock database
@@ -46,3 +47,11 @@ def export_status(status: model.Status) -> i32:
 
 extern "C":
     def consume_cache_entry(entry: model.CacheEntry) -> i32
+
+
+def construct_entry_only(key: i32) -> void:
+    entry = model.CacheEntry(value=key)
+
+
+struct QualifiedHolder:
+    entry: model.CacheEntry

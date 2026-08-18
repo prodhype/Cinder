@@ -53,7 +53,9 @@ def main(argc: i32, argv: **char) -> i32:
     test_impact_caller_truncation(&state)
     test_import_call_resolution(&state)
     test_import_value_resolution(&state)
+    test_import_constructor_resolution(&state)
     test_import_type_resolution(&state)
+    test_ownership_use_resolution(&state)
     test_semantic_query_diagnostics(&state)
     test_semantic_diff(&state)
 
@@ -248,7 +250,7 @@ def test_atomic_codegen(state: &TestState) -> void:
 
 
 def test_context_capsule(state: &TestState) -> void:
-    target = state.root + "/tests/cases/semantic_context/src/cache.ci:15"
+    target = state.root + "/tests/cases/semantic_context/src/cache.ci:16"
     command: List[String] = [
         state.compiler.clone(),
         "context",
@@ -265,14 +267,14 @@ def test_context_capsule(state: &TestState) -> void:
     ]
     first = process.run(command)
     second = process.run(repeated_command)
-    method_target = state.root + "/tests/cases/semantic_context/src/cache.ci:23"
+    method_target = state.root + "/tests/cases/semantic_context/src/cache.ci:24"
     method_command: List[String] = [
         state.compiler.clone(),
         "context",
         method_target,
     ]
     method = process.run(method_command)
-    qualified_target = state.root + "/tests/cases/semantic_context/src/cache.ci:28"
+    qualified_target = state.root + "/tests/cases/semantic_context/src/cache.ci:29"
     qualified_command: List[String] = [
         state.compiler.clone(),
         "context",
@@ -316,6 +318,7 @@ def test_context_capsule(state: &TestState) -> void:
         and import_context.exit_code == 0
         and first.stdout == second.stdout
         and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
+        and contains(&first.stdout, "type: model.CacheEntry")
         and contains(&first.stdout, "cache::function:hash_key")
         and contains(&first.stdout, "main::function:lookup_twice")
         and contains(&first.stdout, "lock_effect: unknown (unresolved callee)")
@@ -401,6 +404,7 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&nominal.stdout, "cache::function:cache_entry_value")
         and contains(&nominal.stdout, "cache::function:export_cache_entry")
         and contains(&nominal.stdout, "cache::function:consume_cache_entry")
+        and contains(&nominal.stdout, "cache::function:construct_entry_only")
         and contains(&nominal.stdout, "C ABI sensitive")
         and not contains(&nominal.stdout, "source-level layout sensitive")
         and contains(&nominal.stdout, "emitted runtime reflection metadata")
@@ -675,6 +679,35 @@ def test_import_value_resolution(state: &TestState) -> void:
         report_process_failure(&target.stdout, &target.stderr)
 
 
+def test_import_constructor_resolution(state: &TestState) -> void:
+    constructor_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:52",
+        "--depth",
+        "1",
+    ]
+    target_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/model.ci:2",
+    ]
+    constructor = process.run(constructor_context)
+    target = process.run(target_impact)
+    ok = (
+        constructor.exit_code == 0
+        and target.exit_code == 0
+        and contains(&constructor.stdout, "symbol: cache::function:construct_entry_only")
+        and contains(&constructor.stdout, "type: void")
+        and contains(&constructor.stdout, "DEPENDS ON\n- model::struct:CacheEntry")
+        and contains(&target.stdout, "cache::function:construct_entry_only")
+    )
+    expect(state, "semantic queries record module-qualified constructor uses", ok)
+    if not ok:
+        report_process_failure(&constructor.stdout, &constructor.stderr)
+        report_process_failure(&target.stdout, &target.stderr)
+
+
 def test_import_type_resolution(state: &TestState) -> void:
     qualified_context: List[String] = [
         state.compiler.clone(),
@@ -691,6 +724,11 @@ def test_import_type_resolution(state: &TestState) -> void:
         "context",
         state.root + "/tests/cases/semantic_context/src/main.ci:52",
     ]
+    field_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:57",
+    ]
     target_impact: List[String] = [
         state.compiler.clone(),
         "impact",
@@ -704,19 +742,25 @@ def test_import_type_resolution(state: &TestState) -> void:
     qualified = process.run(qualified_context)
     shadowed = process.run(shadowed_context)
     imported = process.run(imported_context)
+    field = process.run(field_context)
     target = process.run(target_impact)
     method = process.run(method_impact)
     ok = (
         qualified.exit_code == 0
         and shadowed.exit_code == 0
         and imported.exit_code == 0
+        and field.exit_code == 0
         and target.exit_code == 0
         and method.exit_code == 0
         and contains(&qualified.stdout, "DEPENDS ON\n- type_targets::struct:Target")
+        and contains(&qualified.stdout, "type: type_targets.Target")
         and not contains(&qualified.stdout, "type_targets::method:Holder.Target")
         and not contains(&shadowed.stdout, "type_targets::struct:Target")
         and not contains(&shadowed.stdout, "type_targets::method:Holder.Target")
         and contains(&imported.stdout, "DEPENDS ON\n- type_targets::struct:Target")
+        and contains(&imported.stdout, "type: Target")
+        and contains(&field.stdout, "symbol: cache::field:QualifiedHolder.entry")
+        and contains(&field.stdout, "type: model.CacheEntry")
         and contains(&target.stdout, "main::function:use_qualified_target")
         and contains(&target.stdout, "main::function:use_imported_target")
         and not contains(&target.stdout, "main::function-template:identity")
@@ -727,8 +771,71 @@ def test_import_type_resolution(state: &TestState) -> void:
         report_process_failure(&qualified.stdout, &qualified.stderr)
         report_process_failure(&shadowed.stdout, &shadowed.stderr)
         report_process_failure(&imported.stdout, &imported.stderr)
+        report_process_failure(&field.stdout, &field.stderr)
         report_process_failure(&target.stdout, &target.stderr)
         report_process_failure(&method.stdout, &method.stderr)
+
+
+def test_ownership_use_resolution(state: &TestState) -> void:
+    discard_void_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:13",
+        "--depth",
+        "0",
+    ]
+    discard_value_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:17",
+        "--depth",
+        "0",
+    ]
+    argument_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:21",
+        "--depth",
+        "0",
+    ]
+    return_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:25",
+        "--depth",
+        "0",
+    ]
+    void_return_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:29",
+        "--depth",
+        "0",
+    ]
+    discard_void = process.run(discard_void_command)
+    discard_value = process.run(discard_value_command)
+    argument = process.run(argument_command)
+    returned = process.run(return_command)
+    void_return = process.run(void_return_command)
+    ok = (
+        discard_void.exit_code == 0
+        and discard_value.exit_code == 0
+        and argument.exit_code == 0
+        and returned.exit_code == 0
+        and void_return.exit_code == 0
+        and contains(&discard_void.stdout, "uses: copy=0, move=0, borrow=0, address=0")
+        and contains(&discard_value.stdout, "uses: copy=0, move=0, borrow=0, address=0")
+        and contains(&argument.stdout, "uses: copy=1, move=0, borrow=0, address=0")
+        and contains(&returned.stdout, "uses: copy=1, move=0, borrow=0, address=0")
+        and contains(&void_return.stdout, "uses: copy=0, move=0, borrow=0, address=0")
+    )
+    expect(state, "context counts ownership uses only at transfer sites", ok)
+    if not ok:
+        report_process_failure(&discard_void.stdout, &discard_void.stderr)
+        report_process_failure(&discard_value.stdout, &discard_value.stderr)
+        report_process_failure(&argument.stdout, &argument.stderr)
+        report_process_failure(&returned.stdout, &returned.stderr)
+        report_process_failure(&void_return.stdout, &void_return.stderr)
 
 
 def test_semantic_query_diagnostics(state: &TestState) -> void:

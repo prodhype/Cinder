@@ -124,9 +124,52 @@ def validate_partial_move_source(
     source: &const String,
     current_scope: symbols.ScopeId,
 ) -> void:
+    validate_partial_move_source_impl(
+        checker,
+        arena,
+        expression,
+        value_type,
+        destination_type,
+        source,
+        current_scope,
+        true,
+    )
+
+
+def validate_discarded_expression(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expression: NodeId,
+    value_type: types.TypeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    validate_partial_move_source_impl(
+        checker,
+        arena,
+        expression,
+        value_type,
+        value_type,
+        source,
+        current_scope,
+        false,
+    )
+
+
+def validate_partial_move_source_impl(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expression: NodeId,
+    value_type: types.TypeId,
+    destination_type: types.TypeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+    record_transfer: bool,
+) -> void:
     if expression.index < 0:
         return
-    record_transfer_value_use(checker, expression, value_type, destination_type)
+    if record_transfer:
+        record_transfer_value_use(checker, expression, value_type, destination_type)
     if type_is_borrowed_for_transfer(checker.type_table, destination_type):
         return
     if ownership.type_contains_atomic_storage(&checker.type_table, value_type):
@@ -184,6 +227,8 @@ def record_transfer_value_use(
     value_type: types.TypeId,
     destination_type: types.TypeId,
 ) -> void:
+    if destination_type.index == types.type_void().index:
+        return
     kind = semantic.ValueUseKind.COPY
     if type_is_borrowed_for_transfer(checker.type_table, destination_type):
         kind = semantic.ValueUseKind.BORROW
