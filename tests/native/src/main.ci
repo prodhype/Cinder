@@ -441,6 +441,8 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&field_context.stdout, "model::field:CacheEntry.value")
         and contains(&field_context.stdout, "reflected: yes")
         and contains(&field_impact.stdout, "emitted runtime reflection metadata")
+        and contains(&field_impact.stdout, "C ABI sensitive")
+        and not contains(&field_impact.stdout, "source-level layout sensitive")
         and not contains(&unrelated_method.stdout, "emitted runtime reflection metadata")
         and not contains(&nominal.stdout, "transitive caller search truncated")
         and contains(&borrowed.stdout, "model::struct:BorrowedEntry")
@@ -500,6 +502,11 @@ def test_enum_member_resolution(state: &TestState) -> void:
         "impact",
         example + ":1",
     ]
+    fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":40",
+    ]
     qualified_impact_command: List[String] = [
         state.compiler.clone(),
         "impact",
@@ -509,12 +516,14 @@ def test_enum_member_resolution(state: &TestState) -> void:
     negative_impact = process.run(negative_impact_command)
     explicit_impact = process.run(explicit_impact_command)
     enum_impact = process.run(enum_impact_command)
+    fstring_context = process.run(fstring_context_command)
     qualified_impact = process.run(qualified_impact_command)
     ok = (
         explicit_context.exit_code == 0
         and negative_impact.exit_code == 0
         and explicit_impact.exit_code == 0
         and enum_impact.exit_code == 0
+        and fstring_context.exit_code == 0
         and qualified_impact.exit_code == 0
         and contains(
             &explicit_context.stdout,
@@ -539,6 +548,10 @@ def test_enum_member_resolution(state: &TestState) -> void:
             &negative_impact.stdout,
             "types_and_results::function:increment",
         )
+        and not contains(
+            &negative_impact.stdout,
+            "types_and_results::function:format_too_large_error",
+        )
         and contains(
             &explicit_impact.stdout,
             "symbol: types_and_results::enum-member:ParseError.too_large",
@@ -547,6 +560,10 @@ def test_enum_member_resolution(state: &TestState) -> void:
         and contains(
             &explicit_impact.stdout,
             "types_and_results::function:too_large_error",
+        )
+        and contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:format_too_large_error",
         )
         and not contains(
             &explicit_impact.stdout,
@@ -562,6 +579,10 @@ def test_enum_member_resolution(state: &TestState) -> void:
         )
         and contains(&enum_impact.stdout, "types_and_results::function:increment")
         and contains(
+            &fstring_context.stdout,
+            "types_and_results::enum-member:ParseError.too_large",
+        )
+        and contains(
             &qualified_impact.stdout,
             "symbol: model::enum-member:ParseError.negative",
         )
@@ -576,6 +597,7 @@ def test_enum_member_resolution(state: &TestState) -> void:
         report_process_failure(&negative_impact.stdout, &negative_impact.stderr)
         report_process_failure(&explicit_impact.stdout, &explicit_impact.stderr)
         report_process_failure(&enum_impact.stdout, &enum_impact.stderr)
+        report_process_failure(&fstring_context.stdout, &fstring_context.stderr)
         report_process_failure(&qualified_impact.stdout, &qualified_impact.stderr)
 
 

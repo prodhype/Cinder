@@ -37,6 +37,11 @@ def too_large_error() -> ParseError:
     return ParseError.too_large
 
 
+def format_too_large_error() -> i32:
+    print(f"status={ParseError.too_large}")
+    return 0
+
+
 def main() -> i32:
     number = Number(integer=41)
     result = increment(number.integer)

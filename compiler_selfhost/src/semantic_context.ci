@@ -323,6 +323,14 @@ def has_c_abi_surface_exposure(
             and relation.resolved
         ):
             return true
+    for relation in relations:
+        if (
+            relation.kind == "member"
+            and relation.to_key == target_key
+            and relation.resolved
+            and has_c_abi_surface_exposure(graph, &relation.from_key)
+        ):
+            return true
     return false
 
 

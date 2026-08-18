@@ -1624,14 +1624,22 @@ def enum_member_fact_for_attribute(
         receiver_id,
         module_index,
     )
-    facts: &const List[SymbolFact] = &graph.facts
-    if enum_index < 0 or enum_index >= cast[i32](len(facts)):
-        return -1
-    enum_fact: &const SymbolFact = &facts[cast[usize](enum_index)]
     member = nodes[member_id.index]
     member_name = module.source[
         member.value_start:member.value_start + member.value_length
     ]
+    return enum_member_fact_for_enum(graph, enum_index, &member_name)
+
+
+def enum_member_fact_for_enum(
+    graph: &const SemanticFactGraph,
+    enum_index: i32,
+    member_name: &const String,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    if enum_index < 0 or enum_index >= cast[i32](len(facts)):
+        return -1
+    enum_fact: &const SymbolFact = &facts[cast[usize](enum_index)]
     member_owner = enum_fact.name[0:len(enum_fact.name)]
     if len(enum_fact.owner) > 0:
         member_owner = enum_fact.owner[0:len(enum_fact.owner)] + "." + enum_fact.name[0:len(enum_fact.name)]
@@ -1640,9 +1648,47 @@ def enum_member_fact_for_attribute(
         &enum_fact.module_name,
         &member_kind,
         &member_owner,
-        &member_name,
+        member_name,
     )
     return find_fact_by_key(graph, &member_key)
+
+
+def enum_fact_for_name_symbol(
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    symbol_index: i32,
+    receiver_name: &const String,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    local_index = fact_index_for_symbol(graph, module_index, symbol_index)
+    if (
+        local_index >= 0
+        and facts[cast[usize](local_index)].kind == "enum"
+    ):
+        return local_index
+    if not symbol_is_import_binding(
+        checked,
+        &module.arena,
+        symbol_index,
+        true,
+    ):
+        return -1
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    for imported in module_imports:
+        if len(imported.member) > 0 and imported.alias == receiver_name:
+            imported_index = find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &imported.member,
+            )
+            if (
+                imported_index >= 0
+                and facts[cast[usize](imported_index)].kind == "enum"
+            ):
+                return imported_index
+    return -1
 
 
 def enum_fact_for_value_receiver(
@@ -1660,36 +1706,17 @@ def enum_fact_for_value_receiver(
     receiver = nodes[receiver_id.index]
     if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
         bound_symbol = bound_symbol_for_node(checked, receiver_id)
-        local_index = fact_index_for_symbol(graph, module_index, bound_symbol)
-        if (
-            local_index >= 0
-            and facts[cast[usize](local_index)].kind == "enum"
-        ):
-            return local_index
-        if not symbol_is_import_binding(
-            checked,
-            &module.arena,
-            bound_symbol,
-            true,
-        ):
-            return -1
         receiver_name = module.source[
             receiver.value_start:receiver.value_start + receiver.value_length
         ]
-        module_imports: &const List[project.ImportBinding] = &module.imports
-        for imported in module_imports:
-            if len(imported.member) > 0 and imported.alias == receiver_name:
-                imported_index = find_top_level_fact_by_module_name(
-                    graph,
-                    &imported.module_name,
-                    &imported.member,
-                )
-                if (
-                    imported_index >= 0
-                    and facts[cast[usize](imported_index)].kind == "enum"
-                ):
-                    return imported_index
-        return -1
+        return enum_fact_for_name_symbol(
+            graph,
+            checked,
+            module,
+            module_index,
+            bound_symbol,
+            &receiver_name,
+        )
     if receiver.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or receiver.child_count < 2:
         return -1
     module_id = children[receiver.first_child]
@@ -2235,37 +2262,55 @@ def collect_reparsed_attribute_value_relation(
         current_scope,
         &receiver_name,
     )
-    if not symbol_is_import_binding(checked, &module.arena, found.index, false):
-        return
     member_name = source[member.value_start:member.value_start + member.value_length]
     module_imports: &const List[project.ImportBinding] = &module.imports
     facts: &const List[SymbolFact] = &graph.facts
-    for imported in module_imports:
-        if len(imported.member) == 0 and imported.alias == receiver_name:
-            target_index = find_top_level_fact_by_module_name(
-                graph,
-                &imported.module_name,
-                &member_name,
-            )
-            if target_index >= 0:
-                add_relation_unique(
+    if symbol_is_import_binding(checked, &module.arena, found.index, false):
+        for imported in module_imports:
+            if len(imported.member) == 0 and imported.alias == receiver_name:
+                target_index = find_top_level_fact_by_module_name(
                     graph,
-                    "uses",
-                    &facts[cast[usize](caller_index)].key,
-                    &facts[cast[usize](target_index)].key,
-                    "",
-                    true,
-                )
-            else:
-                add_relation_unique(
-                    graph,
-                    "uses",
-                    &facts[cast[usize](caller_index)].key,
                     &imported.module_name,
                     &member_name,
-                    false,
                 )
-            return
+                if target_index >= 0:
+                    add_relation_unique(
+                        graph,
+                        "uses",
+                        &facts[cast[usize](caller_index)].key,
+                        &facts[cast[usize](target_index)].key,
+                        "",
+                        true,
+                    )
+                else:
+                    add_relation_unique(
+                        graph,
+                        "uses",
+                        &facts[cast[usize](caller_index)].key,
+                        &imported.module_name,
+                        &member_name,
+                        false,
+                    )
+                return
+        return
+    enum_index = enum_fact_for_name_symbol(
+        graph,
+        checked,
+        module,
+        facts[cast[usize](caller_index)].module_index,
+        found.index,
+        &receiver_name,
+    )
+    target_index = enum_member_fact_for_enum(graph, enum_index, &member_name)
+    if target_index >= 0:
+        add_relation_unique(
+            graph,
+            "uses",
+            &facts[cast[usize](caller_index)].key,
+            &facts[cast[usize](target_index)].key,
+            "",
+            true,
+        )
 
 
 def collect_reparsed_call_relation(
