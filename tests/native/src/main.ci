@@ -52,6 +52,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_decorator_line_resolution(&state)
     test_impact_caller_truncation(&state)
     test_import_call_resolution(&state)
+    test_fstring_call_resolution(&state)
     test_import_value_resolution(&state)
     test_import_constructor_resolution(&state)
     test_import_type_resolution(&state)
@@ -622,6 +623,33 @@ def test_import_call_resolution(state: &TestState) -> void:
         report_process_failure(&direct_method.stdout, &direct_method.stderr)
         report_process_failure(&child.stdout, &child.stderr)
         report_process_failure(&overridden_base.stdout, &overridden_base.stderr)
+
+
+def test_fstring_call_resolution(state: &TestState) -> void:
+    caller_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/examples/defer.ci:10",
+        "--depth",
+        "1",
+    ]
+    callee_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/examples/defer.ci:1",
+    ]
+    caller = process.run(caller_command)
+    callee = process.run(callee_command)
+    ok = (
+        caller.exit_code == 0
+        and callee.exit_code == 0
+        and contains(&caller.stdout, "CALLS\n- defer::function:compute")
+        and contains(&callee.stdout, "DIRECT CALLERS\n- defer::function:main")
+    )
+    expect(state, "semantic queries resolve calls inside f-string fields", ok)
+    if not ok:
+        report_process_failure(&caller.stdout, &caller.stderr)
+        report_process_failure(&callee.stdout, &callee.stderr)
 
 
 def test_import_value_resolution(state: &TestState) -> void:

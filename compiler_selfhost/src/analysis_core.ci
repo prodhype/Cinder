@@ -1,11 +1,14 @@
 import codegen_type_names
 import codegen_reflection
+import codegen_model
 import checker_core
 import classes
 import emit_project
 import generics
+import lexer
 import lock_order
 import ownership
+import parser
 import project
 import semantic
 import symbols
@@ -1480,6 +1483,20 @@ def collect_import_calls_in_node(
             caller_index,
             receiver_bindings,
         )
+    elif node.kind == syntax.SyntaxKind.EXPR_FSTRING:
+        collect_fstring_call_relations(
+            project_graph,
+            class_model,
+            checked,
+            graph,
+            module,
+            &module.arena,
+            id,
+            &module.source,
+            caller_index,
+            enclosing_scope_for_node(checked, &module.arena, id),
+            receiver_bindings,
+        )
     for offset in range(0, node.child_count):
         collect_import_calls_in_node(
             project_graph,
@@ -1491,6 +1508,360 @@ def collect_import_calls_in_node(
             caller_index,
             receiver_bindings,
         )
+
+
+def collect_fstring_call_relations(
+    project_graph: &const project.ProjectGraph,
+    class_model: &const classes.ProjectClassModel,
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    fstring_id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+    receiver_bindings: &const List[lock_order.MethodReceiverBinding],
+) -> void:
+    if fstring_id.index < 0:
+        return
+    node = arena.nodes[fstring_id.index]
+    if node.value_length < 3:
+        return
+    content_start = node.value_start + 2
+    content_end = node.value_start + node.value_length - 1
+    index = content_start
+    while index < content_end:
+        byte = source.byte_at(index)
+        if byte == 92:
+            if index + 1 < content_end:
+                index += 2
+            else:
+                index += 1
+            continue
+        if byte == 123:
+            if index + 1 < content_end and source.byte_at(index + 1) == 123:
+                index += 2
+                continue
+            field = codegen_model.scan_fstring_field(source, index + 1, content_end)
+            if not field.valid:
+                return
+            expression_start = codegen_model.trim_left(source, index + 1, field.expression_end)
+            expression_end = codegen_model.trim_right(source, expression_start, field.expression_end)
+            if expression_end > expression_start:
+                expression_source = source[expression_start:expression_end]
+                scan = lexer.new_lexer(expression_source)
+                scan.tokenize()
+                parsed = parser.new_parser(&scan)
+                expression = parsed.parse_expression(0)
+                if len(scan.diagnostics) == 0 and len(parsed.diagnostics) == 0 and expression.index >= 0:
+                    collect_reparsed_calls_in_node(
+                        project_graph,
+                        class_model,
+                        checked,
+                        graph,
+                        module,
+                        &parsed.arena,
+                        expression,
+                        &scan.source,
+                        caller_index,
+                        current_scope,
+                        receiver_bindings,
+                    )
+            index = field.close + 1
+            continue
+        index += 1
+
+
+def collect_reparsed_calls_in_node(
+    project_graph: &const project.ProjectGraph,
+    class_model: &const classes.ProjectClassModel,
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+    receiver_bindings: &const List[lock_order.MethodReceiverBinding],
+) -> void:
+    if id.index < 0:
+        return
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_CALL:
+        collect_reparsed_call_relation(
+            project_graph,
+            class_model,
+            checked,
+            graph,
+            module,
+            arena,
+            id,
+            source,
+            caller_index,
+            current_scope,
+            receiver_bindings,
+        )
+    elif node.kind == syntax.SyntaxKind.EXPR_FSTRING:
+        collect_fstring_call_relations(
+            project_graph,
+            class_model,
+            checked,
+            graph,
+            module,
+            arena,
+            id,
+            source,
+            caller_index,
+            current_scope,
+            receiver_bindings,
+        )
+        return
+    for offset in range(0, node.child_count):
+        collect_reparsed_calls_in_node(
+            project_graph,
+            class_model,
+            checked,
+            graph,
+            module,
+            arena,
+            arena.children[node.first_child + offset],
+            source,
+            caller_index,
+            current_scope,
+            receiver_bindings,
+        )
+
+
+def collect_reparsed_call_relation(
+    project_graph: &const project.ProjectGraph,
+    class_model: &const classes.ProjectClassModel,
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+    receiver_bindings: &const List[lock_order.MethodReceiverBinding],
+) -> void:
+    call = arena.nodes[call_id.index]
+    if call.child_count <= 0:
+        return
+    callee_id = arena.children[call.first_child]
+    callee = arena.nodes[callee_id.index]
+    facts: &const List[SymbolFact] = &graph.facts
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    if callee.kind == syntax.SyntaxKind.EXPR_NAME:
+        callee_name = source[callee.value_start:callee.value_start + callee.value_length]
+        found = checked.symbols.find_name_in_scope(&module.source, current_scope, &callee_name)
+        if found.index < 0:
+            return
+        if symbol_is_import_binding(checked, &module.arena, found.index, true):
+            for imported in module_imports:
+                if len(imported.member) > 0 and imported.alias == callee_name:
+                    add_named_reparsed_call_relation(
+                        graph,
+                        caller_index,
+                        &imported.module_name,
+                        &imported.member,
+                        true,
+                    )
+                    return
+            return
+        target_index = fact_index_for_symbol(graph, facts[cast[usize](caller_index)].module_index, found.index)
+        if target_index >= 0 and fact_kind_is_callable(&facts[cast[usize](target_index)].kind):
+            add_relation_unique(
+                graph,
+                "calls",
+                &facts[cast[usize](caller_index)].key,
+                &facts[cast[usize](target_index)].key,
+                "",
+                true,
+            )
+        return
+    if callee.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or callee.child_count < 2:
+        return
+    receiver_id = arena.children[callee.first_child]
+    member_id = arena.children[callee.first_child + 1]
+    receiver = arena.nodes[receiver_id.index]
+    member = arena.nodes[member_id.index]
+    member_name = source[member.value_start:member.value_start + member.value_length]
+    nominal_fact_index: i32 = -1
+    if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
+        receiver_name = source[receiver.value_start:receiver.value_start + receiver.value_length]
+        binding_index = lock_order.find_method_receiver_binding(receiver_bindings, &receiver_name)
+        if binding_index >= 0:
+            binding: &const lock_order.MethodReceiverBinding = &receiver_bindings[cast[usize](binding_index)]
+            add_reparsed_method_call_relation(
+                graph,
+                class_model,
+                caller_index,
+                &binding.module_name,
+                &binding.owner_name,
+                &member_name,
+            )
+            return
+        found = checked.symbols.find_name_in_scope(&module.source, current_scope, &receiver_name)
+        if found.index >= 0 and symbol_is_import_binding(checked, &module.arena, found.index, false):
+            for imported in module_imports:
+                if len(imported.member) == 0 and imported.alias == receiver_name:
+                    add_named_reparsed_call_relation(
+                        graph,
+                        caller_index,
+                        &imported.module_name,
+                        &member_name,
+                        true,
+                    )
+                    return
+        if found.index >= 0 and found.index < cast[i32](len(checked.symbols.symbols)):
+            receiver_type = analysis_value_type(
+                &checked.type_table,
+                checked.symbols.symbols[found.index].type_id,
+            )
+            if receiver_type.index >= 0 and receiver_type.index < cast[i32](len(checked.type_table.types)):
+                receiver_record = checked.type_table.types[receiver_type.index]
+                if types.is_nominal_kind(receiver_record.kind) and receiver_record.name_length > 0:
+                    type_builder = StringBuilder()
+                    codegen_type_names.emit_semantic_readable_type_name(
+                        &checked.type_table,
+                        receiver_type,
+                        &module.source,
+                        &type_builder,
+                    )
+                    type_name = type_builder.finish()
+                    nominal_fact_index = resolve_type_fact(
+                        project_graph,
+                        graph,
+                        facts[cast[usize](caller_index)].module_index,
+                        &type_name,
+                    )
+    if nominal_fact_index < 0:
+        nominal_fact_index = receiver_field_nominal_fact_in_source(
+            project_graph,
+            graph,
+            module,
+            arena,
+            receiver_id,
+            source,
+            caller_index,
+        )
+    if nominal_fact_index >= 0:
+        nominal: &const SymbolFact = &facts[cast[usize](nominal_fact_index)]
+        add_reparsed_method_call_relation(
+            graph,
+            class_model,
+            caller_index,
+            &nominal.module_name,
+            &nominal.name,
+            &member_name,
+        )
+
+
+def add_named_reparsed_call_relation(
+    graph: &SemanticFactGraph,
+    caller_index: i32,
+    module_name: &const String,
+    name: &const String,
+    imported: bool,
+) -> void:
+    facts: &const List[SymbolFact] = &graph.facts
+    target_index = find_top_level_fact_by_module_name(graph, module_name, name)
+    if target_index >= 0:
+        target: &const SymbolFact = &facts[cast[usize](target_index)]
+        if fact_kind_is_callable(&target.kind):
+            detail = ""
+            if imported:
+                detail = "import"
+            add_relation_unique(
+                graph,
+                "calls",
+                &facts[cast[usize](caller_index)].key,
+                &target.key,
+                &detail,
+                true,
+            )
+        elif fact_kind_is_nominal_constructor(&target.kind):
+            add_relation_unique(
+                graph,
+                "uses",
+                &facts[cast[usize](caller_index)].key,
+                &target.key,
+                "",
+                true,
+            )
+        return
+    add_relation_unique(
+        graph,
+        "calls",
+        &facts[cast[usize](caller_index)].key,
+        module_name,
+        name,
+        false,
+    )
+
+
+def add_reparsed_method_call_relation(
+    graph: &SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+    caller_index: i32,
+    module_name: &const String,
+    owner_name: &const String,
+    member_name: &const String,
+) -> void:
+    facts: &const List[SymbolFact] = &graph.facts
+    target_index = find_effective_method_fact(
+        graph,
+        class_model,
+        module_name,
+        owner_name,
+        member_name,
+    )
+    if target_index >= 0:
+        add_relation_unique(
+            graph,
+            "calls",
+            &facts[cast[usize](caller_index)].key,
+            &facts[cast[usize](target_index)].key,
+            "import",
+            true,
+        )
+        return
+    owner_method = owner_name[0:len(owner_name)] + "." + member_name[0:len(member_name)]
+    add_relation_unique(
+        graph,
+        "calls",
+        &facts[cast[usize](caller_index)].key,
+        module_name,
+        &owner_method,
+        false,
+    )
+
+
+def enclosing_scope_for_node(
+    checked: &const checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+) -> symbols.ScopeId:
+    if id.index < 0:
+        return symbols.root_scope()
+    target = arena.nodes[id.index]
+    target_end = target.start + target.length
+    best = symbols.root_scope()
+    best_length: usize = 0
+    scope_bindings: &const List[semantic.NodeScopeBinding] = &checked.model.node_scopes
+    for binding in scope_bindings:
+        if binding.node.index < 0 or binding.node.index >= cast[i32](len(arena.nodes)):
+            continue
+        candidate = arena.nodes[binding.node.index]
+        candidate_end = candidate.start + candidate.length
+        if candidate.start <= target.start and candidate_end >= target_end:
+            if best_length == 0 or candidate.length < best_length:
+                best = binding.scope
+                best_length = candidate.length
+    return best
 
 
 def collect_import_call_relation(
@@ -1710,15 +2081,35 @@ def receiver_field_nominal_fact(
     id: NodeId,
     caller_index: i32,
 ) -> i32:
+    return receiver_field_nominal_fact_in_source(
+        project_graph,
+        graph,
+        module,
+        &module.arena,
+        id,
+        &module.source,
+        caller_index,
+    )
+
+
+def receiver_field_nominal_fact_in_source(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    caller_index: i32,
+) -> i32:
     if id.index < 0:
         return -1
-    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
-    children: &const List[NodeId] = &module.arena.children
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
     node = nodes[id.index]
     facts: &const List[SymbolFact] = &graph.facts
     caller: &const SymbolFact = &facts[cast[usize](caller_index)]
     if node.kind == syntax.SyntaxKind.EXPR_NAME:
-        name = module.source[node.value_start:node.value_start + node.value_length]
+        name = source[node.value_start:node.value_start + node.value_length]
         if name == "self" and len(caller.owner) > 0:
             return find_fact_by_owner_name(
                 graph,
@@ -1730,11 +2121,13 @@ def receiver_field_nominal_fact(
         return -1
     receiver_id = children[node.first_child]
     member_id = children[node.first_child + 1]
-    owner_index = receiver_field_nominal_fact(
+    owner_index = receiver_field_nominal_fact_in_source(
         project_graph,
         graph,
         module,
+        arena,
         receiver_id,
+        source,
         caller_index,
     )
     if owner_index < 0:
@@ -1744,7 +2137,7 @@ def receiver_field_nominal_fact(
     if len(owner.owner) > 0:
         field_owner = owner.owner[0:len(owner.owner)] + "." + owner.name[0:len(owner.name)]
     member = nodes[member_id.index]
-    member_name = module.source[member.value_start:member.value_start + member.value_length]
+    member_name = source[member.value_start:member.value_start + member.value_length]
     field_kind = "field"
     field_key = stable_symbol_key(
         &owner.module_name,

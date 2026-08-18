@@ -145,6 +145,26 @@ struct SymbolTable:
             current_scope = self.scopes[current_scope.index].parent
         return missing_symbol()
 
+    def find_name_in_current_scope(self: &const SymbolTable, source: &const String, scope: ScopeId, name: &const String) -> SymbolId:
+        if scope.index < 0:
+            return missing_symbol()
+        index: usize = 0
+        while index < len(self.symbols):
+            symbol = self.symbols[index]
+            if symbol.scope.index == scope.index and range_equals_string(source, symbol.name_start, symbol.name_length, name):
+                return SymbolId(index=cast[i32](index))
+            index += 1
+        return missing_symbol()
+
+    def find_name_in_scope(self: &const SymbolTable, source: &const String, scope: ScopeId, name: &const String) -> SymbolId:
+        current_scope = scope
+        while current_scope.index >= 0:
+            found = self.find_name_in_current_scope(source, current_scope, name)
+            if found.index >= 0:
+                return found
+            current_scope = self.scopes[current_scope.index].parent
+        return missing_symbol()
+
 
 def missing_symbol() -> SymbolId:
     return SymbolId(index=-1)
@@ -172,6 +192,17 @@ def range_equals(source: &const String, left_start: usize, left_length: usize, r
     offset: usize = 0
     while offset < left_length:
         if source.byte_at(left_start + offset) != source.byte_at(right_start + offset):
+            return false
+        offset += 1
+    return true
+
+
+def range_equals_string(source: &const String, start: usize, length: usize, value: &const String) -> bool:
+    if length != len(value):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != value.byte_at(offset):
             return false
         offset += 1
     return true
