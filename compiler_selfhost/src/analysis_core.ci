@@ -290,7 +290,11 @@ def make_symbol_fact(
         &module.source,
     )
     modifiers = semantic_modifiers(arena, symbol.node, &module.source)
-    declaration_source = module.source[node.start:node.start + node.length]
+    declaration_source = declaration_source_slice(
+        arena,
+        symbol.node,
+        &module.source,
+    )
     reflected = symbol_is_reflected(
         arena,
         &checked.symbols,
@@ -417,7 +421,11 @@ def collect_static_assert_facts(
                 reflected=false,
                 exported=false,
                 path=module.path[0:len(module.path)],
-                source=module.source[node.start:node.start + node.length],
+                source=declaration_source_slice(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
                 line=node.line,
                 column=node.column,
                 module_index=module_index,
@@ -471,7 +479,11 @@ def collect_import_facts(
                 reflected=false,
                 exported=false,
                 path=module.path[0:len(module.path)],
-                source=module.source[node.start:node.start + node.length],
+                source=declaration_source_slice(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
                 line=node.line,
                 column=node.column,
                 module_index=module_index,
@@ -522,7 +534,11 @@ def collect_extern_import_facts(
                 reflected=false,
                 exported=false,
                 path=module.path[0:len(module.path)],
-                source=module.source[node.start:node.start + node.length],
+                source=declaration_source_slice(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
                 line=node.line,
                 column=node.column,
                 module_index=module_index,
@@ -1002,6 +1018,7 @@ def declaration_header(
     nodes: &const List[syntax.SyntaxNode] = &arena.nodes
     children: &const List[NodeId] = &arena.children
     node = nodes[id.index]
+    start = declaration_location_start(arena, id)
     end = node.start + node.length
     if node.kind == syntax.SyntaxKind.FUNCTION_DECL or is_nominal_declaration_kind(node.kind):
         if node.kind == syntax.SyntaxKind.FUNCTION_DECL:
@@ -1024,12 +1041,24 @@ def declaration_header(
                     end = index + 1
                     break
                 index += 1
-    while end > node.start:
+    while end > start:
         byte = source.byte_at(end - 1)
         if byte != 32 and byte != 9 and byte != 10 and byte != 13:
             break
         end -= 1
-    return source[node.start:end]
+    return source[start:end]
+
+
+def declaration_source_slice(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> String:
+    if id.index < 0:
+        return ""
+    node = arena.nodes[id.index]
+    start = declaration_location_start(arena, id)
+    return source[start:node.start + node.length]
 
 
 def canonical_declaration_snapshot(

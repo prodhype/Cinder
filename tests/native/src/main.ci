@@ -447,27 +447,45 @@ def test_decorator_line_resolution(state: &TestState) -> void:
     exported_command: List[String] = [
         state.compiler.clone(),
         "context",
-        state.root + "/tests/cases/semantic_context/src/main.ci:33",
+        state.root + "/tests/cases/semantic_context/src/main.ci:34",
+    ]
+    override_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/model.ci:14",
     ]
     reflected = process.run(reflected_command)
     abstract_method = process.run(abstract_method_command)
     exported = process.run(exported_command)
+    overridden = process.run(override_command)
     ok = (
         reflected.exit_code == 0
         and abstract_method.exit_code == 0
         and exported.exit_code == 0
+        and overridden.exit_code == 0
         and contains(&reflected.stdout, "symbol: model::struct:CacheEntry")
         and contains(&reflected.stdout, "reflected: yes")
+        and contains(&reflected.stdout, "TARGET\n@reflect\nstruct CacheEntry:")
+        and contains(&reflected.stdout, "RELEVANT SOURCE\n@reflect\nstruct CacheEntry:")
         and contains(&abstract_method.stdout, "symbol: model::method:Store.lookup")
         and contains(&abstract_method.stdout, "modifiers: abstractmethod")
+        and contains(&abstract_method.stdout, "TARGET\n@abstractmethod\n    def lookup(self, key: i32) -> CacheEntry:")
+        and contains(&abstract_method.stdout, "RELEVANT SOURCE\n@abstractmethod\n    def lookup(self, key: i32) -> CacheEntry:")
         and contains(&exported.stdout, "symbol: main::function:cinder_cache_lookup")
         and contains(&exported.stdout, "exported: yes")
+        and contains(&exported.stdout, "TARGET\n@export\ndef cinder_cache_lookup(key: i32) -> i32:")
+        and contains(&exported.stdout, "RELEVANT SOURCE\n@export\ndef cinder_cache_lookup(key: i32) -> i32:")
+        and contains(&overridden.stdout, "symbol: model::method:MemoryStore.lookup")
+        and contains(&overridden.stdout, "modifiers: override")
+        and contains(&overridden.stdout, "TARGET\n@override\n    def lookup(self, key: i32) -> CacheEntry:")
+        and contains(&overridden.stdout, "RELEVANT SOURCE\n@override\n    def lookup(self, key: i32) -> CacheEntry:")
     )
-    expect(state, "semantic queries locate declarations from decorator lines", ok)
+    expect(state, "semantic queries retain decorators in declaration source", ok)
     if not ok:
         report_process_failure(&reflected.stdout, &reflected.stderr)
         report_process_failure(&abstract_method.stdout, &abstract_method.stderr)
         report_process_failure(&exported.stdout, &exported.stderr)
+        report_process_failure(&overridden.stdout, &overridden.stderr)
 
 
 def test_impact_caller_truncation(state: &TestState) -> void:
