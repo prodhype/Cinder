@@ -20,6 +20,11 @@ struct DiffGraphResult:
     error: String
 
 
+struct FactMatches:
+    before_to_after: List[i32]
+    after_to_before: List[i32]
+
+
 def semantic_diff_command(args: &const List[String]) -> i32:
     options = parse_diff_options(args)
     if not options.ok:
@@ -193,24 +198,28 @@ def render_semantic_diff(
     builder.append("SYMBOLS\n")
     before_facts: &const List[analysis_core.DiffSymbolFact] = &before.facts
     after_facts: &const List[analysis_core.DiffSymbolFact] = &after.facts
-    before_index = build_fact_index(before_facts)
-    after_index = build_fact_index(after_facts)
-    for fact in before_facts:
-        if not (fact.key in after_index):
+    matches = build_fact_matches(before_facts, after_facts)
+    before_position: usize = 0
+    while before_position < len(before_facts):
+        fact: &const analysis_core.DiffSymbolFact = &before_facts[before_position]
+        if matches.before_to_after[before_position] < 0:
             builder.append("- removed ")
             builder.append(fact.key[0:len(fact.key)])
             builder.append("\n")
             changed = true
-    for fact in after_facts:
-        if not (fact.key in before_index):
+        before_position += 1
+    after_position: usize = 0
+    while after_position < len(after_facts):
+        fact: &const analysis_core.DiffSymbolFact = &after_facts[after_position]
+        previous_position = matches.after_to_before[after_position]
+        if previous_position < 0:
             builder.append("+ added ")
             builder.append(fact.key[0:len(fact.key)])
             builder.append("\n")
             changed = true
         else:
-            previous_index = before_index[fact.key]
-            previous: &const analysis_core.DiffSymbolFact = &before_facts[cast[usize](previous_index)]
-            if not diff_facts_equal(previous, &fact):
+            previous: &const analysis_core.DiffSymbolFact = &before_facts[cast[usize](previous_position)]
+            if not diff_facts_equal(previous, fact):
                 builder.append("~ changed ")
                 builder.append(fact.key[0:len(fact.key)])
                 builder.append("\n")
@@ -286,16 +295,215 @@ def render_semantic_diff(
                 )
                 append_reachable_callers(&builder, after, &fact.key)
                 changed = true
+        after_position += 1
     if not changed:
         builder.append("(unchanged)\n")
     builder.append("\n")
 
-    relation_changed = append_relation_diff(&builder, before, after)
+    relation_changed = append_relation_diff(&builder, before, after, &matches)
     if relation_changed:
         changed = true
     if not changed:
         builder.append("NO SEMANTIC CHANGES\n")
     return builder.finish()
+
+
+def build_fact_matches(
+    before: &const List[analysis_core.DiffSymbolFact],
+    after: &const List[analysis_core.DiffSymbolFact],
+) -> FactMatches:
+    before_to_after: List[i32] = []
+    after_to_before: List[i32] = []
+    while len(before_to_after) < len(before):
+        before_to_after.append(-1)
+    while len(after_to_before) < len(after):
+        after_to_before.append(-1)
+    matches = FactMatches(
+        before_to_after=before_to_after,
+        after_to_before=after_to_before,
+    )
+
+    before_index = build_fact_index(before)
+    after_position: usize = 0
+    while after_position < len(after):
+        fact: &const analysis_core.DiffSymbolFact = &after[after_position]
+        if fact.kind != "static-assert" and fact.key in before_index:
+            before_position = before_index[fact.key]
+            set_fact_match(
+                &matches,
+                before_position,
+                cast[i32](after_position),
+            )
+        after_position += 1
+
+    modules: List[String] = []
+    for fact in before:
+        if fact.kind == "static-assert" and not contains_string(&modules, &fact.module_name):
+            modules.append(fact.module_name[0:len(fact.module_name)])
+    for fact in after:
+        if fact.kind == "static-assert" and not contains_string(&modules, &fact.module_name):
+            modules.append(fact.module_name[0:len(fact.module_name)])
+    for module_name in modules:
+        before_assertions = static_assertion_indexes(before, &module_name)
+        after_assertions = static_assertion_indexes(after, &module_name)
+        align_static_assertions(
+            before,
+            after,
+            &before_assertions,
+            &after_assertions,
+            &matches,
+        )
+    return matches
+
+
+def set_fact_match(
+    matches: &FactMatches,
+    before_position: i32,
+    after_position: i32,
+) -> void:
+    if before_position < 0 or after_position < 0:
+        return
+    before_index = cast[usize](before_position)
+    after_index = cast[usize](after_position)
+    if matches.before_to_after[before_index] >= 0 or matches.after_to_before[after_index] >= 0:
+        return
+    matches.before_to_after[before_index] = after_position
+    matches.after_to_before[after_index] = before_position
+
+
+def static_assertion_indexes(
+    facts: &const List[analysis_core.DiffSymbolFact],
+    module_name: &const String,
+) -> List[i32]:
+    result: List[i32] = []
+    index: usize = 0
+    while index < len(facts):
+        fact: &const analysis_core.DiffSymbolFact = &facts[index]
+        if fact.kind == "static-assert" and fact.module_name == module_name:
+            result.append(cast[i32](index))
+        index += 1
+    return result
+
+
+def align_static_assertions(
+    before: &const List[analysis_core.DiffSymbolFact],
+    after: &const List[analysis_core.DiffSymbolFact],
+    before_indexes: &const List[i32],
+    after_indexes: &const List[i32],
+    matches: &FactMatches,
+) -> void:
+    before_count = len(before_indexes)
+    after_count = len(after_indexes)
+    width = after_count + 1
+    cells: List[i32] = []
+    cell_count = (before_count + 1) * width
+    while len(cells) < cell_count:
+        cells.append(0)
+
+    before_offset = before_count
+    while before_offset > 0:
+        before_offset -= 1
+        after_offset = after_count
+        while after_offset > 0:
+            after_offset -= 1
+            before_fact: &const analysis_core.DiffSymbolFact = &before[
+                cast[usize](before_indexes[before_offset])
+            ]
+            after_fact: &const analysis_core.DiffSymbolFact = &after[
+                cast[usize](after_indexes[after_offset])
+            ]
+            cell = before_offset * width + after_offset
+            if analysis_core.strings_equal(
+                &before_fact.canonical_signature,
+                &after_fact.canonical_signature,
+            ):
+                cells[cell] = cells[(before_offset + 1) * width + after_offset + 1] + 1
+            else:
+                skip_before = cells[(before_offset + 1) * width + after_offset]
+                skip_after = cells[before_offset * width + after_offset + 1]
+                cells[cell] = skip_before
+                if skip_after > skip_before:
+                    cells[cell] = skip_after
+
+    before_anchors: List[i32] = []
+    after_anchors: List[i32] = []
+    before_offset = 0
+    after_offset: usize = 0
+    while before_offset < before_count and after_offset < after_count:
+        before_fact: &const analysis_core.DiffSymbolFact = &before[
+            cast[usize](before_indexes[before_offset])
+        ]
+        after_fact: &const analysis_core.DiffSymbolFact = &after[
+            cast[usize](after_indexes[after_offset])
+        ]
+        if analysis_core.strings_equal(
+            &before_fact.canonical_signature,
+            &after_fact.canonical_signature,
+        ):
+            set_fact_match(
+                matches,
+                before_indexes[before_offset],
+                after_indexes[after_offset],
+            )
+            before_anchors.append(cast[i32](before_offset))
+            after_anchors.append(cast[i32](after_offset))
+            before_offset += 1
+            after_offset += 1
+        elif cells[(before_offset + 1) * width + after_offset] >= cells[
+            before_offset * width + after_offset + 1
+        ]:
+            before_offset += 1
+        else:
+            after_offset += 1
+
+    before_start: usize = 0
+    after_start: usize = 0
+    anchor_index: usize = 0
+    while anchor_index < len(before_anchors):
+        before_end = cast[usize](before_anchors[anchor_index])
+        after_end = cast[usize](after_anchors[anchor_index])
+        pair_static_assertion_gap(
+            before_indexes,
+            after_indexes,
+            before_start,
+            before_end,
+            after_start,
+            after_end,
+            matches,
+        )
+        before_start = before_end + 1
+        after_start = after_end + 1
+        anchor_index += 1
+    pair_static_assertion_gap(
+        before_indexes,
+        after_indexes,
+        before_start,
+        before_count,
+        after_start,
+        after_count,
+        matches,
+    )
+
+
+def pair_static_assertion_gap(
+    before_indexes: &const List[i32],
+    after_indexes: &const List[i32],
+    before_start: usize,
+    before_end: usize,
+    after_start: usize,
+    after_end: usize,
+    matches: &FactMatches,
+) -> void:
+    before_offset = before_start
+    after_offset = after_start
+    while before_offset < before_end and after_offset < after_end:
+        set_fact_match(
+            matches,
+            before_indexes[before_offset],
+            after_indexes[after_offset],
+        )
+        before_offset += 1
+        after_offset += 1
 
 
 def build_fact_index(
@@ -387,21 +595,42 @@ def append_relation_diff(
     builder: &StringBuilder,
     before: &const analysis_core.DiffFactGraph,
     after: &const analysis_core.DiffFactGraph,
+    matches: &const FactMatches,
 ) -> bool:
     changed = false
     builder.append("RELATIONS\n")
     before_relations: &const List[analysis_core.DiffRelationFact] = &before.relations
     after_relations: &const List[analysis_core.DiffRelationFact] = &after.relations
-    before_index = build_relation_index(before_relations)
-    after_index = build_relation_index(after_relations)
+    before_index = build_relation_index(
+        before_relations,
+        &before.facts,
+        matches,
+        true,
+    )
+    after_index = build_relation_index(
+        after_relations,
+        &after.facts,
+        matches,
+        false,
+    )
     for relation in before_relations:
-        identity = relation_identity(&relation)
+        identity = relation_identity(
+            &relation,
+            &before.facts,
+            matches,
+            true,
+        )
         if not (identity in after_index):
             builder.append("- ")
             append_relation(builder, &relation)
             changed = true
     for relation in after_relations:
-        identity = relation_identity(&relation)
+        identity = relation_identity(
+            &relation,
+            &after.facts,
+            matches,
+            false,
+        )
         if not (identity in before_index):
             builder.append("+ ")
             append_relation(builder, &relation)
@@ -414,28 +643,92 @@ def append_relation_diff(
 
 def build_relation_index(
     relations: &const List[analysis_core.DiffRelationFact],
+    facts: &const List[analysis_core.DiffSymbolFact],
+    matches: &const FactMatches,
+    before: bool,
 ) -> Set[String]:
     result: Set[String] = {""}
     result.clear()
     for relation in relations:
-        identity = relation_identity(&relation)
+        identity = relation_identity(
+            &relation,
+            facts,
+            matches,
+            before,
+        )
         result.add(identity)
     return result
 
 
 def relation_identity(
     relation: &const analysis_core.DiffRelationFact,
+    facts: &const List[analysis_core.DiffSymbolFact],
+    matches: &const FactMatches,
+    before: bool,
 ) -> String:
     builder = StringBuilder()
     append_identity_field(&builder, &relation.kind)
-    append_identity_field(&builder, &relation.from_key)
-    append_identity_field(&builder, &relation.to_key)
+    from_identity = matched_endpoint_identity(
+        &relation.from_key,
+        facts,
+        matches,
+        before,
+    )
+    to_identity = matched_endpoint_identity(
+        &relation.to_key,
+        facts,
+        matches,
+        before,
+    )
+    append_identity_field(&builder, &from_identity)
+    append_identity_field(&builder, &to_identity)
     append_identity_field(&builder, &relation.detail)
     if relation.resolved:
         builder.append("1")
     else:
         builder.append("0")
     return builder.finish()
+
+
+def matched_endpoint_identity(
+    key: &const String,
+    facts: &const List[analysis_core.DiffSymbolFact],
+    matches: &const FactMatches,
+    before: bool,
+) -> String:
+    builder = StringBuilder()
+    position = find_diff_fact_index(facts, key)
+    if position < 0:
+        builder.append("key:")
+        builder.append(key[0:len(key)])
+        return builder.finish()
+    if before:
+        if matches.before_to_after[cast[usize](position)] >= 0:
+            builder.append("matched:")
+        else:
+            builder.append("before:")
+        append_usize(&builder, cast[usize](position))
+        return builder.finish()
+    before_position = matches.after_to_before[cast[usize](position)]
+    if before_position >= 0:
+        builder.append("matched:")
+        append_usize(&builder, cast[usize](before_position))
+    else:
+        builder.append("after:")
+        append_usize(&builder, cast[usize](position))
+    return builder.finish()
+
+
+def find_diff_fact_index(
+    facts: &const List[analysis_core.DiffSymbolFact],
+    key: &const String,
+) -> i32:
+    index: usize = 0
+    while index < len(facts):
+        if facts[index].key == key:
+            return cast[i32](index)
+        index += 1
+    return -1
 
 
 def append_identity_field(

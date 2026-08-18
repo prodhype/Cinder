@@ -84,6 +84,12 @@ back to a text diff.
 Facts use a key composed from module, owner path, symbol kind, and name. This
 avoids exposing transient `SymbolId`, `TypeId`, or AST indexes. Collection
 follows deterministic module and source order, and duplicate edges are removed.
+Unnamed top-level static assertions keep deterministic `assertion_N` keys within
+each snapshot. Across snapshots, `semantic-diff` sequence-aligns them by
+canonical parsed signature and uses the same matches for relation comparison,
+so inserting an assertion does not make later unchanged assertions appear
+changed. Unmatched one-to-one gaps remain changes, preserving useful reports
+for edited assertions.
 The first output schema is identified as `cinder-semantic-v1`.
 
 The query model is currently in memory. There is no semantic cache or database;

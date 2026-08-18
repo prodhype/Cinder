@@ -56,6 +56,8 @@ struct SemanticFactGraph:
 
 struct DiffSymbolFact:
     key: String
+    module_name: String
+    kind: String
     signature: String
     canonical_signature: String
     implementation: String
@@ -172,6 +174,8 @@ def compact_diff_graph(graph: &const SemanticFactGraph) -> DiffFactGraph:
         facts.append(
             DiffSymbolFact(
                 key=owned_text(&fact.key),
+                module_name=owned_text(&fact.module_name),
+                kind=owned_text(&fact.kind),
                 signature=owned_text(&fact.signature),
                 canonical_signature=owned_text(&fact.canonical_signature),
                 implementation=owned_text(&fact.implementation),
