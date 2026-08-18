@@ -346,5 +346,7 @@ def append_numeric_literal(builder: &StringBuilder, source: &const String, start
     while offset < length:
         byte = source.byte_at(start + offset)
         if byte != 95:
-            builder.append(source[start + offset:start + offset + 1])
+            if byte >= 65 and byte <= 90:
+                byte += 32
+            builder.append_char(cast[char](byte))
         offset += 1

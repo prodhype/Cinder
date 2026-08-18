@@ -1083,30 +1083,41 @@ def test_ownership_use_resolution(state: &TestState) -> void:
         "--depth",
         "0",
     ]
+    explicit_address_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:36",
+        "--depth",
+        "0",
+    ]
     discard_void = process.run(discard_void_command)
     discard_value = process.run(discard_value_command)
     argument = process.run(argument_command)
     returned = process.run(return_command)
     void_return = process.run(void_return_command)
+    explicit_address = process.run(explicit_address_command)
     ok = (
         discard_void.exit_code == 0
         and discard_value.exit_code == 0
         and argument.exit_code == 0
         and returned.exit_code == 0
         and void_return.exit_code == 0
+        and explicit_address.exit_code == 0
         and contains(&discard_void.stdout, "uses: copy=0, move=0, borrow=0, address=0")
         and contains(&discard_value.stdout, "uses: copy=0, move=0, borrow=0, address=0")
         and contains(&argument.stdout, "uses: copy=1, move=0, borrow=0, address=0")
         and contains(&returned.stdout, "uses: copy=1, move=0, borrow=0, address=0")
         and contains(&void_return.stdout, "uses: copy=0, move=0, borrow=0, address=0")
+        and contains(&explicit_address.stdout, "uses: copy=0, move=0, borrow=2, address=2")
     )
-    expect(state, "context counts ownership uses only at transfer sites", ok)
+    expect(state, "context counts transfer and explicit address uses", ok)
     if not ok:
         report_process_failure(&discard_void.stdout, &discard_void.stderr)
         report_process_failure(&discard_value.stdout, &discard_value.stderr)
         report_process_failure(&argument.stdout, &argument.stderr)
         report_process_failure(&returned.stdout, &returned.stderr)
         report_process_failure(&void_return.stdout, &void_return.stderr)
+        report_process_failure(&explicit_address.stdout, &explicit_address.stderr)
 
 
 def test_semantic_query_diagnostics(state: &TestState) -> void:
@@ -1156,7 +1167,7 @@ def test_semantic_diff(state: &TestState) -> void:
     literal_format_path = source_dir + "/literal_format.ci"
     write_test_text(
         literal_format_path[0:len(literal_format_path)],
-        "def literal_format_probe() -> i32:\n    return 1_000\n",
+        "def literal_format_probe() -> i32:\n    return 1_000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0XAF + 0B10 + 0O7) + 1E6\n",
     )
     literal_change_path = source_dir + "/literal_change.ci"
     write_test_text(
@@ -1321,7 +1332,7 @@ def test_semantic_diff(state: &TestState) -> void:
     )
     write_test_text(
         literal_format_path[0:len(literal_format_path)],
-        "def literal_format_probe() -> i32:\n    return 1000\n",
+        "def literal_format_probe() -> i32:\n    return 1000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0xaf + 0b10 + 0o7) + 1e6\n",
     )
     write_test_text(
         literal_change_path[0:len(literal_change_path)],
@@ -1627,6 +1638,10 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(
             &literal_format.stdout,
             "~ changed literal_format::function:literal_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:literal_case_probe",
         )
         and contains(
             &literal_change.stdout,

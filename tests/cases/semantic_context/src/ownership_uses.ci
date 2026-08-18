@@ -28,3 +28,11 @@ def transfer_return() -> i32:
 
 def return_void_call() -> void:
     return noop()
+
+
+address_target: i32 = 7
+
+
+def explicit_address_transfers() -> *i32:
+    pointer: *i32 = &address_target
+    return &address_target

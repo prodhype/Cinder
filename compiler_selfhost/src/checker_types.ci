@@ -1241,6 +1241,12 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         result = operand_type
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
             validate_ordered_lock_element_mutation(checker, arena, operand, source, current_scope)
+            if operand.index >= 0:
+                address_symbol = symbols.missing_symbol()
+                operand_node = arena.nodes[operand.index]
+                if operand_node.kind == syntax.SyntaxKind.EXPR_NAME:
+                    address_symbol = checker.symbols.find_in_scope(source, current_scope, operand_node.value_start, operand_node.value_length)
+                checker.model.record_value_use(operand, semantic.ValueUseKind.ADDRESS, address_symbol, operand_type)
             result = checker.type_table.pointer_to(operand_type)
         elif types.is_atomic_type(&checker.type_table, operand_type):
             operand_node = arena.nodes[operand.index]
