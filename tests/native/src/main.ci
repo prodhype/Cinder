@@ -49,6 +49,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_atomic_codegen(&state)
     test_context_capsule(&state)
     test_impact_report(&state)
+    test_enum_member_resolution(&state)
     test_decorator_line_resolution(&state)
     test_impact_caller_truncation(&state)
     test_import_call_resolution(&state)
@@ -475,6 +476,107 @@ def test_impact_report(state: &TestState) -> void:
             &abi_indirect_payload.stdout,
             &abi_indirect_payload.stderr,
         )
+
+
+def test_enum_member_resolution(state: &TestState) -> void:
+    example = state.root + "/examples/types_and_results.ci"
+    explicit_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":3",
+    ]
+    negative_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":2",
+    ]
+    explicit_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":3",
+    ]
+    enum_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":1",
+    ]
+    qualified_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/examples/module_project/src/model.ci:2",
+    ]
+    explicit_context = process.run(explicit_context_command)
+    negative_impact = process.run(negative_impact_command)
+    explicit_impact = process.run(explicit_impact_command)
+    enum_impact = process.run(enum_impact_command)
+    qualified_impact = process.run(qualified_impact_command)
+    ok = (
+        explicit_context.exit_code == 0
+        and negative_impact.exit_code == 0
+        and explicit_impact.exit_code == 0
+        and enum_impact.exit_code == 0
+        and qualified_impact.exit_code == 0
+        and contains(
+            &explicit_context.stdout,
+            "symbol: types_and_results::enum-member:ParseError.too_large",
+        )
+        and contains(&explicit_context.stdout, "kind: enum-member")
+        and contains(&explicit_context.stdout, "too_large = 10")
+        and contains(
+            &negative_impact.stdout,
+            "symbol: types_and_results::enum-member:ParseError.negative",
+        )
+        and contains(&negative_impact.stdout, "types_and_results::function:parse")
+        and contains(
+            &negative_impact.stdout,
+            "types_and_results::function:negative_error",
+        )
+        and not contains(
+            &negative_impact.stdout,
+            "types_and_results::function:too_large_error",
+        )
+        and not contains(
+            &negative_impact.stdout,
+            "types_and_results::function:increment",
+        )
+        and contains(
+            &explicit_impact.stdout,
+            "symbol: types_and_results::enum-member:ParseError.too_large",
+        )
+        and contains(&explicit_impact.stdout, "types_and_results::function:parse")
+        and contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:too_large_error",
+        )
+        and not contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:negative_error",
+        )
+        and not contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:increment",
+        )
+        and contains(
+            &enum_impact.stdout,
+            "symbol: types_and_results::enum:ParseError",
+        )
+        and contains(&enum_impact.stdout, "types_and_results::function:increment")
+        and contains(
+            &qualified_impact.stdout,
+            "symbol: model::enum-member:ParseError.negative",
+        )
+        and contains(
+            &qualified_impact.stdout,
+            "support.parser::function:parse",
+        )
+    )
+    expect(state, "enum members are addressable with precise consumers", ok)
+    if not ok:
+        report_process_failure(&explicit_context.stdout, &explicit_context.stderr)
+        report_process_failure(&negative_impact.stdout, &negative_impact.stderr)
+        report_process_failure(&explicit_impact.stdout, &explicit_impact.stderr)
+        report_process_failure(&enum_impact.stdout, &enum_impact.stderr)
+        report_process_failure(&qualified_impact.stdout, &qualified_impact.stderr)
 
 
 def test_decorator_line_resolution(state: &TestState) -> void:

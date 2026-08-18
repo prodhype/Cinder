@@ -143,6 +143,12 @@ def build_fact_graph(
                     &reflection_model,
                 ))
             symbol_index += 1
+        collect_enum_member_facts(
+            source_module,
+            &analyzed.checked,
+            analyzed.module_index,
+            &facts,
+        )
         collect_static_assert_facts(
             source_module,
             analyzed.module_index,
@@ -172,6 +178,7 @@ def build_fact_graph(
     )
     collect_member_relations(&graph_value)
     collect_semantic_relations(graph, analysis, &graph_value)
+    collect_enum_member_use_relations(graph, analysis, &graph_value)
     collect_import_value_relations(graph, analysis, &graph_value)
     collect_import_call_relations(graph, analysis, &class_model, &graph_value)
     collect_type_relations(graph, &graph_value)
@@ -348,6 +355,98 @@ def make_symbol_fact(
         symbol_index=symbol_index,
         node=symbol.node,
     )
+
+
+def collect_enum_member_facts(
+    module: &const project.ParsedModule,
+    checked: &const checker_core.Checker,
+    module_index: usize,
+    facts: &List[SymbolFact],
+) -> void:
+    arena: &const syntax.SyntaxArena = &module.arena
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    symbol_values: &const List[symbols.SymbolRecord] = &checked.symbols.symbols
+    enum_bindings: &const List[semantic.NodeSymbolBinding] = &checked.model.enum_symbols
+    for binding in enum_bindings:
+        if (
+            binding.node.index < 0
+            or binding.symbol.index < 0
+            or binding.symbol.index >= cast[i32](len(symbol_values))
+        ):
+            continue
+        enum_symbol: &const symbols.SymbolRecord = &symbol_values[
+            cast[usize](binding.symbol.index)
+        ]
+        declaration = nodes[binding.node.index]
+        enum_name = module.source[
+            enum_symbol.name_start:enum_symbol.name_start + enum_symbol.name_length
+        ]
+        enum_owner = symbol_owner_path(
+            &checked.symbols,
+            enum_symbol.owner,
+            &module.source,
+        )
+        member_owner = enum_name[0:len(enum_name)]
+        if len(enum_owner) > 0:
+            member_owner = enum_owner[0:len(enum_owner)] + "." + enum_name[0:len(enum_name)]
+        enum_type_name = symbol_fact_type_name(
+            arena,
+            &checked.type_table,
+            enum_symbol,
+            &module.source,
+        )
+        enum_ownership = ownership_name(&checked.type_table, enum_symbol.type_id)
+        enum_reflected = has_decorator(arena, binding.node, &module.source, "reflect")
+        for offset in range(0, declaration.child_count):
+            member_id = children[declaration.first_child + offset]
+            member = nodes[member_id.index]
+            if member.kind != syntax.SyntaxKind.ENUM_MEMBER_DECL:
+                continue
+            member_name = module.source[
+                member.value_start:member.value_start + member.value_length
+            ]
+            member_kind = "enum-member"
+            facts.append(
+                SymbolFact(
+                    key=stable_symbol_key(
+                        &module.name,
+                        &member_kind,
+                        &member_owner,
+                        &member_name,
+                    ),
+                    module_name=module.name[0:len(module.name)],
+                    name=member_name,
+                    kind=member_kind,
+                    owner=member_owner[0:len(member_owner)],
+                    signature=declaration_header(arena, member_id, &module.source),
+                    canonical_signature=canonical_declaration_snapshot(
+                        arena,
+                        member_id,
+                        &module.source,
+                    ),
+                    implementation="",
+                    modifiers="none",
+                    type_name=enum_type_name[0:len(enum_type_name)],
+                    ownership=enum_ownership[0:len(enum_ownership)],
+                    parameter_ownership="(not applicable)",
+                    abi="Cinder",
+                    members="",
+                    reflected=enum_reflected,
+                    exported=false,
+                    path=module.path[0:len(module.path)],
+                    source=declaration_source_slice(
+                        arena,
+                        member_id,
+                        &module.source,
+                    ),
+                    line=member.line,
+                    column=member.column,
+                    module_index=module_index,
+                    symbol_index=-1,
+                    node=member_id,
+                )
+            )
 
 
 def symbol_fact_type_name(
@@ -1456,6 +1555,177 @@ def collect_semantic_relations(
                     true,
                 )
         module_index += 1
+
+
+def collect_enum_member_use_relations(
+    project_graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    facts: &const List[SymbolFact] = &graph.facts
+    for analyzed in analyzed_modules:
+        module_index = analyzed.module_index
+        module: &const project.ParsedModule = &project_modules[module_index]
+        nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+        node_index: usize = 0
+        while node_index < len(nodes):
+            node = nodes[node_index]
+            if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE and node.child_count >= 2:
+                attribute_id = NodeId(index=cast[i32](node_index))
+                source_index = enclosing_fact_index(
+                    graph,
+                    module_index,
+                    attribute_id,
+                    &module.arena,
+                )
+                target_index = enum_member_fact_for_attribute(
+                    graph,
+                    &analyzed.checked,
+                    module,
+                    attribute_id,
+                    module_index,
+                )
+                if (
+                    source_index >= 0
+                    and target_index >= 0
+                    and source_index != target_index
+                ):
+                    add_relation_unique(
+                        graph,
+                        "uses",
+                        &facts[cast[usize](source_index)].key,
+                        &facts[cast[usize](target_index)].key,
+                        "",
+                        true,
+                    )
+            node_index += 1
+
+
+def enum_member_fact_for_attribute(
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    attribute_id: NodeId,
+    module_index: usize,
+) -> i32:
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    attribute = nodes[attribute_id.index]
+    if attribute.child_count < 2:
+        return -1
+    receiver_id = children[attribute.first_child]
+    member_id = children[attribute.first_child + 1]
+    enum_index = enum_fact_for_value_receiver(
+        graph,
+        checked,
+        module,
+        receiver_id,
+        module_index,
+    )
+    facts: &const List[SymbolFact] = &graph.facts
+    if enum_index < 0 or enum_index >= cast[i32](len(facts)):
+        return -1
+    enum_fact: &const SymbolFact = &facts[cast[usize](enum_index)]
+    member = nodes[member_id.index]
+    member_name = module.source[
+        member.value_start:member.value_start + member.value_length
+    ]
+    member_owner = enum_fact.name[0:len(enum_fact.name)]
+    if len(enum_fact.owner) > 0:
+        member_owner = enum_fact.owner[0:len(enum_fact.owner)] + "." + enum_fact.name[0:len(enum_fact.name)]
+    member_kind = "enum-member"
+    member_key = stable_symbol_key(
+        &enum_fact.module_name,
+        &member_kind,
+        &member_owner,
+        &member_name,
+    )
+    return find_fact_by_key(graph, &member_key)
+
+
+def enum_fact_for_value_receiver(
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    receiver_id: NodeId,
+    module_index: usize,
+) -> i32:
+    if receiver_id.index < 0:
+        return -1
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    facts: &const List[SymbolFact] = &graph.facts
+    receiver = nodes[receiver_id.index]
+    if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
+        bound_symbol = bound_symbol_for_node(checked, receiver_id)
+        local_index = fact_index_for_symbol(graph, module_index, bound_symbol)
+        if (
+            local_index >= 0
+            and facts[cast[usize](local_index)].kind == "enum"
+        ):
+            return local_index
+        if not symbol_is_import_binding(
+            checked,
+            &module.arena,
+            bound_symbol,
+            true,
+        ):
+            return -1
+        receiver_name = module.source[
+            receiver.value_start:receiver.value_start + receiver.value_length
+        ]
+        module_imports: &const List[project.ImportBinding] = &module.imports
+        for imported in module_imports:
+            if len(imported.member) > 0 and imported.alias == receiver_name:
+                imported_index = find_top_level_fact_by_module_name(
+                    graph,
+                    &imported.module_name,
+                    &imported.member,
+                )
+                if (
+                    imported_index >= 0
+                    and facts[cast[usize](imported_index)].kind == "enum"
+                ):
+                    return imported_index
+        return -1
+    if receiver.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or receiver.child_count < 2:
+        return -1
+    module_id = children[receiver.first_child]
+    enum_id = children[receiver.first_child + 1]
+    module_node = nodes[module_id.index]
+    enum_node = nodes[enum_id.index]
+    if module_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return -1
+    bound_module = bound_symbol_for_node(checked, module_id)
+    if not symbol_is_import_binding(
+        checked,
+        &module.arena,
+        bound_module,
+        false,
+    ):
+        return -1
+    module_alias = module.source[
+        module_node.value_start:module_node.value_start + module_node.value_length
+    ]
+    enum_name = module.source[
+        enum_node.value_start:enum_node.value_start + enum_node.value_length
+    ]
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    for imported in module_imports:
+        if len(imported.member) == 0 and imported.alias == module_alias:
+            imported_index = find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &enum_name,
+            )
+            if (
+                imported_index >= 0
+                and facts[cast[usize](imported_index)].kind == "enum"
+            ):
+                return imported_index
+    return -1
 
 
 def collect_import_value_relation(

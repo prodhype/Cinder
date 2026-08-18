@@ -29,6 +29,14 @@ def increment(value: i32) -> Result[i32, ParseError]:
             return Ok(0)
 
 
+def negative_error() -> ParseError:
+    return ParseError.negative
+
+
+def too_large_error() -> ParseError:
+    return ParseError.too_large
+
+
 def main() -> i32:
     number = Number(integer=41)
     result = increment(number.integer)
