@@ -408,6 +408,7 @@ def test_impact_report(state: &TestState) -> void:
     unrelated_method_target = state.root + "/tests/cases/semantic_context/src/model.ci:14"
     borrowed_target = state.root + "/tests/cases/semantic_context/src/model.ci:18"
     status_target = state.root + "/tests/cases/semantic_context/src/model.ci:22"
+    status_member_target = state.root + "/tests/cases/semantic_context/src/model.ci:23"
     abi_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:27"
     abi_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:35"
     interface_target = state.root + "/tests/cases/semantic_context/src/model.ci:6"
@@ -441,6 +442,11 @@ def test_impact_report(state: &TestState) -> void:
         "impact",
         status_target,
     ]
+    status_member_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        status_member_target,
+    ]
     abi_payload_command: List[String] = [
         state.compiler.clone(),
         "impact",
@@ -462,6 +468,7 @@ def test_impact_report(state: &TestState) -> void:
     unrelated_method = process.run(unrelated_method_command)
     borrowed = process.run(borrowed_command)
     status = process.run(status_command)
+    status_member = process.run(status_member_command)
     abi_payload = process.run(abi_payload_command)
     abi_indirect_payload = process.run(abi_indirect_payload_command)
     interface = process.run(interface_command)
@@ -472,6 +479,7 @@ def test_impact_report(state: &TestState) -> void:
         and unrelated_method.exit_code == 0
         and borrowed.exit_code == 0
         and status.exit_code == 0
+        and status_member.exit_code == 0
         and abi_payload.exit_code == 0
         and abi_indirect_payload.exit_code == 0
         and interface.exit_code == 0
@@ -495,6 +503,7 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&field_impact.stdout, "C ABI sensitive")
         and not contains(&field_impact.stdout, "source-level layout sensitive")
         and not contains(&unrelated_method.stdout, "emitted runtime reflection metadata")
+        and not contains(&unrelated_method.stdout, "C ABI sensitive")
         and not contains(&nominal.stdout, "transitive caller search truncated")
         and contains(&borrowed.stdout, "model::struct:BorrowedEntry")
         and contains(&borrowed.stdout, "cache::function:export_borrowed_entry_value")
@@ -504,6 +513,8 @@ def test_impact_report(state: &TestState) -> void:
         and contains(&status.stdout, "cache::function:export_status")
         and contains(&status.stdout, "C ABI sensitive")
         and not contains(&status.stdout, "no explicit C ABI exposure recorded")
+        and contains(&status_member.stdout, "model::enum-member:Status.Ready")
+        and contains(&status_member.stdout, "C ABI sensitive")
         and contains(&abi_payload.stdout, "model::struct:AbiPayload")
         and contains(&abi_payload.stdout, "cache::function:export_abi_box")
         and contains(&abi_payload.stdout, "C ABI sensitive")
@@ -527,6 +538,7 @@ def test_impact_report(state: &TestState) -> void:
         report_process_failure(&unrelated_method.stdout, &unrelated_method.stderr)
         report_process_failure(&borrowed.stdout, &borrowed.stderr)
         report_process_failure(&status.stdout, &status.stderr)
+        report_process_failure(&status_member.stdout, &status_member.stderr)
         report_process_failure(&abi_payload.stdout, &abi_payload.stderr)
         report_process_failure(
             &abi_indirect_payload.stdout,
@@ -563,15 +575,38 @@ def test_inherited_field_resolution(state: &TestState) -> void:
         "impact",
         example + ":5",
     ]
+    base_method_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":11",
+    ]
+    override_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":27",
+        "--depth",
+        "1",
+    ]
+    override_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":27",
+    ]
     ordinary_context = process.run(ordinary_context_command)
     fstring_context = process.run(fstring_context_command)
     typed_fstring_context = process.run(typed_fstring_context_command)
     impact = process.run(impact_command)
+    base_method_impact = process.run(base_method_impact_command)
+    override_context = process.run(override_context_command)
+    override_impact = process.run(override_impact_command)
     ok = (
         ordinary_context.exit_code == 0
         and fstring_context.exit_code == 0
         and typed_fstring_context.exit_code == 0
         and impact.exit_code == 0
+        and base_method_impact.exit_code == 0
+        and override_context.exit_code == 0
+        and override_impact.exit_code == 0
         and contains(
             &ordinary_context.stdout,
             "classes::field:Shape.name",
@@ -594,6 +629,16 @@ def test_inherited_field_resolution(state: &TestState) -> void:
         )
         and contains(&impact.stdout, "C ABI sensitive")
         and not contains(&impact.stdout, "source-level layout sensitive")
+        and contains(
+            &base_method_impact.stdout,
+            "classes::method:Circle.area",
+        )
+        and not contains(&base_method_impact.stdout, "C ABI sensitive")
+        and contains(
+            &override_context.stdout,
+            "DEPENDS ON\n- classes::method:Shape.area",
+        )
+        and not contains(&override_impact.stdout, "C ABI sensitive")
     )
     expect(
         state,
@@ -614,6 +659,12 @@ def test_inherited_field_resolution(state: &TestState) -> void:
             &typed_fstring_context.stderr,
         )
         report_process_failure(&impact.stdout, &impact.stderr)
+        report_process_failure(
+            &base_method_impact.stdout,
+            &base_method_impact.stderr,
+        )
+        report_process_failure(&override_context.stdout, &override_context.stderr)
+        report_process_failure(&override_impact.stdout, &override_impact.stderr)
 
 
 def test_enum_member_resolution(state: &TestState) -> void:
@@ -929,6 +980,10 @@ def test_import_call_resolution(state: &TestState) -> void:
         and contains(&inherited_method.stdout, "emitted runtime reflection metadata")
         and contains(&direct_method.stdout, "main::function:call_imported_method")
         and contains(&child.stdout, "DIRECT CALLERS\n(none)")
+        and contains(
+            &overridden_base.stdout,
+            "call_targets::method:OverrideChild.hidden",
+        )
         and not contains(&overridden_base.stdout, "emitted runtime reflection metadata")
     )
     expect(state, "semantic queries resolve imported calls without false edges", ok)

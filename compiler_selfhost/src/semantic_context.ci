@@ -325,16 +325,33 @@ def has_c_abi_surface_exposure(
             return true
     for relation in relations:
         if (
-            (
-                relation.kind == "member"
-                or relation.kind == "layout-base"
-            )
-            and relation.to_key == target_key
+            relation.to_key == target_key
             and relation.resolved
+            and relation_propagates_c_abi_surface(graph, &relation)
             and has_c_abi_surface_exposure(graph, &relation.from_key)
         ):
             return true
     return false
+
+
+def relation_propagates_c_abi_surface(
+    graph: &const analysis_core.SemanticFactGraph,
+    relation: &const analysis_core.RelationFact,
+) -> bool:
+    if relation.kind == "layout-base":
+        return true
+    if relation.kind != "member":
+        return false
+    fact_index = analysis_core.find_fact_by_key(graph, &relation.to_key)
+    if fact_index < 0:
+        return false
+    facts: &const List[analysis_core.SymbolFact] = &graph.facts
+    kind: &const String = &facts[cast[usize](fact_index)].kind
+    return (
+        kind == "field"
+        or kind == "enum-member"
+        or kind == "variant-case"
+    )
 
 
 def append_property(
@@ -432,7 +449,13 @@ def relation_matches_filter(kind: &const String, filter: i32) -> bool:
         return kind == "calls"
     if filter == 2:
         return kind == "lock-before" or kind == "acquires" or kind == "lock-effect"
-    return kind == "type" or kind == "uses" or kind == "member" or kind == "acquires"
+    return (
+        kind == "type"
+        or kind == "uses"
+        or kind == "member"
+        or kind == "override"
+        or kind == "acquires"
+    )
 
 
 def append_lock_effect(
@@ -606,7 +629,15 @@ def append_consumer_section(
     consumers: List[String] = []
     relations: &const List[analysis_core.RelationFact] = &graph.relations
     for relation in relations:
-        if text_equal(&relation.to_key, &target.key) and (relation.kind == "type" or relation.kind == "uses" or relation.kind == "member"):
+        if (
+            text_equal(&relation.to_key, &target.key)
+            and (
+                relation.kind == "type"
+                or relation.kind == "uses"
+                or relation.kind == "member"
+                or relation.kind == "override"
+            )
+        ):
             if not string_list_contains(&consumers, &relation.from_key):
                 consumers.append(relation.from_key[0:len(relation.from_key)])
     if len(consumers) == 0:

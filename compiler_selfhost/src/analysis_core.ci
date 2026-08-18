@@ -183,6 +183,7 @@ def build_fact_graph(
     )
     collect_member_relations(&graph_value)
     collect_layout_base_relations(&graph_value, &class_model)
+    collect_override_relations(&graph_value, &class_model)
     collect_semantic_relations(graph, analysis, &graph_value)
     collect_enum_member_use_relations(graph, analysis, &graph_value)
     collect_nominal_field_use_relations(
@@ -1618,6 +1619,79 @@ def collect_layout_base_relations(
                 "embedded",
                 true,
             )
+
+
+def collect_override_relations(
+    graph: &SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+) -> void:
+    facts: &const List[SymbolFact] = &graph.facts
+    class_values: &const List[classes.ClassInfo] = &class_model.classes
+    method_values: &const List[classes.ClassMethodInfo] = &class_model.methods
+    class_index: usize = 0
+    while class_index < len(class_values):
+        class_info: &const classes.ClassInfo = &class_values[class_index]
+        method_offset: i32 = 0
+        while method_offset < class_info.method_count:
+            method_index = class_info.first_method + method_offset
+            method: &const classes.ClassMethodInfo = &method_values[
+                cast[usize](method_index)
+            ]
+            if method.name != "__init__" and method.name != "__del__":
+                method_owner = (
+                    class_info.name[0:len(class_info.name)]
+                    + "."
+                    + method.name[0:len(method.name)]
+                )
+                method_fact_index = find_fact_by_owner_name(
+                    graph,
+                    &class_info.module_name,
+                    &method_owner,
+                )
+                if method_fact_index >= 0:
+                    base_offset: i32 = 0
+                    while base_offset < class_info.base_count:
+                        base: &const classes.ClassBaseInfo = &class_model.bases[
+                            cast[usize](class_info.first_base + base_offset)
+                        ]
+                        if base.target >= 0:
+                            base_method_index = classes.find_effective_method(
+                                class_model,
+                                base.target,
+                                &method.name,
+                            )
+                            if (
+                                base_method_index >= 0
+                                and base_method_index != method_index
+                            ):
+                                base_method: &const classes.ClassMethodInfo = &method_values[
+                                    cast[usize](base_method_index)
+                                ]
+                                base_owner: &const classes.ClassInfo = &class_values[
+                                    cast[usize](base_method.owner)
+                                ]
+                                base_method_owner = (
+                                    base_owner.name[0:len(base_owner.name)]
+                                    + "."
+                                    + base_method.name[0:len(base_method.name)]
+                                )
+                                base_fact_index = find_fact_by_owner_name(
+                                    graph,
+                                    &base_owner.module_name,
+                                    &base_method_owner,
+                                )
+                                if base_fact_index >= 0:
+                                    add_relation_unique(
+                                        graph,
+                                        "override",
+                                        &facts[cast[usize](method_fact_index)].key,
+                                        &facts[cast[usize](base_fact_index)].key,
+                                        "",
+                                        true,
+                                    )
+                        base_offset += 1
+            method_offset += 1
+        class_index += 1
 
 
 def collect_semantic_relations(
