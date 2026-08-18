@@ -2375,11 +2375,16 @@ def receiver_field_nominal_fact_in_source(
     if field_index < 0:
         return -1
     field: &const SymbolFact = &facts[cast[usize](field_index)]
-    return resolve_type_fact(
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    field_module: &const project.ParsedModule = &project_modules[field.module_index]
+    field_type_id = codegen_type_names.find_child_type(&field_module.arena, field.node)
+    return resolve_type_fact_from_node(
         project_graph,
         graph,
         field.module_index,
-        &field.type_name,
+        &field_module.arena,
+        &field_module.source,
+        field_type_id,
     )
 
 
@@ -2454,8 +2459,14 @@ def collect_type_relations(
                     &module.arena,
                     &module.source,
                 ):
-                    type_text = module.source[node.start:node.start + node.length]
-                    target_index = resolve_type_fact(project_graph, graph, module_index, &type_text)
+                    target_index = resolve_type_fact_from_node(
+                        project_graph,
+                        graph,
+                        module_index,
+                        &module.arena,
+                        &module.source,
+                        type_id,
+                    )
                     if target_index >= 0 and target_index != source_index:
                         add_relation_unique(
                             graph,
@@ -2532,14 +2543,13 @@ def collect_abi_surface_type_relation(
     name_id = abi_surface_nominal_name_node(&module.arena, type_node_id)
     if name_id.index < 0:
         return
-    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
-    name_node = nodes[name_id.index]
-    type_text = module.source[name_node.start:name_node.start + name_node.length]
-    target_index = resolve_type_fact(
+    target_index = resolve_type_fact_from_node(
         project_graph,
         graph,
         module_index,
-        &type_text,
+        &module.arena,
+        &module.source,
+        name_id,
     )
     if target_index < 0 or target_index == source_index:
         return
@@ -2637,6 +2647,31 @@ def resolve_type_fact(
     if local >= 0:
         return local
     return -1
+
+
+def resolve_type_fact_from_node(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    arena: &const syntax.SyntaxArena,
+    source: &const String,
+    type_id: NodeId,
+) -> i32:
+    if type_id.index < 0:
+        return -1
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    node = nodes[type_id.index]
+    if node.kind != syntax.SyntaxKind.TYPE_NAME or node.child_count == 0:
+        return -1
+    builder = StringBuilder()
+    for offset in range(0, node.child_count):
+        if offset > 0:
+            builder.append(".")
+        part = nodes[children[node.first_child + offset].index]
+        builder.append(source[part.value_start:part.value_start + part.value_length])
+    type_text = builder.finish()
+    return resolve_type_fact(project_graph, graph, module_index, &type_text)
 
 
 def collect_lock_relations(

@@ -41,7 +41,7 @@ def main() -> i32:
     return 0
 
 
-def use_qualified_target(value: type_targets.Target) -> type_targets.Target:
+def use_qualified_target(value: type_targets . Target) -> type_targets . Target:
     return value
 
 
@@ -105,3 +105,8 @@ def read_qualified_limit_fstring() -> i32:
 def read_shadowed_qualified_limit_fstring(value_targets: LocalValues) -> i32:
     print(f"limit={value_targets.LIMIT}")
     return 0
+
+
+@export
+def export_spaced_qualified_target(value: type_targets . Target) -> i32:
+    return value.value

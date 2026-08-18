@@ -836,7 +836,7 @@ def test_import_type_resolution(state: &TestState) -> void:
         and target.exit_code == 0
         and method.exit_code == 0
         and contains(&qualified.stdout, "DEPENDS ON\n- type_targets::struct:Target")
-        and contains(&qualified.stdout, "type: type_targets.Target")
+        and contains(&qualified.stdout, "type: type_targets . Target")
         and not contains(&qualified.stdout, "type_targets::method:Holder.Target")
         and not contains(&shadowed.stdout, "type_targets::struct:Target")
         and not contains(&shadowed.stdout, "type_targets::method:Holder.Target")
@@ -846,6 +846,8 @@ def test_import_type_resolution(state: &TestState) -> void:
         and contains(&field.stdout, "type: model.CacheEntry")
         and contains(&target.stdout, "main::function:use_qualified_target")
         and contains(&target.stdout, "main::function:use_imported_target")
+        and contains(&target.stdout, "main::function:export_spaced_qualified_target")
+        and contains(&target.stdout, "C ABI sensitive")
         and not contains(&target.stdout, "main::function-template:identity")
         and not contains(&method.stdout, "main::function:use_qualified_target")
     )
