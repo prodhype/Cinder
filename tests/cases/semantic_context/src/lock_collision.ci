@@ -5,3 +5,7 @@ class Holder:
 
 lock database
 lock cache after database
+
+
+lock metrics
+lockorder cache before metrics

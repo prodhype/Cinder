@@ -289,6 +289,13 @@ def test_context_capsule(state: &TestState) -> void:
         lock_target,
     ]
     lock_context = process.run(lock_command)
+    lock_order_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:11"
+    lock_order_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        lock_order_target,
+    ]
+    lock_order_context = process.run(lock_order_command)
     collision_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:2"
     collision_command: List[String] = [
         state.compiler.clone(),
@@ -314,6 +321,7 @@ def test_context_capsule(state: &TestState) -> void:
         and method.exit_code == 0
         and qualified.exit_code == 0
         and lock_context.exit_code == 0
+        and lock_order_context.exit_code == 0
         and collision.exit_code == 0
         and extern_import.exit_code == 0
         and import_context.exit_code == 0
@@ -330,6 +338,9 @@ def test_context_capsule(state: &TestState) -> void:
         and contains(&qualified.stdout, "DEPENDS ON\n- model::struct:CacheEntry")
         and contains(&lock_context.stdout, "symbol: lock_collision::lock:cache")
         and contains(&lock_context.stdout, "lock_collision::lock:database < lock_collision::lock:cache")
+        and contains(&lock_order_context.stdout, "lockorder cache before metrics")
+        and contains(&lock_order_context.stdout, "symbol: lock_collision::lock-order:order_0")
+        and contains(&lock_order_context.stdout, "kind: lock-order")
         and contains(&collision.stdout, "symbol: lock_collision::method:Holder.cache")
         and contains(&collision.stdout, "LOCK IMPACT\n(none)")
         and contains(&extern_import.stdout, "extern import \"stdlib.h\"")
@@ -345,6 +356,7 @@ def test_context_capsule(state: &TestState) -> void:
         report_process_failure(&method.stdout, &method.stderr)
         report_process_failure(&qualified.stdout, &qualified.stderr)
         report_process_failure(&lock_context.stdout, &lock_context.stderr)
+        report_process_failure(&lock_order_context.stdout, &lock_order_context.stderr)
         report_process_failure(&collision.stdout, &collision.stderr)
         report_process_failure(&extern_import.stdout, &extern_import.stderr)
         report_process_failure(&import_context.stdout, &import_context.stderr)
@@ -1045,7 +1057,7 @@ def test_semantic_diff(state: &TestState) -> void:
     type_format_path = source_dir + "/type_format.ci"
     write_test_text(
         type_format_path[0:len(type_format_path)],
-        "import type_format_model\n\n\nstruct Holder:\n    items: List[i32]\n    item: type_format_model.Item\n    nested: List[type_format_model.Item]\n",
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[i32]\n    item: type_format_model.Item\n    nested: List[type_format_model.Item]\n    array_items: type_format_model.Item[1_000]\n",
     )
     enum_format_path = source_dir + "/enum_format.ci"
     write_test_text(
@@ -1071,6 +1083,11 @@ def test_semantic_diff(state: &TestState) -> void:
     write_test_text(
         assertion_insert_path[0:len(assertion_insert_path)],
         "import assertion_insert_values\n\nstatic_assert(assertion_insert_values.LIMIT == 3)\nstatic_assert(2 == 2)\n",
+    )
+    lock_order_insert_path = source_dir + "/lock_order_insert.ci"
+    write_test_text(
+        lock_order_insert_path[0:len(lock_order_insert_path)],
+        "lock database\nlock cache\nlock metrics\nlockorder cache before metrics\n",
     )
     extern_import_path = source_dir + "/extern_import.ci"
     write_test_text(
@@ -1200,7 +1217,7 @@ def test_semantic_diff(state: &TestState) -> void:
     )
     write_test_text(
         type_format_path[0:len(type_format_path)],
-        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i32\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n",
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i32\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n    array_items: type_format_model . Item[1000]\n",
     )
     write_test_text(
         enum_format_path[0:len(enum_format_path)],
@@ -1217,6 +1234,10 @@ def test_semantic_diff(state: &TestState) -> void:
     write_test_text(
         assertion_insert_path[0:len(assertion_insert_path)],
         "import assertion_insert_values\n\nstatic_assert(3 == 3)\nstatic_assert(assertion_insert_values.LIMIT == 3)\nstatic_assert(2 == 2)\n",
+    )
+    write_test_text(
+        lock_order_insert_path[0:len(lock_order_insert_path)],
+        "lock database\nlock cache\nlock metrics\nlockorder database before cache\nlockorder cache before metrics\n",
     )
     write_test_text(
         extern_import_path[0:len(extern_import_path)],
@@ -1334,6 +1355,14 @@ def test_semantic_diff(state: &TestState) -> void:
         assertion_insert_path,
     ]
     assertion_insert = process.run(assertion_insert_command)
+    lock_order_insert_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        lock_order_insert_path,
+    ]
+    lock_order_insert = process.run(lock_order_insert_command)
     extern_import_command: List[String] = [
         state.compiler.clone(),
         "semantic-diff",
@@ -1376,7 +1405,7 @@ def test_semantic_diff(state: &TestState) -> void:
     ordinary_import = process.run(ordinary_import_command)
     write_test_text(
         type_format_path[0:len(type_format_path)],
-        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i64\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n",
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i64\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n    array_items: type_format_model . Item[1001]\n",
     )
     type_change_command: List[String] = [
         state.compiler.clone(),
@@ -1416,6 +1445,7 @@ def test_semantic_diff(state: &TestState) -> void:
         and assertion.exit_code == 0
         and assertion_format.exit_code == 0
         and assertion_insert.exit_code == 0
+        and lock_order_insert.exit_code == 0
         and extern_import.exit_code == 0
         and extern_import_format.exit_code == 0
         and extern_import_insert.exit_code == 0
@@ -1495,6 +1525,7 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(&type_format.stdout, "~ changed type_format::field:Holder.items")
         and not contains(&type_format.stdout, "~ changed type_format::field:Holder.item")
         and not contains(&type_format.stdout, "~ changed type_format::field:Holder.nested")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.array_items")
         and contains(&enum_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(&enum_format.stdout, "~ changed enum_format::enum:FormatEnum")
         and contains(&assertion.stdout, "~ changed assertion::static-assert:assertion_0")
@@ -1521,6 +1552,22 @@ def test_semantic_diff(state: &TestState) -> void:
             "+ added assertion_insert::static-assert:assertion_2",
         )
         and contains(&assertion_insert.stdout, "RELATIONS\n(unchanged)")
+        and contains(
+            &lock_order_insert.stdout,
+            "+ added lock_order_insert::lock-order:order_0",
+        )
+        and not contains(
+            &lock_order_insert.stdout,
+            "~ changed lock_order_insert::lock-order:",
+        )
+        and not contains(
+            &lock_order_insert.stdout,
+            "- removed lock_order_insert::lock-order:",
+        )
+        and not contains(
+            &lock_order_insert.stdout,
+            "+ added lock_order_insert::lock-order:order_1",
+        )
         and contains(&extern_import.stdout, "~ changed extern_import::extern-import:import_0")
         and contains(
             &extern_import.stdout,
@@ -1570,6 +1617,11 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(&ordinary_import.stdout, "NO SEMANTIC CHANGES")
         and contains(&type_change.stdout, "~ changed type_format::field:Holder.items")
         and contains(&type_change.stdout, "type: CinderList_i32 -> CinderList_i64")
+        and contains(&type_change.stdout, "~ changed type_format::field:Holder.array_items")
+        and contains(
+            &type_change.stdout,
+            "type: type_format_model.Item[1000] -> type_format_model.Item[1001]",
+        )
         and not contains(&type_change.stdout, "NO SEMANTIC CHANGES")
         and contains(&standalone.stdout, "NO SEMANTIC CHANGES")
         and not contains(&worktrees.stdout, "cinder-semantic-diff.")
@@ -1588,6 +1640,7 @@ def test_semantic_diff(state: &TestState) -> void:
         report_process_failure(&assertion.stdout, &assertion.stderr)
         report_process_failure(&assertion_format.stdout, &assertion_format.stderr)
         report_process_failure(&assertion_insert.stdout, &assertion_insert.stderr)
+        report_process_failure(&lock_order_insert.stdout, &lock_order_insert.stderr)
         report_process_failure(&extern_import.stdout, &extern_import.stderr)
         report_process_failure(
             &extern_import_format.stdout,

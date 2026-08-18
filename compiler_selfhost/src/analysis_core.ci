@@ -158,6 +158,11 @@ def build_fact_graph(
             analyzed.module_index,
             &facts,
         )
+        collect_lock_order_facts(
+            source_module,
+            analyzed.module_index,
+            &facts,
+        )
         module_index += 1
     graph_value = SemanticFactGraph(facts=facts, relations=relations, error="")
     mark_effective_reflected_members(
@@ -554,6 +559,61 @@ def collect_extern_import_facts(
             )
         )
         import_index += 1
+
+
+def collect_lock_order_facts(
+    module: &const project.ParsedModule,
+    module_index: usize,
+    facts: &List[SymbolFact],
+) -> void:
+    if module.root.index < 0:
+        return
+    arena: &const syntax.SyntaxArena = &module.arena
+    root = arena.nodes[module.root.index]
+    order_index: i32 = 0
+    for offset in range(0, root.child_count):
+        declaration = arena.children[root.first_child + offset]
+        node = arena.nodes[declaration.index]
+        if node.kind != syntax.SyntaxKind.LOCK_ORDER_DECL:
+            continue
+        name = "order_" + to_string(order_index)
+        kind = "lock-order"
+        facts.append(
+            SymbolFact(
+                key=stable_symbol_key(&module.name, &kind, "", &name),
+                module_name=module.name[0:len(module.name)],
+                name=name,
+                kind=kind,
+                owner="",
+                signature=declaration_header(arena, declaration, &module.source),
+                canonical_signature=canonical_declaration_snapshot(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
+                implementation="",
+                modifiers="none",
+                type_name="not applicable",
+                ownership="not applicable",
+                parameter_ownership="(not applicable)",
+                abi="not applicable",
+                members="",
+                reflected=false,
+                exported=false,
+                path=module.path[0:len(module.path)],
+                source=declaration_source_slice(
+                    arena,
+                    declaration,
+                    &module.source,
+                ),
+                line=node.line,
+                column=node.column,
+                module_index=module_index,
+                symbol_index=-1,
+                node=declaration,
+            )
+        )
+        order_index += 1
 
 
 def ordered_nominal_member_keys(
