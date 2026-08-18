@@ -194,6 +194,7 @@ def build_fact_graph(
     )
     collect_import_value_relations(graph, analysis, &graph_value)
     collect_import_call_relations(graph, analysis, &class_model, &graph_value)
+    collect_layout_type_relations(graph, &graph_value)
     collect_type_relations(graph, &graph_value)
     collect_abi_surface_relations(graph, analysis, &graph_value)
     collect_lock_relations(analysis, &graph_value)
@@ -2282,6 +2283,30 @@ def enum_member_fact_for_enum(
     return find_fact_by_key(graph, &member_key)
 
 
+def variant_case_fact_for_nominal(
+    graph: &const SemanticFactGraph,
+    nominal_index: i32,
+    member_name: &const String,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    if nominal_index < 0 or nominal_index >= cast[i32](len(facts)):
+        return -1
+    nominal: &const SymbolFact = &facts[cast[usize](nominal_index)]
+    if nominal.kind != "variant":
+        return -1
+    member_owner = nominal.name[0:len(nominal.name)]
+    if len(nominal.owner) > 0:
+        member_owner = nominal.owner[0:len(nominal.owner)] + "." + nominal.name[0:len(nominal.name)]
+    member_kind = "variant-case"
+    member_key = stable_symbol_key(
+        &nominal.module_name,
+        &member_kind,
+        &member_owner,
+        member_name,
+    )
+    return find_fact_by_key(graph, &member_key)
+
+
 def enum_fact_for_name_symbol(
     graph: &const SemanticFactGraph,
     checked: &const checker_core.Checker,
@@ -2290,11 +2315,32 @@ def enum_fact_for_name_symbol(
     symbol_index: i32,
     receiver_name: &const String,
 ) -> i32:
+    expected_kind = "enum"
+    return nominal_fact_for_name_symbol_kind(
+        graph,
+        checked,
+        module,
+        module_index,
+        symbol_index,
+        receiver_name,
+        &expected_kind,
+    )
+
+
+def nominal_fact_for_name_symbol_kind(
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    symbol_index: i32,
+    receiver_name: &const String,
+    expected_kind: &const String,
+) -> i32:
     facts: &const List[SymbolFact] = &graph.facts
     local_index = fact_index_for_symbol(graph, module_index, symbol_index)
     if (
         local_index >= 0
-        and facts[cast[usize](local_index)].kind == "enum"
+        and facts[cast[usize](local_index)].kind == expected_kind
     ):
         return local_index
     if not symbol_is_import_binding(
@@ -2314,7 +2360,7 @@ def enum_fact_for_name_symbol(
             )
             if (
                 imported_index >= 0
-                and facts[cast[usize](imported_index)].kind == "enum"
+                and facts[cast[usize](imported_index)].kind == expected_kind
             ):
                 return imported_index
     return -1
@@ -2327,6 +2373,25 @@ def enum_fact_for_value_receiver(
     receiver_id: NodeId,
     module_index: usize,
 ) -> i32:
+    expected_kind = "enum"
+    return nominal_fact_for_value_receiver_kind(
+        graph,
+        checked,
+        module,
+        receiver_id,
+        module_index,
+        &expected_kind,
+    )
+
+
+def nominal_fact_for_value_receiver_kind(
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    receiver_id: NodeId,
+    module_index: usize,
+    expected_kind: &const String,
+) -> i32:
     if receiver_id.index < 0:
         return -1
     nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
@@ -2338,13 +2403,14 @@ def enum_fact_for_value_receiver(
         receiver_name = module.source[
             receiver.value_start:receiver.value_start + receiver.value_length
         ]
-        return enum_fact_for_name_symbol(
+        return nominal_fact_for_name_symbol_kind(
             graph,
             checked,
             module,
             module_index,
             bound_symbol,
             &receiver_name,
+            expected_kind,
         )
     if receiver.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or receiver.child_count < 2:
         return -1
@@ -2378,9 +2444,53 @@ def enum_fact_for_value_receiver(
             )
             if (
                 imported_index >= 0
-                and facts[cast[usize](imported_index)].kind == "enum"
+                and facts[cast[usize](imported_index)].kind == expected_kind
             ):
                 return imported_index
+    return -1
+
+
+def imported_nominal_fact_for_attribute_source(
+    graph: &const SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    source: &const String,
+    attribute_id: NodeId,
+    expected_kind: &const String,
+) -> i32:
+    if attribute_id.index < 0:
+        return -1
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    attribute = nodes[attribute_id.index]
+    if attribute.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or attribute.child_count < 2:
+        return -1
+    module_id = children[attribute.first_child]
+    nominal_id = children[attribute.first_child + 1]
+    module_node = nodes[module_id.index]
+    nominal_node = nodes[nominal_id.index]
+    if module_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return -1
+    module_alias = source[
+        module_node.value_start:module_node.value_start + module_node.value_length
+    ]
+    nominal_name = source[
+        nominal_node.value_start:nominal_node.value_start + nominal_node.value_length
+    ]
+    facts: &const List[SymbolFact] = &graph.facts
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    for imported in module_imports:
+        if len(imported.member) == 0 and imported.alias == module_alias:
+            nominal_index = find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &nominal_name,
+            )
+            if (
+                nominal_index >= 0
+                and facts[cast[usize](nominal_index)].kind == expected_kind
+            ):
+                return nominal_index
     return -1
 
 
@@ -3110,6 +3220,36 @@ def collect_reparsed_call_relation(
     member = arena.nodes[member_id.index]
     member_name = source[member.value_start:member.value_start + member.value_length]
     nominal_fact_index: i32 = -1
+    if receiver.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE and receiver.child_count >= 2:
+        module_id = arena.children[receiver.first_child]
+        module_node = arena.nodes[module_id.index]
+        if module_node.kind == syntax.SyntaxKind.EXPR_NAME:
+            module_alias = source[
+                module_node.value_start:module_node.value_start + module_node.value_length
+            ]
+            found = checked.symbols.find_name_in_scope(
+                &module.source,
+                current_scope,
+                &module_alias,
+            )
+            if (
+                found.index >= 0
+                and symbol_is_import_binding(
+                    checked,
+                    &module.arena,
+                    found.index,
+                    false,
+                )
+            ):
+                variant_kind = "variant"
+                nominal_fact_index = imported_nominal_fact_for_attribute_source(
+                    graph,
+                    module,
+                    arena,
+                    source,
+                    receiver_id,
+                    &variant_kind,
+                )
     if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
         receiver_name = source[receiver.value_start:receiver.value_start + receiver.value_length]
         binding_index = lock_order.find_method_receiver_binding(receiver_bindings, &receiver_name)
@@ -3236,6 +3376,26 @@ def add_reparsed_method_call_relation(
             true,
         )
         return
+    nominal_index = find_top_level_fact_by_module_name(
+        graph,
+        module_name,
+        owner_name,
+    )
+    target_index = variant_case_fact_for_nominal(
+        graph,
+        nominal_index,
+        member_name,
+    )
+    if target_index >= 0:
+        add_relation_unique(
+            graph,
+            "uses",
+            &facts[cast[usize](caller_index)].key,
+            &facts[cast[usize](target_index)].key,
+            "",
+            true,
+        )
+        return
     owner_method = owner_name[0:len(owner_name)] + "." + member_name[0:len(member_name)]
     add_relation_unique(
         graph,
@@ -3346,28 +3506,37 @@ def collect_import_call_relation(
                         target_module = imported.module_name[0:len(imported.module_name)]
                         target_name = member_name
         if len(target_module) == 0:
-            nominal_fact_index: i32 = -1
-            receiver_type = analysis_value_type(
-                &checked.type_table,
-                semantic_expression_type(checked, &module.arena, receiver_id),
+            variant_kind = "variant"
+            nominal_fact_index = nominal_fact_for_value_receiver_kind(
+                graph,
+                checked,
+                module,
+                receiver_id,
+                facts[cast[usize](caller_index)].module_index,
+                &variant_kind,
             )
-            if receiver_type.index >= 0 and receiver_type.index < cast[i32](len(checked.type_table.types)):
-                receiver_record = checked.type_table.types[receiver_type.index]
-                if types.is_nominal_kind(receiver_record.kind) and receiver_record.name_length > 0:
-                    type_builder = StringBuilder()
-                    codegen_type_names.emit_semantic_readable_type_name(
-                        &checked.type_table,
-                        receiver_type,
-                        &module.source,
-                        &type_builder,
-                    )
-                    type_name = type_builder.finish()
-                    nominal_fact_index = resolve_type_fact(
-                        project_graph,
-                        graph,
-                        facts[cast[usize](caller_index)].module_index,
-                        &type_name,
-                    )
+            if nominal_fact_index < 0:
+                receiver_type = analysis_value_type(
+                    &checked.type_table,
+                    semantic_expression_type(checked, &module.arena, receiver_id),
+                )
+                if receiver_type.index >= 0 and receiver_type.index < cast[i32](len(checked.type_table.types)):
+                    receiver_record = checked.type_table.types[receiver_type.index]
+                    if types.is_nominal_kind(receiver_record.kind) and receiver_record.name_length > 0:
+                        type_builder = StringBuilder()
+                        codegen_type_names.emit_semantic_readable_type_name(
+                            &checked.type_table,
+                            receiver_type,
+                            &module.source,
+                            &type_builder,
+                        )
+                        type_name = type_builder.finish()
+                        nominal_fact_index = resolve_type_fact(
+                            project_graph,
+                            graph,
+                            facts[cast[usize](caller_index)].module_index,
+                            &type_name,
+                        )
             if nominal_fact_index < 0:
                 nominal_fact_index = receiver_field_nominal_fact(
                     project_graph,
@@ -3396,15 +3565,30 @@ def collect_import_call_relation(
                         true,
                     )
                 else:
-                    owner_method = nominal.name[0:len(nominal.name)] + "." + member_name[0:len(member_name)]
-                    add_relation_unique(
+                    target_index = variant_case_fact_for_nominal(
                         graph,
-                        "calls",
-                        &facts[cast[usize](caller_index)].key,
-                        &nominal.module_name,
-                        &owner_method,
-                        false,
+                        nominal_fact_index,
+                        &member_name,
                     )
+                    if target_index >= 0:
+                        add_relation_unique(
+                            graph,
+                            "uses",
+                            &facts[cast[usize](caller_index)].key,
+                            &facts[cast[usize](target_index)].key,
+                            "",
+                            true,
+                        )
+                    else:
+                        owner_method = nominal.name[0:len(nominal.name)] + "." + member_name[0:len(member_name)]
+                        add_relation_unique(
+                            graph,
+                            "calls",
+                            &facts[cast[usize](caller_index)].key,
+                            &nominal.module_name,
+                            &owner_method,
+                            false,
+                        )
                 return
     if len(target_module) == 0 or len(target_name) == 0:
         return
@@ -3616,6 +3800,38 @@ def symbol_is_import_binding(
     return node.kind == syntax.SyntaxKind.IMPORT_DECL
 
 
+def collect_layout_type_relations(
+    project_graph: &const project.ProjectGraph,
+    graph: &SemanticFactGraph,
+) -> void:
+    facts: &const List[SymbolFact] = &graph.facts
+    modules: &const List[project.ParsedModule] = &project_graph.modules
+    fact_index: usize = 0
+    while fact_index < len(facts):
+        fact: &const SymbolFact = &facts[fact_index]
+        if (
+            fact.kind == "field"
+            and fact.node.index >= 0
+            and fact.module_index < len(modules)
+        ):
+            module: &const project.ParsedModule = &modules[fact.module_index]
+            type_id = codegen_type_names.find_child_type(
+                &module.arena,
+                fact.node,
+            )
+            relation_kind = "type"
+            collect_embedded_aggregate_type_relation(
+                project_graph,
+                module,
+                graph,
+                fact.module_index,
+                cast[i32](fact_index),
+                type_id,
+                &relation_kind,
+            )
+        fact_index += 1
+
+
 def collect_type_relations(
     project_graph: &const project.ProjectGraph,
     graph: &SemanticFactGraph,
@@ -3720,6 +3936,27 @@ def collect_abi_surface_type_relation(
     source_index: i32,
     type_node_id: NodeId,
 ) -> void:
+    relation_kind = "abi-surface"
+    collect_embedded_aggregate_type_relation(
+        project_graph,
+        module,
+        graph,
+        module_index,
+        source_index,
+        type_node_id,
+        &relation_kind,
+    )
+
+
+def collect_embedded_aggregate_type_relation(
+    project_graph: &const project.ProjectGraph,
+    module: &const project.ParsedModule,
+    graph: &SemanticFactGraph,
+    module_index: usize,
+    source_index: i32,
+    type_node_id: NodeId,
+    relation_kind: &const String,
+) -> void:
     name_id = abi_surface_nominal_name_node(&module.arena, type_node_id)
     target_index: i32 = -1
     if name_id.index >= 0:
@@ -3741,7 +3978,7 @@ def collect_abi_surface_type_relation(
     ):
         add_relation_unique(
             graph,
-            "abi-surface",
+            relation_kind[0:len(relation_kind)],
             &facts[cast[usize](source_index)].key,
             &facts[cast[usize](target_index)].key,
             "by-value",
@@ -3750,7 +3987,7 @@ def collect_abi_surface_type_relation(
     generic_id = abi_surface_generic_type_node(&module.arena, type_node_id)
     if generic_id.index < 0:
         return
-    collect_abi_surface_generic_argument_relations(
+    collect_embedded_generic_argument_relations(
         project_graph,
         graph,
         module,
@@ -3758,10 +3995,11 @@ def collect_abi_surface_type_relation(
         source_index,
         generic_id,
         target_index,
+        relation_kind,
     )
 
 
-def collect_abi_surface_generic_argument_relations(
+def collect_embedded_generic_argument_relations(
     project_graph: &const project.ProjectGraph,
     graph: &SemanticFactGraph,
     module: &const project.ParsedModule,
@@ -3769,6 +4007,7 @@ def collect_abi_surface_generic_argument_relations(
     source_index: i32,
     generic_id: NodeId,
     target_index: i32,
+    relation_kind: &const String,
 ) -> void:
     nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
     children: &const List[NodeId] = &module.arena.children
@@ -3782,13 +4021,14 @@ def collect_abi_surface_generic_argument_relations(
     if abi_surface_is_value_runtime_generic(&module.source, &base):
         argument_offset: i32 = 1
         while argument_offset < generic.child_count:
-            collect_abi_surface_type_relation(
+            collect_embedded_aggregate_type_relation(
                 project_graph,
                 module,
                 graph,
                 module_index,
                 source_index,
                 children[generic.first_child + argument_offset],
+                relation_kind,
             )
             argument_offset += 1
         return
@@ -3821,13 +4061,14 @@ def collect_abi_surface_generic_argument_relations(
             argument_offset - 1,
             0,
         ):
-            collect_abi_surface_type_relation(
+            collect_embedded_aggregate_type_relation(
                 project_graph,
                 module,
                 graph,
                 module_index,
                 source_index,
                 children[generic.first_child + argument_offset],
+                relation_kind,
             )
         argument_offset += 1
 

@@ -79,3 +79,21 @@ def format_cache_entry(entry: model.CacheEntry) -> void:
 def indexed_cache_entry_value() -> i32:
     items: model.CacheEntry[1] = [model.CacheEntry(value=7)]
     return items[0].value
+
+
+def construct_token(value: i32) -> void:
+    token = model.Token.Integer(value=value)
+
+
+@export
+def export_abi_nested_holder(value: model.AbiNestedHolder) -> i32:
+    return value.payload.value
+
+
+@export
+def export_abi_nested_ref_holder(value: model.AbiNestedRefHolder) -> i32:
+    return 0
+
+
+def format_constructed_token(value: i32) -> void:
+    print(f"{model.Token.Integer(value)}")

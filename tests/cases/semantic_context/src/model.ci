@@ -38,3 +38,24 @@ struct AbiIndirectPayload:
 
 struct AbiRefBox[T]:
     value: &T
+
+
+variant Token:
+    Integer(value: i32)
+    End
+
+
+struct AbiNestedPayload:
+    value: i32
+
+
+struct AbiNestedHolder:
+    payload: AbiNestedPayload
+
+
+struct AbiNestedIndirectPayload:
+    value: i32
+
+
+struct AbiNestedRefHolder:
+    payload: &AbiNestedIndirectPayload

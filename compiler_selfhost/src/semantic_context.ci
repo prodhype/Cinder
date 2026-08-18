@@ -340,6 +340,16 @@ def relation_propagates_c_abi_surface(
 ) -> bool:
     if relation.kind == "layout-base":
         return true
+    if relation.kind == "type":
+        if relation.detail != "by-value":
+            return false
+        fact_index = analysis_core.find_fact_by_key(graph, &relation.to_key)
+        if fact_index < 0:
+            return false
+        facts: &const List[analysis_core.SymbolFact] = &graph.facts
+        return analysis_core.fact_kind_is_abi_aggregate(
+            &facts[cast[usize](fact_index)].kind,
+        )
     if relation.kind != "member":
         return false
     fact_index = analysis_core.find_fact_by_key(graph, &relation.to_key)

@@ -414,6 +414,8 @@ def test_impact_report(state: &TestState) -> void:
     status_member_target = state.root + "/tests/cases/semantic_context/src/model.ci:23"
     abi_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:27"
     abi_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:35"
+    abi_nested_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:48"
+    abi_nested_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:56"
     interface_target = state.root + "/tests/cases/semantic_context/src/model.ci:6"
     nominal_command: List[String] = [
         state.compiler.clone(),
@@ -467,6 +469,16 @@ def test_impact_report(state: &TestState) -> void:
         "impact",
         abi_indirect_payload_target,
     ]
+    abi_nested_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_nested_payload_target,
+    ]
+    abi_nested_indirect_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_nested_indirect_payload_target,
+    ]
     interface_command: List[String] = [
         state.compiler.clone(),
         "impact",
@@ -482,6 +494,8 @@ def test_impact_report(state: &TestState) -> void:
     status_member = process.run(status_member_command)
     abi_payload = process.run(abi_payload_command)
     abi_indirect_payload = process.run(abi_indirect_payload_command)
+    abi_nested_payload = process.run(abi_nested_payload_command)
+    abi_nested_indirect_payload = process.run(abi_nested_indirect_payload_command)
     interface = process.run(interface_command)
     ok = (
         nominal.exit_code == 0
@@ -494,6 +508,8 @@ def test_impact_report(state: &TestState) -> void:
         and status_member.exit_code == 0
         and abi_payload.exit_code == 0
         and abi_indirect_payload.exit_code == 0
+        and abi_nested_payload.exit_code == 0
+        and abi_nested_indirect_payload.exit_code == 0
         and interface.exit_code == 0
         and contains(&nominal.stdout, "model::struct:CacheEntry")
         and contains(&nominal.stdout, "TYPE / MEMBER CONSUMERS")
@@ -541,6 +557,35 @@ def test_impact_report(state: &TestState) -> void:
         )
         and contains(&abi_indirect_payload.stdout, "source-level layout sensitive")
         and not contains(&abi_indirect_payload.stdout, "C ABI sensitive")
+        and contains(
+            &abi_nested_payload.stdout,
+            "model::struct:AbiNestedPayload",
+        )
+        and contains(
+            &abi_nested_payload.stdout,
+            "model::field:AbiNestedHolder.payload",
+        )
+        and contains(&abi_nested_payload.stdout, "C ABI sensitive")
+        and not contains(
+            &abi_nested_payload.stdout,
+            "source-level layout sensitive",
+        )
+        and contains(
+            &abi_nested_indirect_payload.stdout,
+            "model::struct:AbiNestedIndirectPayload",
+        )
+        and contains(
+            &abi_nested_indirect_payload.stdout,
+            "model::field:AbiNestedRefHolder.payload",
+        )
+        and contains(
+            &abi_nested_indirect_payload.stdout,
+            "source-level layout sensitive",
+        )
+        and not contains(
+            &abi_nested_indirect_payload.stdout,
+            "C ABI sensitive",
+        )
         and contains(&interface.stdout, "model::class:Store")
         and contains(&interface.stdout, "source-level layout sensitive")
         and not contains(&interface.stdout, "C ABI sensitive")
@@ -559,6 +604,14 @@ def test_impact_report(state: &TestState) -> void:
         report_process_failure(
             &abi_indirect_payload.stdout,
             &abi_indirect_payload.stderr,
+        )
+        report_process_failure(
+            &abi_nested_payload.stdout,
+            &abi_nested_payload.stderr,
+        )
+        report_process_failure(
+            &abi_nested_indirect_payload.stdout,
+            &abi_nested_indirect_payload.stderr,
         )
         report_process_failure(&interface.stdout, &interface.stderr)
 
@@ -1163,24 +1216,74 @@ def test_import_constructor_resolution(state: &TestState) -> void:
         "--depth",
         "1",
     ]
+    variant_constructor_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:84",
+        "--depth",
+        "1",
+    ]
+    variant_fstring_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:98",
+        "--depth",
+        "1",
+    ]
     target_impact: List[String] = [
         state.compiler.clone(),
         "impact",
         state.root + "/tests/cases/semantic_context/src/model.ci:2",
     ]
     constructor = process.run(constructor_context)
+    variant_constructor = process.run(variant_constructor_context)
+    variant_fstring = process.run(variant_fstring_context)
     target = process.run(target_impact)
     ok = (
         constructor.exit_code == 0
+        and variant_constructor.exit_code == 0
+        and variant_fstring.exit_code == 0
         and target.exit_code == 0
         and contains(&constructor.stdout, "symbol: cache::function:construct_entry_only")
         and contains(&constructor.stdout, "type: void")
         and contains(&constructor.stdout, "DEPENDS ON\n- model::struct:CacheEntry")
+        and contains(
+            &variant_constructor.stdout,
+            "symbol: cache::function:construct_token",
+        )
+        and contains(
+            &variant_constructor.stdout,
+            "model::variant-case:Token.Integer",
+        )
+        and not contains(
+            &variant_constructor.stdout,
+            "model::variant-case:Token.End",
+        )
+        and contains(
+            &variant_fstring.stdout,
+            "symbol: cache::function:format_constructed_token",
+        )
+        and contains(
+            &variant_fstring.stdout,
+            "model::variant-case:Token.Integer",
+        )
+        and not contains(
+            &variant_fstring.stdout,
+            "model::variant-case:Token.End",
+        )
         and contains(&target.stdout, "cache::function:construct_entry_only")
     )
     expect(state, "semantic queries record module-qualified constructor uses", ok)
     if not ok:
         report_process_failure(&constructor.stdout, &constructor.stderr)
+        report_process_failure(
+            &variant_constructor.stdout,
+            &variant_constructor.stderr,
+        )
+        report_process_failure(
+            &variant_fstring.stdout,
+            &variant_fstring.stderr,
+        )
         report_process_failure(&target.stdout, &target.stderr)
 
 
