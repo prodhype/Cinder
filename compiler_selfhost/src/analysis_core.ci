@@ -350,16 +350,21 @@ def symbol_fact_type_name(
     source: &const String,
 ) -> String:
     type_node_id = codegen_type_names.find_child_type(arena, symbol.node)
-    if type_node_contains_qualified_name(arena, type_node_id):
-        type_node = arena.nodes[type_node_id.index]
-        return source[type_node.start:type_node.start + type_node.length]
     type_builder = StringBuilder()
-    codegen_type_names.emit_semantic_readable_type_name(
-        table,
-        symbol.type_id,
-        source,
-        &type_builder,
-    )
+    if type_node_contains_qualified_name(arena, type_node_id):
+        codegen_type_names.emit_semantic_declared_type_name(
+            arena,
+            type_node_id,
+            source,
+            &type_builder,
+        )
+    else:
+        codegen_type_names.emit_semantic_readable_type_name(
+            table,
+            symbol.type_id,
+            source,
+            &type_builder,
+        )
     return type_builder.finish()
 
 

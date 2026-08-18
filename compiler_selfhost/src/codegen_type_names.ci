@@ -431,6 +431,115 @@ def emit_semantic_specialized_type_name(
         index += 1
     builder.append(readable[0:len(readable)])
 
+
+def emit_semantic_declared_type_name(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+) -> void:
+    if id.index < 0:
+        builder.append("error")
+        return
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.TYPE_NAME:
+        if node.child_count == 0:
+            codegen_names.append_source(builder, source, node.value_start, node.value_length)
+            return
+        for offset in range(0, node.child_count):
+            if offset > 0:
+                builder.append(".")
+            part = arena.nodes[arena.children[node.first_child + offset].index]
+            codegen_names.append_source(builder, source, part.value_start, part.value_length)
+        return
+    if node.kind == SyntaxKind.TYPE_GENERIC:
+        if node.child_count == 0:
+            builder.append("error")
+            return
+        emit_semantic_declared_type_name(arena, arena.children[node.first_child], source, builder)
+        builder.append("[")
+        offset: i32 = 1
+        while offset < node.child_count:
+            if offset > 1:
+                builder.append(", ")
+            emit_semantic_declared_type_name(arena, arena.children[node.first_child + offset], source, builder)
+            offset += 1
+        builder.append("]")
+        return
+    if node.kind == SyntaxKind.TYPE_POINTER:
+        if node.flags == 1:
+            emit_semantic_declared_type_name(arena, codegen_names.first_child(arena, id), source, builder)
+            builder.append("*")
+        else:
+            builder.append("*")
+            emit_semantic_declared_type_name(arena, codegen_names.first_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.TYPE_REFERENCE:
+        builder.append("&")
+        emit_semantic_declared_type_name(arena, codegen_names.first_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.TYPE_CONST:
+        builder.append("const ")
+        emit_semantic_declared_type_name(arena, codegen_names.first_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.TYPE_ARRAY:
+        emit_semantic_declared_type_name(arena, codegen_names.first_child(arena, id), source, builder)
+        builder.append("[")
+        if node.child_count > 1:
+            length = arena.nodes[arena.children[node.first_child + 1].index]
+            codegen_names.append_source(builder, source, length.value_start, length.value_length)
+        builder.append("]")
+        return
+    if node.kind == SyntaxKind.TYPE_SLICE:
+        builder.append("[]")
+        emit_semantic_declared_type_name(arena, codegen_names.first_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.TYPE_DYN:
+        builder.append("&dyn ")
+        emit_semantic_declared_type_name(arena, codegen_names.first_child(arena, id), source, builder)
+        return
+    if node.kind == SyntaxKind.TYPE_FUNCTION:
+        has_return = callable_type_has_return(source, &node)
+        parameter_count = node.child_count
+        if has_return:
+            parameter_count -= 1
+        builder.append("def(")
+        offset: i32 = 0
+        while offset < parameter_count:
+            if offset > 0:
+                builder.append(", ")
+            emit_semantic_declared_type_name(arena, arena.children[node.first_child + offset], source, builder)
+            offset += 1
+        builder.append(")")
+        if has_return:
+            builder.append(" -> ")
+            emit_semantic_declared_type_name(arena, arena.children[node.first_child + node.child_count - 1], source, builder)
+        return
+    if node.kind == SyntaxKind.TYPE_CLOSURE:
+        if node.child_count == 0:
+            builder.append("error")
+            return
+        has_return = callable_type_has_return(source, &node)
+        parameter_end = node.child_count
+        if has_return:
+            parameter_end -= 1
+        builder.append("closure[")
+        emit_semantic_declared_type_name(arena, arena.children[node.first_child], source, builder)
+        builder.append("](")
+        offset: i32 = 1
+        while offset < parameter_end:
+            if offset > 1:
+                builder.append(", ")
+            emit_semantic_declared_type_name(arena, arena.children[node.first_child + offset], source, builder)
+            offset += 1
+        builder.append(")")
+        if has_return:
+            builder.append(" -> ")
+            emit_semantic_declared_type_name(arena, arena.children[node.first_child + node.child_count - 1], source, builder)
+        return
+    builder.append("error")
+
+
 def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: types.TypeId, source: &const String, builder: &StringBuilder) -> void:
     if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
         builder.append("error")

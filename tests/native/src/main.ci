@@ -854,7 +854,7 @@ def test_import_type_resolution(state: &TestState) -> void:
         and target.exit_code == 0
         and method.exit_code == 0
         and contains(&qualified.stdout, "DEPENDS ON\n- type_targets::struct:Target")
-        and contains(&qualified.stdout, "type: type_targets . Target")
+        and contains(&qualified.stdout, "type: type_targets.Target")
         and not contains(&qualified.stdout, "type_targets::method:Holder.Target")
         and not contains(&shadowed.stdout, "type_targets::struct:Target")
         and not contains(&shadowed.stdout, "type_targets::method:Holder.Target")
@@ -995,10 +995,15 @@ def test_semantic_diff(state: &TestState) -> void:
         fstring_change_path[0:len(fstring_change_path)],
         "const LIMIT: i32 = 42\n\n\ndef fstring_change_probe() -> i32:\n    print(f\"limit={LIMIT}\")\n    return 0\n",
     )
+    type_format_model_path = source_dir + "/type_format_model.ci"
+    write_test_text(
+        type_format_model_path[0:len(type_format_model_path)],
+        "struct Item:\n    value: i32\n",
+    )
     type_format_path = source_dir + "/type_format.ci"
     write_test_text(
         type_format_path[0:len(type_format_path)],
-        "struct Holder:\n    items: List[i32]\n",
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[i32]\n    item: type_format_model.Item\n    nested: List[type_format_model.Item]\n",
     )
     enum_format_path = source_dir + "/enum_format.ci"
     write_test_text(
@@ -1145,7 +1150,7 @@ def test_semantic_diff(state: &TestState) -> void:
     )
     write_test_text(
         type_format_path[0:len(type_format_path)],
-        "struct Holder:\n    items: List[\n        i32\n    ]\n",
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i32\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n",
     )
     write_test_text(
         enum_format_path[0:len(enum_format_path)],
@@ -1305,7 +1310,7 @@ def test_semantic_diff(state: &TestState) -> void:
     ordinary_import = process.run(ordinary_import_command)
     write_test_text(
         type_format_path[0:len(type_format_path)],
-        "struct Holder:\n    items: List[\n        i64\n    ]\n",
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i64\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n",
     )
     type_change_command: List[String] = [
         state.compiler.clone(),
@@ -1409,6 +1414,8 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(&fstring_change.stdout, "NO SEMANTIC CHANGES")
         and contains(&type_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(&type_format.stdout, "~ changed type_format::field:Holder.items")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.item")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.nested")
         and contains(&enum_format.stdout, "NO SEMANTIC CHANGES")
         and not contains(&enum_format.stdout, "~ changed enum_format::enum:FormatEnum")
         and contains(&assertion.stdout, "~ changed assertion::static-assert:assertion_0")
