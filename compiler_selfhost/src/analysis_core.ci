@@ -182,9 +182,15 @@ def build_fact_graph(
         &reflection_model,
     )
     collect_member_relations(&graph_value)
+    collect_layout_base_relations(&graph_value, &class_model)
     collect_semantic_relations(graph, analysis, &graph_value)
     collect_enum_member_use_relations(graph, analysis, &graph_value)
-    collect_nominal_field_use_relations(graph, analysis, &graph_value)
+    collect_nominal_field_use_relations(
+        graph,
+        analysis,
+        &class_model,
+        &graph_value,
+    )
     collect_import_value_relations(graph, analysis, &graph_value)
     collect_import_call_relations(graph, analysis, &class_model, &graph_value)
     collect_type_relations(graph, &graph_value)
@@ -1043,15 +1049,10 @@ def append_canonical_enum_member_value(
         end = node.start + node.length
         while index < end:
             byte = source.byte_at(index)
-            if (
-                byte != 32
-                and byte != 9
-                and byte != 10
-                and byte != 13
-                and byte != 95
-            ):
-                builder.append(source[index:index + 1])
+            if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+                break
             index += 1
+        codegen_names.append_numeric_literal(builder, source, index, end - index)
         return
     builder.append(source[node.value_start:node.value_start + node.value_length])
 
@@ -1586,6 +1587,39 @@ def collect_member_relations(graph: &SemanticFactGraph) -> void:
             )
 
 
+def collect_layout_base_relations(
+    graph: &SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+) -> void:
+    facts: &const List[SymbolFact] = &graph.facts
+    class_values: &const List[classes.ClassInfo] = &class_model.classes
+    for class_info in class_values:
+        if class_info.primary_base < 0:
+            continue
+        base: &const classes.ClassInfo = &class_values[
+            cast[usize](class_info.primary_base)
+        ]
+        class_index = find_fact_by_owner_name(
+            graph,
+            &class_info.module_name,
+            &class_info.name,
+        )
+        base_index = find_fact_by_owner_name(
+            graph,
+            &base.module_name,
+            &base.name,
+        )
+        if class_index >= 0 and base_index >= 0:
+            add_relation_unique(
+                graph,
+                "layout-base",
+                &facts[cast[usize](class_index)].key,
+                &facts[cast[usize](base_index)].key,
+                "embedded",
+                true,
+            )
+
+
 def collect_semantic_relations(
     project_graph: &const project.ProjectGraph,
     analysis: &const emit_project.AnalysisResult,
@@ -1684,6 +1718,7 @@ def collect_enum_member_use_relations(
 def collect_nominal_field_use_relations(
     project_graph: &const project.ProjectGraph,
     analysis: &const emit_project.AnalysisResult,
+    class_model: &const classes.ProjectClassModel,
     graph: &SemanticFactGraph,
 ) -> void:
     analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
@@ -1707,6 +1742,7 @@ def collect_nominal_field_use_relations(
                 target_index = nominal_field_fact_for_attribute(
                     project_graph,
                     graph,
+                    class_model,
                     &analyzed.checked,
                     module,
                     attribute_id,
@@ -1732,6 +1768,7 @@ def collect_nominal_field_use_relations(
 def nominal_field_fact_for_attribute(
     project_graph: &const project.ProjectGraph,
     graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
     checked: &const checker_core.Checker,
     module: &const project.ParsedModule,
     attribute_id: NodeId,
@@ -1748,6 +1785,7 @@ def nominal_field_fact_for_attribute(
     nominal_index = nominal_fact_for_expression(
         project_graph,
         graph,
+        class_model,
         checked,
         module,
         receiver_id,
@@ -1759,6 +1797,7 @@ def nominal_field_fact_for_attribute(
         nominal_index = receiver_field_nominal_fact(
             project_graph,
             graph,
+            class_model,
             module,
             receiver_id,
             source_index,
@@ -1769,11 +1808,17 @@ def nominal_field_fact_for_attribute(
     member_name = module.source[
         member.value_start:member.value_start + member.value_length
     ]
-    return field_fact_for_nominal(graph, nominal_index, &member_name)
+    return field_fact_for_nominal(
+        graph,
+        class_model,
+        nominal_index,
+        &member_name,
+    )
 
 
 def field_fact_for_nominal(
     graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
     nominal_index: i32,
     member_name: &const String,
 ) -> i32:
@@ -1781,6 +1826,15 @@ def field_fact_for_nominal(
     if nominal_index < 0 or nominal_index >= cast[i32](len(facts)):
         return -1
     nominal: &const SymbolFact = &facts[cast[usize](nominal_index)]
+    effective_index = find_effective_field_fact(
+        graph,
+        class_model,
+        &nominal.module_name,
+        &nominal.name,
+        member_name,
+    )
+    if effective_index >= 0:
+        return effective_index
     owner = nominal.name[0:len(nominal.name)]
     if len(nominal.owner) > 0:
         owner = nominal.owner[0:len(nominal.owner)] + "." + nominal.name[0:len(nominal.name)]
@@ -1797,6 +1851,7 @@ def field_fact_for_nominal(
 def nominal_fact_for_expression(
     project_graph: &const project.ProjectGraph,
     graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
     checked: &const checker_core.Checker,
     module: &const project.ParsedModule,
     id: NodeId,
@@ -1840,6 +1895,7 @@ def nominal_fact_for_expression(
             return nominal_fact_for_expression(
                 project_graph,
                 graph,
+                class_model,
                 checked,
                 module,
                 initializer,
@@ -1868,6 +1924,7 @@ def nominal_fact_for_expression(
     owner_index = nominal_fact_for_expression(
         project_graph,
         graph,
+        class_model,
         checked,
         module,
         receiver_id,
@@ -1881,7 +1938,12 @@ def nominal_fact_for_expression(
     member_name = module.source[
         member.value_start:member.value_start + member.value_length
     ]
-    field_index = field_fact_for_nominal(graph, owner_index, &member_name)
+    field_index = field_fact_for_nominal(
+        graph,
+        class_model,
+        owner_index,
+        &member_name,
+    )
     if field_index < 0:
         return -1
     field: &const SymbolFact = &graph.facts[cast[usize](field_index)]
@@ -2631,6 +2693,8 @@ def collect_reparsed_relations_in_node(
             )
         elif node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
             collect_reparsed_attribute_value_relation(
+                project_graph,
+                class_model,
                 checked,
                 graph,
                 module,
@@ -2700,6 +2764,8 @@ def collect_reparsed_name_value_relation(
 
 
 def collect_reparsed_attribute_value_relation(
+    project_graph: &const project.ProjectGraph,
+    class_model: &const classes.ProjectClassModel,
     checked: &const checker_core.Checker,
     graph: &SemanticFactGraph,
     module: &const project.ParsedModule,
@@ -2775,6 +2841,96 @@ def collect_reparsed_attribute_value_relation(
             "",
             true,
         )
+        return
+    nominal_fact_index = declared_nominal_fact_for_symbol(
+        project_graph,
+        graph,
+        checked,
+        module,
+        facts[cast[usize](caller_index)].module_index,
+        found.index,
+    )
+    if nominal_fact_index < 0:
+        nominal_fact_index = nominal_fact_for_typed_symbol(
+            project_graph,
+            graph,
+            checked,
+            module,
+            facts[cast[usize](caller_index)].module_index,
+            found.index,
+        )
+    if nominal_fact_index < 0:
+        nominal_fact_index = receiver_field_nominal_fact_in_source(
+            project_graph,
+            graph,
+            class_model,
+            module,
+            arena,
+            receiver_id,
+            source,
+            caller_index,
+        )
+    if nominal_fact_index < 0:
+        return
+    target_index = field_fact_for_nominal(
+        graph,
+        class_model,
+        nominal_fact_index,
+        &member_name,
+    )
+    if target_index >= 0:
+        add_relation_unique(
+            graph,
+            "uses",
+            &facts[cast[usize](caller_index)].key,
+            &facts[cast[usize](target_index)].key,
+            "",
+            true,
+        )
+
+
+def nominal_fact_for_typed_symbol(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    symbol_index: i32,
+) -> i32:
+    if (
+        symbol_index < 0
+        or symbol_index >= cast[i32](len(checked.symbols.symbols))
+    ):
+        return -1
+    receiver_type = analysis_value_type(
+        &checked.type_table,
+        checked.symbols.symbols[symbol_index].type_id,
+    )
+    if (
+        receiver_type.index < 0
+        or receiver_type.index >= cast[i32](len(checked.type_table.types))
+    ):
+        return -1
+    receiver_record = checked.type_table.types[receiver_type.index]
+    if (
+        not types.is_nominal_kind(receiver_record.kind)
+        or receiver_record.name_length <= 0
+    ):
+        return -1
+    type_builder = StringBuilder()
+    codegen_type_names.emit_semantic_readable_type_name(
+        &checked.type_table,
+        receiver_type,
+        &module.source,
+        &type_builder,
+    )
+    type_name = type_builder.finish()
+    return resolve_type_fact(
+        project_graph,
+        graph,
+        module_index,
+        &type_name,
+    )
 
 
 def collect_reparsed_call_relation(
@@ -2859,32 +3015,19 @@ def collect_reparsed_call_relation(
                         true,
                     )
                     return
-        if found.index >= 0 and found.index < cast[i32](len(checked.symbols.symbols)):
-            receiver_type = analysis_value_type(
-                &checked.type_table,
-                checked.symbols.symbols[found.index].type_id,
-            )
-            if receiver_type.index >= 0 and receiver_type.index < cast[i32](len(checked.type_table.types)):
-                receiver_record = checked.type_table.types[receiver_type.index]
-                if types.is_nominal_kind(receiver_record.kind) and receiver_record.name_length > 0:
-                    type_builder = StringBuilder()
-                    codegen_type_names.emit_semantic_readable_type_name(
-                        &checked.type_table,
-                        receiver_type,
-                        &module.source,
-                        &type_builder,
-                    )
-                    type_name = type_builder.finish()
-                    nominal_fact_index = resolve_type_fact(
-                        project_graph,
-                        graph,
-                        facts[cast[usize](caller_index)].module_index,
-                        &type_name,
-                    )
+        nominal_fact_index = nominal_fact_for_typed_symbol(
+            project_graph,
+            graph,
+            checked,
+            module,
+            facts[cast[usize](caller_index)].module_index,
+            found.index,
+        )
     if nominal_fact_index < 0:
         nominal_fact_index = receiver_field_nominal_fact_in_source(
             project_graph,
             graph,
+            class_model,
             module,
             arena,
             receiver_id,
@@ -3108,6 +3251,7 @@ def collect_import_call_relation(
                 nominal_fact_index = receiver_field_nominal_fact(
                     project_graph,
                     graph,
+                    class_model,
                     module,
                     receiver_id,
                     caller_index,
@@ -3220,6 +3364,7 @@ def semantic_expression_type(
 def receiver_field_nominal_fact(
     project_graph: &const project.ProjectGraph,
     graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
     module: &const project.ParsedModule,
     id: NodeId,
     caller_index: i32,
@@ -3227,6 +3372,7 @@ def receiver_field_nominal_fact(
     return receiver_field_nominal_fact_in_source(
         project_graph,
         graph,
+        class_model,
         module,
         &module.arena,
         id,
@@ -3238,6 +3384,7 @@ def receiver_field_nominal_fact(
 def receiver_field_nominal_fact_in_source(
     project_graph: &const project.ProjectGraph,
     graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
     module: &const project.ParsedModule,
     arena: &const syntax.SyntaxArena,
     id: NodeId,
@@ -3267,6 +3414,7 @@ def receiver_field_nominal_fact_in_source(
     owner_index = receiver_field_nominal_fact_in_source(
         project_graph,
         graph,
+        class_model,
         module,
         arena,
         receiver_id,
@@ -3275,20 +3423,14 @@ def receiver_field_nominal_fact_in_source(
     )
     if owner_index < 0:
         return -1
-    owner: &const SymbolFact = &facts[cast[usize](owner_index)]
-    field_owner = owner.name[0:len(owner.name)]
-    if len(owner.owner) > 0:
-        field_owner = owner.owner[0:len(owner.owner)] + "." + owner.name[0:len(owner.name)]
     member = nodes[member_id.index]
     member_name = source[member.value_start:member.value_start + member.value_length]
-    field_kind = "field"
-    field_key = stable_symbol_key(
-        &owner.module_name,
-        &field_kind,
-        &field_owner,
+    field_index = field_fact_for_nominal(
+        graph,
+        class_model,
+        owner_index,
         &member_name,
     )
-    field_index = find_fact_by_key(graph, &field_key)
     if field_index < 0:
         return -1
     field: &const SymbolFact = &facts[cast[usize](field_index)]
@@ -4173,6 +4315,26 @@ def find_fact_by_owner_name(
             return cast[i32](index)
         index += 1
     return -1
+
+
+def find_effective_field_fact(
+    graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+    module_name: &const String,
+    owner_name: &const String,
+    field_name: &const String,
+) -> i32:
+    class_index = classes.find_class(class_model, module_name, owner_name)
+    if class_index < 0:
+        return -1
+    owner_index = classes.find_field_owner(class_model, class_index, field_name)
+    if owner_index < 0:
+        return -1
+    owner: &const classes.ClassInfo = &class_model.classes[
+        cast[usize](owner_index)
+    ]
+    qualified_name = owner.name[0:len(owner.name)] + "." + field_name[0:len(field_name)]
+    return find_fact_by_owner_name(graph, &owner.module_name, &qualified_name)
 
 
 def find_effective_method_fact(

@@ -27,6 +27,17 @@ class Circle(Shape):
     def area(self) -> f64:
         return math.pi * self.radius * self.radius
 
+    def print_inherited_name(self) -> void:
+        print(self.name)
+
+    def format_inherited_name(self) -> void:
+        print(f"circle name: {self.name}")
+
+
+@export
+def export_circle_radius(circle: Circle) -> f64:
+    return circle.radius
+
 
 def describe(shape: &dyn Shape) -> void:
     print(f"runtime type: {type_name(shape)}")
@@ -35,5 +46,7 @@ def describe(shape: &dyn Shape) -> void:
 
 def main() -> i32:
     circle = Circle(radius=4.0)
+    circle.print_inherited_name()
+    circle.format_inherited_name()
     describe(circle)
     return 0

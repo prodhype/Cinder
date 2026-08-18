@@ -65,3 +65,12 @@ def export_abi_box(value: model.AbiBox[model.AbiPayload]) -> i32:
 @export
 def export_abi_ref_box(value: model.AbiRefBox[model.AbiIndirectPayload]) -> i32:
     return 0
+
+
+@export
+def export_memory_store(value: model.MemoryStore) -> i32:
+    return 0
+
+
+def format_cache_entry(entry: model.CacheEntry) -> void:
+    print(f"value={entry.value}")
