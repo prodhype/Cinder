@@ -1956,6 +1956,14 @@ def collect_enum_member_use_relations(
                     attribute_id,
                     module_index,
                 )
+                if target_index < 0:
+                    target_index = variant_case_fact_for_attribute(
+                        graph,
+                        &analyzed.checked,
+                        module,
+                        attribute_id,
+                        module_index,
+                    )
                 if (
                     source_index >= 0
                     and target_index >= 0
@@ -2443,6 +2451,36 @@ def enum_member_fact_for_attribute(
         member.value_start:member.value_start + member.value_length
     ]
     return enum_member_fact_for_enum(graph, enum_index, &member_name)
+
+
+def variant_case_fact_for_attribute(
+    graph: &const SemanticFactGraph,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    attribute_id: NodeId,
+    module_index: usize,
+) -> i32:
+    nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+    children: &const List[NodeId] = &module.arena.children
+    attribute = nodes[attribute_id.index]
+    if attribute.child_count < 2:
+        return -1
+    receiver_id = children[attribute.first_child]
+    member_id = children[attribute.first_child + 1]
+    variant_kind = "variant"
+    variant_index = nominal_fact_for_value_receiver_kind(
+        graph,
+        checked,
+        module,
+        receiver_id,
+        module_index,
+        &variant_kind,
+    )
+    member = nodes[member_id.index]
+    member_name = module.source[
+        member.value_start:member.value_start + member.value_length
+    ]
+    return variant_case_fact_for_nominal(graph, variant_index, &member_name)
 
 
 def enum_member_fact_for_enum(
@@ -3252,12 +3290,18 @@ def collect_reparsed_attribute_value_relation(
     )
     if nominal_fact_index < 0:
         return
-    target_index = field_fact_for_nominal(
+    target_index = variant_case_fact_for_nominal(
         graph,
-        class_model,
         nominal_fact_index,
         &member_name,
     )
+    if target_index < 0:
+        target_index = field_fact_for_nominal(
+            graph,
+            class_model,
+            nominal_fact_index,
+            &member_name,
+        )
     if target_index >= 0:
         add_relation_unique(
             graph,

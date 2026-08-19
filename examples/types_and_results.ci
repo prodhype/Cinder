@@ -53,3 +53,15 @@ def main() -> i32:
             print(f"error={cast[i32](error)}")
 
     return 0
+
+
+def end_token() -> Token:
+    return Token.End
+
+
+def token_code(token: Token) -> i32:
+    return 0
+
+
+def format_end_token() -> void:
+    print(f"{token_code(Token.End)}")

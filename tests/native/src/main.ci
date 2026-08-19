@@ -52,7 +52,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_inherited_field_resolution(&state)
     test_deep_field_chain_resolution(&state)
     test_enum_member_resolution(&state)
-    test_variant_case_match_resolution(&state)
+    test_variant_case_resolution(&state)
     test_decorator_line_resolution(&state)
     test_impact_caller_truncation(&state)
     test_import_call_resolution(&state)
@@ -990,12 +990,26 @@ def test_enum_member_resolution(state: &TestState) -> void:
         report_process_failure(&qualified_impact.stdout, &qualified_impact.stderr)
 
 
-def test_variant_case_match_resolution(state: &TestState) -> void:
+def test_variant_case_resolution(state: &TestState) -> void:
     example = state.root + "/examples/types_and_results.ci"
     context_command: List[String] = [
         state.compiler.clone(),
         "context",
         example + ":22",
+    ]
+    value_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":58",
+        "--depth",
+        "1",
+    ]
+    fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":66",
+        "--depth",
+        "1",
     ]
     end_impact_command: List[String] = [
         state.compiler.clone(),
@@ -1003,9 +1017,13 @@ def test_variant_case_match_resolution(state: &TestState) -> void:
         example + ":11",
     ]
     context = process.run(context_command)
+    value_context = process.run(value_context_command)
+    fstring_context = process.run(fstring_context_command)
     end_impact = process.run(end_impact_command)
     ok = (
         context.exit_code == 0
+        and value_context.exit_code == 0
+        and fstring_context.exit_code == 0
         and end_impact.exit_code == 0
         and contains(
             &context.stdout,
@@ -1016,12 +1034,44 @@ def test_variant_case_match_resolution(state: &TestState) -> void:
             "types_and_results::variant-case:Token.End",
         )
         and contains(
+            &value_context.stdout,
+            "symbol: types_and_results::function:end_token",
+        )
+        and contains(
+            &value_context.stdout,
+            "types_and_results::variant-case:Token.End",
+        )
+        and not contains(
+            &value_context.stdout,
+            "types_and_results::variant-case:Token.Integer",
+        )
+        and contains(
+            &fstring_context.stdout,
+            "symbol: types_and_results::function:format_end_token",
+        )
+        and contains(
+            &fstring_context.stdout,
+            "types_and_results::variant-case:Token.End",
+        )
+        and not contains(
+            &fstring_context.stdout,
+            "types_and_results::variant-case:Token.Integer",
+        )
+        and contains(
             &end_impact.stdout,
             "symbol: types_and_results::variant-case:Token.End",
         )
         and contains(
             &end_impact.stdout,
             "types_and_results::function:increment",
+        )
+        and contains(
+            &end_impact.stdout,
+            "types_and_results::function:end_token",
+        )
+        and contains(
+            &end_impact.stdout,
+            "types_and_results::function:format_end_token",
         )
         and not contains(
             &end_impact.stdout,
@@ -1030,11 +1080,13 @@ def test_variant_case_match_resolution(state: &TestState) -> void:
     )
     expect(
         state,
-        "match-pattern variant cases report precise consumers",
+        "variant cases report precise consumers",
         ok,
     )
     if not ok:
         report_process_failure(&context.stdout, &context.stderr)
+        report_process_failure(&value_context.stdout, &value_context.stderr)
+        report_process_failure(&fstring_context.stdout, &fstring_context.stderr)
         report_process_failure(&end_impact.stdout, &end_impact.stderr)
 
 
