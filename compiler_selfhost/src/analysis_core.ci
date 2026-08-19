@@ -182,6 +182,7 @@ def build_fact_graph(
         &reflection_model,
     )
     collect_member_relations(&graph_value)
+    collect_extern_block_member_relations(graph, &graph_value)
     collect_layout_base_relations(&graph_value, &class_model)
     collect_override_relations(&graph_value, &class_model)
     collect_semantic_relations(graph, analysis, &graph_value)
@@ -1632,6 +1633,46 @@ def collect_member_relations(graph: &SemanticFactGraph) -> void:
                 "",
                 true,
             )
+
+
+def collect_extern_block_member_relations(
+    project_graph: &const project.ProjectGraph,
+    graph: &SemanticFactGraph,
+) -> void:
+    facts: &const List[SymbolFact] = &graph.facts
+    modules: &const List[project.ParsedModule] = &project_graph.modules
+    for block_fact in facts:
+        if (
+            block_fact.kind != "extern-block"
+            or block_fact.node.index < 0
+            or block_fact.module_index >= len(modules)
+        ):
+            continue
+        module: &const project.ParsedModule = &modules[block_fact.module_index]
+        arena: &const syntax.SyntaxArena = &module.arena
+        block = arena.nodes[block_fact.node.index]
+        for offset in range(0, block.child_count):
+            child_id = arena.children[block.first_child + offset]
+            child = arena.nodes[child_id.index]
+            if (
+                child.kind != syntax.SyntaxKind.FUNCTION_DECL
+                and child.kind != syntax.SyntaxKind.EXTERN_TYPE_DECL
+            ):
+                continue
+            child_index = fact_index_for_node(
+                graph,
+                block_fact.module_index,
+                child_id,
+            )
+            if child_index >= 0:
+                add_relation_unique(
+                    graph,
+                    "member",
+                    &facts[cast[usize](child_index)].key,
+                    &block_fact.key,
+                    "",
+                    true,
+                )
 
 
 def collect_layout_base_relations(
@@ -5551,6 +5592,21 @@ def fact_index_for_symbol(
     while index < len(facts):
         fact: &const SymbolFact = &facts[index]
         if fact.module_index == module_index and fact.symbol_index == symbol_index:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def fact_index_for_node(
+    graph: &const SemanticFactGraph,
+    module_index: usize,
+    node: NodeId,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    index: usize = 0
+    while index < len(facts):
+        fact: &const SymbolFact = &facts[index]
+        if fact.module_index == module_index and fact.node.index == node.index:
             return cast[i32](index)
         index += 1
     return -1

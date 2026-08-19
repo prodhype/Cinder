@@ -336,6 +336,12 @@ def test_context_capsule(state: &TestState) -> void:
         state.root + "/tests/cases/semantic_context/src/main.ci:12",
     ]
     extern_child = process.run(extern_child_command)
+    extern_block_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/main.ci:11",
+    ]
+    extern_block_impact = process.run(extern_block_impact_command)
     import_command: List[String] = [
         state.compiler.clone(),
         "context",
@@ -354,6 +360,7 @@ def test_context_capsule(state: &TestState) -> void:
         and extern_import.exit_code == 0
         and extern_block.exit_code == 0
         and extern_child.exit_code == 0
+        and extern_block_impact.exit_code == 0
         and import_context.exit_code == 0
         and first.stdout == second.stdout
         and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
@@ -390,6 +397,14 @@ def test_context_capsule(state: &TestState) -> void:
         and contains(&extern_block.stdout, "kind: extern-block")
         and contains(&extern_block.stdout, "abi: C")
         and contains(&extern_child.stdout, "symbol: main::function:abs")
+        and contains(
+            &extern_child.stdout,
+            "DEPENDS ON\n- main::extern-block:block_0",
+        )
+        and contains(
+            &extern_block_impact.stdout,
+            "TYPE / MEMBER CONSUMERS\n- main::function:abs",
+        )
         and contains(&import_context.stdout, "import cache")
         and contains(&import_context.stdout, "symbol: main::import:import_0")
         and contains(&import_context.stdout, "abi: not applicable")
@@ -406,6 +421,10 @@ def test_context_capsule(state: &TestState) -> void:
         report_process_failure(&extern_import.stdout, &extern_import.stderr)
         report_process_failure(&extern_block.stdout, &extern_block.stderr)
         report_process_failure(&extern_child.stdout, &extern_child.stderr)
+        report_process_failure(
+            &extern_block_impact.stdout,
+            &extern_block_impact.stderr,
+        )
         report_process_failure(&import_context.stdout, &import_context.stderr)
 
 
