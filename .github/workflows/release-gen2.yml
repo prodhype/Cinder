@@ -1,0 +1,114 @@
+name: Release Gen2
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-gen2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos-arm64:
+    name: Build macOS ARM64
+    uses: ./.github/workflows/build-gen2-macos-arm64.yml
+
+  build-linux-x86_64:
+    name: Build Linux x86_64
+    uses: ./.github/workflows/build-gen2-x86_64.yml
+
+  build-linux-arm64:
+    name: Build Linux ARM64
+    uses: ./.github/workflows/build-gen2-arm64.yml
+
+  build-linux-armv7:
+    name: Build Linux ARMv7
+    uses: ./.github/workflows/build-gen2-armv7.yml
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - build-macos-arm64
+      - build-linux-x86_64
+      - build-linux-arm64
+      - build-linux-armv7
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download platform bundles
+        uses: actions/download-artifact@v7
+        with:
+          pattern: cinder-gen2-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            cinder-gen2-macos-arm64.tar.gz
+            cinder-gen2-macos-arm64.tar.gz.sha256
+            cinder-gen2-linux-x86_64.tar.gz
+            cinder-gen2-linux-x86_64.tar.gz.sha256
+            cinder-gen2-linux-arm64.tar.gz
+            cinder-gen2-linux-arm64.tar.gz.sha256
+            cinder-gen2-linux-armv7.tar.gz
+            cinder-gen2-linux-armv7.tar.gz.sha256
+          )
+
+          shopt -s nullglob
+          actual=(dist/*)
+          if (( ${#actual[@]} != ${#expected[@]} )); then
+            printf 'Expected %d release assets, found %d:\n' \
+              "${#expected[@]}" "${#actual[@]}" >&2
+            printf '  %s\n' "${actual[@]}" >&2
+            exit 1
+          fi
+
+          for asset in "${expected[@]}"; do
+            test -f "dist/$asset" || {
+              echo "Missing release asset: $asset" >&2
+              exit 1
+            }
+          done
+
+          (
+            cd dist
+            sha256sum --check ./*.sha256
+          )
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          assets=(
+            dist/cinder-gen2-macos-arm64.tar.gz
+            dist/cinder-gen2-macos-arm64.tar.gz.sha256
+            dist/cinder-gen2-linux-x86_64.tar.gz
+            dist/cinder-gen2-linux-x86_64.tar.gz.sha256
+            dist/cinder-gen2-linux-arm64.tar.gz
+            dist/cinder-gen2-linux-arm64.tar.gz.sha256
+            dist/cinder-gen2-linux-armv7.tar.gz
+            dist/cinder-gen2-linux-armv7.tar.gz.sha256
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            gh release edit "$TAG" --latest
+          else
+            gh release create "$TAG" "${assets[@]}" \
+              --verify-tag \
+              --generate-notes \
+              --latest \
+              --title "$TAG"
+          fi

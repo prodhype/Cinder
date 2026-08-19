@@ -19,16 +19,21 @@ The core design goals are unlikely to change: readable generated C, explicit own
 
 ## Installation
 
-Get the gen2 artifact for your platform from GitHub Actions.
-Each artifact contains the `cinder` executable and the `runtime/` files that it needs to build native programs.
+Download the latest gen2 bundle for your platform from
+[GitHub Releases](https://github.com/prodhype/Cinder/releases/latest).
+Each bundle contains the `cinder` executable and the `runtime/` files that it needs to build native programs.
 Keep the extracted directory together.
 
-Current gen2 artifacts are:
+Current gen2 bundles are:
 
-- `cinder-gen2-macos-arm64`
-- `cinder-gen2-linux-x86_64`
-- `cinder-gen2-linux-arm64`
-- `cinder-gen2-linux-armv7`
+- [macOS ARM64](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-macos-arm64.tar.gz)
+  ([SHA-256](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-macos-arm64.tar.gz.sha256))
+- [Linux x86_64](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-linux-x86_64.tar.gz)
+  ([SHA-256](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-linux-x86_64.tar.gz.sha256))
+- [Linux ARM64](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-linux-arm64.tar.gz)
+  ([SHA-256](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-linux-arm64.tar.gz.sha256))
+- [Linux ARMv7](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-linux-armv7.tar.gz)
+  ([SHA-256](https://github.com/prodhype/Cinder/releases/latest/download/cinder-gen2-linux-armv7.tar.gz.sha256))
 
 The macOS ARM64 bootstrap seed requires macOS 15.4 or newer.
 
@@ -36,7 +41,7 @@ The Linux x86_64 seed and compiler bundle require glibc 2.34 or newer. Ubuntu
 22.04, Debian 12, and RHEL 9 meet that baseline; Ubuntu 20.04, Debian 11, and
 RHEL 8 do not. Other C libraries such as musl are not supported by that binary.
 
-After you extract the artifact, put the extracted directory on `PATH`, or call the executable by path:
+After you extract the bundle, put the extracted directory on `PATH`, or call the executable by path:
 
 ```sh
 tar -xzf cinder-gen2-linux-x86_64.tar.gz

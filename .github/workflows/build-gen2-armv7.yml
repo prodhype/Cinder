@@ -2,6 +2,7 @@ name: Build Gen2 Linux ARMv7
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
