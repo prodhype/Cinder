@@ -22,8 +22,30 @@ jobs:
       - name: Install ARM64 toolchain
         run: |
           set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y file gcc-aarch64-linux-gnu qemu-user
+          for source_file in \
+            /etc/apt/sources.list \
+            /etc/apt/sources.list.d/ubuntu.sources; do
+            if [[ -f "$source_file" ]]; then
+              sudo sed -i \
+                -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+                -e 's|https://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+                "$source_file"
+            fi
+          done
+
+          apt_options=(
+            -o Acquire::Retries=5
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+            -o Dpkg::Use-Pty=0
+          )
+          sudo apt-get "${apt_options[@]}" update
+          sudo env DEBIAN_FRONTEND=noninteractive \
+            apt-get "${apt_options[@]}" install -y --no-install-recommends \
+              file \
+              gcc-aarch64-linux-gnu \
+              libc6-dev-arm64-cross \
+              qemu-user
 
       - name: Bootstrap host compiler
         run: ./bootstrap.sh
