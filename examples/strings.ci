@@ -40,6 +40,7 @@ def main() -> i32:
         return 1
     if '\?' != '?':
         return 2
+    print(f"f-string escapes: \x41{1}\x42")
 
     # Literals infer String; String() is the empty owner.
     empty = String()

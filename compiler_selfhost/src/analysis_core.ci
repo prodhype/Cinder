@@ -1527,7 +1527,13 @@ def canonical_fstring_snapshot_value(
                 or expression.index < 0
             ):
                 return raw
-            builder.append(source[literal_start:index])
+            if not codegen_names.append_canonical_literal_content(
+                &builder,
+                source,
+                literal_start,
+                index - literal_start,
+            ):
+                return raw
             builder.append("{")
             append_syntax_snapshot(
                 &builder,
@@ -1553,7 +1559,14 @@ def canonical_fstring_snapshot_value(
             literal_start = index
             continue
         index += 1
-    builder.append(source[literal_start:node.value_start + node.value_length])
+    if not codegen_names.append_canonical_literal_content(
+        &builder,
+        source,
+        literal_start,
+        content_end - literal_start,
+    ):
+        return raw
+    builder.append(source[content_end:node.value_start + node.value_length])
     return builder.finish()
 
 

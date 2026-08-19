@@ -372,17 +372,34 @@ def canonical_quoted_literal_value(
         return source[start:start + length]
 
     builder = StringBuilder()
-    index = start + 1
+    if not append_canonical_literal_content(
+        &builder,
+        source,
+        start + 1,
+        length - 2,
+    ):
+        return source[start:start + length]
+    return builder.finish()
+
+
+def append_canonical_literal_content(
+    builder: &StringBuilder,
+    source: &const String,
+    start: usize,
+    length: usize,
+) -> bool:
+    end = start + length
+    index = start
     while index < end:
         byte = source.byte_at(index)
         if byte != 92:
-            append_canonical_literal_byte(&builder, byte)
+            append_canonical_literal_byte(builder, byte)
             index += 1
             continue
 
         index += 1
         if index >= end:
-            return source[start:start + length]
+            return false
         escaped = source.byte_at(index)
         value: i32 = -1
         if escaped == 39 or escaped == 34 or escaped == 63 or escaped == 92:
@@ -414,13 +431,13 @@ def canonical_quoted_literal_value(
                 index += 1
                 digit_count += 1
             if value > 255:
-                return source[start:start + length]
-            append_canonical_literal_byte(&builder, cast[u8](value))
+                return false
+            append_canonical_literal_byte(builder, cast[u8](value))
             continue
         elif escaped == 120:
             index += 1
             if index >= end or numeric_digit_value(source.byte_at(index)) < 0:
-                return source[start:start + length]
+                return false
             value = 0
             while index < end:
                 digit = numeric_digit_value(source.byte_at(index))
@@ -428,16 +445,16 @@ def canonical_quoted_literal_value(
                     break
                 value = value * 16 + digit
                 if value > 255:
-                    return source[start:start + length]
+                    return false
                 index += 1
-            append_canonical_literal_byte(&builder, cast[u8](value))
+            append_canonical_literal_byte(builder, cast[u8](value))
             continue
         else:
-            return source[start:start + length]
+            return false
 
-        append_canonical_literal_byte(&builder, cast[u8](value))
+        append_canonical_literal_byte(builder, cast[u8](value))
         index += 1
-    return builder.finish()
+    return true
 
 
 def append_canonical_literal_byte(
