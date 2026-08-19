@@ -2997,94 +2997,77 @@ def collect_reparsed_attribute_value_relation(
     member_id = arena.children[attribute.first_child + 1]
     receiver = arena.nodes[receiver_id.index]
     member = arena.nodes[member_id.index]
-    if receiver.kind != syntax.SyntaxKind.EXPR_NAME:
-        return
-    receiver_name = source[
-        receiver.value_start:receiver.value_start + receiver.value_length
-    ]
-    found = checked.symbols.find_name_in_scope(
-        &module.source,
-        current_scope,
-        &receiver_name,
-    )
     member_name = source[member.value_start:member.value_start + member.value_length]
     module_imports: &const List[project.ImportBinding] = &module.imports
     facts: &const List[SymbolFact] = &graph.facts
-    if symbol_is_import_binding(checked, &module.arena, found.index, false):
-        for imported in module_imports:
-            if len(imported.member) == 0 and imported.alias == receiver_name:
-                target_index = find_top_level_fact_by_module_name(
-                    graph,
-                    &imported.module_name,
-                    &member_name,
-                )
-                if target_index >= 0:
-                    add_relation_unique(
+    if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
+        receiver_name = source[
+            receiver.value_start:receiver.value_start + receiver.value_length
+        ]
+        found = checked.symbols.find_name_in_scope(
+            &module.source,
+            current_scope,
+            &receiver_name,
+        )
+        if symbol_is_import_binding(checked, &module.arena, found.index, false):
+            for imported in module_imports:
+                if len(imported.member) == 0 and imported.alias == receiver_name:
+                    target_index = find_top_level_fact_by_module_name(
                         graph,
-                        "uses",
-                        &facts[cast[usize](caller_index)].key,
-                        &facts[cast[usize](target_index)].key,
-                        "",
-                        true,
-                    )
-                else:
-                    add_relation_unique(
-                        graph,
-                        "uses",
-                        &facts[cast[usize](caller_index)].key,
                         &imported.module_name,
                         &member_name,
-                        false,
                     )
-                return
-        return
-    enum_index = enum_fact_for_name_symbol(
-        graph,
-        checked,
-        module,
-        facts[cast[usize](caller_index)].module_index,
-        found.index,
-        &receiver_name,
-    )
-    target_index = enum_member_fact_for_enum(graph, enum_index, &member_name)
-    if target_index >= 0:
-        add_relation_unique(
-            graph,
-            "uses",
-            &facts[cast[usize](caller_index)].key,
-            &facts[cast[usize](target_index)].key,
-            "",
-            true,
-        )
-        return
-    nominal_fact_index = declared_nominal_fact_for_symbol(
-        project_graph,
-        graph,
-        checked,
-        module,
-        facts[cast[usize](caller_index)].module_index,
-        found.index,
-    )
-    if nominal_fact_index < 0:
-        nominal_fact_index = nominal_fact_for_typed_symbol(
-            project_graph,
+                    if target_index >= 0:
+                        add_relation_unique(
+                            graph,
+                            "uses",
+                            &facts[cast[usize](caller_index)].key,
+                            &facts[cast[usize](target_index)].key,
+                            "",
+                            true,
+                        )
+                    else:
+                        add_relation_unique(
+                            graph,
+                            "uses",
+                            &facts[cast[usize](caller_index)].key,
+                            &imported.module_name,
+                            &member_name,
+                            false,
+                        )
+                    return
+            return
+        enum_index = enum_fact_for_name_symbol(
             graph,
             checked,
             module,
             facts[cast[usize](caller_index)].module_index,
             found.index,
+            &receiver_name,
         )
-    if nominal_fact_index < 0:
-        nominal_fact_index = receiver_field_nominal_fact_in_source(
-            project_graph,
-            graph,
-            class_model,
-            module,
-            arena,
-            receiver_id,
-            source,
-            caller_index,
-        )
+        target_index = enum_member_fact_for_enum(graph, enum_index, &member_name)
+        if target_index >= 0:
+            add_relation_unique(
+                graph,
+                "uses",
+                &facts[cast[usize](caller_index)].key,
+                &facts[cast[usize](target_index)].key,
+                "",
+                true,
+            )
+            return
+    nominal_fact_index = nominal_fact_for_reparsed_expression(
+        project_graph,
+        graph,
+        class_model,
+        checked,
+        module,
+        arena,
+        receiver_id,
+        source,
+        caller_index,
+        current_scope,
+    )
     if nominal_fact_index < 0:
         return
     target_index = field_fact_for_nominal(
@@ -3102,6 +3085,591 @@ def collect_reparsed_attribute_value_relation(
             "",
             true,
         )
+
+
+def nominal_fact_for_reparsed_expression(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    facts: &const List[SymbolFact] = &graph.facts
+    module_index = facts[cast[usize](caller_index)].module_index
+    if node.kind == syntax.SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        found = checked.symbols.find_name_in_scope(
+            &module.source,
+            current_scope,
+            &name,
+        )
+        nominal_fact_index = declared_nominal_fact_for_symbol(
+            project_graph,
+            graph,
+            checked,
+            module,
+            module_index,
+            found.index,
+        )
+        if nominal_fact_index < 0:
+            nominal_fact_index = nominal_fact_for_typed_symbol(
+                project_graph,
+                graph,
+                checked,
+                module,
+                module_index,
+                found.index,
+            )
+        if nominal_fact_index >= 0:
+            return nominal_fact_index
+        return receiver_field_nominal_fact_in_source(
+            project_graph,
+            graph,
+            class_model,
+            module,
+            arena,
+            id,
+            source,
+            caller_index,
+        )
+    if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        imported_index = imported_reparsed_nominal_fact(
+            graph,
+            module,
+            arena,
+            id,
+            source,
+        )
+        if imported_index >= 0:
+            return imported_index
+        field_index = field_fact_for_reparsed_attribute(
+            project_graph,
+            graph,
+            class_model,
+            checked,
+            module,
+            arena,
+            id,
+            source,
+            caller_index,
+            current_scope,
+        )
+        return nominal_fact_for_fact_type(
+            project_graph,
+            graph,
+            field_index,
+        )
+    if node.kind == syntax.SyntaxKind.EXPR_INDEX:
+        checked_type = reparsed_expression_checked_type(
+            checked,
+            module,
+            arena,
+            id,
+            source,
+            current_scope,
+        )
+        nominal_fact_index = nominal_fact_for_checked_type(
+            project_graph,
+            graph,
+            checked,
+            module,
+            module_index,
+            checked_type,
+        )
+        if nominal_fact_index >= 0:
+            return nominal_fact_index
+        if node.child_count <= 0:
+            return -1
+        receiver_id = arena.children[node.first_child]
+        receiver = arena.nodes[receiver_id.index]
+        if receiver.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE:
+            return -1
+        field_index = field_fact_for_reparsed_attribute(
+            project_graph,
+            graph,
+            class_model,
+            checked,
+            module,
+            arena,
+            receiver_id,
+            source,
+            caller_index,
+            current_scope,
+        )
+        return nominal_fact_for_indexed_fact_type(
+            project_graph,
+            graph,
+            field_index,
+        )
+    if node.kind == syntax.SyntaxKind.EXPR_CALL:
+        return nominal_fact_for_reparsed_call(
+            project_graph,
+            graph,
+            class_model,
+            checked,
+            module,
+            arena,
+            id,
+            source,
+            caller_index,
+            current_scope,
+        )
+    if (
+        node.kind == syntax.SyntaxKind.EXPR_UNARY
+        or node.kind == syntax.SyntaxKind.EXPR_PROPAGATE
+    ) and node.child_count > 0:
+        return nominal_fact_for_reparsed_expression(
+            project_graph,
+            graph,
+            class_model,
+            checked,
+            module,
+            arena,
+            arena.children[node.first_child],
+            source,
+            caller_index,
+            current_scope,
+        )
+    if node.kind == syntax.SyntaxKind.EXPR_CAST:
+        type_id = codegen_type_names.find_child_type(arena, id)
+        nominal_type_id = nominal_name_type_node(arena, type_id)
+        return resolve_type_fact_from_node(
+            project_graph,
+            graph,
+            module_index,
+            arena,
+            source,
+            nominal_type_id,
+        )
+    return -1
+
+
+def field_fact_for_reparsed_attribute(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+) -> i32:
+    if id.index < 0:
+        return -1
+    node = arena.nodes[id.index]
+    if node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or node.child_count < 2:
+        return -1
+    receiver_id = arena.children[node.first_child]
+    member_id = arena.children[node.first_child + 1]
+    owner_index = nominal_fact_for_reparsed_expression(
+        project_graph,
+        graph,
+        class_model,
+        checked,
+        module,
+        arena,
+        receiver_id,
+        source,
+        caller_index,
+        current_scope,
+    )
+    if owner_index < 0:
+        return -1
+    member = arena.nodes[member_id.index]
+    member_name = source[member.value_start:member.value_start + member.value_length]
+    return field_fact_for_nominal(
+        graph,
+        class_model,
+        owner_index,
+        &member_name,
+    )
+
+
+def imported_reparsed_nominal_fact(
+    graph: &const SemanticFactGraph,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> i32:
+    node = arena.nodes[id.index]
+    if node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or node.child_count < 2:
+        return -1
+    module_id = arena.children[node.first_child]
+    nominal_id = arena.children[node.first_child + 1]
+    module_node = arena.nodes[module_id.index]
+    nominal_node = arena.nodes[nominal_id.index]
+    if module_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return -1
+    module_alias = source[
+        module_node.value_start:module_node.value_start + module_node.value_length
+    ]
+    nominal_name = source[
+        nominal_node.value_start:nominal_node.value_start + nominal_node.value_length
+    ]
+    facts: &const List[SymbolFact] = &graph.facts
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    for imported in module_imports:
+        if len(imported.member) == 0 and imported.alias == module_alias:
+            target_index = find_top_level_fact_by_module_name(
+                graph,
+                &imported.module_name,
+                &nominal_name,
+            )
+            if (
+                target_index >= 0
+                and fact_kind_is_nominal_constructor(
+                    &facts[cast[usize](target_index)].kind
+                )
+            ):
+                return target_index
+    return -1
+
+
+def nominal_fact_for_fact_type(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    fact_index: i32,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    if fact_index < 0 or fact_index >= cast[i32](len(facts)):
+        return -1
+    fact: &const SymbolFact = &facts[cast[usize](fact_index)]
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    fact_module: &const project.ParsedModule = &project_modules[fact.module_index]
+    type_id = codegen_type_names.find_child_type(&fact_module.arena, fact.node)
+    nominal_type_id = nominal_name_type_node(&fact_module.arena, type_id)
+    return resolve_type_fact_from_node(
+        project_graph,
+        graph,
+        fact.module_index,
+        &fact_module.arena,
+        &fact_module.source,
+        nominal_type_id,
+    )
+
+
+def reparsed_expression_checked_type(
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> types.TypeId:
+    if id.index < 0:
+        return types.missing_type()
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        found = checked.symbols.find_name_in_scope(
+            &module.source,
+            current_scope,
+            &name,
+        )
+        if found.index >= 0:
+            return checked.symbols.symbols[cast[usize](found.index)].type_id
+        return types.missing_type()
+    if node.kind == syntax.SyntaxKind.EXPR_INDEX and node.child_count > 0:
+        receiver_type = reparsed_expression_checked_type(
+            checked,
+            module,
+            arena,
+            arena.children[node.first_child],
+            source,
+            current_scope,
+        )
+        return indexed_reparsed_checked_type(
+            &checked.type_table,
+            arena,
+            id,
+            source,
+            receiver_type,
+        )
+    if (
+        node.kind == syntax.SyntaxKind.EXPR_UNARY
+        or node.kind == syntax.SyntaxKind.EXPR_PROPAGATE
+    ) and node.child_count > 0:
+        return reparsed_expression_checked_type(
+            checked,
+            module,
+            arena,
+            arena.children[node.first_child],
+            source,
+            current_scope,
+        )
+    return types.missing_type()
+
+
+def indexed_reparsed_checked_type(
+    table: &const types.TypeTable,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    receiver_type: types.TypeId,
+) -> types.TypeId:
+    value_type = analysis_value_type(table, receiver_type)
+    if value_type.index < 0 or value_type.index >= cast[i32](len(table.types)):
+        return types.missing_type()
+    record = table.types[value_type.index]
+    if (
+        record.kind == types.TypeKind.LIST
+        or record.kind == types.TypeKind.ARRAY
+        or record.kind == types.TypeKind.SLICE
+    ):
+        return record.inner
+    if record.kind == types.TypeKind.MAP:
+        return record.second
+    if record.kind != types.TypeKind.TUPLE:
+        return types.missing_type()
+    node = arena.nodes[id.index]
+    if node.child_count < 2:
+        return types.missing_type()
+    index_id = arena.children[node.first_child + 1]
+    index_node = arena.nodes[index_id.index]
+    if index_node.kind != syntax.SyntaxKind.EXPR_LITERAL:
+        return types.missing_type()
+    offset = reparsed_decimal_index(
+        source,
+        index_node.value_start,
+        index_node.value_length,
+    )
+    if offset < 0 or offset >= record.flags:
+        return types.missing_type()
+    return table.type_args[cast[usize](record.extra + offset)]
+
+
+def reparsed_decimal_index(
+    source: &const String,
+    start: usize,
+    length: usize,
+) -> i32:
+    result: i32 = 0
+    for offset in range(0, length):
+        byte = source.byte_at(start + offset)
+        if byte < 48 or byte > 57:
+            return -1
+        result = result * 10 + cast[i32](byte - 48)
+    return result
+
+
+def nominal_fact_for_indexed_fact_type(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    fact_index: i32,
+) -> i32:
+    facts: &const List[SymbolFact] = &graph.facts
+    if fact_index < 0 or fact_index >= cast[i32](len(facts)):
+        return -1
+    fact: &const SymbolFact = &facts[cast[usize](fact_index)]
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    fact_module: &const project.ParsedModule = &project_modules[fact.module_index]
+    type_id = codegen_type_names.find_child_type(&fact_module.arena, fact.node)
+    element_type_id = indexed_type_element_node(
+        &fact_module.arena,
+        type_id,
+        &fact_module.source,
+    )
+    nominal_type_id = nominal_name_type_node(
+        &fact_module.arena,
+        element_type_id,
+    )
+    return resolve_type_fact_from_node(
+        project_graph,
+        graph,
+        fact.module_index,
+        &fact_module.arena,
+        &fact_module.source,
+        nominal_type_id,
+    )
+
+
+def indexed_type_element_node(
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> NodeId:
+    if id.index < 0:
+        return syntax.missing_node()
+    node = arena.nodes[id.index]
+    if (
+        node.kind == syntax.SyntaxKind.TYPE_CONST
+        or node.kind == syntax.SyntaxKind.TYPE_POINTER
+        or node.kind == syntax.SyntaxKind.TYPE_REFERENCE
+    ) and node.child_count > 0:
+        return indexed_type_element_node(
+            arena,
+            arena.children[node.first_child],
+            source,
+        )
+    if (
+        node.kind == syntax.SyntaxKind.TYPE_ARRAY
+        or node.kind == syntax.SyntaxKind.TYPE_SLICE
+    ) and node.child_count > 0:
+        return arena.children[node.first_child]
+    if node.kind != syntax.SyntaxKind.TYPE_GENERIC or node.child_count < 2:
+        return syntax.missing_node()
+    base_id = arena.children[node.first_child]
+    base = arena.nodes[base_id.index]
+    if (
+        codegen_names.range_text_equals(
+            source,
+            base.value_start,
+            base.value_length,
+            "List",
+        )
+        or codegen_names.range_text_equals(
+            source,
+            base.value_start,
+            base.value_length,
+            "Slice",
+        )
+    ):
+        return arena.children[node.first_child + 1]
+    if (
+        codegen_names.range_text_equals(
+            source,
+            base.value_start,
+            base.value_length,
+            "Map",
+        )
+        and node.child_count > 2
+    ):
+        return arena.children[node.first_child + 2]
+    return syntax.missing_node()
+
+
+def nominal_fact_for_reparsed_call(
+    project_graph: &const project.ProjectGraph,
+    graph: &const SemanticFactGraph,
+    class_model: &const classes.ProjectClassModel,
+    checked: &const checker_core.Checker,
+    module: &const project.ParsedModule,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    caller_index: i32,
+    current_scope: symbols.ScopeId,
+) -> i32:
+    call = arena.nodes[id.index]
+    if call.child_count <= 0:
+        return -1
+    callee_id = arena.children[call.first_child]
+    callee = arena.nodes[callee_id.index]
+    facts: &const List[SymbolFact] = &graph.facts
+    module_imports: &const List[project.ImportBinding] = &module.imports
+    module_index = facts[cast[usize](caller_index)].module_index
+    if callee.kind == syntax.SyntaxKind.EXPR_NAME:
+        callee_name = source[
+            callee.value_start:callee.value_start + callee.value_length
+        ]
+        found = checked.symbols.find_name_in_scope(
+            &module.source,
+            current_scope,
+            &callee_name,
+        )
+        target_index = fact_index_for_symbol(
+            graph,
+            module_index,
+            found.index,
+        )
+        if target_index < 0 and symbol_is_import_binding(
+            checked,
+            &module.arena,
+            found.index,
+            true,
+        ):
+            for imported in module_imports:
+                if len(imported.member) > 0 and imported.alias == callee_name:
+                    target_index = find_top_level_fact_by_module_name(
+                        graph,
+                        &imported.module_name,
+                        &imported.member,
+                    )
+                    break
+        return nominal_fact_for_call_target(
+            project_graph,
+            graph,
+            target_index,
+        )
+    if callee.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or callee.child_count < 2:
+        return -1
+    receiver_id = arena.children[callee.first_child]
+    member_id = arena.children[callee.first_child + 1]
+    receiver = arena.nodes[receiver_id.index]
+    member = arena.nodes[member_id.index]
+    member_name = source[member.value_start:member.value_start + member.value_length]
+    if receiver.kind == syntax.SyntaxKind.EXPR_NAME:
+        receiver_name = source[
+            receiver.value_start:receiver.value_start + receiver.value_length
+        ]
+        found = checked.symbols.find_name_in_scope(
+            &module.source,
+            current_scope,
+            &receiver_name,
+        )
+        if symbol_is_import_binding(
+            checked,
+            &module.arena,
+            found.index,
+            false,
+        ):
+            for imported in module_imports:
+                if len(imported.member) == 0 and imported.alias == receiver_name:
+                    target_index = find_top_level_fact_by_module_name(
+                        graph,
+                        &imported.module_name,
+                        &member_name,
+                    )
+                    return nominal_fact_for_call_target(
+                        project_graph,
+                        graph,
+                        target_index,
+                    )
+    nominal_index = nominal_fact_for_reparsed_expression(
+        project_graph,
+        graph,
+        class_model,
+        checked,
+        module,
+        arena,
+        receiver_id,
+        source,
+        caller_index,
+        current_scope,
+    )
+    if nominal_index < 0:
+        return -1
+    nominal: &const SymbolFact = &facts[cast[usize](nominal_index)]
+    target_index = find_effective_method_fact(
+        graph,
+        class_model,
+        &nominal.module_name,
+        &nominal.name,
+        &member_name,
+    )
+    if target_index < 0:
+        owner_method = nominal.name[0:len(nominal.name)] + "." + member_name[0:len(member_name)]
+        target_index = find_fact_by_owner_name(
+            graph,
+            &nominal.module_name,
+            &owner_method,
+        )
+    return nominal_fact_for_call_target(
+        project_graph,
+        graph,
+        target_index,
+    )
 
 
 def nominal_fact_for_checked_type(

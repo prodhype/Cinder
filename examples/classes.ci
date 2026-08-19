@@ -98,3 +98,11 @@ struct DeepField0:
 
 def deep_field_value(root: DeepField0) -> i32:
     return root.next.next.next.next.next.next.next.next.next.next.value
+
+
+def format_deep_field_value(root: DeepField0) -> void:
+    print(f"value={root.next.next.next.next.next.next.next.next.next.next.value}")
+
+
+def format_indexed_deep_field_value(values: DeepField10[1]) -> void:
+    print(f"value={values[0].value}")

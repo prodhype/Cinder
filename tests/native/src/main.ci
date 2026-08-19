@@ -746,28 +746,74 @@ def test_deep_field_chain_resolution(state: &TestState) -> void:
         "--depth",
         "1",
     ]
+    nested_fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":103",
+        "--depth",
+        "1",
+    ]
+    indexed_fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":107",
+        "--depth",
+        "1",
+    ]
     impact_command: List[String] = [
         state.compiler.clone(),
         "impact",
         example + ":56",
     ]
     context = process.run(context_command)
+    nested_fstring_context = process.run(nested_fstring_context_command)
+    indexed_fstring_context = process.run(indexed_fstring_context_command)
     impact = process.run(impact_command)
     ok = (
         context.exit_code == 0
+        and nested_fstring_context.exit_code == 0
+        and indexed_fstring_context.exit_code == 0
         and impact.exit_code == 0
         and contains(
             &context.stdout,
             "classes::field:DeepField10.value",
         )
         and contains(
+            &nested_fstring_context.stdout,
+            "classes::field:DeepField10.value",
+        )
+        and contains(
+            &indexed_fstring_context.stdout,
+            "classes::field:DeepField10.value",
+        )
+        and contains(
             &impact.stdout,
             "classes::function:deep_field_value",
         )
+        and contains(
+            &impact.stdout,
+            "classes::function:format_deep_field_value",
+        )
+        and contains(
+            &impact.stdout,
+            "classes::function:format_indexed_deep_field_value",
+        )
     )
-    expect(state, "semantic queries traverse complete field chains", ok)
+    expect(
+        state,
+        "semantic queries resolve nested and indexed f-string fields",
+        ok,
+    )
     if not ok:
         report_process_failure(&context.stdout, &context.stderr)
+        report_process_failure(
+            &nested_fstring_context.stdout,
+            &nested_fstring_context.stderr,
+        )
+        report_process_failure(
+            &indexed_fstring_context.stdout,
+            &indexed_fstring_context.stderr,
+        )
         report_process_failure(&impact.stdout, &impact.stderr)
 
 
