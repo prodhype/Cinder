@@ -356,6 +356,99 @@ def append_numeric_literal(builder: &StringBuilder, source: &const String, start
         offset += 1
 
 
+def canonical_quoted_literal_value(
+    source: &const String,
+    start: usize,
+    length: usize,
+) -> String:
+    if length < 2:
+        return source[start:start + length]
+    quote = source.byte_at(start)
+    end = start + length - 1
+    if (
+        (quote != 34 and quote != 39)
+        or source.byte_at(end) != quote
+    ):
+        return source[start:start + length]
+
+    builder = StringBuilder()
+    index = start + 1
+    while index < end:
+        byte = source.byte_at(index)
+        if byte != 92:
+            append_canonical_literal_byte(&builder, byte)
+            index += 1
+            continue
+
+        index += 1
+        if index >= end:
+            return source[start:start + length]
+        escaped = source.byte_at(index)
+        value: i32 = -1
+        if escaped == 39 or escaped == 34 or escaped == 63 or escaped == 92:
+            value = cast[i32](escaped)
+        elif escaped == 97:
+            value = 7
+        elif escaped == 98:
+            value = 8
+        elif escaped == 102:
+            value = 12
+        elif escaped == 110:
+            value = 10
+        elif escaped == 114:
+            value = 13
+        elif escaped == 116:
+            value = 9
+        elif escaped == 118:
+            value = 11
+        elif escaped >= 48 and escaped <= 55:
+            value = 0
+            digit_count: i32 = 0
+            while (
+                index < end
+                and digit_count < 3
+                and source.byte_at(index) >= 48
+                and source.byte_at(index) <= 55
+            ):
+                value = value * 8 + cast[i32](source.byte_at(index) - 48)
+                index += 1
+                digit_count += 1
+            if value > 255:
+                return source[start:start + length]
+            append_canonical_literal_byte(&builder, cast[u8](value))
+            continue
+        elif escaped == 120:
+            index += 1
+            if index >= end or numeric_digit_value(source.byte_at(index)) < 0:
+                return source[start:start + length]
+            value = 0
+            while index < end:
+                digit = numeric_digit_value(source.byte_at(index))
+                if digit < 0:
+                    break
+                value = value * 16 + digit
+                if value > 255:
+                    return source[start:start + length]
+                index += 1
+            append_canonical_literal_byte(&builder, cast[u8](value))
+            continue
+        else:
+            return source[start:start + length]
+
+        append_canonical_literal_byte(&builder, cast[u8](value))
+        index += 1
+    return builder.finish()
+
+
+def append_canonical_literal_byte(
+    builder: &StringBuilder,
+    value: u8,
+) -> void:
+    digits = "0123456789abcdef"
+    builder.append_char(cast[char](digits.byte_at(cast[usize](value / 16))))
+    builder.append_char(cast[char](digits.byte_at(cast[usize](value % 16))))
+
+
 def canonical_numeric_literal_value(
     source: &const String,
     start: usize,

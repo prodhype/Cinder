@@ -1401,6 +1401,8 @@ def append_snapshot_node_start(
     value = source[node.value_start:node.value_start + node.value_length]
     if snapshot_node_value_is_numeric(node):
         value = canonical_numeric_snapshot_value(node, source)
+    elif snapshot_node_value_is_quoted_literal(node):
+        value = canonical_quoted_literal_snapshot_value(node, source)
     elif snapshot_node_value_is_fstring(node, source):
         value = canonical_fstring_snapshot_value(node, source)
     builder.append("(")
@@ -1422,6 +1424,29 @@ def snapshot_node_value_is_numeric(
             node.flags == cast[i32](token.TokenKind.INTEGER)
             or node.flags == cast[i32](token.TokenKind.FLOAT)
         )
+    )
+
+
+def snapshot_node_value_is_quoted_literal(
+    node: &const syntax.SyntaxNode,
+) -> bool:
+    return (
+        node.kind == syntax.SyntaxKind.EXPR_LITERAL
+        and (
+            node.flags == cast[i32](token.TokenKind.STRING)
+            or node.flags == cast[i32](token.TokenKind.CHAR)
+        )
+    )
+
+
+def canonical_quoted_literal_snapshot_value(
+    node: &const syntax.SyntaxNode,
+    source: &const String,
+) -> String:
+    return codegen_names.canonical_quoted_literal_value(
+        source,
+        node.value_start,
+        node.value_length,
     )
 
 

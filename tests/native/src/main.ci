@@ -1778,12 +1778,12 @@ def test_semantic_diff(state: &TestState) -> void:
     literal_format_path = source_dir + "/literal_format.ci"
     write_test_text(
         literal_format_path[0:len(literal_format_path)],
-        "def literal_format_probe() -> i32:\n    return 1_000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0XAF + 0B10 + 0O7) + 1E6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.00000000000000001\n\n\ndef integer_value_format_probe() -> i32:\n    return 16 + 8 + 2\n",
+        "def literal_format_probe() -> i32:\n    return 1_000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0XAF + 0B10 + 0O7) + 1E6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.00000000000000001\n\n\ndef integer_value_format_probe() -> i32:\n    return 16 + 8 + 2\n\n\ndef string_escape_format_probe() -> String:\n    return \"A\"\n\n\ndef character_escape_format_probe() -> char:\n    return '?'\n",
     )
     literal_change_path = source_dir + "/literal_change.ci"
     write_test_text(
         literal_change_path[0:len(literal_change_path)],
-        "def literal_change_probe() -> i32:\n    return 1_000\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000001\n",
+        "def literal_change_probe() -> i32:\n    return 1_000\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000001\n\n\ndef string_literal_change_probe() -> String:\n    return \"A\"\n\n\ndef character_literal_change_probe() -> char:\n    return '?'\n",
     )
     fstring_format_path = source_dir + "/fstring_format.ci"
     write_test_text(
@@ -1943,11 +1943,11 @@ def test_semantic_diff(state: &TestState) -> void:
     )
     write_test_text(
         literal_format_path[0:len(literal_format_path)],
-        "def literal_format_probe() -> i32:\n    return 1000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0xaf + 0b10 + 0o7) + 1e6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.00\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef integer_value_format_probe() -> i32:\n    return 0x10 + 0o10 + 0b10\n",
+        "def literal_format_probe() -> i32:\n    return 1000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0xaf + 0b10 + 0o7) + 1e6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.00\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef integer_value_format_probe() -> i32:\n    return 0x10 + 0o10 + 0b10\n\n\ndef string_escape_format_probe() -> String:\n    return \"\\x41\"\n\n\ndef character_escape_format_probe() -> char:\n    return '\\?'\n",
     )
     write_test_text(
         literal_change_path[0:len(literal_change_path)],
-        "def literal_change_probe() -> i32:\n    return 1_001\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000002\n",
+        "def literal_change_probe() -> i32:\n    return 1_001\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000002\n\n\ndef string_literal_change_probe() -> String:\n    return \"B\"\n\n\ndef character_literal_change_probe() -> char:\n    return '!'\n",
     )
     write_test_text(
         fstring_format_path[0:len(fstring_format_path)],
@@ -2266,6 +2266,14 @@ def test_semantic_diff(state: &TestState) -> void:
             &literal_format.stdout,
             "~ changed literal_format::function:integer_value_format_probe",
         )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:string_escape_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:character_escape_format_probe",
+        )
         and contains(
             &literal_change.stdout,
             "~ changed literal_change::function:literal_change_probe",
@@ -2273,6 +2281,14 @@ def test_semantic_diff(state: &TestState) -> void:
         and contains(
             &literal_change.stdout,
             "~ changed literal_change::function:float_value_change_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:string_literal_change_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:character_literal_change_probe",
         )
         and contains(&literal_change.stdout, "implementation: changed")
         and not contains(&literal_change.stdout, "NO SEMANTIC CHANGES")
