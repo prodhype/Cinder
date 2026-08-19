@@ -1037,12 +1037,13 @@ def append_canonical_enum_member_value(
     node = arena.nodes[id.index]
     if node.kind == syntax.SyntaxKind.EXPR_LITERAL:
         if snapshot_node_value_is_numeric(&node):
-            codegen_names.append_numeric_literal(
-                builder,
+            value = codegen_names.canonical_numeric_literal_value(
                 source,
                 node.value_start,
                 node.value_length,
+                node.flags,
             )
+            builder.append(value[0:len(value)])
         else:
             builder.append(source[node.value_start:node.value_start + node.value_length])
         return
@@ -1055,7 +1056,13 @@ def append_canonical_enum_member_value(
             if byte != 32 and byte != 9 and byte != 10 and byte != 13:
                 break
             index += 1
-        codegen_names.append_numeric_literal(builder, source, index, end - index)
+        value = codegen_names.canonical_numeric_literal_value(
+            source,
+            index,
+            end - index,
+            cast[i32](token.TokenKind.INTEGER),
+        )
+        builder.append(value[0:len(value)])
         return
     builder.append(source[node.value_start:node.value_start + node.value_length])
 
@@ -1421,14 +1428,12 @@ def canonical_numeric_snapshot_value(
     node: &const syntax.SyntaxNode,
     source: &const String,
 ) -> String:
-    builder = StringBuilder()
-    codegen_names.append_numeric_literal(
-        &builder,
+    return codegen_names.canonical_numeric_literal_value(
         source,
         node.value_start,
         node.value_length,
+        node.flags,
     )
-    return builder.finish()
 
 
 def snapshot_node_value_is_fstring(

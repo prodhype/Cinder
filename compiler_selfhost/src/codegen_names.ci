@@ -5,6 +5,10 @@ import token
 from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
+extern "C":
+    def cinder_f64_snapshot_bits(value: f64) -> u64
+
+
 struct SpecializationNameRegistry:
     canonical_bytes: List[char]
     canonical_starts: List[usize]
@@ -350,3 +354,89 @@ def append_numeric_literal(builder: &StringBuilder, source: &const String, start
                 byte += 32
             builder.append_char(cast[char](byte))
         offset += 1
+
+
+def canonical_numeric_literal_value(
+    source: &const String,
+    start: usize,
+    length: usize,
+    flags: i32,
+) -> String:
+    if flags == cast[i32](token.TokenKind.FLOAT):
+        normalized = normalized_numeric_literal(source, start, length)
+        match parse_f64(normalized.clone()):
+            case Ok(value):
+                return to_string(cinder_f64_snapshot_bits(value))
+            case Err(error):
+                ignored_error = error
+                return normalized
+    return canonical_integer_literal_value(source, start, length)
+
+
+def normalized_numeric_literal(
+    source: &const String,
+    start: usize,
+    length: usize,
+) -> String:
+    builder = StringBuilder()
+    append_numeric_literal(&builder, source, start, length)
+    return builder.finish()
+
+
+def canonical_integer_literal_value(
+    source: &const String,
+    start: usize,
+    length: usize,
+) -> String:
+    base: i32 = 10
+    digit_start = start
+    if length >= 2 and source.byte_at(start) == 48:
+        marker = source.byte_at(start + 1)
+        if marker == 120 or marker == 88:
+            base = 16
+            digit_start += 2
+        elif marker == 98 or marker == 66:
+            base = 2
+            digit_start += 2
+        elif marker == 111 or marker == 79:
+            base = 8
+            digit_start += 2
+
+    decimal_digits: List[u8] = []
+    decimal_digits.append(cast[u8](0))
+    index = digit_start
+    end = start + length
+    while index < end:
+        byte = source.byte_at(index)
+        if byte != 95:
+            digit = numeric_digit_value(byte)
+            if digit < 0 or digit >= base:
+                return normalized_numeric_literal(source, start, length)
+            carry = digit
+            decimal_index: usize = 0
+            while decimal_index < len(decimal_digits):
+                product = cast[i32](decimal_digits[decimal_index]) * base + carry
+                decimal_digits[decimal_index] = cast[u8](product % 10)
+                carry = product / 10
+                decimal_index += 1
+            while carry > 0:
+                decimal_digits.append(cast[u8](carry % 10))
+                carry = carry / 10
+        index += 1
+
+    builder = StringBuilder()
+    decimal_index = len(decimal_digits)
+    while decimal_index > 0:
+        decimal_index -= 1
+        builder.append_char(cast[char](48 + decimal_digits[decimal_index]))
+    return builder.finish()
+
+
+def numeric_digit_value(byte: u8) -> i32:
+    if byte >= 48 and byte <= 57:
+        return cast[i32](byte - 48)
+    if byte >= 65 and byte <= 70:
+        return cast[i32](byte - 65 + 10)
+    if byte >= 97 and byte <= 102:
+        return cast[i32](byte - 97 + 10)
+    return -1

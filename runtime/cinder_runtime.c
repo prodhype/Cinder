@@ -1342,6 +1342,14 @@ bool cinder_parse_f64(const char *text, double *out, CinderParseError *error)
     return true;
 }
 
+uint64_t cinder_f64_snapshot_bits(double value)
+{
+    uint64_t bits = 0;
+    _Static_assert(sizeof(bits) == sizeof(value), "f64 snapshot requires 64-bit double");
+    (void)memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
 bool cinder_parse_f32(const char *text, float *out, CinderParseError *error)
 {
     if (!cinder_prepare_parse(&text, error)) {

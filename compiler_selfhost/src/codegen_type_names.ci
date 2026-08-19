@@ -487,7 +487,13 @@ def emit_semantic_declared_type_name(
         builder.append("[")
         if node.child_count > 1:
             length = arena.nodes[arena.children[node.first_child + 1].index]
-            codegen_names.append_numeric_literal(builder, source, length.value_start, length.value_length)
+            value = codegen_names.canonical_numeric_literal_value(
+                source,
+                length.value_start,
+                length.value_length,
+                cast[i32](token.TokenKind.INTEGER),
+            )
+            builder.append(value[0:len(value)])
         builder.append("]")
         return
     if node.kind == SyntaxKind.TYPE_SLICE:

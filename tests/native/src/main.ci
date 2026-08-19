@@ -1733,12 +1733,12 @@ def test_semantic_diff(state: &TestState) -> void:
     literal_format_path = source_dir + "/literal_format.ci"
     write_test_text(
         literal_format_path[0:len(literal_format_path)],
-        "def literal_format_probe() -> i32:\n    return 1_000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0XAF + 0B10 + 0O7) + 1E6\n",
+        "def literal_format_probe() -> i32:\n    return 1_000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0XAF + 0B10 + 0O7) + 1E6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.00000000000000001\n\n\ndef integer_value_format_probe() -> i32:\n    return 16 + 8 + 2\n",
     )
     literal_change_path = source_dir + "/literal_change.ci"
     write_test_text(
         literal_change_path[0:len(literal_change_path)],
-        "def literal_change_probe() -> i32:\n    return 1_000\n",
+        "def literal_change_probe() -> i32:\n    return 1_000\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000001\n",
     )
     fstring_format_path = source_dir + "/fstring_format.ci"
     write_test_text(
@@ -1758,12 +1758,12 @@ def test_semantic_diff(state: &TestState) -> void:
     type_format_path = source_dir + "/type_format.ci"
     write_test_text(
         type_format_path[0:len(type_format_path)],
-        "import type_format_model\n\n\nstruct Holder:\n    items: List[i32]\n    item: type_format_model.Item\n    nested: List[type_format_model.Item]\n    array_items: type_format_model.Item[1_000]\n",
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[i32]\n    item: type_format_model.Item\n    nested: List[type_format_model.Item]\n    array_items: type_format_model.Item[0x3E8]\n",
     )
     enum_format_path = source_dir + "/enum_format.ci"
     write_test_text(
         enum_format_path[0:len(enum_format_path)],
-        "enum FormatEnum:\n    neg = -0XAF\n    pos = 42\n",
+        "enum FormatEnum:\n    neg = -0XAF\n    pos = 0b101010\n",
     )
     assertion_path = source_dir + "/assertion.ci"
     write_test_text(
@@ -1898,11 +1898,11 @@ def test_semantic_diff(state: &TestState) -> void:
     )
     write_test_text(
         literal_format_path[0:len(literal_format_path)],
-        "def literal_format_probe() -> i32:\n    return 1000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0xaf + 0b10 + 0o7) + 1e6\n",
+        "def literal_format_probe() -> i32:\n    return 1000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0xaf + 0b10 + 0o7) + 1e6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.00\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef integer_value_format_probe() -> i32:\n    return 0x10 + 0o10 + 0b10\n",
     )
     write_test_text(
         literal_change_path[0:len(literal_change_path)],
-        "def literal_change_probe() -> i32:\n    return 1_001\n",
+        "def literal_change_probe() -> i32:\n    return 1_001\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000002\n",
     )
     write_test_text(
         fstring_format_path[0:len(fstring_format_path)],
@@ -1922,7 +1922,7 @@ def test_semantic_diff(state: &TestState) -> void:
     )
     write_test_text(
         enum_format_path[0:len(enum_format_path)],
-        "enum FormatEnum:\n    neg = - 0xaf\n    pos = 42\n",
+        "enum FormatEnum:\n    neg = - 175\n    pos = 42\n",
     )
     write_test_text(
         assertion_path[0:len(assertion_path)],
@@ -2209,9 +2209,25 @@ def test_semantic_diff(state: &TestState) -> void:
             &literal_format.stdout,
             "~ changed literal_format::function:literal_case_probe",
         )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:float_value_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:rounded_float_value_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:integer_value_format_probe",
+        )
         and contains(
             &literal_change.stdout,
             "~ changed literal_change::function:literal_change_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:float_value_change_probe",
         )
         and contains(&literal_change.stdout, "implementation: changed")
         and not contains(&literal_change.stdout, "NO SEMANTIC CHANGES")
