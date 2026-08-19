@@ -2,7 +2,6 @@ import analysis_core
 import cinder
 import emit_project
 import fs
-import manifest
 import process
 import project
 
@@ -31,11 +30,14 @@ def semantic_diff_command(args: &const List[String]) -> i32:
         diff_error(options.error[0:len(options.error)])
         return 2
 
-    current_config: manifest.ProjectConfig = project.resolve_project(options.project_path[0:len(options.project_path)])
+    current_project: project.ProjectGraph = project.load_project(options.project_path[0:len(options.project_path)])
+    if len(current_project.error) > 0:
+        diff_error("analysis error: project error: " + current_project.error)
+        return 1
     repository_command: List[String] = [
         "git",
         "-C",
-        current_config.root[0:len(current_config.root)],
+        current_project.config.root[0:len(current_project.config.root)],
         "rev-parse",
         "--show-toplevel",
     ]
@@ -47,7 +49,7 @@ def semantic_diff_command(args: &const List[String]) -> i32:
     prefix_command: List[String] = [
         "git",
         "-C",
-        current_config.root[0:len(current_config.root)],
+        current_project.config.root[0:len(current_project.config.root)],
         "rev-parse",
         "--show-prefix",
     ]
@@ -112,7 +114,7 @@ def semantic_diff_command(args: &const List[String]) -> i32:
         diff_error("reference analysis error: " + reference_result.error)
         return 1
 
-    current_result = analyze_diff_side(options.project_path[0:len(options.project_path)])
+    current_result = analyze_loaded_diff_side(&current_project)
     if not current_result.ok:
         diff_error("analysis error: " + current_result.error)
         return 1
@@ -129,10 +131,14 @@ def analyze_diff_side(path: String) -> DiffGraphResult:
     loaded: project.ProjectGraph = project.load_project(path)
     if len(loaded.error) > 0:
         return diff_graph_error("project error: " + loaded.error)
-    analyzed: emit_project.AnalysisResult = emit_project.analyze_project(&loaded)
+    return analyze_loaded_diff_side(&loaded)
+
+
+def analyze_loaded_diff_side(loaded: &const project.ProjectGraph) -> DiffGraphResult:
+    analyzed: emit_project.AnalysisResult = emit_project.analyze_project(loaded)
     if not analyzed.ok:
         return diff_graph_error("project error: " + analyzed.error)
-    full_graph: analysis_core.SemanticFactGraph = analysis_core.build_fact_graph(&loaded, &analyzed)
+    full_graph: analysis_core.SemanticFactGraph = analysis_core.build_fact_graph(loaded, &analyzed)
     if len(full_graph.error) > 0:
         return diff_graph_error(full_graph.error[0:len(full_graph.error)])
     compact: analysis_core.DiffFactGraph = analysis_core.compact_diff_graph(&full_graph)

@@ -61,6 +61,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_import_type_resolution(&state)
     test_ownership_use_resolution(&state)
     test_semantic_query_diagnostics(&state)
+    test_semantic_diff_missing_manifest(&state)
     test_semantic_diff(&state)
 
     print("native compiler tests:", state.passed, "passed,", state.failed, "failed")
@@ -1525,6 +1526,29 @@ def test_semantic_query_diagnostics(state: &TestState) -> void:
         and contains(&result.stderr, "line is outside the source file")
     )
     expect(state, "semantic queries reject invalid locations", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_semantic_diff_missing_manifest(state: &TestState) -> void:
+    missing_manifest = state.workspace + "/missing-semantic-diff-project/cinder.toml"
+    command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        missing_manifest,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 1
+        and len(result.stdout) == 0
+        and contains(
+            &result.stderr,
+            "analysis error: project error: manifest file not found:",
+        )
+    )
+    expect(state, "semantic-diff rejects a missing manifest path", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
 
