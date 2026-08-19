@@ -6,6 +6,7 @@ import lock_order
 import project
 import semantic
 import syntax
+import toolchain
 
 
 struct TargetSpec:
@@ -32,7 +33,8 @@ def context_command(args: &const List[String]) -> i32:
     if not options.ok:
         command_error(options.error[0:len(options.error)])
         return 2
-    load_path = project_path_for_target(&options.target.path)
+    target_path = toolchain.canonical_path(&options.target.path)
+    load_path = project_path_for_target(&target_path)
     loaded = project.load_project(load_path)
     if len(loaded.error) > 0:
         command_error("project error: " + loaded.error)
@@ -48,7 +50,7 @@ def context_command(args: &const List[String]) -> i32:
     located = analysis_core.locate_symbol(
         &loaded,
         &graph,
-        &options.target.path,
+        &target_path,
         options.target.line,
     )
     if not located.ok:
@@ -73,7 +75,8 @@ def impact_command(args: &const List[String]) -> i32:
     if not target.ok:
         command_error(target.error[0:len(target.error)])
         return 2
-    load_path = project_path_for_target(&target.path)
+    target_path = toolchain.canonical_path(&target.path)
+    load_path = project_path_for_target(&target_path)
     loaded = project.load_project(load_path)
     if len(loaded.error) > 0:
         command_error("project error: " + loaded.error)
@@ -86,7 +89,7 @@ def impact_command(args: &const List[String]) -> i32:
     if len(graph.error) > 0:
         command_error("analysis error: " + graph.error)
         return 1
-    located = analysis_core.locate_symbol(&loaded, &graph, &target.path, target.line)
+    located = analysis_core.locate_symbol(&loaded, &graph, &target_path, target.line)
     if not located.ok:
         command_error("impact error: " + located.error)
         return 2

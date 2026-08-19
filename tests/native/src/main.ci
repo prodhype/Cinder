@@ -55,6 +55,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_variant_case_resolution(&state)
     test_decorator_line_resolution(&state)
     test_impact_caller_truncation(&state)
+    test_relative_semantic_query_targets(&state)
     test_import_call_resolution(&state)
     test_fstring_call_resolution(&state)
     test_import_value_resolution(&state)
@@ -1178,6 +1179,63 @@ def test_impact_caller_truncation(state: &TestState) -> void:
     expect(state, "impact reports transitive caller truncation", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_relative_semantic_query_targets(state: &TestState) -> void:
+    project_dir = state.workspace + "/relative-semantic-target-project"
+    source_dir = project_dir + "/src"
+    nested_dir = source_dir + "/sub"
+    create: List[String] = ["mkdir", "-p", nested_dir.clone()]
+    if process.run(create).exit_code != 0:
+        expect(state, "context resolves cwd-relative source targets", false)
+        expect(state, "impact resolves cwd-relative source targets", false)
+        return
+    write_test_text(
+        project_dir + "/cinder.toml",
+        "[project]\nname = \"relative_semantic_target_fixture\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+    )
+    write_test_text(
+        source_dir + "/main.ci",
+        "import sub.main\n\ndef root_target() -> i32:\n    return 1\n",
+    )
+    write_test_text(
+        nested_dir + "/main.ci",
+        "def nested_target() -> i32:\n    return 2\n",
+    )
+    context_command: List[String] = [
+        "sh",
+        "-c",
+        "cd \"$1\" && \"$2\" context main.ci:3",
+        "relative-context",
+        source_dir.clone(),
+        state.compiler.clone(),
+    ]
+    impact_command: List[String] = [
+        "sh",
+        "-c",
+        "cd \"$1\" && \"$2\" impact main.ci:3",
+        "relative-impact",
+        source_dir.clone(),
+        state.compiler.clone(),
+    ]
+    context_result = process.run(context_command)
+    impact_result = process.run(impact_command)
+    context_ok = (
+        context_result.exit_code == 0
+        and contains(&context_result.stdout, "symbol: main::function:root_target")
+        and not contains(&context_result.stdout, "nested_target")
+    )
+    impact_ok = (
+        impact_result.exit_code == 0
+        and contains(&impact_result.stdout, "symbol: main::function:root_target")
+        and not contains(&impact_result.stdout, "nested_target")
+    )
+    expect(state, "context resolves cwd-relative source targets", context_ok)
+    expect(state, "impact resolves cwd-relative source targets", impact_ok)
+    if not context_ok:
+        report_process_failure(&context_result.stdout, &context_result.stderr)
+    if not impact_ok:
+        report_process_failure(&impact_result.stdout, &impact_result.stderr)
 
 
 def test_import_call_resolution(state: &TestState) -> void:

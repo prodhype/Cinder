@@ -5816,17 +5816,7 @@ def paths_match(
     candidate: &const String,
     requested: &const String,
 ) -> bool:
-    if candidate == requested:
-        return true
-    if len(requested) >= 2 and requested.byte_at(0) == 46 and requested.byte_at(1) == 47:
-        stripped = requested[2:len(requested)]
-        if candidate == stripped:
-            return true
-    if len(candidate) > len(requested):
-        start = len(candidate) - len(requested)
-        if candidate[start:len(candidate)] == requested and start > 0 and candidate.byte_at(start - 1) == 47:
-            return true
-    return false
+    return candidate == requested
 
 
 def last_dot(value: &const String) -> i32:
