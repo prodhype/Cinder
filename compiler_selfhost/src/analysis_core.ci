@@ -197,6 +197,7 @@ def build_fact_graph(
     collect_import_call_relations(graph, analysis, &class_model, &graph_value)
     collect_layout_type_relations(graph, &graph_value)
     collect_type_relations(graph, &graph_value)
+    collect_import_type_fact_relations(graph, analysis, &graph_value)
     collect_abi_surface_relations(graph, analysis, &graph_value)
     collect_lock_relations(analysis, &graph_value)
     return graph_value
@@ -1727,6 +1728,14 @@ def collect_semantic_relations(
                     true,
                 )
             elif source_index >= 0 and target_index < 0:
+                add_import_fact_use_relation(
+                    &analyzed.checked,
+                    graph,
+                    module,
+                    analyzed.module_index,
+                    source_index,
+                    binding.symbol.index,
+                )
                 collect_import_value_relation(
                     &analyzed.checked,
                     graph,
@@ -3194,6 +3203,14 @@ def collect_reparsed_name_value_relation(
         )
         return
     if target_index < 0:
+        add_import_fact_use_relation(
+            checked,
+            graph,
+            module,
+            caller.module_index,
+            caller_index,
+            found.index,
+        )
         collect_import_value_relation(
             checked,
             graph,
@@ -3235,6 +3252,14 @@ def collect_reparsed_attribute_value_relation(
             &receiver_name,
         )
         if symbol_is_import_binding(checked, &module.arena, found.index, false):
+            add_import_fact_use_relation(
+                checked,
+                graph,
+                module,
+                facts[cast[usize](caller_index)].module_index,
+                caller_index,
+                found.index,
+            )
             for imported in module_imports:
                 if len(imported.member) == 0 and imported.alias == receiver_name:
                     target_index = find_top_level_fact_by_module_name(
@@ -3991,6 +4016,14 @@ def collect_reparsed_call_relation(
         if found.index < 0:
             return
         if symbol_is_import_binding(checked, &module.arena, found.index, true):
+            add_import_fact_use_relation(
+                checked,
+                graph,
+                module,
+                facts[cast[usize](caller_index)].module_index,
+                caller_index,
+                found.index,
+            )
             for imported in module_imports:
                 if len(imported.member) > 0 and imported.alias == callee_name:
                     add_named_reparsed_call_relation(
@@ -4042,6 +4075,14 @@ def collect_reparsed_call_relation(
                     false,
                 )
             ):
+                add_import_fact_use_relation(
+                    checked,
+                    graph,
+                    module,
+                    facts[cast[usize](caller_index)].module_index,
+                    caller_index,
+                    found.index,
+                )
                 variant_kind = "variant"
                 nominal_fact_index = imported_nominal_fact_for_attribute_source(
                     graph,
@@ -4067,6 +4108,14 @@ def collect_reparsed_call_relation(
             return
         found = checked.symbols.find_name_in_scope(&module.source, current_scope, &receiver_name)
         if found.index >= 0 and symbol_is_import_binding(checked, &module.arena, found.index, false):
+            add_import_fact_use_relation(
+                checked,
+                graph,
+                module,
+                facts[cast[usize](caller_index)].module_index,
+                caller_index,
+                found.index,
+            )
             for imported in module_imports:
                 if len(imported.member) == 0 and imported.alias == receiver_name:
                     add_named_reparsed_call_relation(
@@ -4601,6 +4650,56 @@ def symbol_is_import_binding(
     return node.kind == syntax.SyntaxKind.IMPORT_DECL
 
 
+def add_import_fact_use_relation(
+    checked: &const checker_core.Checker,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    source_index: i32,
+    symbol_index: i32,
+) -> void:
+    if (
+        not symbol_is_import_binding(
+            checked,
+            &module.arena,
+            symbol_index,
+            false,
+        )
+        and not symbol_is_import_binding(
+            checked,
+            &module.arena,
+            symbol_index,
+            true,
+        )
+    ):
+        return
+    facts: &const List[SymbolFact] = &graph.facts
+    if source_index < 0 or source_index >= cast[i32](len(facts)):
+        return
+    symbol_values: &const List[symbols.SymbolRecord] = &checked.symbols.symbols
+    symbol: &const symbols.SymbolRecord = &symbol_values[cast[usize](symbol_index)]
+    import_index = enclosing_fact_index(
+        graph,
+        module_index,
+        symbol.node,
+        &module.arena,
+    )
+    if (
+        import_index < 0
+        or import_index == source_index
+        or facts[cast[usize](import_index)].kind != "import"
+    ):
+        return
+    add_relation_unique(
+        graph,
+        "uses",
+        &facts[cast[usize](source_index)].key,
+        &facts[cast[usize](import_index)].key,
+        "import",
+        true,
+    )
+
+
 def collect_layout_type_relations(
     project_graph: &const project.ProjectGraph,
     graph: &SemanticFactGraph,
@@ -4675,6 +4774,60 @@ def collect_type_relations(
                         )
             node_index += 1
         module_index += 1
+
+
+def collect_import_type_fact_relations(
+    project_graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    for analyzed in analyzed_modules:
+        module_index = analyzed.module_index
+        module: &const project.ParsedModule = &project_modules[module_index]
+        nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
+        children: &const List[NodeId] = &module.arena.children
+        node_index: usize = 0
+        while node_index < len(nodes):
+            node = nodes[node_index]
+            if node.kind == syntax.SyntaxKind.TYPE_NAME and node.child_count > 0:
+                type_id = NodeId(index=cast[i32](node_index))
+                source_index = enclosing_fact_index(
+                    graph,
+                    module_index,
+                    type_id,
+                    &module.arena,
+                )
+                if source_index >= 0 and not type_name_is_enclosing_parameter(
+                    graph,
+                    module_index,
+                    type_id,
+                    &module.arena,
+                    &module.source,
+                ):
+                    name_id = children[node.first_child]
+                    name_node = nodes[name_id.index]
+                    current_scope = enclosing_scope_for_node(
+                        &analyzed.checked,
+                        &module.arena,
+                        type_id,
+                    )
+                    imported_symbol = analyzed.checked.symbols.find_in_scope(
+                        &module.source,
+                        current_scope,
+                        name_node.value_start,
+                        name_node.value_length,
+                    )
+                    add_import_fact_use_relation(
+                        &analyzed.checked,
+                        graph,
+                        module,
+                        module_index,
+                        source_index,
+                        imported_symbol.index,
+                    )
+            node_index += 1
 
 
 def collect_abi_surface_relations(
