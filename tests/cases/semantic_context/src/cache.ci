@@ -97,3 +97,9 @@ def export_abi_nested_ref_holder(value: model.AbiNestedRefHolder) -> i32:
 
 def format_constructed_token(value: i32) -> void:
     print(f"{model.Token.Integer(value)}")
+
+
+struct AbiMethodExporter:
+    @export
+    def consume(self, value: model.AbiMethodPayload) -> i32:
+        return value.value

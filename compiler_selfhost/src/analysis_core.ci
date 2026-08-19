@@ -4648,7 +4648,10 @@ def collect_abi_surface_relations(
                 fact.module_index == module_index
                 and fact.node.index >= 0
                 and fact.abi == "C"
-                and fact_kind_is_callable(&fact.kind)
+                and (
+                    fact_kind_is_callable(&fact.kind)
+                    or fact.kind == "method"
+                )
             ):
                 declaration = nodes[fact.node.index]
                 if declaration.kind == syntax.SyntaxKind.FUNCTION_DECL:

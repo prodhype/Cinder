@@ -419,6 +419,8 @@ def test_impact_report(state: &TestState) -> void:
     abi_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:35"
     abi_nested_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:48"
     abi_nested_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:56"
+    abi_method_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:64"
+    abi_method_field_target = state.root + "/tests/cases/semantic_context/src/model.ci:65"
     interface_target = state.root + "/tests/cases/semantic_context/src/model.ci:6"
     nominal_command: List[String] = [
         state.compiler.clone(),
@@ -482,6 +484,16 @@ def test_impact_report(state: &TestState) -> void:
         "impact",
         abi_nested_indirect_payload_target,
     ]
+    abi_method_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_method_payload_target,
+    ]
+    abi_method_field_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_method_field_target,
+    ]
     interface_command: List[String] = [
         state.compiler.clone(),
         "impact",
@@ -499,6 +511,8 @@ def test_impact_report(state: &TestState) -> void:
     abi_indirect_payload = process.run(abi_indirect_payload_command)
     abi_nested_payload = process.run(abi_nested_payload_command)
     abi_nested_indirect_payload = process.run(abi_nested_indirect_payload_command)
+    abi_method_payload = process.run(abi_method_payload_command)
+    abi_method_field = process.run(abi_method_field_command)
     interface = process.run(interface_command)
     ok = (
         nominal.exit_code == 0
@@ -513,6 +527,8 @@ def test_impact_report(state: &TestState) -> void:
         and abi_indirect_payload.exit_code == 0
         and abi_nested_payload.exit_code == 0
         and abi_nested_indirect_payload.exit_code == 0
+        and abi_method_payload.exit_code == 0
+        and abi_method_field.exit_code == 0
         and interface.exit_code == 0
         and contains(&nominal.stdout, "model::struct:CacheEntry")
         and contains(&nominal.stdout, "TYPE / MEMBER CONSUMERS")
@@ -589,6 +605,32 @@ def test_impact_report(state: &TestState) -> void:
             &abi_nested_indirect_payload.stdout,
             "C ABI sensitive",
         )
+        and contains(
+            &abi_method_payload.stdout,
+            "model::struct:AbiMethodPayload",
+        )
+        and contains(
+            &abi_method_payload.stdout,
+            "cache::method:AbiMethodExporter.consume",
+        )
+        and contains(&abi_method_payload.stdout, "C ABI sensitive")
+        and not contains(
+            &abi_method_payload.stdout,
+            "source-level layout sensitive",
+        )
+        and contains(
+            &abi_method_field.stdout,
+            "model::field:AbiMethodPayload.value",
+        )
+        and contains(
+            &abi_method_field.stdout,
+            "cache::method:AbiMethodExporter.consume",
+        )
+        and contains(&abi_method_field.stdout, "C ABI sensitive")
+        and not contains(
+            &abi_method_field.stdout,
+            "source-level layout sensitive",
+        )
         and contains(&interface.stdout, "model::class:Store")
         and contains(&interface.stdout, "source-level layout sensitive")
         and not contains(&interface.stdout, "C ABI sensitive")
@@ -615,6 +657,14 @@ def test_impact_report(state: &TestState) -> void:
         report_process_failure(
             &abi_nested_indirect_payload.stdout,
             &abi_nested_indirect_payload.stderr,
+        )
+        report_process_failure(
+            &abi_method_payload.stdout,
+            &abi_method_payload.stderr,
+        )
+        report_process_failure(
+            &abi_method_field.stdout,
+            &abi_method_field.stderr,
         )
         report_process_failure(&interface.stdout, &interface.stderr)
 

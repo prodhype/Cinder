@@ -59,3 +59,7 @@ struct AbiNestedIndirectPayload:
 
 struct AbiNestedRefHolder:
     payload: &AbiNestedIndirectPayload
+
+
+struct AbiMethodPayload:
+    value: i32
