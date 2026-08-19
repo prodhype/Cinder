@@ -50,3 +50,51 @@ def main() -> i32:
     circle.format_inherited_name()
     describe(circle)
     return 0
+
+
+struct DeepField10:
+    value: i32
+
+
+struct DeepField9:
+    next: DeepField10
+
+
+struct DeepField8:
+    next: DeepField9
+
+
+struct DeepField7:
+    next: DeepField8
+
+
+struct DeepField6:
+    next: DeepField7
+
+
+struct DeepField5:
+    next: DeepField6
+
+
+struct DeepField4:
+    next: DeepField5
+
+
+struct DeepField3:
+    next: DeepField4
+
+
+struct DeepField2:
+    next: DeepField3
+
+
+struct DeepField1:
+    next: DeepField2
+
+
+struct DeepField0:
+    next: DeepField1
+
+
+def deep_field_value(root: DeepField0) -> i32:
+    return root.next.next.next.next.next.next.next.next.next.next.value

@@ -50,6 +50,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_context_capsule(&state)
     test_impact_report(&state)
     test_inherited_field_resolution(&state)
+    test_deep_field_chain_resolution(&state)
     test_enum_member_resolution(&state)
     test_decorator_line_resolution(&state)
     test_impact_caller_truncation(&state)
@@ -734,6 +735,40 @@ def test_inherited_field_resolution(state: &TestState) -> void:
         )
         report_process_failure(&override_context.stdout, &override_context.stderr)
         report_process_failure(&override_impact.stdout, &override_impact.stderr)
+
+
+def test_deep_field_chain_resolution(state: &TestState) -> void:
+    example = state.root + "/examples/classes.ci"
+    context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":99",
+        "--depth",
+        "1",
+    ]
+    impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":56",
+    ]
+    context = process.run(context_command)
+    impact = process.run(impact_command)
+    ok = (
+        context.exit_code == 0
+        and impact.exit_code == 0
+        and contains(
+            &context.stdout,
+            "classes::field:DeepField10.value",
+        )
+        and contains(
+            &impact.stdout,
+            "classes::function:deep_field_value",
+        )
+    )
+    expect(state, "semantic queries traverse complete field chains", ok)
+    if not ok:
+        report_process_failure(&context.stdout, &context.stderr)
+        report_process_failure(&impact.stdout, &impact.stderr)
 
 
 def test_enum_member_resolution(state: &TestState) -> void:

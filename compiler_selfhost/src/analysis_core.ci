@@ -1857,6 +1857,7 @@ def nominal_field_fact_for_attribute(
         return -1
     receiver_id = children[attribute.first_child]
     member_id = children[attribute.first_child + 1]
+    visited: List[i32] = []
     nominal_index = nominal_fact_for_expression(
         project_graph,
         graph,
@@ -1866,7 +1867,7 @@ def nominal_field_fact_for_attribute(
         receiver_id,
         module_index,
         source_index,
-        0,
+        visited,
     )
     if nominal_index < 0 and source_index >= 0:
         nominal_index = receiver_field_nominal_fact(
@@ -1932,10 +1933,11 @@ def nominal_fact_for_expression(
     id: NodeId,
     module_index: usize,
     source_index: i32,
-    depth: i32,
+    visited: &List[i32],
 ) -> i32:
-    if id.index < 0 or depth > 8:
+    if id.index < 0 or lock_order.contains_i32(visited, id.index):
         return -1
+    visited.append(id.index)
     nodes: &const List[syntax.SyntaxNode] = &module.arena.nodes
     children: &const List[NodeId] = &module.arena.children
     node = nodes[id.index]
@@ -1976,7 +1978,7 @@ def nominal_fact_for_expression(
                 initializer,
                 module_index,
                 source_index,
-                depth + 1,
+                visited,
             )
         return -1
     if node.kind == syntax.SyntaxKind.EXPR_CALL:
@@ -2012,7 +2014,7 @@ def nominal_fact_for_expression(
             children[node.first_child],
             module_index,
             source_index,
-            depth + 1,
+            visited,
         )
     if node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE or node.child_count < 2:
         return nominal_fact_for_checked_type(
@@ -2034,7 +2036,7 @@ def nominal_fact_for_expression(
         receiver_id,
         module_index,
         source_index,
-        depth + 1,
+        visited,
     )
     if owner_index < 0:
         return -1
