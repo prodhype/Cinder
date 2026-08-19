@@ -185,6 +185,7 @@ def build_fact_graph(
     collect_layout_base_relations(&graph_value, &class_model)
     collect_override_relations(&graph_value, &class_model)
     collect_semantic_relations(graph, analysis, &graph_value)
+    collect_match_variant_case_use_relations(graph, analysis, &graph_value)
     collect_enum_member_use_relations(graph, analysis, &graph_value)
     collect_nominal_field_use_relations(
         graph,
@@ -1742,6 +1743,187 @@ def collect_semantic_relations(
                     true,
                 )
         module_index += 1
+
+
+def collect_match_variant_case_use_relations(
+    project_graph: &const project.ProjectGraph,
+    analysis: &const emit_project.AnalysisResult,
+    graph: &SemanticFactGraph,
+) -> void:
+    analyzed_modules: &const List[emit_project.AnalyzedModule] = &analysis.modules
+    project_modules: &const List[project.ParsedModule] = &project_graph.modules
+    for analyzed in analyzed_modules:
+        module_index = analyzed.module_index
+        module: &const project.ParsedModule = &project_modules[module_index]
+        arena: &const syntax.SyntaxArena = &module.arena
+        nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+        children: &const List[NodeId] = &arena.children
+        node_index: usize = 0
+        while node_index < len(nodes):
+            node = nodes[node_index]
+            if node.kind == syntax.SyntaxKind.MATCH_STMT and node.child_count > 1:
+                subject_id = children[node.first_child]
+                subject_type = semantic_expression_type(
+                    &analyzed.checked,
+                    arena,
+                    subject_id,
+                )
+                subject_nominal_index = nominal_fact_for_checked_type(
+                    project_graph,
+                    graph,
+                    &analyzed.checked,
+                    module,
+                    module_index,
+                    subject_type,
+                )
+                for offset in range(1, node.child_count):
+                    case_id = children[node.first_child + offset]
+                    case_node = nodes[case_id.index]
+                    if (
+                        case_node.kind == syntax.SyntaxKind.MATCH_CASE
+                        and case_node.child_count > 0
+                    ):
+                        pattern_id = children[case_node.first_child]
+                        collect_match_pattern_variant_case_use_relation(
+                            project_graph,
+                            graph,
+                            module,
+                            module_index,
+                            pattern_id,
+                            subject_nominal_index,
+                        )
+            node_index += 1
+
+
+def collect_match_pattern_variant_case_use_relation(
+    project_graph: &const project.ProjectGraph,
+    graph: &SemanticFactGraph,
+    module: &const project.ParsedModule,
+    module_index: usize,
+    pattern_id: NodeId,
+    subject_nominal_index: i32,
+) -> void:
+    if pattern_id.index < 0:
+        return
+    arena: &const syntax.SyntaxArena = &module.arena
+    nodes: &const List[syntax.SyntaxNode] = &arena.nodes
+    children: &const List[NodeId] = &arena.children
+    pattern = nodes[pattern_id.index]
+    if pattern.kind == syntax.SyntaxKind.PATTERN_WILDCARD:
+        return
+    if pattern.kind == syntax.SyntaxKind.PATTERN_CAPTURE:
+        if pattern.child_count > 1:
+            collect_match_pattern_variant_case_use_relation(
+                project_graph,
+                graph,
+                module,
+                module_index,
+                children[pattern.first_child + 1],
+                subject_nominal_index,
+            )
+        return
+    if pattern.kind == syntax.SyntaxKind.PATTERN_OR:
+        for offset in range(0, pattern.child_count):
+            collect_match_pattern_variant_case_use_relation(
+                project_graph,
+                graph,
+                module,
+                module_index,
+                children[pattern.first_child + offset],
+                subject_nominal_index,
+            )
+        return
+    if pattern.kind != syntax.SyntaxKind.PATTERN_PATH:
+        return
+    if pattern.flags == 1:
+        if pattern.child_count > 0:
+            collect_match_pattern_variant_case_use_relation(
+                project_graph,
+                graph,
+                module,
+                module_index,
+                children[pattern.first_child],
+                subject_nominal_index,
+            )
+        return
+    name_count: i32 = 0
+    while name_count < pattern.child_count:
+        child_id = children[pattern.first_child + name_count]
+        if nodes[child_id.index].kind != syntax.SyntaxKind.NAME:
+            break
+        name_count += 1
+    if name_count <= 0:
+        return
+    case_id = children[pattern.first_child + name_count - 1]
+    case_node = nodes[case_id.index]
+    case_name = module.source[
+        case_node.value_start:case_node.value_start + case_node.value_length
+    ]
+    is_binding = (
+        pattern.child_count == 1
+        and codegen_names.is_lowercase_start(&module.source, case_node.value_start)
+    )
+    is_builtin_case = (
+        case_name == "Some"
+        or case_name == "None"
+        or case_name == "Ok"
+        or case_name == "Err"
+    )
+    if not is_binding and not is_builtin_case:
+        nominal_index = subject_nominal_index
+        if name_count >= 2:
+            owner_builder = StringBuilder()
+            for offset in range(0, name_count - 1):
+                if offset > 0:
+                    owner_builder.append(".")
+                owner_id = children[pattern.first_child + offset]
+                owner_node = nodes[owner_id.index]
+                owner_builder.append(
+                    module.source[
+                        owner_node.value_start:owner_node.value_start + owner_node.value_length
+                    ]
+                )
+            owner_name = owner_builder.finish()
+            nominal_index = resolve_type_fact(
+                project_graph,
+                graph,
+                module_index,
+                &owner_name,
+            )
+        target_index = variant_case_fact_for_nominal(
+            graph,
+            nominal_index,
+            &case_name,
+        )
+        source_index = enclosing_fact_index(
+            graph,
+            module_index,
+            pattern_id,
+            arena,
+        )
+        facts: &const List[SymbolFact] = &graph.facts
+        if (
+            source_index >= 0
+            and target_index >= 0
+            and source_index != target_index
+        ):
+            add_relation_unique(
+                graph,
+                "uses",
+                &facts[cast[usize](source_index)].key,
+                &facts[cast[usize](target_index)].key,
+                "",
+                true,
+            )
+    for offset in range(name_count, pattern.child_count):
+        collect_match_pattern_variant_case_use_relation(
+            project_graph,
+            graph,
+            module,
+            module_index,
+            children[pattern.first_child + offset],
+            -1,
+        )
 
 
 def collect_enum_member_use_relations(
