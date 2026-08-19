@@ -1865,7 +1865,7 @@ def test_semantic_diff(state: &TestState) -> void:
     fstring_format_path = source_dir + "/fstring_format.ci"
     write_test_text(
         fstring_format_path[0:len(fstring_format_path)],
-        "const LIMIT: i32 = 42\n\n\ndef fstring_format_probe() -> i32:\n    print(f\"limit={LIMIT:d}\")\n    return 0\n\n\ndef fstring_literal_escape_format_probe() -> i32:\n    print(f\"A{1}B{2}C\")\n    return 0\n",
+        "const LIMIT: i32 = 42\n\n\ndef fstring_format_probe() -> i32:\n    print(f\"limit={LIMIT:d}\")\n    return 0\n\n\ndef fstring_literal_escape_format_probe() -> i32:\n    print(f\"A{1}B{2}C\")\n    return 0\n\n\ndef fstring_quote_delimiter_format_probe() -> i32:\n    print(f'quote={LIMIT}')\n    return 0\n",
     )
     fstring_change_path = source_dir + "/fstring_change.ci"
     write_test_text(
@@ -2028,7 +2028,7 @@ def test_semantic_diff(state: &TestState) -> void:
     )
     write_test_text(
         fstring_format_path[0:len(fstring_format_path)],
-        "const LIMIT: i32 = 42\n\n\ndef fstring_format_probe() -> i32:\n    print(f\"limit={ LIMIT : d }\")\n    return 0\n\n\ndef fstring_literal_escape_format_probe() -> i32:\n    print(f\"\\x41{1}\\x42{2}\\x43\")\n    return 0\n",
+        "const LIMIT: i32 = 42\n\n\ndef fstring_format_probe() -> i32:\n    print(f\"limit={ LIMIT : d }\")\n    return 0\n\n\ndef fstring_literal_escape_format_probe() -> i32:\n    print(f\"\\x41{1}\\x42{2}\\x43\")\n    return 0\n\n\ndef fstring_quote_delimiter_format_probe() -> i32:\n    print(f\"quote={LIMIT}\")\n    return 0\n",
     )
     write_test_text(
         fstring_change_path[0:len(fstring_change_path)],
@@ -2377,6 +2377,10 @@ def test_semantic_diff(state: &TestState) -> void:
         and not contains(
             &fstring_format.stdout,
             "~ changed fstring_format::function:fstring_literal_escape_format_probe",
+        )
+        and not contains(
+            &fstring_format.stdout,
+            "~ changed fstring_format::function:fstring_quote_delimiter_format_probe",
         )
         and contains(
             &fstring_change.stdout,

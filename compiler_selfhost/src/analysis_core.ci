@@ -1487,7 +1487,7 @@ def canonical_fstring_snapshot_value(
     content_start = node.value_start + 2
     content_end = node.value_start + node.value_length - 1
     builder = StringBuilder()
-    builder.append(source[node.value_start:content_start])
+    builder.append("f")
     literal_start = content_start
     index = content_start
     while index < content_end:
@@ -1567,7 +1567,6 @@ def canonical_fstring_snapshot_value(
         content_end - literal_start,
     ):
         return raw
-    builder.append(source[content_end:node.value_start + node.value_length])
     return builder.finish()
 
 
