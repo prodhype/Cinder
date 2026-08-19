@@ -74,6 +74,9 @@ cinder emit-c examples/reflection.ci -o reflection.c
 cinder emit-project examples/class_project -o generated
 cinder build examples/class_project -o class-demo
 cinder run examples/class_project
+cinder context examples/class_project/src/shapes.ci:11 --depth 2
+cinder impact examples/class_project/src/shapes.ci:2
+cinder semantic-diff HEAD --project examples/class_project
 # See also examples/large_project for an SDL2 + SDL_mixer Breakout demo.
 ```
 
@@ -81,6 +84,13 @@ cinder run examples/class_project
 `emit-project` writes the usual per-module `.c` and `.cinder.h` tree.
 `build` writes that same tree under `.cinder/<project-name>/` unless you supply `--build-dir`.
 Then `build` compiles and links each generated translation unit.
+
+`context` emits a compact compiler-derived capsule for the declaration at a
+source line. `impact` reports its resolved callers, consumers, module
+dependents, lock relationships, and external exposure. `semantic-diff`
+compares canonical semantic facts from the working tree with a detached Git
+revision. See [`docs/context-engine.md`](docs/context-engine.md) for the output
+contract and current limits.
 
 You can send compiler and linker flags (these append after any `[native]` values in `cinder.toml`):
 

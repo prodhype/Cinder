@@ -1,0 +1,33 @@
+class Base:
+    def work(self, value: i32) -> i32:
+        return value + 1
+
+
+class Child(Base):
+    def run(self, value: i32) -> i32:
+        return value + 100
+
+
+def run(value: i32) -> i32:
+    return value + 10
+
+
+def action(value: i32) -> i32:
+    return value
+
+
+@reflect
+class ReflectedChild(Child):
+    pass
+
+
+class OverrideBase:
+    def hidden(self, value: i32) -> i32:
+        return value + 200
+
+
+@reflect
+class OverrideChild(OverrideBase):
+    @override
+    def hidden(self, value: i32) -> i32:
+        return value + 300

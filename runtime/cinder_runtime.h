@@ -189,6 +189,7 @@ bool cinder_parse_usize(const char *text, size_t *out, CinderParseError *error);
 bool cinder_parse_f32(const char *text, float *out, CinderParseError *error);
 bool cinder_parse_f64(const char *text, double *out, CinderParseError *error);
 bool cinder_parse_bool(const char *text, bool *out, CinderParseError *error);
+uint64_t cinder_f64_snapshot_bits(double value);
 CinderString cinder_i8_to_string(int8_t value);
 CinderString cinder_i16_to_string(int16_t value);
 CinderString cinder_i32_to_string(int32_t value);

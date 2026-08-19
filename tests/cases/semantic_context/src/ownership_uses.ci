@@ -1,0 +1,38 @@
+def noop() -> void:
+    pass
+
+
+def produce_value() -> i32:
+    return 7
+
+
+def consume(value: i32) -> void:
+    pass
+
+
+def discard_void_call() -> void:
+    noop()
+
+
+def discard_value_call() -> void:
+    produce_value()
+
+
+def discard_call_with_argument() -> void:
+    consume(1)
+
+
+def transfer_return() -> i32:
+    return produce_value()
+
+
+def return_void_call() -> void:
+    return noop()
+
+
+address_target: i32 = 7
+
+
+def explicit_address_transfers() -> *i32:
+    pointer: *i32 = &address_target
+    return &address_target

@@ -36,6 +36,12 @@ def make_label(text: String) -> Label:
 
 
 def main() -> i32:
+    if "\x41" != "A":
+        return 1
+    if '\?' != '?':
+        return 2
+    print(f"f-string escapes: \x41{1}\x42")
+
     # Literals infer String; String() is the empty owner.
     empty = String()
     text = "Aé中Z"

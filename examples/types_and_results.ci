@@ -29,6 +29,19 @@ def increment(value: i32) -> Result[i32, ParseError]:
             return Ok(0)
 
 
+def negative_error() -> ParseError:
+    return ParseError.negative
+
+
+def too_large_error() -> ParseError:
+    return ParseError.too_large
+
+
+def format_too_large_error() -> i32:
+    print(f"status={ParseError.too_large}")
+    return 0
+
+
 def main() -> i32:
     number = Number(integer=41)
     result = increment(number.integer)
@@ -40,3 +53,15 @@ def main() -> i32:
             print(f"error={cast[i32](error)}")
 
     return 0
+
+
+def end_token() -> Token:
+    return Token.End
+
+
+def token_code(token: Token) -> i32:
+    return 0
+
+
+def format_end_token() -> void:
+    print(f"{token_code(Token.End)}")

@@ -240,12 +240,12 @@ def emit_print_fstring_segments(
                 segment_start = index
                 continue
             emit_fstring_literal(source, segment_start, index, builder)
-            field = scan_fstring_field(source, index + 1, content_end)
+            field = codegen_model.scan_fstring_field(source, index + 1, content_end)
             if not field.valid:
                 emit_fstring_literal(source, index, content_end, builder)
                 return
-            expression_start = trim_left(source, index + 1, field.expression_end)
-            expression_end = trim_right(source, expression_start, field.expression_end)
+            expression_start = codegen_model.trim_left(source, index + 1, field.expression_end)
+            expression_end = codegen_model.trim_right(source, expression_start, field.expression_end)
             if expression_end > expression_start:
                 expression_source = source[expression_start:expression_end]
                 scan = lexer.new_lexer(expression_source)
@@ -256,8 +256,8 @@ def emit_print_fstring_segments(
                     format_start = field.format_start
                     format_length: usize = 0
                     if format_start < field.close:
-                        format_start = trim_left(source, format_start + 1, field.close)
-                        format_end = trim_right(source, format_start, field.close)
+                        format_start = codegen_model.trim_left(source, format_start + 1, field.close)
+                        format_end = codegen_model.trim_right(source, format_start, field.close)
                         format_length = format_end - format_start
                     nested_state = codegen_context.ModuleExpressionState(
                         arena=&parsed.arena,
@@ -294,83 +294,6 @@ def emit_print_fstring_segments(
             continue
         index += 1
     emit_fstring_literal(source, segment_start, content_end, builder)
-
-def scan_fstring_field(source: &const String, start: usize, end: usize) -> codegen_model.FStringField:
-    brackets: List[u8] = []
-    index = start
-    format_start = end
-    while index < end:
-        byte = source.byte_at(index)
-        if byte == 34 or byte == 39:
-            index = skip_fstring_quoted(source, index, end)
-            continue
-        if byte == 40:
-            brackets.append(41)
-            index += 1
-            continue
-        if byte == 91:
-            brackets.append(93)
-            index += 1
-            continue
-        if byte == 123:
-            brackets.append(125)
-            index += 1
-            continue
-        if byte == 41 or byte == 93 or byte == 125:
-            if len(brackets) > 0:
-                if brackets[len(brackets) - 1] == byte:
-                    brackets.pop()
-                index += 1
-                continue
-            if byte == 125:
-                expression_end = index
-                if format_start < end:
-                    expression_end = format_start
-                return codegen_model.FStringField(
-                    expression_end=expression_end,
-                    format_start=format_start,
-                    close=index,
-                    valid=true,
-                )
-            index += 1
-            continue
-        if byte == 58 and len(brackets) == 0 and format_start == end:
-            format_start = index
-        index += 1
-    return codegen_model.FStringField(expression_end=end, format_start=end, close=end, valid=false)
-
-def skip_fstring_quoted(source: &const String, start: usize, end: usize) -> usize:
-    quote = source.byte_at(start)
-    index = start + 1
-    escaped = false
-    while index < end:
-        byte = source.byte_at(index)
-        if escaped:
-            escaped = false
-        elif byte == 92:
-            escaped = true
-        elif byte == quote:
-            return index + 1
-        index += 1
-    return index
-
-def trim_left(source: &const String, start: usize, end: usize) -> usize:
-    index = start
-    while index < end:
-        byte = source.byte_at(index)
-        if byte != 32 and byte != 9 and byte != 10 and byte != 13:
-            break
-        index += 1
-    return index
-
-def trim_right(source: &const String, start: usize, end: usize) -> usize:
-    index = end
-    while index > start:
-        byte = source.byte_at(index - 1)
-        if byte != 32 and byte != 9 and byte != 10 and byte != 13:
-            break
-        index -= 1
-    return index
 
 def emit_fstring_literal(source: &const String, start: usize, end: usize, builder: &StringBuilder) -> void:
     if start >= end:

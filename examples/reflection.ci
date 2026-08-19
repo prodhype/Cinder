@@ -8,10 +8,23 @@ struct User:
         return self.active
 
 
+class ReflectionBase:
+    def inherited(self) -> i32:
+        return 1
+
+
+@reflect
+class ReflectionChild(ReflectionBase):
+    def own(self) -> i32:
+        return 2
+
+
 static_assert(field_count(User) == 3, "User layout changed")
 static_assert(method_count(User) == 1)
 static_assert(has_field(User, "name"))
 static_assert(has_method(User, "enabled"))
+static_assert(method_count(ReflectionChild) == 2)
+static_assert(has_method(ReflectionChild, "inherited"))
 
 
 def print_compile_time_layout() -> void:

@@ -40,12 +40,32 @@ def main(argc: i32, argv: **char) -> i32:
 
     test_check_valid(&state)
     test_check_diagnostic(&state)
+    test_check_ir_validation(&state)
     test_emit_c(&state)
     test_emit_c_is_deterministic(&state)
     test_emit_project(&state)
     test_build_and_run(&state)
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
+    test_context_capsule(&state)
+    test_impact_report(&state)
+    test_inherited_field_resolution(&state)
+    test_deep_field_chain_resolution(&state)
+    test_enum_member_resolution(&state)
+    test_variant_case_resolution(&state)
+    test_decorator_line_resolution(&state)
+    test_impact_caller_truncation(&state)
+    test_relative_semantic_query_targets(&state)
+    test_import_call_resolution(&state)
+    test_fstring_call_resolution(&state)
+    test_import_value_resolution(&state)
+    test_import_constructor_resolution(&state)
+    test_import_type_resolution(&state)
+    test_import_binding_impact(&state)
+    test_ownership_use_resolution(&state)
+    test_semantic_query_diagnostics(&state)
+    test_semantic_diff_missing_manifest(&state)
+    test_semantic_diff(&state)
 
     print("native compiler tests:", state.passed, "passed,", state.failed, "failed")
     if state.failed > 0:
@@ -79,6 +99,34 @@ def test_check_diagnostic(state: &TestState) -> void:
     expect(state, "check reports source diagnostics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_check_ir_validation(state: &TestState) -> void:
+    source_path = state.root + "/examples/atomics.ci"
+    check_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        source_path,
+    ]
+    context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/compiler_selfhost/src/emit_project.ci:115",
+    ]
+    checked = process.run(check_command)
+    context = process.run(context_command)
+    ok = (
+        checked.exit_code == 0
+        and context.exit_code == 0
+        and contains(&checked.stdout, "ok: ")
+        and contains(&context.stdout, "CALLS")
+        and contains(&context.stdout, "backend_ir::function:lower")
+        and not contains(&context.stdout, "emit_project::function:compile_project")
+    )
+    expect(state, "check validates atomic IR without retaining compiled modules", ok)
+    if not ok:
+        report_process_failure(&checked.stdout, &checked.stderr)
+        report_process_failure(&context.stdout, &context.stderr)
 
 
 def test_emit_c(state: &TestState) -> void:
@@ -209,6 +257,2426 @@ def test_atomic_codegen(state: &TestState) -> void:
     expect(state, "emit-c lowers atomic operations to C11 atomics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_context_capsule(state: &TestState) -> void:
+    target = state.root + "/tests/cases/semantic_context/src/cache.ci:16"
+    command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        target.clone(),
+        "--depth",
+        "2",
+    ]
+    repeated_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        target,
+        "--depth",
+        "2",
+    ]
+    first = process.run(command)
+    second = process.run(repeated_command)
+    method_target = state.root + "/tests/cases/semantic_context/src/cache.ci:24"
+    method_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        method_target,
+    ]
+    method = process.run(method_command)
+    qualified_target = state.root + "/tests/cases/semantic_context/src/cache.ci:29"
+    qualified_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        qualified_target,
+    ]
+    qualified = process.run(qualified_command)
+    lock_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:7"
+    lock_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        lock_target,
+    ]
+    lock_context = process.run(lock_command)
+    lock_order_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:11"
+    lock_order_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        lock_order_target.clone(),
+    ]
+    lock_order_context = process.run(lock_order_command)
+    lock_order_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        lock_order_target,
+    ]
+    lock_order_impact = process.run(lock_order_impact_command)
+    collision_target = state.root + "/tests/cases/semantic_context/src/lock_collision.ci:2"
+    collision_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        collision_target,
+    ]
+    collision = process.run(collision_command)
+    extern_import_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:10",
+    ]
+    extern_import = process.run(extern_import_command)
+    extern_block_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:11",
+    ]
+    extern_block = process.run(extern_block_command)
+    extern_child_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:12",
+    ]
+    extern_child = process.run(extern_child_command)
+    extern_block_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/main.ci:11",
+    ]
+    extern_block_impact = process.run(extern_block_impact_command)
+    import_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:1",
+    ]
+    import_context = process.run(import_command)
+    ok = (
+        first.exit_code == 0
+        and second.exit_code == 0
+        and method.exit_code == 0
+        and qualified.exit_code == 0
+        and lock_context.exit_code == 0
+        and lock_order_context.exit_code == 0
+        and lock_order_impact.exit_code == 0
+        and collision.exit_code == 0
+        and extern_import.exit_code == 0
+        and extern_block.exit_code == 0
+        and extern_child.exit_code == 0
+        and extern_block_impact.exit_code == 0
+        and import_context.exit_code == 0
+        and first.stdout == second.stdout
+        and contains(&first.stdout, "def cache_get(key: i32) -> model.CacheEntry:")
+        and contains(&first.stdout, "type: model.CacheEntry")
+        and contains(&first.stdout, "cache::function:hash_key")
+        and contains(&first.stdout, "main::function:lookup_twice")
+        and contains(&first.stdout, "lock_effect: unknown (unresolved callee)")
+        and contains(&first.stdout, "cache::lock:database < cache::lock:cache")
+        and contains(&first.stdout, "allocation: unknown")
+        and contains(&method.stdout, "cache::method:CacheWorker.refresh")
+        and contains(&method.stdout, "lock_effect: acquires cache.cache")
+        and contains(&qualified.stdout, "model::struct:CacheEntry")
+        and contains(&lock_context.stdout, "symbol: lock_collision::lock:cache")
+        and contains(&lock_context.stdout, "lock_collision::lock:database < lock_collision::lock:cache")
+        and contains(&lock_order_context.stdout, "lockorder cache before metrics")
+        and contains(&lock_order_context.stdout, "symbol: lock_collision::lock-order:order_0")
+        and contains(&lock_order_context.stdout, "kind: lock-order")
+        and contains(
+            &lock_order_context.stdout,
+            "lock_collision::lock:cache < lock_collision::lock:metrics (explicit)",
+        )
+        and not contains(&lock_order_context.stdout, "LOCK ORDER\n(none)")
+        and contains(
+            &lock_order_impact.stdout,
+            "lock-before: lock_collision::lock:cache -> lock_collision::lock:metrics",
+        )
+        and contains(&collision.stdout, "symbol: lock_collision::method:Holder.cache")
+        and contains(&collision.stdout, "LOCK IMPACT\n(none)")
+        and contains(&extern_import.stdout, "extern import \"stdlib.h\"")
+        and contains(&extern_import.stdout, "symbol: main::extern-import:import_0")
+        and contains(&extern_import.stdout, "abi: C")
+        and contains(&extern_block.stdout, "extern \"C\":")
+        and contains(&extern_block.stdout, "symbol: main::extern-block:block_0")
+        and contains(&extern_block.stdout, "kind: extern-block")
+        and contains(&extern_block.stdout, "abi: C")
+        and contains(&extern_child.stdout, "symbol: main::function:abs")
+        and contains(
+            &extern_child.stdout,
+            "DEPENDS ON\n- main::extern-block:block_0",
+        )
+        and contains(
+            &extern_block_impact.stdout,
+            "TYPE / MEMBER CONSUMERS\n- main::function:abs",
+        )
+        and contains(&import_context.stdout, "import cache")
+        and contains(&import_context.stdout, "symbol: main::import:import_0")
+        and contains(&import_context.stdout, "abi: not applicable")
+    )
+    expect(state, "context emits deterministic compiler-derived facts", ok)
+    if not ok:
+        report_process_failure(&first.stdout, &first.stderr)
+        report_process_failure(&method.stdout, &method.stderr)
+        report_process_failure(&qualified.stdout, &qualified.stderr)
+        report_process_failure(&lock_context.stdout, &lock_context.stderr)
+        report_process_failure(&lock_order_context.stdout, &lock_order_context.stderr)
+        report_process_failure(&lock_order_impact.stdout, &lock_order_impact.stderr)
+        report_process_failure(&collision.stdout, &collision.stderr)
+        report_process_failure(&extern_import.stdout, &extern_import.stderr)
+        report_process_failure(&extern_block.stdout, &extern_block.stderr)
+        report_process_failure(&extern_child.stdout, &extern_child.stderr)
+        report_process_failure(
+            &extern_block_impact.stdout,
+            &extern_block_impact.stderr,
+        )
+        report_process_failure(&import_context.stdout, &import_context.stderr)
+
+
+def test_impact_report(state: &TestState) -> void:
+    nominal_target = state.root + "/tests/cases/semantic_context/src/model.ci:2"
+    field_target = state.root + "/tests/cases/semantic_context/src/model.ci:3"
+    indexed_context_target = state.root + "/tests/cases/semantic_context/src/cache.ci:79"
+    unrelated_method_target = state.root + "/tests/cases/semantic_context/src/model.ci:14"
+    borrowed_target = state.root + "/tests/cases/semantic_context/src/model.ci:18"
+    status_target = state.root + "/tests/cases/semantic_context/src/model.ci:22"
+    status_member_target = state.root + "/tests/cases/semantic_context/src/model.ci:23"
+    abi_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:27"
+    abi_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:35"
+    abi_nested_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:48"
+    abi_nested_indirect_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:56"
+    abi_method_payload_target = state.root + "/tests/cases/semantic_context/src/model.ci:64"
+    abi_method_field_target = state.root + "/tests/cases/semantic_context/src/model.ci:65"
+    interface_target = state.root + "/tests/cases/semantic_context/src/model.ci:6"
+    nominal_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        nominal_target,
+    ]
+    field_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        field_target.clone(),
+    ]
+    indexed_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        indexed_context_target,
+        "--depth",
+        "1",
+    ]
+    field_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        field_target,
+    ]
+    unrelated_method_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        unrelated_method_target,
+    ]
+    borrowed_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        borrowed_target,
+    ]
+    status_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        status_target,
+    ]
+    status_member_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        status_member_target,
+    ]
+    abi_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_payload_target,
+    ]
+    abi_indirect_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_indirect_payload_target,
+    ]
+    abi_nested_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_nested_payload_target,
+    ]
+    abi_nested_indirect_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_nested_indirect_payload_target,
+    ]
+    abi_method_payload_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_method_payload_target,
+    ]
+    abi_method_field_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        abi_method_field_target,
+    ]
+    interface_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        interface_target,
+    ]
+    nominal = process.run(nominal_command)
+    field_context = process.run(field_context_command)
+    indexed_context = process.run(indexed_context_command)
+    field_impact = process.run(field_impact_command)
+    unrelated_method = process.run(unrelated_method_command)
+    borrowed = process.run(borrowed_command)
+    status = process.run(status_command)
+    status_member = process.run(status_member_command)
+    abi_payload = process.run(abi_payload_command)
+    abi_indirect_payload = process.run(abi_indirect_payload_command)
+    abi_nested_payload = process.run(abi_nested_payload_command)
+    abi_nested_indirect_payload = process.run(abi_nested_indirect_payload_command)
+    abi_method_payload = process.run(abi_method_payload_command)
+    abi_method_field = process.run(abi_method_field_command)
+    interface = process.run(interface_command)
+    ok = (
+        nominal.exit_code == 0
+        and field_context.exit_code == 0
+        and indexed_context.exit_code == 0
+        and field_impact.exit_code == 0
+        and unrelated_method.exit_code == 0
+        and borrowed.exit_code == 0
+        and status.exit_code == 0
+        and status_member.exit_code == 0
+        and abi_payload.exit_code == 0
+        and abi_indirect_payload.exit_code == 0
+        and abi_nested_payload.exit_code == 0
+        and abi_nested_indirect_payload.exit_code == 0
+        and abi_method_payload.exit_code == 0
+        and abi_method_field.exit_code == 0
+        and interface.exit_code == 0
+        and contains(&nominal.stdout, "model::struct:CacheEntry")
+        and contains(&nominal.stdout, "TYPE / MEMBER CONSUMERS")
+        and contains(&nominal.stdout, "cache::function:cache_get")
+        and contains(&nominal.stdout, "cache::function:cache_entry_value")
+        and contains(&nominal.stdout, "cache::function:export_cache_entry")
+        and contains(&nominal.stdout, "cache::function:consume_cache_entry")
+        and contains(&nominal.stdout, "cache::function:construct_entry_only")
+        and contains(&nominal.stdout, "C ABI sensitive")
+        and not contains(&nominal.stdout, "source-level layout sensitive")
+        and contains(&nominal.stdout, "emitted runtime reflection metadata")
+        and contains(&field_context.stdout, "model::field:CacheEntry.value")
+        and contains(&field_context.stdout, "reflected: yes")
+        and contains(&indexed_context.stdout, "DEPENDS ON")
+        and contains(&indexed_context.stdout, "model::field:CacheEntry.value")
+        and contains(&field_impact.stdout, "cache::function:cache_entry_value")
+        and contains(&field_impact.stdout, "cache::function:format_cache_entry")
+        and contains(&field_impact.stdout, "cache::function:indexed_cache_entry_value")
+        and contains(&field_impact.stdout, "main::function:lookup_twice")
+        and contains(&field_impact.stdout, "main::function:cinder_cache_lookup")
+        and contains(&field_impact.stdout, "emitted runtime reflection metadata")
+        and contains(&field_impact.stdout, "C ABI sensitive")
+        and not contains(&field_impact.stdout, "source-level layout sensitive")
+        and not contains(&unrelated_method.stdout, "emitted runtime reflection metadata")
+        and not contains(&unrelated_method.stdout, "C ABI sensitive")
+        and not contains(&nominal.stdout, "transitive caller search truncated")
+        and contains(&borrowed.stdout, "model::struct:BorrowedEntry")
+        and contains(&borrowed.stdout, "cache::function:export_borrowed_entry_value")
+        and contains(&borrowed.stdout, "source-level layout sensitive")
+        and not contains(&borrowed.stdout, "C ABI sensitive")
+        and contains(&status.stdout, "model::enum:Status")
+        and contains(&status.stdout, "cache::function:export_status")
+        and contains(&status.stdout, "C ABI sensitive")
+        and not contains(&status.stdout, "no explicit C ABI exposure recorded")
+        and contains(&status_member.stdout, "model::enum-member:Status.Ready")
+        and contains(&status_member.stdout, "C ABI sensitive")
+        and contains(&abi_payload.stdout, "model::struct:AbiPayload")
+        and contains(&abi_payload.stdout, "cache::function:export_abi_box")
+        and contains(&abi_payload.stdout, "C ABI sensitive")
+        and not contains(&abi_payload.stdout, "source-level layout sensitive")
+        and contains(&abi_indirect_payload.stdout, "model::struct:AbiIndirectPayload")
+        and contains(
+            &abi_indirect_payload.stdout,
+            "cache::function:export_abi_ref_box",
+        )
+        and contains(&abi_indirect_payload.stdout, "source-level layout sensitive")
+        and not contains(&abi_indirect_payload.stdout, "C ABI sensitive")
+        and contains(
+            &abi_nested_payload.stdout,
+            "model::struct:AbiNestedPayload",
+        )
+        and contains(
+            &abi_nested_payload.stdout,
+            "model::field:AbiNestedHolder.payload",
+        )
+        and contains(&abi_nested_payload.stdout, "C ABI sensitive")
+        and not contains(
+            &abi_nested_payload.stdout,
+            "source-level layout sensitive",
+        )
+        and contains(
+            &abi_nested_indirect_payload.stdout,
+            "model::struct:AbiNestedIndirectPayload",
+        )
+        and contains(
+            &abi_nested_indirect_payload.stdout,
+            "model::field:AbiNestedRefHolder.payload",
+        )
+        and contains(
+            &abi_nested_indirect_payload.stdout,
+            "source-level layout sensitive",
+        )
+        and not contains(
+            &abi_nested_indirect_payload.stdout,
+            "C ABI sensitive",
+        )
+        and contains(
+            &abi_method_payload.stdout,
+            "model::struct:AbiMethodPayload",
+        )
+        and contains(
+            &abi_method_payload.stdout,
+            "cache::method:AbiMethodExporter.consume",
+        )
+        and contains(&abi_method_payload.stdout, "C ABI sensitive")
+        and not contains(
+            &abi_method_payload.stdout,
+            "source-level layout sensitive",
+        )
+        and contains(
+            &abi_method_field.stdout,
+            "model::field:AbiMethodPayload.value",
+        )
+        and contains(
+            &abi_method_field.stdout,
+            "cache::method:AbiMethodExporter.consume",
+        )
+        and contains(&abi_method_field.stdout, "C ABI sensitive")
+        and not contains(
+            &abi_method_field.stdout,
+            "source-level layout sensitive",
+        )
+        and contains(&interface.stdout, "model::class:Store")
+        and contains(&interface.stdout, "source-level layout sensitive")
+        and not contains(&interface.stdout, "C ABI sensitive")
+    )
+    expect(state, "impact reports semantic consumers and exposure", ok)
+    if not ok:
+        report_process_failure(&nominal.stdout, &nominal.stderr)
+        report_process_failure(&field_context.stdout, &field_context.stderr)
+        report_process_failure(&indexed_context.stdout, &indexed_context.stderr)
+        report_process_failure(&field_impact.stdout, &field_impact.stderr)
+        report_process_failure(&unrelated_method.stdout, &unrelated_method.stderr)
+        report_process_failure(&borrowed.stdout, &borrowed.stderr)
+        report_process_failure(&status.stdout, &status.stderr)
+        report_process_failure(&status_member.stdout, &status_member.stderr)
+        report_process_failure(&abi_payload.stdout, &abi_payload.stderr)
+        report_process_failure(
+            &abi_indirect_payload.stdout,
+            &abi_indirect_payload.stderr,
+        )
+        report_process_failure(
+            &abi_nested_payload.stdout,
+            &abi_nested_payload.stderr,
+        )
+        report_process_failure(
+            &abi_nested_indirect_payload.stdout,
+            &abi_nested_indirect_payload.stderr,
+        )
+        report_process_failure(
+            &abi_method_payload.stdout,
+            &abi_method_payload.stderr,
+        )
+        report_process_failure(
+            &abi_method_field.stdout,
+            &abi_method_field.stderr,
+        )
+        report_process_failure(&interface.stdout, &interface.stderr)
+
+
+def test_inherited_field_resolution(state: &TestState) -> void:
+    example = state.root + "/examples/classes.ci"
+    ordinary_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":30",
+        "--depth",
+        "1",
+    ]
+    fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":34",
+        "--depth",
+        "1",
+    ]
+    typed_fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:75",
+        "--depth",
+        "1",
+    ]
+    impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":5",
+    ]
+    base_method_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":11",
+    ]
+    override_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":27",
+        "--depth",
+        "1",
+    ]
+    override_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":27",
+    ]
+    ordinary_context = process.run(ordinary_context_command)
+    fstring_context = process.run(fstring_context_command)
+    typed_fstring_context = process.run(typed_fstring_context_command)
+    impact = process.run(impact_command)
+    base_method_impact = process.run(base_method_impact_command)
+    override_context = process.run(override_context_command)
+    override_impact = process.run(override_impact_command)
+    ok = (
+        ordinary_context.exit_code == 0
+        and fstring_context.exit_code == 0
+        and typed_fstring_context.exit_code == 0
+        and impact.exit_code == 0
+        and base_method_impact.exit_code == 0
+        and override_context.exit_code == 0
+        and override_impact.exit_code == 0
+        and contains(
+            &ordinary_context.stdout,
+            "classes::field:Shape.name",
+        )
+        and contains(
+            &fstring_context.stdout,
+            "classes::field:Shape.name",
+        )
+        and contains(
+            &typed_fstring_context.stdout,
+            "model::field:CacheEntry.value",
+        )
+        and contains(
+            &impact.stdout,
+            "classes::method:Circle.print_inherited_name",
+        )
+        and contains(
+            &impact.stdout,
+            "classes::method:Circle.format_inherited_name",
+        )
+        and contains(&impact.stdout, "C ABI sensitive")
+        and not contains(&impact.stdout, "source-level layout sensitive")
+        and contains(
+            &base_method_impact.stdout,
+            "classes::method:Circle.area",
+        )
+        and not contains(&base_method_impact.stdout, "C ABI sensitive")
+        and contains(
+            &override_context.stdout,
+            "DEPENDS ON\n- classes::method:Shape.area",
+        )
+        and not contains(&override_impact.stdout, "C ABI sensitive")
+    )
+    expect(
+        state,
+        "semantic queries resolve inherited fields and embedded base ABI",
+        ok,
+    )
+    if not ok:
+        report_process_failure(
+            &ordinary_context.stdout,
+            &ordinary_context.stderr,
+        )
+        report_process_failure(
+            &fstring_context.stdout,
+            &fstring_context.stderr,
+        )
+        report_process_failure(
+            &typed_fstring_context.stdout,
+            &typed_fstring_context.stderr,
+        )
+        report_process_failure(&impact.stdout, &impact.stderr)
+        report_process_failure(
+            &base_method_impact.stdout,
+            &base_method_impact.stderr,
+        )
+        report_process_failure(&override_context.stdout, &override_context.stderr)
+        report_process_failure(&override_impact.stdout, &override_impact.stderr)
+
+
+def test_deep_field_chain_resolution(state: &TestState) -> void:
+    example = state.root + "/examples/classes.ci"
+    context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":99",
+        "--depth",
+        "1",
+    ]
+    nested_fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":103",
+        "--depth",
+        "1",
+    ]
+    indexed_fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":107",
+        "--depth",
+        "1",
+    ]
+    impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":56",
+    ]
+    context = process.run(context_command)
+    nested_fstring_context = process.run(nested_fstring_context_command)
+    indexed_fstring_context = process.run(indexed_fstring_context_command)
+    impact = process.run(impact_command)
+    ok = (
+        context.exit_code == 0
+        and nested_fstring_context.exit_code == 0
+        and indexed_fstring_context.exit_code == 0
+        and impact.exit_code == 0
+        and contains(
+            &context.stdout,
+            "classes::field:DeepField10.value",
+        )
+        and contains(
+            &nested_fstring_context.stdout,
+            "classes::field:DeepField10.value",
+        )
+        and contains(
+            &indexed_fstring_context.stdout,
+            "classes::field:DeepField10.value",
+        )
+        and contains(
+            &impact.stdout,
+            "classes::function:deep_field_value",
+        )
+        and contains(
+            &impact.stdout,
+            "classes::function:format_deep_field_value",
+        )
+        and contains(
+            &impact.stdout,
+            "classes::function:format_indexed_deep_field_value",
+        )
+    )
+    expect(
+        state,
+        "semantic queries resolve nested and indexed f-string fields",
+        ok,
+    )
+    if not ok:
+        report_process_failure(&context.stdout, &context.stderr)
+        report_process_failure(
+            &nested_fstring_context.stdout,
+            &nested_fstring_context.stderr,
+        )
+        report_process_failure(
+            &indexed_fstring_context.stdout,
+            &indexed_fstring_context.stderr,
+        )
+        report_process_failure(&impact.stdout, &impact.stderr)
+
+
+def test_enum_member_resolution(state: &TestState) -> void:
+    example = state.root + "/examples/types_and_results.ci"
+    explicit_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":3",
+    ]
+    negative_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":2",
+    ]
+    explicit_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":3",
+    ]
+    enum_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":1",
+    ]
+    fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":40",
+    ]
+    qualified_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/examples/module_project/src/model.ci:2",
+    ]
+    explicit_context = process.run(explicit_context_command)
+    negative_impact = process.run(negative_impact_command)
+    explicit_impact = process.run(explicit_impact_command)
+    enum_impact = process.run(enum_impact_command)
+    fstring_context = process.run(fstring_context_command)
+    qualified_impact = process.run(qualified_impact_command)
+    ok = (
+        explicit_context.exit_code == 0
+        and negative_impact.exit_code == 0
+        and explicit_impact.exit_code == 0
+        and enum_impact.exit_code == 0
+        and fstring_context.exit_code == 0
+        and qualified_impact.exit_code == 0
+        and contains(
+            &explicit_context.stdout,
+            "symbol: types_and_results::enum-member:ParseError.too_large",
+        )
+        and contains(&explicit_context.stdout, "kind: enum-member")
+        and contains(&explicit_context.stdout, "too_large = 10")
+        and contains(
+            &negative_impact.stdout,
+            "symbol: types_and_results::enum-member:ParseError.negative",
+        )
+        and contains(&negative_impact.stdout, "types_and_results::function:parse")
+        and contains(
+            &negative_impact.stdout,
+            "types_and_results::function:negative_error",
+        )
+        and not contains(
+            &negative_impact.stdout,
+            "types_and_results::function:too_large_error",
+        )
+        and not contains(
+            &negative_impact.stdout,
+            "types_and_results::function:increment",
+        )
+        and not contains(
+            &negative_impact.stdout,
+            "types_and_results::function:format_too_large_error",
+        )
+        and contains(
+            &explicit_impact.stdout,
+            "symbol: types_and_results::enum-member:ParseError.too_large",
+        )
+        and contains(&explicit_impact.stdout, "types_and_results::function:parse")
+        and contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:too_large_error",
+        )
+        and contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:format_too_large_error",
+        )
+        and not contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:negative_error",
+        )
+        and not contains(
+            &explicit_impact.stdout,
+            "types_and_results::function:increment",
+        )
+        and contains(
+            &enum_impact.stdout,
+            "symbol: types_and_results::enum:ParseError",
+        )
+        and contains(&enum_impact.stdout, "types_and_results::function:increment")
+        and contains(
+            &fstring_context.stdout,
+            "types_and_results::enum-member:ParseError.too_large",
+        )
+        and contains(
+            &qualified_impact.stdout,
+            "symbol: model::enum-member:ParseError.negative",
+        )
+        and contains(
+            &qualified_impact.stdout,
+            "support.parser::function:parse",
+        )
+    )
+    expect(state, "enum members are addressable with precise consumers", ok)
+    if not ok:
+        report_process_failure(&explicit_context.stdout, &explicit_context.stderr)
+        report_process_failure(&negative_impact.stdout, &negative_impact.stderr)
+        report_process_failure(&explicit_impact.stdout, &explicit_impact.stderr)
+        report_process_failure(&enum_impact.stdout, &enum_impact.stderr)
+        report_process_failure(&fstring_context.stdout, &fstring_context.stderr)
+        report_process_failure(&qualified_impact.stdout, &qualified_impact.stderr)
+
+
+def test_variant_case_resolution(state: &TestState) -> void:
+    example = state.root + "/examples/types_and_results.ci"
+    context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":22",
+    ]
+    value_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":58",
+        "--depth",
+        "1",
+    ]
+    fstring_context_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        example + ":66",
+        "--depth",
+        "1",
+    ]
+    end_impact_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        example + ":11",
+    ]
+    context = process.run(context_command)
+    value_context = process.run(value_context_command)
+    fstring_context = process.run(fstring_context_command)
+    end_impact = process.run(end_impact_command)
+    ok = (
+        context.exit_code == 0
+        and value_context.exit_code == 0
+        and fstring_context.exit_code == 0
+        and end_impact.exit_code == 0
+        and contains(
+            &context.stdout,
+            "types_and_results::variant-case:Token.Integer",
+        )
+        and contains(
+            &context.stdout,
+            "types_and_results::variant-case:Token.End",
+        )
+        and contains(
+            &value_context.stdout,
+            "symbol: types_and_results::function:end_token",
+        )
+        and contains(
+            &value_context.stdout,
+            "types_and_results::variant-case:Token.End",
+        )
+        and not contains(
+            &value_context.stdout,
+            "types_and_results::variant-case:Token.Integer",
+        )
+        and contains(
+            &fstring_context.stdout,
+            "symbol: types_and_results::function:format_end_token",
+        )
+        and contains(
+            &fstring_context.stdout,
+            "types_and_results::variant-case:Token.End",
+        )
+        and not contains(
+            &fstring_context.stdout,
+            "types_and_results::variant-case:Token.Integer",
+        )
+        and contains(
+            &end_impact.stdout,
+            "symbol: types_and_results::variant-case:Token.End",
+        )
+        and contains(
+            &end_impact.stdout,
+            "types_and_results::function:increment",
+        )
+        and contains(
+            &end_impact.stdout,
+            "types_and_results::function:end_token",
+        )
+        and contains(
+            &end_impact.stdout,
+            "types_and_results::function:format_end_token",
+        )
+        and not contains(
+            &end_impact.stdout,
+            "types_and_results::function:parse",
+        )
+    )
+    expect(
+        state,
+        "variant cases report precise consumers",
+        ok,
+    )
+    if not ok:
+        report_process_failure(&context.stdout, &context.stderr)
+        report_process_failure(&value_context.stdout, &value_context.stderr)
+        report_process_failure(&fstring_context.stdout, &fstring_context.stderr)
+        report_process_failure(&end_impact.stdout, &end_impact.stderr)
+
+
+def test_decorator_line_resolution(state: &TestState) -> void:
+    reflected_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/model.ci:1",
+    ]
+    abstract_method_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/model.ci:7",
+    ]
+    exported_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:34",
+    ]
+    override_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/model.ci:14",
+    ]
+    reflected = process.run(reflected_command)
+    abstract_method = process.run(abstract_method_command)
+    exported = process.run(exported_command)
+    overridden = process.run(override_command)
+    ok = (
+        reflected.exit_code == 0
+        and abstract_method.exit_code == 0
+        and exported.exit_code == 0
+        and overridden.exit_code == 0
+        and contains(&reflected.stdout, "symbol: model::struct:CacheEntry")
+        and contains(&reflected.stdout, "reflected: yes")
+        and contains(&reflected.stdout, "TARGET\n@reflect\nstruct CacheEntry:")
+        and contains(&reflected.stdout, "RELEVANT SOURCE\n@reflect\nstruct CacheEntry:")
+        and contains(&abstract_method.stdout, "symbol: model::method:Store.lookup")
+        and contains(&abstract_method.stdout, "modifiers: abstractmethod")
+        and contains(&abstract_method.stdout, "TARGET\n@abstractmethod\n    def lookup(self, key: i32) -> CacheEntry:")
+        and contains(&abstract_method.stdout, "RELEVANT SOURCE\n@abstractmethod\n    def lookup(self, key: i32) -> CacheEntry:")
+        and contains(&exported.stdout, "symbol: main::function:cinder_cache_lookup")
+        and contains(&exported.stdout, "exported: yes")
+        and contains(&exported.stdout, "TARGET\n@export\ndef cinder_cache_lookup(key: i32) -> i32:")
+        and contains(&exported.stdout, "RELEVANT SOURCE\n@export\ndef cinder_cache_lookup(key: i32) -> i32:")
+        and contains(&overridden.stdout, "symbol: model::method:MemoryStore.lookup")
+        and contains(&overridden.stdout, "modifiers: override")
+        and contains(&overridden.stdout, "TARGET\n@override\n    def lookup(self, key: i32) -> CacheEntry:")
+        and contains(&overridden.stdout, "RELEVANT SOURCE\n@override\n    def lookup(self, key: i32) -> CacheEntry:")
+    )
+    expect(state, "semantic queries retain decorators in declaration source", ok)
+    if not ok:
+        report_process_failure(&reflected.stdout, &reflected.stderr)
+        report_process_failure(&abstract_method.stdout, &abstract_method.stderr)
+        report_process_failure(&exported.stdout, &exported.stderr)
+        report_process_failure(&overridden.stdout, &overridden.stderr)
+
+
+def test_impact_caller_truncation(state: &TestState) -> void:
+    project_dir = state.workspace + "/impact-caller-project"
+    source_dir = project_dir + "/src"
+    create: List[String] = ["mkdir", "-p", source_dir.clone()]
+    if process.run(create).exit_code != 0:
+        expect(state, "impact reports transitive caller truncation", false)
+        return
+    write_test_text(
+        project_dir + "/cinder.toml",
+        "[project]\nname = \"impact_caller_fixture\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+    )
+    source_path = source_dir + "/main.ci"
+    write_test_text(source_path[0:len(source_path)], caller_chain_source(66))
+    command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        source_path + ":1",
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "- main::function:node_64")
+        and not contains(&result.stdout, "- main::function:node_65")
+        and not contains(&result.stdout, "- main::function:main")
+        and contains(
+            &result.stdout,
+            "- transitive caller search truncated at 64 hops; additional callers may exist",
+        )
+    )
+    expect(state, "impact reports transitive caller truncation", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_relative_semantic_query_targets(state: &TestState) -> void:
+    project_dir = state.workspace + "/relative-semantic-target-project"
+    source_dir = project_dir + "/src"
+    nested_dir = source_dir + "/sub"
+    create: List[String] = ["mkdir", "-p", nested_dir.clone()]
+    if process.run(create).exit_code != 0:
+        expect(state, "context resolves cwd-relative source targets", false)
+        expect(state, "impact resolves cwd-relative source targets", false)
+        return
+    write_test_text(
+        project_dir + "/cinder.toml",
+        "[project]\nname = \"relative_semantic_target_fixture\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+    )
+    write_test_text(
+        source_dir + "/main.ci",
+        "import sub.main\n\ndef root_target() -> i32:\n    return 1\n",
+    )
+    write_test_text(
+        nested_dir + "/main.ci",
+        "def nested_target() -> i32:\n    return 2\n",
+    )
+    context_command: List[String] = [
+        "sh",
+        "-c",
+        "cd \"$1\" && \"$2\" context main.ci:3",
+        "relative-context",
+        source_dir.clone(),
+        state.compiler.clone(),
+    ]
+    impact_command: List[String] = [
+        "sh",
+        "-c",
+        "cd \"$1\" && \"$2\" impact main.ci:3",
+        "relative-impact",
+        source_dir.clone(),
+        state.compiler.clone(),
+    ]
+    context_result = process.run(context_command)
+    impact_result = process.run(impact_command)
+    context_ok = (
+        context_result.exit_code == 0
+        and contains(&context_result.stdout, "symbol: main::function:root_target")
+        and not contains(&context_result.stdout, "nested_target")
+    )
+    impact_ok = (
+        impact_result.exit_code == 0
+        and contains(&impact_result.stdout, "symbol: main::function:root_target")
+        and not contains(&impact_result.stdout, "nested_target")
+    )
+    expect(state, "context resolves cwd-relative source targets", context_ok)
+    expect(state, "impact resolves cwd-relative source targets", impact_ok)
+    if not context_ok:
+        report_process_failure(&context_result.stdout, &context_result.stderr)
+    if not impact_ok:
+        report_process_failure(&impact_result.stdout, &impact_result.stderr)
+
+
+def test_import_call_resolution(state: &TestState) -> void:
+    shadow_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:20",
+    ]
+    top_level_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:24",
+    ]
+    instance_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:28",
+    ]
+    global_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:64",
+    ]
+    constant_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:65",
+    ]
+    field_receiver_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:75",
+    ]
+    action_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:15",
+    ]
+    inherited_method_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:2",
+    ]
+    inherited_method_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:2",
+    ]
+    direct_method_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:7",
+    ]
+    child_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:6",
+    ]
+    overridden_base_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/call_targets.ci:25",
+    ]
+    shadow = process.run(shadow_context)
+    top_level = process.run(top_level_context)
+    instance = process.run(instance_context)
+    global = process.run(global_context)
+    constant = process.run(constant_context)
+    field_receiver = process.run(field_receiver_context)
+    action = process.run(action_impact)
+    inherited_context = process.run(inherited_method_context)
+    inherited_method = process.run(inherited_method_impact)
+    direct_method = process.run(direct_method_impact)
+    child = process.run(child_impact)
+    overridden_base = process.run(overridden_base_impact)
+    ok = (
+        shadow.exit_code == 0
+        and top_level.exit_code == 0
+        and instance.exit_code == 0
+        and global.exit_code == 0
+        and constant.exit_code == 0
+        and field_receiver.exit_code == 0
+        and action.exit_code == 0
+        and inherited_context.exit_code == 0
+        and inherited_method.exit_code == 0
+        and direct_method.exit_code == 0
+        and child.exit_code == 0
+        and overridden_base.exit_code == 0
+        and not contains(&shadow.stdout, "call_targets::function:action")
+        and contains(&top_level.stdout, "call_targets::function:run")
+        and not contains(&top_level.stdout, "call_targets::method:Child.run")
+        and contains(&instance.stdout, "call_targets::method:Base.work")
+        and contains(&instance.stdout, "call_targets::method:Child.run")
+        and contains(&global.stdout, "call_targets::function:action")
+        and contains(&constant.stdout, "call_targets::function:action")
+        and contains(&field_receiver.stdout, "call_targets::method:Base.work")
+        and not contains(&action.stdout, "main::function:call_shadowed")
+        and contains(&action.stdout, "main::global:IMPORTED_GLOBAL")
+        and contains(&action.stdout, "main::constant:IMPORTED_CONSTANT")
+        and contains(&inherited_context.stdout, "reflected: yes")
+        and contains(&inherited_method.stdout, "main::function:call_imported_method")
+        and contains(&inherited_method.stdout, "main::method:ChildHolder.call")
+        and contains(&inherited_method.stdout, "emitted runtime reflection metadata")
+        and contains(&direct_method.stdout, "main::function:call_imported_method")
+        and contains(&child.stdout, "DIRECT CALLERS\n(none)")
+        and contains(
+            &overridden_base.stdout,
+            "call_targets::method:OverrideChild.hidden",
+        )
+        and not contains(&overridden_base.stdout, "emitted runtime reflection metadata")
+    )
+    expect(state, "semantic queries resolve imported calls without false edges", ok)
+    if not ok:
+        report_process_failure(&shadow.stdout, &shadow.stderr)
+        report_process_failure(&top_level.stdout, &top_level.stderr)
+        report_process_failure(&instance.stdout, &instance.stderr)
+        report_process_failure(&global.stdout, &global.stderr)
+        report_process_failure(&constant.stdout, &constant.stderr)
+        report_process_failure(&field_receiver.stdout, &field_receiver.stderr)
+        report_process_failure(&action.stdout, &action.stderr)
+        report_process_failure(&inherited_context.stdout, &inherited_context.stderr)
+        report_process_failure(&inherited_method.stdout, &inherited_method.stderr)
+        report_process_failure(&direct_method.stdout, &direct_method.stderr)
+        report_process_failure(&child.stdout, &child.stderr)
+        report_process_failure(&overridden_base.stdout, &overridden_base.stderr)
+
+
+def test_fstring_call_resolution(state: &TestState) -> void:
+    caller_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/examples/defer.ci:10",
+        "--depth",
+        "1",
+    ]
+    callee_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/examples/defer.ci:1",
+    ]
+    caller = process.run(caller_command)
+    callee = process.run(callee_command)
+    ok = (
+        caller.exit_code == 0
+        and callee.exit_code == 0
+        and contains(&caller.stdout, "CALLS\n- defer::function:compute")
+        and contains(&callee.stdout, "DIRECT CALLERS\n- defer::function:main")
+    )
+    expect(state, "semantic queries resolve calls inside f-string fields", ok)
+    if not ok:
+        report_process_failure(&caller.stdout, &caller.stderr)
+        report_process_failure(&callee.stdout, &callee.stderr)
+
+
+def test_import_value_resolution(state: &TestState) -> void:
+    imported_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:56",
+    ]
+    qualified_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:78",
+    ]
+    imported_fstring_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:90",
+    ]
+    qualified_fstring_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:100",
+    ]
+    shadowed_qualified_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:86",
+    ]
+    shadowed_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:60",
+    ]
+    shadowed_fstring_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:95",
+    ]
+    shadowed_qualified_fstring_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:105",
+    ]
+    target_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/value_targets.ci:1",
+    ]
+    imported = process.run(imported_context)
+    qualified = process.run(qualified_context)
+    imported_fstring = process.run(imported_fstring_context)
+    qualified_fstring = process.run(qualified_fstring_context)
+    shadowed_qualified = process.run(shadowed_qualified_context)
+    shadowed = process.run(shadowed_context)
+    shadowed_fstring = process.run(shadowed_fstring_context)
+    shadowed_qualified_fstring = process.run(shadowed_qualified_fstring_context)
+    target = process.run(target_impact)
+    ok = (
+        imported.exit_code == 0
+        and qualified.exit_code == 0
+        and imported_fstring.exit_code == 0
+        and qualified_fstring.exit_code == 0
+        and shadowed_qualified.exit_code == 0
+        and shadowed.exit_code == 0
+        and shadowed_fstring.exit_code == 0
+        and shadowed_qualified_fstring.exit_code == 0
+        and target.exit_code == 0
+        and contains(&imported.stdout, "- value_targets::constant:LIMIT")
+        and contains(&qualified.stdout, "- value_targets::constant:LIMIT")
+        and contains(
+            &imported_fstring.stdout,
+            "- value_targets::constant:LIMIT",
+        )
+        and contains(
+            &qualified_fstring.stdout,
+            "- value_targets::constant:LIMIT",
+        )
+        and not contains(&shadowed_qualified.stdout, "value_targets::constant:LIMIT")
+        and not contains(&shadowed.stdout, "value_targets::constant:LIMIT")
+        and not contains(&shadowed_fstring.stdout, "value_targets::constant:LIMIT")
+        and not contains(
+            &shadowed_qualified_fstring.stdout,
+            "value_targets::constant:LIMIT",
+        )
+        and contains(&target.stdout, "main::function:read_imported_limit")
+        and contains(&target.stdout, "main::function:read_qualified_limit")
+        and contains(&target.stdout, "main::function:read_imported_limit_fstring")
+        and contains(&target.stdout, "main::function:read_qualified_limit_fstring")
+        and not contains(&target.stdout, "main::function:read_shadowed_qualified_limit")
+        and not contains(&target.stdout, "main::function:read_shadowed_limit")
+        and not contains(&target.stdout, "main::function:read_shadowed_limit_fstring")
+        and not contains(
+            &target.stdout,
+            "main::function:read_shadowed_qualified_limit_fstring",
+        )
+    )
+    expect(state, "semantic queries resolve imported values without false edges", ok)
+    if not ok:
+        report_process_failure(&imported.stdout, &imported.stderr)
+        report_process_failure(&qualified.stdout, &qualified.stderr)
+        report_process_failure(&imported_fstring.stdout, &imported_fstring.stderr)
+        report_process_failure(&qualified_fstring.stdout, &qualified_fstring.stderr)
+        report_process_failure(&shadowed_qualified.stdout, &shadowed_qualified.stderr)
+        report_process_failure(&shadowed.stdout, &shadowed.stderr)
+        report_process_failure(&shadowed_fstring.stdout, &shadowed_fstring.stderr)
+        report_process_failure(
+            &shadowed_qualified_fstring.stdout,
+            &shadowed_qualified_fstring.stderr,
+        )
+        report_process_failure(&target.stdout, &target.stderr)
+
+
+def test_import_constructor_resolution(state: &TestState) -> void:
+    constructor_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:52",
+        "--depth",
+        "1",
+    ]
+    variant_constructor_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:84",
+        "--depth",
+        "1",
+    ]
+    variant_fstring_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:98",
+        "--depth",
+        "1",
+    ]
+    target_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/model.ci:2",
+    ]
+    constructor = process.run(constructor_context)
+    variant_constructor = process.run(variant_constructor_context)
+    variant_fstring = process.run(variant_fstring_context)
+    target = process.run(target_impact)
+    ok = (
+        constructor.exit_code == 0
+        and variant_constructor.exit_code == 0
+        and variant_fstring.exit_code == 0
+        and target.exit_code == 0
+        and contains(&constructor.stdout, "symbol: cache::function:construct_entry_only")
+        and contains(&constructor.stdout, "type: void")
+        and contains(&constructor.stdout, "- model::struct:CacheEntry")
+        and contains(
+            &variant_constructor.stdout,
+            "symbol: cache::function:construct_token",
+        )
+        and contains(
+            &variant_constructor.stdout,
+            "model::variant-case:Token.Integer",
+        )
+        and not contains(
+            &variant_constructor.stdout,
+            "model::variant-case:Token.End",
+        )
+        and contains(
+            &variant_fstring.stdout,
+            "symbol: cache::function:format_constructed_token",
+        )
+        and contains(
+            &variant_fstring.stdout,
+            "model::variant-case:Token.Integer",
+        )
+        and not contains(
+            &variant_fstring.stdout,
+            "model::variant-case:Token.End",
+        )
+        and contains(&target.stdout, "cache::function:construct_entry_only")
+    )
+    expect(state, "semantic queries record module-qualified constructor uses", ok)
+    if not ok:
+        report_process_failure(&constructor.stdout, &constructor.stderr)
+        report_process_failure(
+            &variant_constructor.stdout,
+            &variant_constructor.stderr,
+        )
+        report_process_failure(
+            &variant_fstring.stdout,
+            &variant_fstring.stderr,
+        )
+        report_process_failure(&target.stdout, &target.stderr)
+
+
+def test_import_type_resolution(state: &TestState) -> void:
+    qualified_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:44",
+    ]
+    shadowed_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:48",
+    ]
+    imported_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/main.ci:52",
+    ]
+    field_context: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/cache.ci:57",
+    ]
+    target_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/type_targets.ci:6",
+    ]
+    method_impact: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/type_targets.ci:2",
+    ]
+    qualified = process.run(qualified_context)
+    shadowed = process.run(shadowed_context)
+    imported = process.run(imported_context)
+    field = process.run(field_context)
+    target = process.run(target_impact)
+    method = process.run(method_impact)
+    ok = (
+        qualified.exit_code == 0
+        and shadowed.exit_code == 0
+        and imported.exit_code == 0
+        and field.exit_code == 0
+        and target.exit_code == 0
+        and method.exit_code == 0
+        and contains(&qualified.stdout, "DEPENDS ON\n- type_targets::struct:Target")
+        and contains(&qualified.stdout, "type: type_targets.Target")
+        and not contains(&qualified.stdout, "type_targets::method:Holder.Target")
+        and not contains(&shadowed.stdout, "type_targets::struct:Target")
+        and not contains(&shadowed.stdout, "type_targets::method:Holder.Target")
+        and contains(&imported.stdout, "DEPENDS ON\n- type_targets::struct:Target")
+        and contains(&imported.stdout, "type: Target")
+        and contains(&field.stdout, "symbol: cache::field:QualifiedHolder.entry")
+        and contains(&field.stdout, "type: model.CacheEntry")
+        and contains(&target.stdout, "main::function:use_qualified_target")
+        and contains(&target.stdout, "main::function:use_imported_target")
+        and contains(&target.stdout, "main::function:export_spaced_qualified_target")
+        and contains(&target.stdout, "C ABI sensitive")
+        and not contains(&target.stdout, "main::function-template:identity")
+        and not contains(&method.stdout, "main::function:use_qualified_target")
+    )
+    expect(state, "semantic queries resolve imported types without false edges", ok)
+    if not ok:
+        report_process_failure(&qualified.stdout, &qualified.stderr)
+        report_process_failure(&shadowed.stdout, &shadowed.stderr)
+        report_process_failure(&imported.stdout, &imported.stderr)
+        report_process_failure(&field.stdout, &field.stderr)
+        report_process_failure(&target.stdout, &target.stderr)
+        report_process_failure(&method.stdout, &method.stderr)
+
+
+def test_import_binding_impact(state: &TestState) -> void:
+    ordinary_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/main.ci:1",
+    ]
+    type_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/main.ci:8",
+    ]
+    value_command: List[String] = [
+        state.compiler.clone(),
+        "impact",
+        state.root + "/tests/cases/semantic_context/src/main.ci:9",
+    ]
+    ordinary = process.run(ordinary_command)
+    imported_type = process.run(type_command)
+    imported_value = process.run(value_command)
+    ok = (
+        ordinary.exit_code == 0
+        and imported_type.exit_code == 0
+        and imported_value.exit_code == 0
+        and contains(&ordinary.stdout, "main::function:lookup_twice")
+        and contains(&imported_type.stdout, "main::function:use_imported_target")
+        and not contains(&imported_type.stdout, "main::function-template:identity")
+        and contains(&imported_value.stdout, "main::function:read_imported_limit")
+        and contains(
+            &imported_value.stdout,
+            "main::function:read_imported_limit_fstring",
+        )
+        and not contains(&imported_value.stdout, "main::function:read_shadowed_limit")
+        and not contains(
+            &imported_value.stdout,
+            "main::function:read_shadowed_limit_fstring",
+        )
+    )
+    expect(state, "impact links declarations to import facts", ok)
+    if not ok:
+        report_process_failure(&ordinary.stdout, &ordinary.stderr)
+        report_process_failure(&imported_type.stdout, &imported_type.stderr)
+        report_process_failure(&imported_value.stdout, &imported_value.stderr)
+
+
+def test_ownership_use_resolution(state: &TestState) -> void:
+    discard_void_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:13",
+        "--depth",
+        "0",
+    ]
+    discard_value_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:17",
+        "--depth",
+        "0",
+    ]
+    argument_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:21",
+        "--depth",
+        "0",
+    ]
+    return_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:25",
+        "--depth",
+        "0",
+    ]
+    void_return_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:29",
+        "--depth",
+        "0",
+    ]
+    explicit_address_command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        state.root + "/tests/cases/semantic_context/src/ownership_uses.ci:36",
+        "--depth",
+        "0",
+    ]
+    discard_void = process.run(discard_void_command)
+    discard_value = process.run(discard_value_command)
+    argument = process.run(argument_command)
+    returned = process.run(return_command)
+    void_return = process.run(void_return_command)
+    explicit_address = process.run(explicit_address_command)
+    ok = (
+        discard_void.exit_code == 0
+        and discard_value.exit_code == 0
+        and argument.exit_code == 0
+        and returned.exit_code == 0
+        and void_return.exit_code == 0
+        and explicit_address.exit_code == 0
+        and contains(&discard_void.stdout, "uses: copy=0, move=0, borrow=0, address=0")
+        and contains(&discard_value.stdout, "uses: copy=0, move=0, borrow=0, address=0")
+        and contains(&argument.stdout, "uses: copy=1, move=0, borrow=0, address=0")
+        and contains(&returned.stdout, "uses: copy=1, move=0, borrow=0, address=0")
+        and contains(&void_return.stdout, "uses: copy=0, move=0, borrow=0, address=0")
+        and contains(&explicit_address.stdout, "uses: copy=0, move=0, borrow=2, address=2")
+    )
+    expect(state, "context counts transfer and explicit address uses", ok)
+    if not ok:
+        report_process_failure(&discard_void.stdout, &discard_void.stderr)
+        report_process_failure(&discard_value.stdout, &discard_value.stderr)
+        report_process_failure(&argument.stdout, &argument.stderr)
+        report_process_failure(&returned.stdout, &returned.stderr)
+        report_process_failure(&void_return.stdout, &void_return.stderr)
+        report_process_failure(&explicit_address.stdout, &explicit_address.stderr)
+
+
+def test_semantic_query_diagnostics(state: &TestState) -> void:
+    target = state.root + "/tests/cases/semantic_context/src/cache.ci:999"
+    command: List[String] = [
+        state.compiler.clone(),
+        "context",
+        target,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 2
+        and len(result.stdout) == 0
+        and contains(&result.stderr, "line is outside the source file")
+    )
+    expect(state, "semantic queries reject invalid locations", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_semantic_diff_missing_manifest(state: &TestState) -> void:
+    missing_manifest = state.workspace + "/missing-semantic-diff-project/cinder.toml"
+    command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        missing_manifest,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 1
+        and len(result.stdout) == 0
+        and contains(
+            &result.stderr,
+            "analysis error: project error: manifest file not found:",
+        )
+    )
+    expect(state, "semantic-diff rejects a missing manifest path", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_semantic_diff(state: &TestState) -> void:
+    repository = state.workspace + "/semantic-diff-project"
+    source_dir = repository + "/src"
+    create: List[String] = ["mkdir", "-p", source_dir.clone()]
+    if process.run(create).exit_code != 0:
+        expect(state, "semantic-diff reports canonical changes", false)
+        return
+    write_test_text(
+        repository + "/cinder.toml",
+        "[project]\nname = \"semantic_diff_fixture\"\nsource-root = \"src\"\nentry = \"main.ci\"\n",
+    )
+    source_path = source_dir + "/main.ci"
+    write_test_text(
+        source_path[0:len(source_path)],
+        semantic_diff_stress_source(96, false),
+    )
+    selected_path = source_dir + "/selected.ci"
+    write_test_text(
+        selected_path[0:len(selected_path)],
+        "def selected(value: i32) -> i32:\n    return value\n",
+    )
+    implementation_path = source_dir + "/implementation.ci"
+    write_test_text(
+        implementation_path[0:len(implementation_path)],
+        "def implementation_probe() -> i32:\n    return 1\n",
+    )
+    literal_format_path = source_dir + "/literal_format.ci"
+    write_test_text(
+        literal_format_path[0:len(literal_format_path)],
+        "def literal_format_probe() -> i32:\n    return 1_000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0XAF + 0B10 + 0O7) + 1E6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.00000000000000001\n\n\ndef integer_value_format_probe() -> i32:\n    return 16 + 8 + 2\n\n\ndef string_escape_format_probe() -> String:\n    return \"A\"\n\n\ndef character_escape_format_probe() -> char:\n    return '?'\n",
+    )
+    literal_change_path = source_dir + "/literal_change.ci"
+    write_test_text(
+        literal_change_path[0:len(literal_change_path)],
+        "def literal_change_probe() -> i32:\n    return 1_000\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000001\n\n\ndef string_literal_change_probe() -> String:\n    return \"A\"\n\n\ndef character_literal_change_probe() -> char:\n    return '?'\n",
+    )
+    fstring_format_path = source_dir + "/fstring_format.ci"
+    write_test_text(
+        fstring_format_path[0:len(fstring_format_path)],
+        "const LIMIT: i32 = 42\n\n\ndef fstring_format_probe() -> i32:\n    print(f\"limit={LIMIT:d}\")\n    return 0\n\n\ndef fstring_literal_escape_format_probe() -> i32:\n    print(f\"A{1}B{2}C\")\n    return 0\n\n\ndef fstring_quote_delimiter_format_probe() -> i32:\n    print(f'quote={LIMIT}')\n    return 0\n",
+    )
+    fstring_change_path = source_dir + "/fstring_change.ci"
+    write_test_text(
+        fstring_change_path[0:len(fstring_change_path)],
+        "const LIMIT: i32 = 42\n\n\ndef fstring_change_probe() -> i32:\n    print(f\"limit={LIMIT}\")\n    return 0\n",
+    )
+    type_format_model_path = source_dir + "/type_format_model.ci"
+    write_test_text(
+        type_format_model_path[0:len(type_format_model_path)],
+        "struct Item:\n    value: i32\n",
+    )
+    type_format_path = source_dir + "/type_format.ci"
+    write_test_text(
+        type_format_path[0:len(type_format_path)],
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[i32]\n    item: type_format_model.Item\n    nested: List[type_format_model.Item]\n    array_items: type_format_model.Item[0x3E8]\n",
+    )
+    enum_format_path = source_dir + "/enum_format.ci"
+    write_test_text(
+        enum_format_path[0:len(enum_format_path)],
+        "enum FormatEnum:\n    neg = -0XAF\n    pos = 0b101010\n",
+    )
+    assertion_path = source_dir + "/assertion.ci"
+    write_test_text(
+        assertion_path[0:len(assertion_path)],
+        "struct Pair:\n    first: i32\n    second: i32\n\nstatic_assert(size_of(Pair) >= 8)\n",
+    )
+    assertion_format_path = source_dir + "/assertion_format.ci"
+    write_test_text(
+        assertion_format_path[0:len(assertion_format_path)],
+        "static_assert(true)\n",
+    )
+    assertion_insert_values_path = source_dir + "/assertion_insert_values.ci"
+    write_test_text(
+        assertion_insert_values_path[0:len(assertion_insert_values_path)],
+        "const LIMIT: i32 = 3\n",
+    )
+    assertion_insert_path = source_dir + "/assertion_insert.ci"
+    write_test_text(
+        assertion_insert_path[0:len(assertion_insert_path)],
+        "import assertion_insert_values\n\nstatic_assert(assertion_insert_values.LIMIT == 3)\nstatic_assert(2 == 2)\n",
+    )
+    lock_order_insert_path = source_dir + "/lock_order_insert.ci"
+    write_test_text(
+        lock_order_insert_path[0:len(lock_order_insert_path)],
+        "lock database\nlock cache\nlock metrics\nlockorder cache before metrics\n",
+    )
+    extern_import_path = source_dir + "/extern_import.ci"
+    write_test_text(
+        extern_import_path[0:len(extern_import_path)],
+        "extern import \"ctype.h\"\n",
+    )
+    extern_import_format_path = source_dir + "/extern_import_format.ci"
+    write_test_text(
+        extern_import_format_path[0:len(extern_import_format_path)],
+        "extern import \"stdlib.h\"\n",
+    )
+    extern_import_insert_path = source_dir + "/extern_import_insert.ci"
+    write_test_text(
+        extern_import_insert_path[0:len(extern_import_insert_path)],
+        "extern import \"ctype.h\"\nextern import \"math.h\"\n",
+    )
+    extern_import_reorder_path = source_dir + "/extern_import_reorder.ci"
+    write_test_text(
+        extern_import_reorder_path[0:len(extern_import_reorder_path)],
+        "extern import \"ctype.h\"\nextern import \"math.h\"\n",
+    )
+    ordinary_import_a_path = source_dir + "/ordinary_import_a.ci"
+    write_test_text(
+        ordinary_import_a_path[0:len(ordinary_import_a_path)],
+        "def value() -> i32:\n    return 1\n",
+    )
+    ordinary_import_b_path = source_dir + "/ordinary_import_b.ci"
+    write_test_text(
+        ordinary_import_b_path[0:len(ordinary_import_b_path)],
+        "def value() -> i32:\n    return 2\n",
+    )
+    ordinary_import_router_path = source_dir + "/ordinary_import_router.ci"
+    write_test_text(
+        ordinary_import_router_path[0:len(ordinary_import_router_path)],
+        "import ordinary_import_a\nimport ordinary_import_b\n\n\ndef route() -> i32:\n    return ordinary_import_a.value() + ordinary_import_b.value()\n",
+    )
+    ordinary_import_path = source_dir + "/ordinary_import.ci"
+    write_test_text(
+        ordinary_import_path[0:len(ordinary_import_path)],
+        "import ordinary_import_a\nimport ordinary_import_router\n\n\ndef probe() -> i32:\n    return ordinary_import_router.route()\n",
+    )
+    init: List[String] = ["git", "-C", repository.clone(), "init", "-q"]
+    add: List[String] = ["git", "-C", repository.clone(), "add", "."]
+    commit: List[String] = [
+        "git",
+        "-C",
+        repository.clone(),
+        "-c",
+        "user.name=Cinder Tests",
+        "-c",
+        "user.email=cinder@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "baseline",
+    ]
+    initialized = process.run(init)
+    added = process.run(add)
+    committed = process.run(commit)
+    if initialized.exit_code != 0 or added.exit_code != 0 or committed.exit_code != 0:
+        expect(state, "semantic-diff reports canonical changes", false)
+        report_process_failure(&committed.stdout, &committed.stderr)
+        return
+    standalone_repository = state.workspace + "/semantic-diff-standalone"
+    standalone_create: List[String] = ["mkdir", "-p", standalone_repository.clone()]
+    if process.run(standalone_create).exit_code != 0:
+        expect(state, "semantic-diff reports canonical changes", false)
+        return
+    standalone_path = standalone_repository + "/selected.ci"
+    write_test_text(
+        standalone_path[0:len(standalone_path)],
+        "def selected(value: i32) -> i32:\n    return value\n",
+    )
+    standalone_init: List[String] = ["git", "-C", standalone_repository.clone(), "init", "-q"]
+    standalone_add: List[String] = ["git", "-C", standalone_repository.clone(), "add", "."]
+    standalone_commit: List[String] = [
+        "git",
+        "-C",
+        standalone_repository.clone(),
+        "-c",
+        "user.name=Cinder Tests",
+        "-c",
+        "user.email=cinder@example.invalid",
+        "commit",
+        "-q",
+        "-m",
+        "baseline",
+    ]
+    standalone_initialized = process.run(standalone_init)
+    standalone_added = process.run(standalone_add)
+    standalone_committed = process.run(standalone_commit)
+    if (
+        standalone_initialized.exit_code != 0
+        or standalone_added.exit_code != 0
+        or standalone_committed.exit_code != 0
+    ):
+        expect(state, "semantic-diff reports canonical changes", false)
+        report_process_failure(&standalone_committed.stdout, &standalone_committed.stderr)
+        return
+    write_test_text(
+        selected_path[0:len(selected_path)],
+        "def selected(\n    value: i32,\n) -> i32:\n    return value\n",
+    )
+    write_test_text(
+        implementation_path[0:len(implementation_path)],
+        "def implementation_probe() -> i32:\n    return 2\n",
+    )
+    write_test_text(
+        literal_format_path[0:len(literal_format_path)],
+        "def literal_format_probe() -> i32:\n    return 1000\n\n\ndef literal_case_probe() -> f64:\n    return cast[f64](0xaf + 0b10 + 0o7) + 1e6\n\n\ndef float_value_format_probe() -> f64:\n    return 1.00\n\n\ndef rounded_float_value_format_probe() -> f64:\n    return 1.0\n\n\ndef integer_value_format_probe() -> i32:\n    return 0x10 + 0o10 + 0b10\n\n\ndef string_escape_format_probe() -> String:\n    return \"\\x41\"\n\n\ndef character_escape_format_probe() -> char:\n    return '\\?'\n",
+    )
+    write_test_text(
+        literal_change_path[0:len(literal_change_path)],
+        "def literal_change_probe() -> i32:\n    return 1_001\n\n\ndef float_value_change_probe() -> f64:\n    return 1.0000002\n\n\ndef string_literal_change_probe() -> String:\n    return \"B\"\n\n\ndef character_literal_change_probe() -> char:\n    return '!'\n",
+    )
+    write_test_text(
+        fstring_format_path[0:len(fstring_format_path)],
+        "const LIMIT: i32 = 42\n\n\ndef fstring_format_probe() -> i32:\n    print(f\"limit={ LIMIT : d }\")\n    return 0\n\n\ndef fstring_literal_escape_format_probe() -> i32:\n    print(f\"\\x41{1}\\x42{2}\\x43\")\n    return 0\n\n\ndef fstring_quote_delimiter_format_probe() -> i32:\n    print(f\"quote={LIMIT}\")\n    return 0\n",
+    )
+    write_test_text(
+        fstring_change_path[0:len(fstring_change_path)],
+        "const LIMIT: i32 = 42\n\n\ndef fstring_change_probe() -> i32:\n    print(f\"limit={LIMIT + 1}\")\n    return 0\n",
+    )
+    write_test_text(
+        source_path,
+        semantic_diff_stress_source(97, true),
+    )
+    write_test_text(
+        type_format_path[0:len(type_format_path)],
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i32\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n    array_items: type_format_model . Item[1000]\n",
+    )
+    write_test_text(
+        enum_format_path[0:len(enum_format_path)],
+        "enum FormatEnum:\n    neg = - 175\n    pos = 42\n",
+    )
+    write_test_text(
+        assertion_path[0:len(assertion_path)],
+        "struct Pair:\n    first: i32\n    second: i32\n\nstatic_assert(size_of(Pair) >= 4)\n",
+    )
+    write_test_text(
+        assertion_format_path[0:len(assertion_format_path)],
+        "# formatting-only comment\n\nstatic_assert(true)\n",
+    )
+    write_test_text(
+        assertion_insert_path[0:len(assertion_insert_path)],
+        "import assertion_insert_values\n\nstatic_assert(3 == 3)\nstatic_assert(assertion_insert_values.LIMIT == 3)\nstatic_assert(2 == 2)\n",
+    )
+    write_test_text(
+        lock_order_insert_path[0:len(lock_order_insert_path)],
+        "lock database\nlock cache\nlock metrics\nlockorder database before cache\nlockorder cache before metrics\n",
+    )
+    write_test_text(
+        extern_import_path[0:len(extern_import_path)],
+        "extern import \"math.h\"\n",
+    )
+    write_test_text(
+        extern_import_format_path[0:len(extern_import_format_path)],
+        "# formatting-only comment\n\nextern import \"stdlib.h\"\n",
+    )
+    write_test_text(
+        extern_import_insert_path[0:len(extern_import_insert_path)],
+        "extern import \"assert.h\"\nextern import \"ctype.h\"\nextern import \"math.h\"\n",
+    )
+    write_test_text(
+        extern_import_reorder_path[0:len(extern_import_reorder_path)],
+        "extern import \"math.h\"\nextern import \"ctype.h\"\n",
+    )
+    write_test_text(
+        ordinary_import_path[0:len(ordinary_import_path)],
+        "import ordinary_import_b\nimport ordinary_import_router\n\n\ndef probe() -> i32:\n    return ordinary_import_router.route()\n",
+    )
+    command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        repository.clone(),
+    ]
+    result = process.run(command)
+    selected_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        selected_path,
+    ]
+    selected = process.run(selected_command)
+    implementation_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        implementation_path,
+    ]
+    implementation = process.run(implementation_command)
+    literal_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        literal_format_path,
+    ]
+    literal_format = process.run(literal_format_command)
+    literal_change_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        literal_change_path,
+    ]
+    literal_change = process.run(literal_change_command)
+    fstring_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        fstring_format_path,
+    ]
+    fstring_format = process.run(fstring_format_command)
+    fstring_change_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        fstring_change_path,
+    ]
+    fstring_change = process.run(fstring_change_command)
+    type_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        type_format_path.clone(),
+    ]
+    type_format = process.run(type_format_command)
+    enum_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        enum_format_path,
+    ]
+    enum_format = process.run(enum_format_command)
+    assertion_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        assertion_path.clone(),
+    ]
+    assertion = process.run(assertion_command)
+    assertion_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        assertion_format_path,
+    ]
+    assertion_format = process.run(assertion_format_command)
+    assertion_insert_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        assertion_insert_path,
+    ]
+    assertion_insert = process.run(assertion_insert_command)
+    lock_order_insert_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        lock_order_insert_path,
+    ]
+    lock_order_insert = process.run(lock_order_insert_command)
+    extern_import_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        extern_import_path.clone(),
+    ]
+    extern_import = process.run(extern_import_command)
+    extern_import_format_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        extern_import_format_path,
+    ]
+    extern_import_format = process.run(extern_import_format_command)
+    extern_import_insert_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        extern_import_insert_path,
+    ]
+    extern_import_insert = process.run(extern_import_insert_command)
+    extern_import_reorder_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        extern_import_reorder_path,
+    ]
+    extern_import_reorder = process.run(extern_import_reorder_command)
+    ordinary_import_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        ordinary_import_path,
+    ]
+    ordinary_import = process.run(ordinary_import_command)
+    write_test_text(
+        type_format_path[0:len(type_format_path)],
+        "import type_format_model\n\n\nstruct Holder:\n    items: List[\n        i64\n    ]\n    item: type_format_model . Item\n    nested: List[\n        type_format_model . Item\n    ]\n    array_items: type_format_model . Item[1001]\n",
+    )
+    type_change_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        type_format_path,
+    ]
+    type_change = process.run(type_change_command)
+    standalone_command: List[String] = [
+        state.compiler.clone(),
+        "semantic-diff",
+        "HEAD",
+        "--project",
+        standalone_path,
+    ]
+    standalone = process.run(standalone_command)
+    worktree_command: List[String] = [
+        "git",
+        "-C",
+        repository,
+        "worktree",
+        "list",
+        "--porcelain",
+    ]
+    worktrees = process.run(worktree_command)
+    ok = (
+        result.exit_code == 0
+        and selected.exit_code == 0
+        and implementation.exit_code == 0
+        and literal_format.exit_code == 0
+        and literal_change.exit_code == 0
+        and fstring_format.exit_code == 0
+        and fstring_change.exit_code == 0
+        and type_format.exit_code == 0
+        and enum_format.exit_code == 0
+        and assertion.exit_code == 0
+        and assertion_format.exit_code == 0
+        and assertion_insert.exit_code == 0
+        and lock_order_insert.exit_code == 0
+        and extern_import.exit_code == 0
+        and extern_import_format.exit_code == 0
+        and extern_import_insert.exit_code == 0
+        and extern_import_reorder.exit_code == 0
+        and ordinary_import.exit_code == 0
+        and type_change.exit_code == 0
+        and standalone.exit_code == 0
+        and worktrees.exit_code == 0
+        and contains(&result.stdout, "schema: cinder-semantic-v1")
+        and contains(&result.stdout, "+ added main::function:node_96")
+        and contains(&result.stdout, "- calls: main::function:main -> main::function:node_95")
+        and contains(&result.stdout, "+ calls: main::function:main -> main::function:node_96")
+        and contains(&result.stdout, "~ changed main::struct:LayoutStruct")
+        and contains(&result.stdout, "~ changed main::class:LayoutClass")
+        and contains(&result.stdout, "~ changed main::union:LayoutUnion")
+        and contains(&result.stdout, "~ changed main::enum:LayoutEnum")
+        and contains(&result.stdout, "~ changed main::enum:ValueEnum")
+        and contains(&result.stdout, "~ changed main::variant:LayoutVariant")
+        and contains(&result.stdout, "~ changed main::constant:multiline_value")
+        and contains(&result.stdout, "~ changed main::function:multiline_signature")
+        and contains(&result.stdout, "~ changed main::field:ModifierStruct.value")
+        and contains(&result.stdout, "~ changed main::method:ModifierBase.apply")
+        and contains(&result.stdout, "~ changed main::method:ModifierImpl.apply")
+        and contains(&result.stdout, "~ changed main::class:MethodOrder")
+        and contains(&result.stdout, "~ changed main::class:ReflectedMethodChild")
+        and contains(&result.stdout, "~ changed main::class:MultilineDerived")
+        and contains(&result.stdout, "members: main::field:LayoutStruct.first, main::field:LayoutStruct.second -> main::field:LayoutStruct.second, main::field:LayoutStruct.first")
+        and contains(&result.stdout, "members: main::enum-member:LayoutEnum.first, main::enum-member:LayoutEnum.second -> main::enum-member:LayoutEnum.second, main::enum-member:LayoutEnum.first")
+        and contains(&result.stdout, "members: main::enum-member:ValueEnum.first=1, main::enum-member:ValueEnum.second=7 -> main::enum-member:ValueEnum.first=3, main::enum-member:ValueEnum.second=7")
+        and contains(&result.stdout, "members: main::variant-case:LayoutVariant.First, main::variant-case:LayoutVariant.Second -> main::variant-case:LayoutVariant.Second, main::variant-case:LayoutVariant.First")
+        and contains(&result.stdout, "members: main::method:MethodOrder.first, main::method:MethodOrder.second -> main::method:MethodOrder.second, main::method:MethodOrder.first")
+        and contains(&result.stdout, "members: main::method:ReflectedMethodChild.own_method, main::method:UnreflectedMethodBase.inherited_first, main::method:UnreflectedMethodBase.inherited_second -> main::method:ReflectedMethodChild.own_method, main::method:UnreflectedMethodBase.inherited_second, main::method:UnreflectedMethodBase.inherited_first")
+        and contains(&result.stdout, "signature: const multiline_value: i32 = (\n    1\n) -> const multiline_value: i32 = (\n    2\n)")
+        and contains(&result.stdout, "signature: def multiline_signature(\n    value: i32,\n) -> i32: -> def multiline_signature(\n    value: i64,\n) -> i32:")
+        and contains(&result.stdout, "signature: class MultilineDerived(\n    SpecializedBase[i32],\n): -> class MultilineDerived(\n    SpecializedBase[i64],\n):")
+        and contains(&result.stdout, "modifiers: private -> none")
+        and contains(&result.stdout, "modifiers: abstractmethod -> none")
+        and contains(&result.stdout, "modifiers: override -> none")
+        and contains(&result.stdout, "~ changed main::function:node_0")
+        and contains(
+            &result.stdout,
+            "  reachable callers:\n    - main::function:node_1\n",
+        )
+        and contains(&result.stdout, "    - main::function:node_96\n")
+        and contains(&result.stdout, "    - main::function:main\n")
+        and contains(&selected.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&selected.stdout, "~ changed selected::function:selected")
+        and contains(
+            &implementation.stdout,
+            "~ changed implementation::function:implementation_probe",
+        )
+        and contains(&implementation.stdout, "implementation: changed")
+        and not contains(&implementation.stdout, "NO SEMANTIC CHANGES")
+        and contains(&literal_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:literal_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:literal_case_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:float_value_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:rounded_float_value_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:integer_value_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:string_escape_format_probe",
+        )
+        and not contains(
+            &literal_format.stdout,
+            "~ changed literal_format::function:character_escape_format_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:literal_change_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:float_value_change_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:string_literal_change_probe",
+        )
+        and contains(
+            &literal_change.stdout,
+            "~ changed literal_change::function:character_literal_change_probe",
+        )
+        and contains(&literal_change.stdout, "implementation: changed")
+        and not contains(&literal_change.stdout, "NO SEMANTIC CHANGES")
+        and contains(&fstring_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(
+            &fstring_format.stdout,
+            "~ changed fstring_format::function:fstring_format_probe",
+        )
+        and not contains(
+            &fstring_format.stdout,
+            "~ changed fstring_format::function:fstring_literal_escape_format_probe",
+        )
+        and not contains(
+            &fstring_format.stdout,
+            "~ changed fstring_format::function:fstring_quote_delimiter_format_probe",
+        )
+        and contains(
+            &fstring_change.stdout,
+            "~ changed fstring_change::function:fstring_change_probe",
+        )
+        and contains(&fstring_change.stdout, "implementation: changed")
+        and not contains(&fstring_change.stdout, "NO SEMANTIC CHANGES")
+        and contains(&type_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.items")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.item")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.nested")
+        and not contains(&type_format.stdout, "~ changed type_format::field:Holder.array_items")
+        and contains(&enum_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&enum_format.stdout, "~ changed enum_format::enum:FormatEnum")
+        and contains(&assertion.stdout, "~ changed assertion::static-assert:assertion_0")
+        and contains(
+            &assertion.stdout,
+            "signature: static_assert(size_of(Pair) >= 8) -> static_assert(size_of(Pair) >= 4)",
+        )
+        and not contains(&assertion.stdout, "NO SEMANTIC CHANGES")
+        and contains(&assertion_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&assertion_format.stdout, "- removed assertion_format::static-assert:")
+        and not contains(&assertion_format.stdout, "+ added assertion_format::static-assert:")
+        and contains(
+            &assertion_insert.stdout,
+            "+ added assertion_insert::static-assert:assertion_0",
+        )
+        and not contains(&assertion_insert.stdout, "~ changed assertion_insert::static-assert:")
+        and not contains(&assertion_insert.stdout, "- removed assertion_insert::static-assert:")
+        and not contains(
+            &assertion_insert.stdout,
+            "+ added assertion_insert::static-assert:assertion_1",
+        )
+        and not contains(
+            &assertion_insert.stdout,
+            "+ added assertion_insert::static-assert:assertion_2",
+        )
+        and contains(&assertion_insert.stdout, "RELATIONS\n(unchanged)")
+        and contains(
+            &lock_order_insert.stdout,
+            "+ added lock_order_insert::lock-order:order_0",
+        )
+        and not contains(
+            &lock_order_insert.stdout,
+            "~ changed lock_order_insert::lock-order:",
+        )
+        and not contains(
+            &lock_order_insert.stdout,
+            "- removed lock_order_insert::lock-order:",
+        )
+        and not contains(
+            &lock_order_insert.stdout,
+            "+ added lock_order_insert::lock-order:order_1",
+        )
+        and contains(&extern_import.stdout, "~ changed extern_import::extern-import:import_0")
+        and contains(
+            &extern_import.stdout,
+            "signature: extern import \"ctype.h\" -> extern import \"math.h\"",
+        )
+        and not contains(&extern_import.stdout, "NO SEMANTIC CHANGES")
+        and contains(&extern_import_format.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&extern_import_format.stdout, "- removed extern_import_format::extern-import:")
+        and not contains(&extern_import_format.stdout, "+ added extern_import_format::extern-import:")
+        and contains(
+            &extern_import_insert.stdout,
+            "+ added extern_import_insert::extern-import:import_0",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "~ changed extern_import_insert::extern-import:",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "- removed extern_import_insert::extern-import:",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "+ added extern_import_insert::extern-import:import_1",
+        )
+        and not contains(
+            &extern_import_insert.stdout,
+            "+ added extern_import_insert::extern-import:import_2",
+        )
+        and contains(
+            &extern_import_reorder.stdout,
+            "- removed extern_import_reorder::extern-import:import_0",
+        )
+        and contains(
+            &extern_import_reorder.stdout,
+            "+ added extern_import_reorder::extern-import:import_1",
+        )
+        and not contains(&extern_import_reorder.stdout, "NO SEMANTIC CHANGES")
+        and contains(
+            &ordinary_import.stdout,
+            "~ changed ordinary_import::import:import_0",
+        )
+        and contains(
+            &ordinary_import.stdout,
+            "signature: import ordinary_import_a -> import ordinary_import_b",
+        )
+        and not contains(&ordinary_import.stdout, "NO SEMANTIC CHANGES")
+        and contains(&type_change.stdout, "~ changed type_format::field:Holder.items")
+        and contains(&type_change.stdout, "type: CinderList_i32 -> CinderList_i64")
+        and contains(&type_change.stdout, "~ changed type_format::field:Holder.array_items")
+        and contains(
+            &type_change.stdout,
+            "type: type_format_model.Item[1000] -> type_format_model.Item[1001]",
+        )
+        and not contains(&type_change.stdout, "NO SEMANTIC CHANGES")
+        and contains(&standalone.stdout, "NO SEMANTIC CHANGES")
+        and not contains(&worktrees.stdout, "cinder-semantic-diff.")
+    )
+    expect(state, "semantic-diff reports canonical changes", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+        report_process_failure(&selected.stdout, &selected.stderr)
+        report_process_failure(&implementation.stdout, &implementation.stderr)
+        report_process_failure(&literal_format.stdout, &literal_format.stderr)
+        report_process_failure(&literal_change.stdout, &literal_change.stderr)
+        report_process_failure(&fstring_format.stdout, &fstring_format.stderr)
+        report_process_failure(&fstring_change.stdout, &fstring_change.stderr)
+        report_process_failure(&type_format.stdout, &type_format.stderr)
+        report_process_failure(&enum_format.stdout, &enum_format.stderr)
+        report_process_failure(&assertion.stdout, &assertion.stderr)
+        report_process_failure(&assertion_format.stdout, &assertion_format.stderr)
+        report_process_failure(&assertion_insert.stdout, &assertion_insert.stderr)
+        report_process_failure(&lock_order_insert.stdout, &lock_order_insert.stderr)
+        report_process_failure(&extern_import.stdout, &extern_import.stderr)
+        report_process_failure(
+            &extern_import_format.stdout,
+            &extern_import_format.stderr,
+        )
+        report_process_failure(
+            &extern_import_insert.stdout,
+            &extern_import_insert.stderr,
+        )
+        report_process_failure(
+            &extern_import_reorder.stdout,
+            &extern_import_reorder.stderr,
+        )
+        report_process_failure(&ordinary_import.stdout, &ordinary_import.stderr)
+        report_process_failure(&type_change.stdout, &type_change.stderr)
+        report_process_failure(&standalone.stdout, &standalone.stderr)
+
+
+def write_test_text(path: String, content: String) -> void:
+    with open(path, "wb") as file:
+        file.write(content)
+
+
+def semantic_diff_stress_source(function_count: i32, reverse_fields: bool) -> String:
+    builder = StringBuilder()
+    append_layout_fixture(&builder, reverse_fields)
+    builder.append("const multiline_value: i32 = (\n")
+    if reverse_fields:
+        builder.append("    2\n")
+    else:
+        builder.append("    1\n")
+    builder.append(")\n\n\n")
+    builder.append("def multiline_signature(\n")
+    if reverse_fields:
+        builder.append("    value: i64,\n")
+    else:
+        builder.append("    value: i32,\n")
+    builder.append(") -> i32:\n")
+    builder.append("    return 0\n\n\n")
+    append_caller_chain(&builder, function_count, reverse_fields)
+    return builder.finish()
+
+
+def caller_chain_source(function_count: i32) -> String:
+    builder = StringBuilder()
+    append_caller_chain(&builder, function_count, false)
+    return builder.finish()
+
+
+def append_caller_chain(
+    builder: &StringBuilder,
+    function_count: i32,
+    change_leaf: bool,
+) -> void:
+    builder.append("def node_0(value: i32) -> i32:\n")
+    if change_leaf:
+        builder.append("    return value + 1\n\n\n")
+    else:
+        builder.append("    return value\n\n\n")
+    index: i32 = 1
+    while index < function_count:
+        current = to_string(index)
+        previous = to_string(index - 1)
+        builder.append("def node_")
+        builder.append(current)
+        builder.append("(value: i32) -> i32:\n")
+        builder.append("    return node_")
+        builder.append(previous)
+        builder.append("(value) + 1\n\n\n")
+        index += 1
+    final_index = to_string(function_count - 1)
+    builder.append("def main() -> i32:\n")
+    builder.append("    return node_")
+    builder.append(final_index)
+    builder.append("(0)\n")
+
+
+def append_layout_fixture(builder: &StringBuilder, reverse_fields: bool) -> void:
+    builder.append("struct LayoutStruct:\n")
+    append_layout_fields(builder, reverse_fields)
+    builder.append("class LayoutClass:\n")
+    append_layout_fields(builder, reverse_fields)
+    builder.append("union LayoutUnion:\n")
+    append_layout_fields(builder, reverse_fields)
+    builder.append("enum LayoutEnum:\n")
+    if reverse_fields:
+        builder.append("    second\n")
+        builder.append("    first\n\n\n")
+    else:
+        builder.append("    first\n")
+        builder.append("    second\n\n\n")
+    builder.append("enum ValueEnum:\n")
+    if reverse_fields:
+        builder.append("    first = 3\n")
+    else:
+        builder.append("    first = 1\n")
+    builder.append("    second = 7\n\n\n")
+    builder.append("variant LayoutVariant:\n")
+    if reverse_fields:
+        builder.append("    Second\n")
+        builder.append("    First(value: i32)\n\n\n")
+    else:
+        builder.append("    First(value: i32)\n")
+        builder.append("    Second\n\n\n")
+    builder.append("@reflect\n")
+    builder.append("struct ModifierStruct:\n")
+    if reverse_fields:
+        builder.append("    value: i32\n\n\n")
+    else:
+        builder.append("    private value: i32\n\n\n")
+    builder.append("abstract class ModifierBase:\n")
+    if not reverse_fields:
+        builder.append("    @abstractmethod\n")
+    builder.append("    def apply(self, value: i32) -> i32:\n")
+    builder.append("        pass\n\n\n")
+    builder.append("class ModifierImpl(ModifierBase):\n")
+    if not reverse_fields:
+        builder.append("    @override\n")
+    builder.append("    def apply(self, value: i32) -> i32:\n")
+    builder.append("        return value\n\n\n")
+    builder.append("@reflect\n")
+    builder.append("class MethodOrder:\n")
+    if reverse_fields:
+        append_reflected_method(builder, "second", 2)
+        append_reflected_method(builder, "first", 1)
+    else:
+        append_reflected_method(builder, "first", 1)
+        append_reflected_method(builder, "second", 2)
+    builder.append("class UnreflectedMethodBase:\n")
+    if reverse_fields:
+        append_reflected_method(builder, "inherited_second", 2)
+        append_reflected_method(builder, "inherited_first", 1)
+    else:
+        append_reflected_method(builder, "inherited_first", 1)
+        append_reflected_method(builder, "inherited_second", 2)
+    builder.append("@reflect\n")
+    builder.append("class ReflectedMethodChild(UnreflectedMethodBase):\n")
+    append_reflected_method(builder, "own_method", 3)
+    builder.append("class SpecializedBase[T]:\n")
+    builder.append("    value: T\n\n\n")
+    builder.append("class MultilineDerived(\n")
+    if reverse_fields:
+        builder.append("    SpecializedBase[i64],\n")
+    else:
+        builder.append("    SpecializedBase[i32],\n")
+    builder.append("):\n")
+    builder.append("    pass\n\n\n")
+
+
+def append_reflected_method(
+    builder: &StringBuilder,
+    name: String,
+    value: i32,
+) -> void:
+    builder.append("    def ")
+    builder.append(name)
+    builder.append("(self) -> i32:\n")
+    builder.append("        return ")
+    builder.append(to_string(value))
+    builder.append("\n\n\n")
+
+
+def append_layout_fields(builder: &StringBuilder, reverse_fields: bool) -> void:
+    if reverse_fields:
+        builder.append("    second: i64\n")
+        builder.append("    first: i32\n\n\n")
+    else:
+        builder.append("    first: i32\n")
+        builder.append("    second: i64\n\n\n")
 
 
 def expect(state: &TestState, name: String, condition: bool) -> void:

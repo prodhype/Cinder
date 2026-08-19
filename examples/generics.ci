@@ -22,7 +22,9 @@ abstract class Writer[T]:
         pass
 
 
-class IntWriter(Writer[i32]):
+class IntWriter(
+    Writer[i32],
+):
     def write(self, item: i32) -> void:
         print(item)
 

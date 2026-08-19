@@ -3,3 +3,84 @@ struct FStringField:
     format_start: usize
     close: usize
     valid: bool
+
+
+def scan_fstring_field(source: &const String, start: usize, end: usize) -> FStringField:
+    brackets: List[u8] = []
+    index = start
+    format_start = end
+    while index < end:
+        byte = source.byte_at(index)
+        if byte == 34 or byte == 39:
+            index = skip_fstring_quoted(source, index, end)
+            continue
+        if byte == 40:
+            brackets.append(41)
+            index += 1
+            continue
+        if byte == 91:
+            brackets.append(93)
+            index += 1
+            continue
+        if byte == 123:
+            brackets.append(125)
+            index += 1
+            continue
+        if byte == 41 or byte == 93 or byte == 125:
+            if len(brackets) > 0:
+                if brackets[len(brackets) - 1] == byte:
+                    brackets.pop()
+                index += 1
+                continue
+            if byte == 125:
+                expression_end = index
+                if format_start < end:
+                    expression_end = format_start
+                return FStringField(
+                    expression_end=expression_end,
+                    format_start=format_start,
+                    close=index,
+                    valid=true,
+                )
+            index += 1
+            continue
+        if byte == 58 and len(brackets) == 0 and format_start == end:
+            format_start = index
+        index += 1
+    return FStringField(expression_end=end, format_start=end, close=end, valid=false)
+
+
+def skip_fstring_quoted(source: &const String, start: usize, end: usize) -> usize:
+    quote = source.byte_at(start)
+    index = start + 1
+    escaped = false
+    while index < end:
+        byte = source.byte_at(index)
+        if escaped:
+            escaped = false
+        elif byte == 92:
+            escaped = true
+        elif byte == quote:
+            return index + 1
+        index += 1
+    return index
+
+
+def trim_left(source: &const String, start: usize, end: usize) -> usize:
+    index = start
+    while index < end:
+        byte = source.byte_at(index)
+        if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+            break
+        index += 1
+    return index
+
+
+def trim_right(source: &const String, start: usize, end: usize) -> usize:
+    index = end
+    while index > start:
+        byte = source.byte_at(index - 1)
+        if byte != 32 and byte != 9 and byte != 10 and byte != 13:
+            break
+        index -= 1
+    return index

@@ -1,0 +1,105 @@
+import model
+import lock_collision
+import ownership_uses
+
+
+lock database
+lock cache after database
+
+request_count: i32 = 0
+
+
+def hash_key(key: i32) -> i32:
+    return key + 1
+
+
+def cache_get(key: i32) -> model.CacheEntry:
+    hashed = hash_key(key)
+    CriticalSection cache:
+        request_count += 1
+    return model.CacheEntry(value=hashed)
+
+
+struct CacheWorker:
+    def refresh(self) -> void:
+        CriticalSection cache:
+            request_count += 1
+
+
+def cache_entry_value(entry: model.CacheEntry) -> i32:
+    return entry.value
+
+
+@export
+def export_cache_entry(key: i32) -> model.CacheEntry:
+    return cache_get(key)
+
+
+@export
+def export_borrowed_entry_value(entry: &model.BorrowedEntry) -> i32:
+    return entry.value
+
+
+@export
+def export_status(status: model.Status) -> i32:
+    return 0
+
+
+extern "C":
+    def consume_cache_entry(entry: model.CacheEntry) -> i32
+
+
+def construct_entry_only(key: i32) -> void:
+    entry = model.CacheEntry(value=key)
+
+
+struct QualifiedHolder:
+    entry: model.CacheEntry
+
+
+@export
+def export_abi_box(value: model.AbiBox[model.AbiPayload]) -> i32:
+    return value.value.value
+
+
+@export
+def export_abi_ref_box(value: model.AbiRefBox[model.AbiIndirectPayload]) -> i32:
+    return 0
+
+
+@export
+def export_memory_store(value: model.MemoryStore) -> i32:
+    return 0
+
+
+def format_cache_entry(entry: model.CacheEntry) -> void:
+    print(f"value={entry.value}")
+
+
+def indexed_cache_entry_value() -> i32:
+    items: model.CacheEntry[1] = [model.CacheEntry(value=7)]
+    return items[0].value
+
+
+def construct_token(value: i32) -> void:
+    token = model.Token.Integer(value=value)
+
+
+@export
+def export_abi_nested_holder(value: model.AbiNestedHolder) -> i32:
+    return value.payload.value
+
+
+@export
+def export_abi_nested_ref_holder(value: model.AbiNestedRefHolder) -> i32:
+    return 0
+
+
+def format_constructed_token(value: i32) -> void:
+    print(f"{model.Token.Integer(value)}")
+
+
+struct AbiMethodExporter:
+    @export
+    def consume(self, value: model.AbiMethodPayload) -> i32:
+        return value.value

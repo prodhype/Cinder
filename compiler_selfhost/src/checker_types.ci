@@ -124,7 +124,53 @@ def validate_partial_move_source(
     source: &const String,
     current_scope: symbols.ScopeId,
 ) -> void:
-    if expression.index < 0 or type_is_borrowed_for_transfer(checker.type_table, destination_type):
+    validate_partial_move_source_impl(
+        checker,
+        arena,
+        expression,
+        value_type,
+        destination_type,
+        source,
+        current_scope,
+        true,
+    )
+
+
+def validate_discarded_expression(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expression: NodeId,
+    value_type: types.TypeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> void:
+    validate_partial_move_source_impl(
+        checker,
+        arena,
+        expression,
+        value_type,
+        value_type,
+        source,
+        current_scope,
+        false,
+    )
+
+
+def validate_partial_move_source_impl(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    expression: NodeId,
+    value_type: types.TypeId,
+    destination_type: types.TypeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+    record_transfer: bool,
+) -> void:
+    if expression.index < 0:
+        return
+    if record_transfer:
+        record_transfer_value_use(checker, expression, value_type, destination_type)
+    if type_is_borrowed_for_transfer(checker.type_table, destination_type):
         return
     if ownership.type_contains_atomic_storage(&checker.type_table, value_type):
         node = arena.nodes[expression.index]
@@ -173,6 +219,36 @@ def validate_partial_move_source(
         return
     node = arena.nodes[expression.index]
     checker_core.emit_error(checker, 254, node.start, node.length, node.line, node.column)
+
+
+def record_transfer_value_use(
+    checker: &checker_core.Checker,
+    expression: NodeId,
+    value_type: types.TypeId,
+    destination_type: types.TypeId,
+) -> void:
+    if destination_type.index == types.type_void().index:
+        return
+    kind = semantic.ValueUseKind.COPY
+    if type_is_borrowed_for_transfer(checker.type_table, destination_type):
+        kind = semantic.ValueUseKind.BORROW
+    else:
+        if value_type.index < 0 or value_type.index >= cast[i32](len(checker.type_table.types)):
+            return
+        type_values: &const List[types.TypeRecord] = &checker.type_table.types
+        if type_values[value_type.index].kind == types.TypeKind.NAMED:
+            return
+        ownership_kind = ownership.ownership_kind(&checker.type_table, value_type)
+        if ownership_kind == ownership.OwnershipKind.MOVE_ONLY:
+            kind = semantic.ValueUseKind.MOVE
+        elif ownership_kind == ownership.OwnershipKind.BORROWED:
+            kind = semantic.ValueUseKind.BORROW
+    symbol = symbols.missing_symbol()
+    name_bindings: &const List[semantic.NodeSymbolBinding] = &checker.model.name_symbols
+    for binding: semantic.NodeSymbolBinding in name_bindings:
+        if binding.node.index == expression.index:
+            symbol = binding.symbol
+    checker.model.record_value_use(expression, kind, symbol, value_type)
 
 
 def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
@@ -1165,6 +1241,12 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         result = operand_type
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
             validate_ordered_lock_element_mutation(checker, arena, operand, source, current_scope)
+            if operand.index >= 0:
+                address_symbol = symbols.missing_symbol()
+                operand_node = arena.nodes[operand.index]
+                if operand_node.kind == syntax.SyntaxKind.EXPR_NAME:
+                    address_symbol = checker.symbols.find_in_scope(source, current_scope, operand_node.value_start, operand_node.value_length)
+                checker.model.record_value_use(operand, semantic.ValueUseKind.ADDRESS, address_symbol, operand_type)
             result = checker.type_table.pointer_to(operand_type)
         elif types.is_atomic_type(&checker.type_table, operand_type):
             operand_node = arena.nodes[operand.index]

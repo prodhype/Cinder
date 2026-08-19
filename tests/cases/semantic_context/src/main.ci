@@ -1,0 +1,112 @@
+import cache
+import call_targets
+import type_targets
+import value_targets
+from call_targets import Child
+from call_targets import action
+from model import CacheEntry
+from type_targets import Target
+from value_targets import LIMIT
+extern import "stdlib.h"
+extern "C":
+    def abs(value: c_int) -> c_int
+
+
+def lookup_twice(key: i32) -> CacheEntry:
+    first = cache.cache_get(key)
+    return cache.cache_get(first.value)
+
+
+def call_shadowed(action: def(i32) -> i32, value: i32) -> i32:
+    return action(value)
+
+
+def call_top_level(value: i32) -> i32:
+    return call_targets.run(value)
+
+
+def call_imported_method(value: i32) -> i32:
+    child = Child()
+    return child.work(value) + child.run(value)
+
+
+@export
+def cinder_cache_lookup(key: i32) -> i32:
+    return lookup_twice(key).value
+
+
+def main() -> i32:
+    if cinder_cache_lookup(-1) != 2:
+        return 1
+    return 0
+
+
+def use_qualified_target(value: type_targets . Target) -> type_targets . Target:
+    return value
+
+
+def identity[Target](value: Target) -> Target:
+    return value
+
+
+def use_imported_target(value: Target) -> Target:
+    return value
+
+
+def read_imported_limit() -> i32:
+    return LIMIT
+
+
+def read_shadowed_limit(LIMIT: i32) -> i32:
+    return LIMIT
+
+
+IMPORTED_GLOBAL: i32 = action(1)
+const IMPORTED_CONSTANT: i32 = action(2)
+
+
+class ChildHolder:
+    child: Child
+
+    def __init__(self):
+        self.child = Child()
+
+    def call(self, value: i32) -> i32:
+        return self.child.work(value)
+
+
+def read_qualified_limit() -> i32:
+    return value_targets.LIMIT
+
+
+struct LocalValues:
+    LIMIT: i32
+
+
+def read_shadowed_qualified_limit(value_targets: LocalValues) -> i32:
+    return value_targets.LIMIT
+
+
+def read_imported_limit_fstring() -> i32:
+    print(f"limit={LIMIT}")
+    return 0
+
+
+def read_shadowed_limit_fstring(LIMIT: i32) -> i32:
+    print(f"limit={LIMIT}")
+    return 0
+
+
+def read_qualified_limit_fstring() -> i32:
+    print(f"limit={value_targets.LIMIT}")
+    return 0
+
+
+def read_shadowed_qualified_limit_fstring(value_targets: LocalValues) -> i32:
+    print(f"limit={value_targets.LIMIT}")
+    return 0
+
+
+@export
+def export_spaced_qualified_target(value: type_targets . Target) -> i32:
+    return value.value

@@ -1,0 +1,850 @@
+import analysis_core
+import cinder
+import emit_project
+import fs
+import process
+import project
+
+
+struct DiffOptions:
+    ok: bool
+    reference: String
+    project_path: String
+    error: String
+
+
+struct DiffGraphResult:
+    ok: bool
+    graph: analysis_core.DiffFactGraph
+    error: String
+
+
+struct FactMatches:
+    before_to_after: List[i32]
+    after_to_before: List[i32]
+
+
+def semantic_diff_command(args: &const List[String]) -> i32:
+    options = parse_diff_options(args)
+    if not options.ok:
+        diff_error(options.error[0:len(options.error)])
+        return 2
+
+    current_project: project.ProjectGraph = project.load_project(options.project_path[0:len(options.project_path)])
+    if len(current_project.error) > 0:
+        diff_error("analysis error: project error: " + current_project.error)
+        return 1
+    repository_command: List[String] = [
+        "git",
+        "-C",
+        current_project.config.root[0:len(current_project.config.root)],
+        "rev-parse",
+        "--show-toplevel",
+    ]
+    repository_result = process.run(repository_command)
+    if repository_result.exit_code != 0:
+        diff_error("semantic-diff requires a Git working tree: " + repository_result.stderr)
+        return 2
+    repository_root = trim_output(&repository_result.stdout)
+    prefix_command: List[String] = [
+        "git",
+        "-C",
+        current_project.config.root[0:len(current_project.config.root)],
+        "rev-parse",
+        "--show-prefix",
+    ]
+    prefix_result = process.run(prefix_command)
+    if prefix_result.exit_code != 0:
+        diff_error("failed to resolve project path within the Git repository")
+        return 2
+    project_prefix = trim_output(&prefix_result.stdout)
+    reference_project_path = project_prefix[0:len(project_prefix)]
+    if fs.ends_with(&options.project_path, ".ci"):
+        source_parent = fs.parent_dir(&options.project_path)
+        source_prefix_command: List[String] = [
+            "git",
+            "-C",
+            source_parent,
+            "rev-parse",
+            "--show-prefix",
+        ]
+        source_prefix_result = process.run(source_prefix_command)
+        if source_prefix_result.exit_code != 0:
+            diff_error("failed to resolve selected source path within the Git repository")
+            return 2
+        source_prefix = trim_output(&source_prefix_result.stdout)
+        source_name = fs.basename(&options.project_path)
+        reference_project_path = fs.join_path(&source_prefix, &source_name)
+
+    temporary_command: List[String] = ["mktemp", "-d", "/tmp/cinder-semantic-diff.XXXXXX"]
+    temporary_result = process.run(temporary_command)
+    if temporary_result.exit_code != 0:
+        diff_error("failed to create a semantic-diff workspace: " + temporary_result.stderr)
+        return 2
+    workspace = trim_output(&temporary_result.stdout)
+    remove_empty_command: List[String] = ["rmdir", workspace[0:len(workspace)]]
+    remove_empty = process.run(remove_empty_command)
+    if remove_empty.exit_code != 0:
+        cleanup_workspace(&repository_root, &workspace, false)
+        diff_error("failed to prepare the semantic-diff workspace")
+        return 2
+
+    add_command: List[String] = [
+        "git",
+        "-C",
+        repository_root[0:len(repository_root)],
+        "worktree",
+        "add",
+        "--detach",
+        workspace[0:len(workspace)],
+        options.reference[0:len(options.reference)],
+    ]
+    add_result = process.run(add_command)
+    if add_result.exit_code != 0:
+        cleanup_workspace(&repository_root, &workspace, false)
+        diff_error("failed to materialize Git ref '" + options.reference + "': " + add_result.stderr)
+        return 2
+
+    reference_path = workspace[0:len(workspace)]
+    if len(reference_project_path) > 0:
+        reference_path = fs.join_path(&workspace, &reference_project_path)
+    reference_result = analyze_diff_side(reference_path)
+    cleanup_workspace(&repository_root, &workspace, true)
+    if not reference_result.ok:
+        diff_error("reference analysis error: " + reference_result.error)
+        return 1
+
+    current_result = analyze_loaded_diff_side(&current_project)
+    if not current_result.ok:
+        diff_error("analysis error: " + current_result.error)
+        return 1
+    output = render_semantic_diff(
+        &options.reference,
+        &reference_result.graph,
+        &current_result.graph,
+    )
+    cinder.write_stdout(output)
+    return 0
+
+
+def analyze_diff_side(path: String) -> DiffGraphResult:
+    loaded: project.ProjectGraph = project.load_project(path)
+    if len(loaded.error) > 0:
+        return diff_graph_error("project error: " + loaded.error)
+    return analyze_loaded_diff_side(&loaded)
+
+
+def analyze_loaded_diff_side(loaded: &const project.ProjectGraph) -> DiffGraphResult:
+    analyzed: emit_project.AnalysisResult = emit_project.analyze_project(loaded)
+    if not analyzed.ok:
+        return diff_graph_error("project error: " + analyzed.error)
+    full_graph: analysis_core.SemanticFactGraph = analysis_core.build_fact_graph(loaded, &analyzed)
+    if len(full_graph.error) > 0:
+        return diff_graph_error(full_graph.error[0:len(full_graph.error)])
+    compact: analysis_core.DiffFactGraph = analysis_core.compact_diff_graph(&full_graph)
+    return DiffGraphResult(ok=true, graph=compact, error="")
+
+
+def diff_graph_error(message: String) -> DiffGraphResult:
+    facts: List[analysis_core.DiffSymbolFact] = []
+    relations: List[analysis_core.DiffRelationFact] = []
+    graph = analysis_core.DiffFactGraph(
+        facts=facts,
+        relations=relations,
+        error="",
+    )
+    return DiffGraphResult(ok=false, graph=graph, error=message)
+
+
+def parse_diff_options(args: &const List[String]) -> DiffOptions:
+    if len(args) == 0:
+        return DiffOptions(
+            ok=false,
+            reference="",
+            project_path=".",
+            error="usage: cinder semantic-diff <git-ref> [--project <path>]",
+        )
+    reference = args[0][0:len(args[0])]
+    project_path = "."
+    index: usize = 1
+    while index < len(args):
+        if args[index] == "--project" and index + 1 < len(args):
+            project_path = args[index + 1][0:len(args[index + 1])]
+            index += 2
+        else:
+            return DiffOptions(
+                ok=false,
+                reference=reference,
+                project_path=project_path,
+                error="usage: cinder semantic-diff <git-ref> [--project <path>]",
+            )
+    return DiffOptions(
+        ok=true,
+        reference=reference,
+        project_path=project_path,
+        error="",
+    )
+
+
+def render_semantic_diff(
+    reference: &const String,
+    before: &const analysis_core.DiffFactGraph,
+    after: &const analysis_core.DiffFactGraph,
+) -> String:
+    builder = StringBuilder()
+    builder.append("SEMANTIC DIFF\n")
+    builder.append("schema: cinder-semantic-v1\n")
+    builder.append("base: ")
+    builder.append(reference[0:len(reference)])
+    builder.append("\n")
+    builder.append("current: working-tree\n")
+    builder.append("target: source-level (physical ABI layout unavailable)\n\n")
+
+    changed = false
+    builder.append("SYMBOLS\n")
+    before_facts: &const List[analysis_core.DiffSymbolFact] = &before.facts
+    after_facts: &const List[analysis_core.DiffSymbolFact] = &after.facts
+    matches = build_fact_matches(before_facts, after_facts)
+    before_position: usize = 0
+    while before_position < len(before_facts):
+        fact: &const analysis_core.DiffSymbolFact = &before_facts[before_position]
+        if matches.before_to_after[before_position] < 0:
+            builder.append("- removed ")
+            builder.append(fact.key[0:len(fact.key)])
+            builder.append("\n")
+            changed = true
+        before_position += 1
+    after_position: usize = 0
+    while after_position < len(after_facts):
+        fact: &const analysis_core.DiffSymbolFact = &after_facts[after_position]
+        previous_position = matches.after_to_before[after_position]
+        if previous_position < 0:
+            builder.append("+ added ")
+            builder.append(fact.key[0:len(fact.key)])
+            builder.append("\n")
+            changed = true
+        else:
+            previous: &const analysis_core.DiffSymbolFact = &before_facts[cast[usize](previous_position)]
+            if not diff_facts_equal(previous, fact):
+                builder.append("~ changed ")
+                builder.append(fact.key[0:len(fact.key)])
+                builder.append("\n")
+                if not analysis_core.strings_equal(
+                    &previous.canonical_signature,
+                    &fact.canonical_signature,
+                ):
+                    if analysis_core.strings_equal(&previous.signature, &fact.signature):
+                        append_changed_marker(&builder, "signature")
+                    else:
+                        append_changed_property(
+                            &builder,
+                            "signature",
+                            &previous.signature,
+                            &fact.signature,
+                        )
+                if not analysis_core.strings_equal(
+                    &previous.implementation,
+                    &fact.implementation,
+                ):
+                    append_changed_marker(&builder, "implementation")
+                append_changed_property(
+                    &builder,
+                    "modifiers",
+                    &previous.modifiers,
+                    &fact.modifiers,
+                )
+                append_changed_property(
+                    &builder,
+                    "type",
+                    &previous.type_name,
+                    &fact.type_name,
+                )
+                append_changed_property(
+                    &builder,
+                    "ownership",
+                    &previous.ownership,
+                    &fact.ownership,
+                )
+                append_changed_property(
+                    &builder,
+                    "parameter ownership",
+                    &previous.parameter_ownership,
+                    &fact.parameter_ownership,
+                )
+                append_changed_property(
+                    &builder,
+                    "abi",
+                    &previous.abi,
+                    &fact.abi,
+                )
+                append_changed_property(
+                    &builder,
+                    "members",
+                    &previous.members,
+                    &fact.members,
+                )
+                previous_reflected = analysis_core.bool_text(previous.reflected)
+                current_reflected = analysis_core.bool_text(fact.reflected)
+                append_changed_property(
+                    &builder,
+                    "reflected",
+                    &previous_reflected,
+                    &current_reflected,
+                )
+                previous_exported = analysis_core.bool_text(previous.exported)
+                current_exported = analysis_core.bool_text(fact.exported)
+                append_changed_property(
+                    &builder,
+                    "exported",
+                    &previous_exported,
+                    &current_exported,
+                )
+                append_reachable_callers(&builder, after, &fact.key)
+                changed = true
+        after_position += 1
+    if not changed:
+        builder.append("(unchanged)\n")
+    builder.append("\n")
+
+    relation_changed = append_relation_diff(&builder, before, after, &matches)
+    if relation_changed:
+        changed = true
+    if not changed:
+        builder.append("NO SEMANTIC CHANGES\n")
+    return builder.finish()
+
+
+def build_fact_matches(
+    before: &const List[analysis_core.DiffSymbolFact],
+    after: &const List[analysis_core.DiffSymbolFact],
+) -> FactMatches:
+    before_to_after: List[i32] = []
+    after_to_before: List[i32] = []
+    while len(before_to_after) < len(before):
+        before_to_after.append(-1)
+    while len(after_to_before) < len(after):
+        after_to_before.append(-1)
+    matches = FactMatches(
+        before_to_after=before_to_after,
+        after_to_before=after_to_before,
+    )
+
+    before_index = build_fact_index(before)
+    after_position: usize = 0
+    while after_position < len(after):
+        fact: &const analysis_core.DiffSymbolFact = &after[after_position]
+        if not ordered_fact_kind(&fact.kind) and fact.key in before_index:
+            before_position = before_index[fact.key]
+            set_fact_match(
+                &matches,
+                before_position,
+                cast[i32](after_position),
+            )
+        after_position += 1
+
+    ordered_kinds: List[String] = [
+        "static-assert",
+        "import",
+        "extern-import",
+        "extern-block",
+        "lock-order",
+    ]
+    for kind in ordered_kinds:
+        modules: List[String] = []
+        for fact in before:
+            if fact.kind == kind and not contains_string(&modules, &fact.module_name):
+                modules.append(fact.module_name[0:len(fact.module_name)])
+        for fact in after:
+            if fact.kind == kind and not contains_string(&modules, &fact.module_name):
+                modules.append(fact.module_name[0:len(fact.module_name)])
+        for module_name in modules:
+            before_indexes = ordered_fact_indexes(before, &module_name, &kind)
+            after_indexes = ordered_fact_indexes(after, &module_name, &kind)
+            align_ordered_facts(
+                before,
+                after,
+                &before_indexes,
+                &after_indexes,
+                &matches,
+            )
+    return matches
+
+
+def ordered_fact_kind(kind: &const String) -> bool:
+    return (
+        kind == "static-assert"
+        or kind == "import"
+        or kind == "extern-import"
+        or kind == "extern-block"
+        or kind == "lock-order"
+    )
+
+
+def set_fact_match(
+    matches: &FactMatches,
+    before_position: i32,
+    after_position: i32,
+) -> void:
+    if before_position < 0 or after_position < 0:
+        return
+    before_index = cast[usize](before_position)
+    after_index = cast[usize](after_position)
+    if matches.before_to_after[before_index] >= 0 or matches.after_to_before[after_index] >= 0:
+        return
+    matches.before_to_after[before_index] = after_position
+    matches.after_to_before[after_index] = before_position
+
+
+def ordered_fact_indexes(
+    facts: &const List[analysis_core.DiffSymbolFact],
+    module_name: &const String,
+    kind: &const String,
+) -> List[i32]:
+    result: List[i32] = []
+    index: usize = 0
+    while index < len(facts):
+        fact: &const analysis_core.DiffSymbolFact = &facts[index]
+        if fact.kind == kind and fact.module_name == module_name:
+            result.append(cast[i32](index))
+        index += 1
+    return result
+
+
+def align_ordered_facts(
+    before: &const List[analysis_core.DiffSymbolFact],
+    after: &const List[analysis_core.DiffSymbolFact],
+    before_indexes: &const List[i32],
+    after_indexes: &const List[i32],
+    matches: &FactMatches,
+) -> void:
+    before_count = len(before_indexes)
+    after_count = len(after_indexes)
+    width = after_count + 1
+    cells: List[i32] = []
+    cell_count = (before_count + 1) * width
+    while len(cells) < cell_count:
+        cells.append(0)
+
+    before_offset = before_count
+    while before_offset > 0:
+        before_offset -= 1
+        after_offset = after_count
+        while after_offset > 0:
+            after_offset -= 1
+            before_fact: &const analysis_core.DiffSymbolFact = &before[
+                cast[usize](before_indexes[before_offset])
+            ]
+            after_fact: &const analysis_core.DiffSymbolFact = &after[
+                cast[usize](after_indexes[after_offset])
+            ]
+            cell = before_offset * width + after_offset
+            if analysis_core.strings_equal(
+                &before_fact.canonical_signature,
+                &after_fact.canonical_signature,
+            ):
+                cells[cell] = cells[(before_offset + 1) * width + after_offset + 1] + 1
+            else:
+                skip_before = cells[(before_offset + 1) * width + after_offset]
+                skip_after = cells[before_offset * width + after_offset + 1]
+                cells[cell] = skip_before
+                if skip_after > skip_before:
+                    cells[cell] = skip_after
+
+    before_anchors: List[i32] = []
+    after_anchors: List[i32] = []
+    before_offset = 0
+    after_offset: usize = 0
+    while before_offset < before_count and after_offset < after_count:
+        before_fact: &const analysis_core.DiffSymbolFact = &before[
+            cast[usize](before_indexes[before_offset])
+        ]
+        after_fact: &const analysis_core.DiffSymbolFact = &after[
+            cast[usize](after_indexes[after_offset])
+        ]
+        if analysis_core.strings_equal(
+            &before_fact.canonical_signature,
+            &after_fact.canonical_signature,
+        ):
+            set_fact_match(
+                matches,
+                before_indexes[before_offset],
+                after_indexes[after_offset],
+            )
+            before_anchors.append(cast[i32](before_offset))
+            after_anchors.append(cast[i32](after_offset))
+            before_offset += 1
+            after_offset += 1
+        elif cells[(before_offset + 1) * width + after_offset] >= cells[
+            before_offset * width + after_offset + 1
+        ]:
+            before_offset += 1
+        else:
+            after_offset += 1
+
+    before_start: usize = 0
+    after_start: usize = 0
+    anchor_index: usize = 0
+    while anchor_index < len(before_anchors):
+        before_end = cast[usize](before_anchors[anchor_index])
+        after_end = cast[usize](after_anchors[anchor_index])
+        pair_ordered_fact_gap(
+            before_indexes,
+            after_indexes,
+            before_start,
+            before_end,
+            after_start,
+            after_end,
+            matches,
+        )
+        before_start = before_end + 1
+        after_start = after_end + 1
+        anchor_index += 1
+    pair_ordered_fact_gap(
+        before_indexes,
+        after_indexes,
+        before_start,
+        before_count,
+        after_start,
+        after_count,
+        matches,
+    )
+
+
+def pair_ordered_fact_gap(
+    before_indexes: &const List[i32],
+    after_indexes: &const List[i32],
+    before_start: usize,
+    before_end: usize,
+    after_start: usize,
+    after_end: usize,
+    matches: &FactMatches,
+) -> void:
+    before_offset = before_start
+    after_offset = after_start
+    while before_offset < before_end and after_offset < after_end:
+        set_fact_match(
+            matches,
+            before_indexes[before_offset],
+            after_indexes[after_offset],
+        )
+        before_offset += 1
+        after_offset += 1
+
+
+def build_fact_index(
+    facts: &const List[analysis_core.DiffSymbolFact],
+) -> Map[String, i32]:
+    result: Map[String, i32] = {}
+    index: usize = 0
+    while index < len(facts):
+        result[facts[index].key] = cast[i32](index)
+        index += 1
+    return result
+
+
+def diff_facts_equal(
+    left: &const analysis_core.DiffSymbolFact,
+    right: &const analysis_core.DiffSymbolFact,
+) -> bool:
+    return (
+        analysis_core.strings_equal(
+            &left.canonical_signature,
+            &right.canonical_signature,
+        )
+        and analysis_core.strings_equal(&left.implementation, &right.implementation)
+        and analysis_core.strings_equal(&left.modifiers, &right.modifiers)
+        and analysis_core.strings_equal(&left.type_name, &right.type_name)
+        and analysis_core.strings_equal(&left.ownership, &right.ownership)
+        and analysis_core.strings_equal(&left.parameter_ownership, &right.parameter_ownership)
+        and analysis_core.strings_equal(&left.abi, &right.abi)
+        and analysis_core.strings_equal(&left.members, &right.members)
+        and left.reflected == right.reflected
+        and left.exported == right.exported
+    )
+
+
+def append_changed_property(
+    builder: &StringBuilder,
+    name: String,
+    before: &const String,
+    after: &const String,
+) -> void:
+    if before == after:
+        return
+    builder.append("  ")
+    builder.append(name)
+    builder.append(": ")
+    builder.append(before[0:len(before)])
+    builder.append(" -> ")
+    builder.append(after[0:len(after)])
+    builder.append("\n")
+
+
+def append_changed_marker(
+    builder: &StringBuilder,
+    name: String,
+) -> void:
+    builder.append("  ")
+    builder.append(name)
+    builder.append(": changed\n")
+
+
+def append_reachable_callers(
+    builder: &StringBuilder,
+    graph: &const analysis_core.DiffFactGraph,
+    target: &const String,
+) -> void:
+    discovered: List[String] = [target[0:len(target)]]
+    relations: &const List[analysis_core.DiffRelationFact] = &graph.relations
+    cursor: usize = 0
+    while cursor < len(discovered):
+        current = discovered[cursor][0:len(discovered[cursor])]
+        for relation in relations:
+            if relation.kind == "calls" and relation.to_key == current and relation.resolved:
+                if not contains_string(&discovered, &relation.from_key):
+                    discovered.append(relation.from_key[0:len(relation.from_key)])
+        cursor += 1
+    if len(discovered) == 1:
+        return
+    builder.append("  reachable callers:\n")
+    caller_index: usize = 1
+    while caller_index < len(discovered):
+        caller: &const String = &discovered[caller_index]
+        builder.append("    - ")
+        builder.append(caller[0:len(caller)])
+        builder.append("\n")
+        caller_index += 1
+
+
+def append_relation_diff(
+    builder: &StringBuilder,
+    before: &const analysis_core.DiffFactGraph,
+    after: &const analysis_core.DiffFactGraph,
+    matches: &const FactMatches,
+) -> bool:
+    changed = false
+    builder.append("RELATIONS\n")
+    before_relations: &const List[analysis_core.DiffRelationFact] = &before.relations
+    after_relations: &const List[analysis_core.DiffRelationFact] = &after.relations
+    before_index = build_relation_index(
+        before_relations,
+        &before.facts,
+        matches,
+        true,
+    )
+    after_index = build_relation_index(
+        after_relations,
+        &after.facts,
+        matches,
+        false,
+    )
+    for relation in before_relations:
+        identity = relation_identity(
+            &relation,
+            &before.facts,
+            matches,
+            true,
+        )
+        if not (identity in after_index):
+            builder.append("- ")
+            append_relation(builder, &relation)
+            changed = true
+    for relation in after_relations:
+        identity = relation_identity(
+            &relation,
+            &after.facts,
+            matches,
+            false,
+        )
+        if not (identity in before_index):
+            builder.append("+ ")
+            append_relation(builder, &relation)
+            changed = true
+    if not changed:
+        builder.append("(unchanged)\n")
+    builder.append("\n")
+    return changed
+
+
+def build_relation_index(
+    relations: &const List[analysis_core.DiffRelationFact],
+    facts: &const List[analysis_core.DiffSymbolFact],
+    matches: &const FactMatches,
+    before: bool,
+) -> Set[String]:
+    result: Set[String] = {""}
+    result.clear()
+    for relation in relations:
+        identity = relation_identity(
+            &relation,
+            facts,
+            matches,
+            before,
+        )
+        result.add(identity)
+    return result
+
+
+def relation_identity(
+    relation: &const analysis_core.DiffRelationFact,
+    facts: &const List[analysis_core.DiffSymbolFact],
+    matches: &const FactMatches,
+    before: bool,
+) -> String:
+    builder = StringBuilder()
+    append_identity_field(&builder, &relation.kind)
+    from_identity = matched_endpoint_identity(
+        &relation.from_key,
+        facts,
+        matches,
+        before,
+    )
+    to_identity = matched_endpoint_identity(
+        &relation.to_key,
+        facts,
+        matches,
+        before,
+    )
+    append_identity_field(&builder, &from_identity)
+    append_identity_field(&builder, &to_identity)
+    append_identity_field(&builder, &relation.detail)
+    if relation.resolved:
+        builder.append("1")
+    else:
+        builder.append("0")
+    return builder.finish()
+
+
+def matched_endpoint_identity(
+    key: &const String,
+    facts: &const List[analysis_core.DiffSymbolFact],
+    matches: &const FactMatches,
+    before: bool,
+) -> String:
+    builder = StringBuilder()
+    position = find_diff_fact_index(facts, key)
+    if position < 0:
+        builder.append("key:")
+        builder.append(key[0:len(key)])
+        return builder.finish()
+    if before:
+        if matches.before_to_after[cast[usize](position)] >= 0:
+            builder.append("matched:")
+        else:
+            builder.append("before:")
+        append_usize(&builder, cast[usize](position))
+        return builder.finish()
+    before_position = matches.after_to_before[cast[usize](position)]
+    if before_position >= 0:
+        builder.append("matched:")
+        append_usize(&builder, cast[usize](before_position))
+    else:
+        builder.append("after:")
+        append_usize(&builder, cast[usize](position))
+    return builder.finish()
+
+
+def find_diff_fact_index(
+    facts: &const List[analysis_core.DiffSymbolFact],
+    key: &const String,
+) -> i32:
+    index: usize = 0
+    while index < len(facts):
+        if facts[index].key == key:
+            return cast[i32](index)
+        index += 1
+    return -1
+
+
+def append_identity_field(
+    builder: &StringBuilder,
+    value: &const String,
+) -> void:
+    append_usize(builder, len(value))
+    builder.append(":")
+    builder.append(value[0:len(value)])
+
+
+def append_usize(builder: &StringBuilder, value: usize) -> void:
+    if value == 0:
+        builder.append("0")
+        return
+    current = value
+    digits: List[u8] = []
+    while current > 0:
+        digits.append(cast[u8](current % 10))
+        current = current / 10
+    index = len(digits)
+    while index > 0:
+        index -= 1
+        builder.append_char(cast[char](48 + digits[index]))
+
+
+def append_relation(
+    builder: &StringBuilder,
+    relation: &const analysis_core.DiffRelationFact,
+) -> void:
+    builder.append(relation.kind[0:len(relation.kind)])
+    builder.append(": ")
+    builder.append(relation.from_key[0:len(relation.from_key)])
+    builder.append(" -> ")
+    builder.append(relation.to_key[0:len(relation.to_key)])
+    if len(relation.detail) > 0:
+        builder.append(" (")
+        builder.append(relation.detail[0:len(relation.detail)])
+        builder.append(")")
+    if not relation.resolved:
+        builder.append(" [unresolved]")
+    builder.append("\n")
+
+
+def cleanup_workspace(
+    repository_root: &const String,
+    workspace: &const String,
+    registered: bool,
+) -> void:
+    if registered:
+        remove_command: List[String] = [
+            "git",
+            "-C",
+            repository_root[0:len(repository_root)],
+            "worktree",
+            "remove",
+            "--force",
+            workspace[0:len(workspace)],
+        ]
+        ignored_remove = process.run(remove_command)
+        ignored_remove_code = ignored_remove.exit_code
+    files_command: List[String] = ["rm", "-rf", workspace[0:len(workspace)]]
+    ignored_files = process.run(files_command)
+    ignored_files_code = ignored_files.exit_code
+
+
+def trim_output(value: &const String) -> String:
+    start: usize = 0
+    end = len(value)
+    while start < end and is_space(value.byte_at(start)):
+        start += 1
+    while end > start and is_space(value.byte_at(end - 1)):
+        end -= 1
+    return value[start:end]
+
+
+def is_space(byte: u8) -> bool:
+    return byte == 32 or byte == 9 or byte == 10 or byte == 13
+
+
+def contains_string(
+    values: &const List[String],
+    expected: &const String,
+) -> bool:
+    for value in values:
+        if value == expected:
+            return true
+    return false
+
+
+def diff_error(message: String) -> void:
+    cinder.write_stderr(message)
+    if len(message) == 0 or message.byte_at(len(message) - 1) != 10:
+        cinder.write_stderr("\n")

@@ -1,0 +1,65 @@
+@reflect
+struct CacheEntry:
+    value: i32
+
+
+abstract class Store:
+    @abstractmethod
+    def lookup(self, key: i32) -> CacheEntry:
+        pass
+
+
+class MemoryStore(Store):
+    @override
+    def lookup(self, key: i32) -> CacheEntry:
+        return CacheEntry(value=key)
+
+
+struct BorrowedEntry:
+    value: i32
+
+
+enum Status:
+    Ready
+    Failed
+
+
+struct AbiPayload:
+    value: i32
+
+
+struct AbiBox[T]:
+    value: T
+
+
+struct AbiIndirectPayload:
+    value: i32
+
+
+struct AbiRefBox[T]:
+    value: &T
+
+
+variant Token:
+    Integer(value: i32)
+    End
+
+
+struct AbiNestedPayload:
+    value: i32
+
+
+struct AbiNestedHolder:
+    payload: AbiNestedPayload
+
+
+struct AbiNestedIndirectPayload:
+    value: i32
+
+
+struct AbiNestedRefHolder:
+    payload: &AbiNestedIndirectPayload
+
+
+struct AbiMethodPayload:
+    value: i32
