@@ -1,5 +1,6 @@
 import cinder
 import process
+from std.path import Path as NativePath
 
 
 struct TestState:
@@ -48,6 +49,9 @@ def main(argc: i32, argv: **char) -> i32:
     test_build_and_run(&state)
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
+    test_path_codegen(&state)
+    test_path_runtime(&state)
+    test_path_diagnostics(&state)
     test_context_capsule(&state)
     test_impact_report(&state)
     test_inherited_field_resolution(&state)
@@ -270,6 +274,82 @@ def test_atomic_codegen(state: &TestState) -> void:
     expect(state, "emit-c lowers atomic operations to C11 atomics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_path_codegen(state: &TestState) -> void:
+    source = state.root + "/examples/paths.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "cinder_path_exists")
+        and contains(&result.stdout, "cinder_path_is_file")
+        and contains(&result.stdout, "cinder_path_is_dir")
+        and contains(&result.stdout, "cinder_path_parent")
+        and contains(&result.stdout, "cinder_path_name")
+        and contains(&result.stdout, "cinder_path_stem")
+        and contains(&result.stdout, "cinder_path_join")
+        and contains(&result.stdout, "cinder_path_with_suffix")
+        and contains(&result.stdout, "cinder_path_create_dir")
+        and contains(&result.stdout, "cinder_path_create_dir_all")
+        and contains(&result.stdout, "cinder_path_remove_file")
+        and contains(&result.stdout, "cinder_path_rename")
+    )
+    expect(state, "emit-c lowers Path calls to runtime functions", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_path_runtime(state: &TestState) -> void:
+    root = state.workspace + "/path-runtime"
+    nested = NativePath.join(root, "nested")
+    NativePath.create_dir_all(nested)
+    single = NativePath.join(nested, "single")
+    NativePath.create_dir(single)
+    NativePath.create_dir_all("")
+
+    source = NativePath.join(right="item.tar.gz", left=nested)
+    write_test_text(source.clone(), "path runtime\n")
+    renamed = NativePath.with_suffix(source, ".txt")
+    before = (
+        NativePath.exists(source)
+        and NativePath.is_file(source)
+        and not NativePath.is_dir(source)
+        and NativePath.is_dir(single)
+        and NativePath.parent(source) == nested
+        and NativePath.name(source) == "item.tar.gz"
+        and NativePath.stem(source) == "item.tar"
+        and NativePath.stem(".profile") == ".profile"
+    )
+    NativePath.rename(source, renamed)
+    after_rename = not NativePath.exists(source) and NativePath.is_file(renamed)
+    NativePath.remove_file(renamed)
+    after_remove = not NativePath.exists(renamed)
+    expect(state, "Path performs native lexical and filesystem operations", before and after_rename and after_remove)
+
+
+def test_path_diagnostics(state: &TestState) -> void:
+    bad_member: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_member.ci",
+    ]
+    bad_argument: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_argument.ci",
+    ]
+    member_result = process.run(bad_member)
+    argument_result = process.run(bad_argument)
+    ok = member_result.exit_code == 1 and argument_result.exit_code == 1
+    expect(state, "Path rejects unknown members and non-String arguments", ok)
+    if not ok:
+        report_process_failure(&member_result.stdout, &member_result.stderr)
+        report_process_failure(&argument_result.stdout, &argument_result.stderr)
 
 
 def test_context_capsule(state: &TestState) -> void:

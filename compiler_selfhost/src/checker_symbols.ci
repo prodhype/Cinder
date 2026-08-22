@@ -279,6 +279,8 @@ def collect_from_import_symbols(
                     if checker_imports.imported_member_is_atomic_template(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.BUILTIN
                         imported_type = checker.type_table.atomic_of(types.type_error(), types.AtomicElementKind.INVALID)
+                    elif checker_imports.imported_member_is_path_namespace(&module_name, &original_text):
+                        symbol_kind = symbols.SymbolKind.BUILTIN
                     elif checker_imports.imported_member_is_lock(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.LOCK
                         imported_type = types.type_lock()

@@ -177,6 +177,18 @@ CinderProcessResult cinder_process_run_argv(
     size_t argc,
     const char *const *argv
 );
+bool cinder_path_exists(const char *path);
+bool cinder_path_is_file(const char *path);
+bool cinder_path_is_dir(const char *path);
+CinderString cinder_path_parent(const char *path);
+CinderString cinder_path_name(const char *path);
+CinderString cinder_path_stem(const char *path);
+CinderString cinder_path_join(const char *left, const char *right);
+CinderString cinder_path_with_suffix(const char *path, const char *suffix);
+void cinder_path_create_dir(const char *path);
+void cinder_path_create_dir_all(const char *path);
+void cinder_path_remove_file(const char *path);
+void cinder_path_rename(const char *source, const char *destination);
 bool cinder_read_line(FILE *stream, CinderString *out);
 CinderString cinder_read_all_text(FILE *stream);
 CinderString cinder_input(const char *prompt);

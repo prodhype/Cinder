@@ -26,6 +26,8 @@
 
 `atomics.ci` demonstrates `std.atomic.Atomic`: integer and bool cells, load/store/exchange/fetch ops, compare-exchange results, sharing via `&Atomic[T]`, and generic inference from `*Atomic[T]`.
 
+`paths.ci` demonstrates the native `std.path.Path` namespace: lexical path transforms, file and directory predicates, recursive and single-directory creation, rename, and file removal without invoking shell utilities.
+
 `unsafe.ci` demonstrates explicit `unsafe` blocks for raw-address casts: store an array element address as `usize`, cast it back to `*u8`, and read a byte while keeping the dangerous boundary visible.
 
 `function_pointers.ci` demonstrates transparent function pointer types: annotate with `def(T…) -> R`, pass a named function by name, store it, and call through the value.

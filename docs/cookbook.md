@@ -252,24 +252,54 @@ Frequently used globals need no import:
 Python-style `key` or `reverse` arguments. F-strings are currently accepted
 only as arguments to `print`.
 
-Common compiler-provided modules are `math`, `process`, `std.atomic`, `stdio`,
-`stdlib`, `string`, and `cinder`. Local modules may shadow them.
+Common compiler-provided modules are `math`, `process`, `std.atomic`, `std.path`,
+`stdio`, `stdlib`, `string`, and `cinder`. Local modules may shadow them.
 
 ```python
 import math
 import process
 from std.atomic import Atomic
+from std.path import Path
 
 root = math.sqrt(9.0)
 command: List[String] = ["cc", "--version"]
 completed = process.run(command)
 counter: Atomic[u64] = 0
 previous = counter.fetch_add(1)
+output = Path.join("build", "output.txt")
 ```
 
 `process.run` takes a shell-free argv `List[String]` and returns owned
 `exit_code`, `stdout`, and `stderr` fields. Its runtime implementation is POSIX;
 Windows currently returns an unsupported result.
+
+`std.path.Path` is a namespace of borrowed-String path and filesystem
+operations:
+
+```python
+from std.path import Path
+
+output_dir = Path.join("build", "generated")
+Path.create_dir_all(output_dir)
+file_path = Path.join(output_dir, "result.tmp")
+with open(file_path, "wb") as file:
+    file.write("ready\n")
+final_path = Path.with_suffix(file_path, ".txt")
+Path.rename(file_path, final_path)
+```
+
+- `exists`, `is_file`, and `is_dir` return `bool` and follow symlinks.
+- `parent`, `name`, `stem`, `join`, and `with_suffix` return owned `String`
+  values using POSIX `/` lexical rules. A non-empty suffix must begin with `.`;
+  a leading dot alone does not give a filename a suffix.
+- `create_dir`, `create_dir_all`, `remove_file`, and `rename` return `void` and
+  panic on failure. `create_dir_all` accepts existing directory components and
+  treats an empty path as a no-op. `rename` uses native POSIX replacement
+  behavior.
+- Filesystem operations are implemented directly in the runtime with
+  `stat`/`mkdir`/`unlink`/`rename`; they do not start shell utilities. Windows
+  builds compile the API, but filesystem operations currently panic as
+  unsupported.
 
 Integer atomics provide `load`, `store`, `exchange`, `compare_exchange`, and
 `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and `fetch_xor`. Bool atomics

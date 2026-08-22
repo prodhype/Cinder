@@ -1,4 +1,5 @@
 import checker_core
+import checker_imports
 import collections
 import generics
 import lock_order
@@ -258,6 +259,8 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         return
     callee_node = arena.nodes[callee.index]
     if callee_node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        if validate_path_namespace_call(checker, arena, id, callee, source, current_scope):
+            return
         if validate_atomic_method_call(checker, arena, id, callee, source, current_scope):
             return
         validate_collection_method_call(checker, arena, id, callee, source, current_scope)
@@ -382,6 +385,139 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
     elif actual > expected:
         checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+
+
+def validate_path_namespace_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callee_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    receiver = checker_core.first_child(arena, callee_id)
+    member = checker_core.second_child(arena, callee_id)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind != syntax.SyntaxKind.EXPR_NAME:
+        return false
+    receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    matched = false
+    module_imports: &const List[project.ImportBinding] = &checker.module_imports
+    for imported in module_imports:
+        if imported.alias == receiver_name and checker_imports.imported_member_is_path_namespace(&imported.module_name, &imported.member):
+            matched = true
+    if not matched:
+        return false
+
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    expected: i32 = 1
+    result_type = types.type_void()
+    if member_name == "exists" or member_name == "is_file" or member_name == "is_dir":
+        result_type = types.type_bool()
+    elif member_name == "parent" or member_name == "name" or member_name == "stem":
+        result_type = types.type_string()
+    elif member_name == "join" or member_name == "with_suffix":
+        expected = 2
+        result_type = types.type_string()
+    elif member_name == "rename":
+        expected = 2
+    elif member_name != "create_dir" and member_name != "create_dir_all" and member_name != "remove_file":
+        checker_core.emit_error(checker, 48, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker.model.record_expr_type(call_id, types.type_error())
+        return true
+
+    call = arena.nodes[call_id.index]
+    actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    if actual < expected:
+        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+    elif actual > expected:
+        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+
+    seen_first = false
+    seen_second = false
+    seen_named = false
+    source_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != syntax.SyntaxKind.EXPR_ARGUMENT:
+            continue
+        role = source_index
+        if argument.flags == 1:
+            seen_named = true
+            role = path_named_argument_index(arena, argument_id, source, &member_name)
+        elif seen_named:
+            checker_core.emit_error(checker, 76, argument.start, argument.length, argument.line, argument.column)
+        if role < 0 or role >= expected:
+            checker_core.emit_error(checker, 48, argument.start, argument.length, argument.line, argument.column)
+        elif role == 0:
+            if seen_first:
+                checker_core.emit_error(checker, 48, argument.start, argument.length, argument.line, argument.column)
+            seen_first = true
+        else:
+            if seen_second:
+                checker_core.emit_error(checker, 48, argument.start, argument.length, argument.line, argument.column)
+            seen_second = true
+        value = checker_core.last_child(arena, argument_id)
+        value_type = infer_expression_type(checker, arena, value, source, current_scope)
+        if not path_argument_type_is_string(checker.type_table, value_type):
+            value_node = arena.nodes[value.index]
+            checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
+        destination_type = checker.type_table.reference_to(checker.type_table.const_of(types.type_string()))
+        record_transfer_value_use(checker, value, value_type, destination_type)
+        source_index += 1
+
+    checker.model.record_expr_type(callee_id, result_type)
+    checker.model.record_expr_type(call_id, result_type)
+    return true
+
+
+def path_named_argument_index(
+    arena: &const syntax.SyntaxArena,
+    argument_id: NodeId,
+    source: &const String,
+    member_name: &const String,
+) -> i32:
+    name = checker_core.first_child(arena, argument_id)
+    if name.index < 0:
+        return -1
+    name_node = arena.nodes[name.index]
+    argument_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    if member_name == "join":
+        if argument_name == "left":
+            return 0
+        if argument_name == "right":
+            return 1
+        return -1
+    if member_name == "rename":
+        if argument_name == "source":
+            return 0
+        if argument_name == "destination":
+            return 1
+        return -1
+    if member_name == "with_suffix":
+        if argument_name == "path":
+            return 0
+        if argument_name == "suffix":
+            return 1
+        return -1
+    if argument_name == "path":
+        return 0
+    return -1
+
+
+def path_argument_type_is_string(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        record = table.types[current.index]
+        if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.POINTER:
+            current = record.inner
+            continue
+        return record.kind == types.TypeKind.STRING
+    return false
 
 
 def validate_sorted_call(

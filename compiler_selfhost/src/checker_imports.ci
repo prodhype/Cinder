@@ -198,6 +198,10 @@ def imported_member_is_atomic_template(
     return false
 
 
+def imported_member_is_path_namespace(module_name: &const String, member_name: &const String) -> bool:
+    return module_name == "std.path" and member_name == "Path"
+
+
 def imported_member_is_lock(
     module_name: &const String,
     member_name: &const String,
@@ -255,6 +259,9 @@ def validate_from_import_members(checker: &checker_core.Checker, arena: &const s
         return
     dotted_node = arena.nodes[dotted.index]
     module_name = source[dotted_node.start:dotted_node.start + dotted_node.length]
+    if module_name == "std.path":
+        validate_path_import_members(checker, arena, id, source, &module_name)
+        return
     module_index: i32 = -1
     index: i32 = 0
     for module in modules:
@@ -290,6 +297,28 @@ def validate_from_import_members(checker: &checker_core.Checker, arena: &const s
                         if found.index >= 0:
                             checker.symbols.symbols[found.index].kind = symbols.SymbolKind.ENUM
                         record_imported_enum_name(checker, source[binding.value_start:binding.value_start + binding.value_length])
+
+
+def validate_path_import_members(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+) -> void:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        import_id = arena.children[node.first_child + offset]
+        imported = arena.nodes[import_id.index]
+        if imported.kind != syntax.SyntaxKind.IMPORT_NAME:
+            continue
+        for item_offset in range(0, imported.child_count):
+            name_id = arena.children[imported.first_child + item_offset]
+            name_node = arena.nodes[name_id.index]
+            if name_node.kind == syntax.SyntaxKind.NAME and name_node.flags != 1:
+                member_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+                if not imported_member_is_path_namespace(module_name, &member_name):
+                    checker_core.emit_error(checker, 48, name_node.start, name_node.length, name_node.line, name_node.column)
 
 
 def validate_import_member_calls_in_node(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:

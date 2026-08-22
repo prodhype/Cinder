@@ -57,7 +57,7 @@ engine/math/__init__.ci
 
 Exactly one may exist. The source path determines the canonical module name, so one file cannot be reached under two different names.
 
-Compiler-provided modules such as `stdio`, `math`, `stdlib`, `string`, and `cinder` are resolved after local filesystem candidates. A local module can therefore intentionally shadow a built-in module.
+Compiler-provided modules such as `stdio`, `math`, `stdlib`, `string`, `cinder`, `process`, `std.atomic`, and `std.path` are resolved after local filesystem candidates. A local module can therefore intentionally shadow a built-in module.
 
 ## Dependency graph
 

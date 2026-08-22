@@ -72,8 +72,8 @@ targets+=(
   "$ROOT/examples/module_project"
 )
 
-if [[ "${#targets[@]}" -ne 41 ]]; then
-  printf 'error: expected 41 smoke targets, found %d\n' "${#targets[@]}" >&2
+if [[ "${#targets[@]}" -ne 42 ]]; then
+  printf 'error: expected 42 smoke targets, found %d\n' "${#targets[@]}" >&2
   exit 2
 fi
 
@@ -117,10 +117,10 @@ for target in "${targets[@]}"; do
   status=$?
 
   if [[ "$status" -eq "$expected" ]]; then
-    printf 'PASS [%d/41] %s\n' "$index" "${target#"$ROOT/"}"
+    printf 'PASS [%d/42] %s\n' "$index" "${target#"$ROOT/"}"
   else
     failures=$((failures + 1))
-    printf 'FAIL [%d/41] %s (expected %d, got %d)\n' \
+    printf 'FAIL [%d/42] %s (expected %d, got %d)\n' \
       "$index" "${target#"$ROOT/"}" "$expected" "$status" >&2
     if [[ -s "$stderr" ]]; then
       while IFS= read -r line; do
@@ -130,7 +130,7 @@ for target in "${targets[@]}"; do
   fi
 done
 
-printf 'smoke tests: %d passed, %d failed\n' "$((41 - failures))" "$failures"
+printf 'smoke tests: %d passed, %d failed\n' "$((42 - failures))" "$failures"
 if [[ "$failures" -ne 0 ]]; then
   exit 1
 fi

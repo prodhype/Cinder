@@ -254,6 +254,10 @@ def emit_attribute_call(
                     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
                 builder.append(")")
                 return
+            imported_member = codegen_names.find_import_member(imports, &receiver_name)
+            if imported_member.module_name == "std.path" and imported_member.member == "Path":
+                emit_path_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                return
     dyn_interface = codegen_context.context_expression_dyn_interface(arena, context, receiver, source)
     if dyn_interface >= 0:
         emit_dynamic_method_call(arena, call_id, receiver, &member_name, dyn_interface, source, builder, context, state, emit_nested)
@@ -535,6 +539,90 @@ def emit_attribute_call(
     emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
     builder.append(")")
+
+
+def emit_path_namespace_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    member_name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    builder.append("cinder_path_")
+    builder.append(member_name[0:len(member_name)])
+    builder.append("(")
+    expected: i32 = 1
+    if member_name == "join" or member_name == "with_suffix" or member_name == "rename":
+        expected = 2
+    for argument_index in range(0, expected):
+        if argument_index > 0:
+            builder.append(", ")
+        argument = path_call_argument(arena, call_id, source, member_name, argument_index)
+        emit_c_string_argument(arena, argument, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(")")
+
+
+def path_call_argument(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    member_name: &const String,
+    wanted: i32,
+) -> NodeId:
+    call = arena.nodes[call_id.index]
+    source_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        role = source_index
+        if argument.flags == 1:
+            role = path_codegen_named_argument_index(arena, argument_id, source, member_name)
+        if role == wanted:
+            return codegen_names.last_child(arena, argument_id)
+        source_index += 1
+    return syntax.missing_node()
+
+
+def path_codegen_named_argument_index(
+    arena: &const SyntaxArena,
+    argument_id: NodeId,
+    source: &const String,
+    member_name: &const String,
+) -> i32:
+    name = codegen_names.first_child(arena, argument_id)
+    if name.index < 0:
+        return -1
+    name_node = arena.nodes[name.index]
+    argument_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    if member_name == "join":
+        if argument_name == "left":
+            return 0
+        if argument_name == "right":
+            return 1
+        return -1
+    if member_name == "rename":
+        if argument_name == "source":
+            return 0
+        if argument_name == "destination":
+            return 1
+        return -1
+    if member_name == "with_suffix":
+        if argument_name == "path":
+            return 0
+        if argument_name == "suffix":
+            return 1
+        return -1
+    if argument_name == "path":
+        return 0
+    return -1
 
 
 def emit_dynamic_method_call(
