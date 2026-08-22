@@ -517,9 +517,16 @@ def path_named_argument_index(
 
 def path_argument_type_is_string(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
     current = type_id
+    indirection_depth: i32 = 0
     while current.index >= 0 and current.index < cast[i32](len(table.types)):
         record = table.types[current.index]
-        if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.POINTER:
+        if record.kind == types.TypeKind.CONST:
+            current = record.inner
+            continue
+        if record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.POINTER:
+            indirection_depth += 1
+            if indirection_depth > 1:
+                return false
             current = record.inner
             continue
         return record.kind == types.TypeKind.STRING

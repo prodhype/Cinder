@@ -62,6 +62,11 @@ struct CodegenLockCleanup:
     collection: bool
 
 
+struct ModulePathBorrowBinding:
+    node: NodeId
+    temporary_index: i32
+
+
 struct ModuleCodegenContext:
     root: NodeId
     module_name: String
@@ -99,6 +104,7 @@ struct ModuleCodegenContext:
     current_return_type: NodeId
     expected_type: NodeId
     temporary_index: i32
+    path_borrow_bindings: List[ModulePathBorrowBinding]
 
 struct ModuleExpressionState:
     arena: &const SyntaxArena
@@ -139,6 +145,7 @@ def make_module_codegen_context(
     with_resources: List[String] = []
     global_names: List[String] = []
     extern_names: List[String] = []
+    path_borrow_bindings: List[ModulePathBorrowBinding] = []
     context = ModuleCodegenContext(
         root=root,
         module_name=module_name[0:len(module_name)],
@@ -176,11 +183,22 @@ def make_module_codegen_context(
         current_return_type=syntax.missing_node(),
         expected_type=syntax.missing_node(),
         temporary_index=0,
+        path_borrow_bindings=path_borrow_bindings,
     )
     collect_module_field_types(arena, root, source, context)
     collect_module_global_names(arena, root, source, context)
     collect_module_extern_names(arena, root, source, context)
     return context
+
+
+def context_path_borrow_temporary(context: &const ModuleCodegenContext, id: NodeId) -> i32:
+    index = len(context.path_borrow_bindings)
+    while index > 0:
+        index -= 1
+        binding: &const ModulePathBorrowBinding = &context.path_borrow_bindings[index]
+        if binding.node.index == id.index:
+            return binding.temporary_index
+    return -1
 
 
 def context_nearest_loop_scope(context: &const ModuleCodegenContext) -> i32:

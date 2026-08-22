@@ -154,11 +154,9 @@ def emit_access_call(
     model: &const classes.ProjectClassModel = context.class_model
     path = codegen_names.first_call_argument(arena, id)
     mode = codegen_names.second_call_argument(arena, id)
-    builder.append("access(cinder_string_cstr(")
-    if not codegen_context.context_expression_is_pointer_like(arena, context, path, source):
-        builder.append("&")
-    emit_nested(state, path)
-    builder.append("), ")
+    builder.append("access(")
+    emit_c_string_argument(arena, path, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(", ")
     emit_nested(state, mode)
     builder.append(")")
 
@@ -185,11 +183,9 @@ def emit_open_call(
             emit_c_string_argument(arena, mode, source, builder, prefix, project_name, imports, context, state, emit_nested)
             builder.append(")")
             return
-    builder.append("fopen(cinder_string_cstr(")
-    if not codegen_context.context_expression_is_pointer_like(arena, context, path, source):
-        builder.append("&")
-    emit_nested(state, path)
-    builder.append("), ")
+    builder.append("fopen(")
+    emit_c_string_argument(arena, path, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(", ")
     emit_c_string_argument(arena, mode, source, builder, prefix, project_name, imports, context, state, emit_nested)
     builder.append(")")
 

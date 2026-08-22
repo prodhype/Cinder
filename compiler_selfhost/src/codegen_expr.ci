@@ -208,6 +208,10 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     if id.index < 0:
         builder.append("0")
         return
+    path_borrow_temporary = codegen_context.context_path_borrow_temporary(context, id)
+    if path_borrow_temporary >= 0:
+        codegen_access.append_path_temporary_name(builder, "borrow", path_borrow_temporary)
+        return
     atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id, context.active_user_specialization)
     if atomic_index >= 0:
         atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
@@ -447,10 +451,15 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
                     builder.append(" >= 0)")
                 return
         if node.flags == cast[i32](token.TokenKind.PLUS) and (codegen_context.expression_may_be_string(arena, context, codegen_names.first_child(arena, id), source) or codegen_context.expression_may_be_string(arena, context, codegen_names.second_child(arena, id), source)):
+            left = codegen_names.first_child(arena, id)
+            right = codegen_names.second_child(arena, id)
+            if codegen_access.expression_is_owned_path_string(arena, left, source, imports, context) or codegen_access.expression_is_owned_path_string(arena, right, source, imports, context):
+                emit_owned_path_string_concat(arena, left, right, source, builder, prefix, project_name, imports, context, state)
+                return
             builder.append("cinder_selfhost_string_concat(")
-            codegen_format.emit_string_value_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+            codegen_format.emit_string_value_expression(arena, left, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
             builder.append(", ")
-            codegen_format.emit_string_value_expression(arena, codegen_names.second_child(arena, id), source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+            codegen_format.emit_string_value_expression(arena, right, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
             builder.append(")")
             return
         builder.append("(")
@@ -531,6 +540,66 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         codegen_access.emit_module_attribute(arena, id, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
         return
     codegen_names.append_source(builder, source, node.start, node.length)
+
+
+def emit_owned_path_string_concat(
+    arena: &const SyntaxArena,
+    left: NodeId,
+    right: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+) -> void:
+    left_owned = codegen_access.expression_is_owned_path_string(arena, left, source, imports, context)
+    right_owned = codegen_access.expression_is_owned_path_string(arena, right, source, imports, context)
+    builder.append("({ ")
+    left_temporary: i32 = -1
+    right_temporary: i32 = -1
+    if left_owned:
+        left_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, left)
+        builder.append("; ")
+    if right_owned:
+        right_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, right)
+        builder.append("; ")
+    result_temporary = context.temporary_index
+    context.temporary_index += 1
+    builder.append("CinderString ")
+    codegen_access.append_path_temporary_name(builder, "concat", result_temporary)
+    builder.append(" = cinder_selfhost_string_concat(")
+    if left_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, left, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append(", ")
+    if right_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, right, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append("); ")
+    if right_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append("); ")
+    if left_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append("); ")
+    codegen_access.append_path_temporary_name(builder, "concat", result_temporary)
+    builder.append("; })")
 
 
 def emit_owned_path_string_comparison(

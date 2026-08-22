@@ -26,6 +26,23 @@ def emit_module_call(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
+    if emit_owned_path_borrowing_call(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested):
+        return
+    emit_module_call_body(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+
+
+def emit_module_call_body(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
     type_table: &const types.TypeTable = context.type_table
     node = arena.nodes[id.index]
     callee = codegen_names.first_child(arena, id)
@@ -168,6 +185,114 @@ def emit_module_call(
             argument_index += 1
     builder.append(")")
     return
+
+
+def emit_owned_path_borrowing_call(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> bool:
+    call = arena.nodes[id.index]
+    callee = codegen_names.first_child(arena, id)
+    argument_index: usize = 0
+    needs_materialization = false
+    for offset in range(1, call.child_count):
+        child_id = arena.children[call.first_child + offset]
+        if arena.nodes[child_id.index].kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        argument = codegen_names.last_child(arena, child_id)
+        if owned_path_call_argument_is_borrowed(arena, callee, argument, argument_index, source, imports, context):
+            needs_materialization = true
+        argument_index += 1
+    if not needs_materialization:
+        return false
+
+    binding_start = len(context.path_borrow_bindings)
+    builder.append("({ ")
+    argument_index = 0
+    for offset in range(1, call.child_count):
+        child_id = arena.children[call.first_child + offset]
+        if arena.nodes[child_id.index].kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        argument = codegen_names.last_child(arena, child_id)
+        if owned_path_call_argument_is_borrowed(arena, callee, argument, argument_index, source, imports, context):
+            temporary_index = context.temporary_index
+            context.temporary_index += 1
+            builder.append("CinderString ")
+            codegen_access.append_path_temporary_name(builder, "borrow", temporary_index)
+            builder.append(" = ")
+            emit_nested(state, argument)
+            builder.append("; ")
+            context.path_borrow_bindings.append(codegen_context.ModulePathBorrowBinding(node=argument, temporary_index=temporary_index))
+        argument_index += 1
+
+    result_type = codegen_context.context_semantic_type(context, id)
+    returns_void = codegen_type_names.semantic_type_is_kind(context.type_table, result_type, types.TypeKind.VOID)
+    result_temporary: i32 = -1
+    if not returns_void:
+        result_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("__auto_type ")
+        codegen_access.append_path_temporary_name(builder, "borrow_result", result_temporary)
+        builder.append(" = ")
+    emit_module_call_body(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append("; ")
+
+    while len(context.path_borrow_bindings) > binding_start:
+        binding = context.path_borrow_bindings.pop()
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "borrow", binding.temporary_index)
+        builder.append("); ")
+    if not returns_void:
+        codegen_access.append_path_temporary_name(builder, "borrow_result", result_temporary)
+        builder.append("; ")
+    builder.append("})")
+    return true
+
+
+def owned_path_call_argument_is_borrowed(
+    arena: &const SyntaxArena,
+    callee: NodeId,
+    argument: NodeId,
+    argument_index: usize,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    if not codegen_access.expression_is_owned_path_string(arena, argument, source, imports, context):
+        return false
+    expected_type = codegen_context.context_callee_parameter_type(arena, context, callee, source, argument_index)
+    if codegen_specializations.module_type_is_c_string(context.type_arena, expected_type, context.type_source):
+        return true
+    if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE:
+        return true
+    if callee.index < 0:
+        return false
+    callee_node = arena.nodes[callee.index]
+    if callee_node.kind == SyntaxKind.EXPR_NAME:
+        name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+        if name == "open":
+            return argument_index < 2
+        if name == "access":
+            return argument_index == 0
+        if name == "String" or name == "len" or name == "panic" or is_parse_builtin_name(&name):
+            return argument_index == 0
+        return false
+    if callee_node.kind != SyntaxKind.EXPR_ATTRIBUTE or argument_index != 0:
+        return false
+    receiver = codegen_names.first_child(arena, callee)
+    member = codegen_names.second_child(arena, callee)
+    if member.index < 0:
+        return false
+    member_node = arena.nodes[member.index]
+    return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "write") and codegen_access.receiver_is_file(arena, receiver, source, context)
 
 
 def emit_reflection_call(

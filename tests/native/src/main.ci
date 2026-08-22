@@ -308,7 +308,14 @@ def test_path_codegen(state: &TestState) -> void:
         and contains(&result.stdout, "bool cinder_path_comparison_")
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_consumer_")
         and contains(&result.stdout, "cinder_selfhost_print_string_value(cinder_path_consumer_")
+        and contains(&result.stdout, "CinderString cinder_path_borrow_")
+        and contains(&result.stdout, "__auto_type cinder_path_borrow_result_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_borrow_")
+        and contains(&result.stdout, "CinderString cinder_path_concat_")
+        and contains(&result.stdout, "= cinder_selfhost_string_concat(cinder_path_consumer_")
         and contains(&result.stdout, "= cinder_paths_paths__make_path_holder().path")
+        and not contains(&result.stdout, "&cinder_path_parent(")
+        and not contains(&result.stdout, "cinder_string_cstr(&cinder_path_join(")
         and not contains(&result.stdout, "cinder_string_cstr(&cinder_path_with_suffix")
         and not contains(&result.stdout, "cinder_string_cstr(&cinder_paths_paths__make_path_holder().path")
     )
@@ -356,13 +363,20 @@ def test_path_diagnostics(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/path_invalid_argument.ci",
     ]
+    bad_indirection: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_string_indirection.ci",
+    ]
     member_result = process.run(bad_member)
     argument_result = process.run(bad_argument)
-    ok = member_result.exit_code == 1 and argument_result.exit_code == 1
-    expect(state, "Path rejects unknown members and non-String arguments", ok)
+    indirection_result = process.run(bad_indirection)
+    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and indirection_result.exit_code == 1
+    expect(state, "Path rejects unknown members and invalid String arguments", ok)
     if not ok:
         report_process_failure(&member_result.stdout, &member_result.stderr)
         report_process_failure(&argument_result.stdout, &argument_result.stderr)
+        report_process_failure(&indirection_result.stdout, &indirection_result.stderr)
 
 
 def test_path_alias_shadowing(state: &TestState) -> void:
