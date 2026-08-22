@@ -76,6 +76,15 @@ def main() -> i32:
         case None:
             return fail(21, "Path result map key")
 
+    literal_names: Set[String] = {Path.name("a/b")}
+    if not ("b" in literal_names):
+        return fail(22, "Path result set literal element")
+    literal_values: Map[String, i32] = {Path.name("a/b"): 7}
+    if literal_values["b"] != 7:
+        return fail(23, "Path result map literal key")
+    if names_by_path[Path.name("a/b")] != 7:
+        return fail(24, "Path result indexed map key")
+
     with open(Path.join(nested, "borrowed.tmp"), "wb") as borrowed_file:
         borrowed_file.write("borrowed path result\n")
     borrowed_path = Path.join(nested, "borrowed.tmp")

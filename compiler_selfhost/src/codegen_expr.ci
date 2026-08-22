@@ -301,15 +301,36 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         element_type = codegen_context.context_generic_argument(context.type_arena, set_type, 0)
         for offset in range(0, node.child_count):
             child_id = arena.children[node.first_child + offset]
+            child_owned_path = codegen_access.expression_is_owned_path_string(arena, child_id, source, imports, context)
+            child_temporary: i32 = -1
+            if child_owned_path:
+                child_temporary = context.temporary_index
+                context.temporary_index += 1
+                builder.append(" CinderString ")
+                codegen_access.append_path_temporary_name(builder, "set_literal", child_temporary)
+                builder.append(" = ")
+                previous_expected = context.expected_type
+                if element_type.index >= 0:
+                    context.expected_type = element_type
+                emit_module_expression_state(state, child_id)
+                context.expected_type = previous_expected
+                builder.append(";")
             builder.append(" (void)")
             builder.append(set_name[0:len(set_name)])
             builder.append("_add(&cinder_set, ")
-            previous_expected = context.expected_type
-            if element_type.index >= 0:
-                context.expected_type = element_type
-            emit_module_expression_state(state, child_id)
-            context.expected_type = previous_expected
+            if child_owned_path:
+                codegen_access.append_path_temporary_name(builder, "set_literal", child_temporary)
+            else:
+                previous_expected = context.expected_type
+                if element_type.index >= 0:
+                    context.expected_type = element_type
+                emit_module_expression_state(state, child_id)
+                context.expected_type = previous_expected
             builder.append(");")
+            if child_owned_path:
+                builder.append(" cinder_string_drop(&")
+                codegen_access.append_path_temporary_name(builder, "set_literal", child_temporary)
+                builder.append(");")
         builder.append(" cinder_set; })")
         return
     if node.kind == SyntaxKind.EXPR_MAP:
@@ -336,19 +357,41 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
             entry = arena.nodes[entry_id.index]
             if entry.kind != SyntaxKind.EXPR_MAP_ENTRY or entry.child_count < 2:
                 continue
+            key = arena.children[entry.first_child]
+            key_owned_path = codegen_access.expression_is_owned_path_string(arena, key, source, imports, context)
+            key_temporary: i32 = -1
+            if key_owned_path:
+                key_temporary = context.temporary_index
+                context.temporary_index += 1
+                builder.append(" CinderString ")
+                codegen_access.append_path_temporary_name(builder, "map_literal_key", key_temporary)
+                builder.append(" = ")
+                previous_expected = context.expected_type
+                if key_type.index >= 0:
+                    context.expected_type = key_type
+                emit_module_expression_state(state, key)
+                context.expected_type = previous_expected
+                builder.append(";")
             builder.append(" ")
             builder.append(map_name[0:len(map_name)])
             builder.append("_set(&cinder_map, ")
             previous_expected = context.expected_type
-            if key_type.index >= 0:
-                context.expected_type = key_type
-            emit_module_expression_state(state, arena.children[entry.first_child])
+            if key_owned_path:
+                codegen_access.append_path_temporary_name(builder, "map_literal_key", key_temporary)
+            else:
+                if key_type.index >= 0:
+                    context.expected_type = key_type
+                emit_module_expression_state(state, key)
             builder.append(", ")
             if value_type.index >= 0:
                 context.expected_type = value_type
             emit_module_expression_state(state, arena.children[entry.first_child + 1])
             context.expected_type = previous_expected
             builder.append(");")
+            if key_owned_path:
+                builder.append(" cinder_string_drop(&")
+                codegen_access.append_path_temporary_name(builder, "map_literal_key", key_temporary)
+                builder.append(");")
         builder.append(" cinder_map; })")
         return
     if node.kind == SyntaxKind.EXPR_TUPLE:

@@ -1171,20 +1171,50 @@ def emit_module_index(
         builder.append("]")
         return
     if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
-        builder.append("(*")
+        previous_expected = context.expected_type
+        key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
+        index_owned_path = expression_is_owned_path_string(arena, index, source, imports, context)
+        index_temporary: i32 = -1
+        result_temporary: i32 = -1
+        if index_owned_path:
+            index_temporary = context.temporary_index
+            context.temporary_index += 1
+            result_temporary = context.temporary_index
+            context.temporary_index += 1
+            builder.append("(*({ CinderString ")
+            append_path_temporary_name(builder, "index", index_temporary)
+            builder.append(" = ")
+            if key_type.index >= 0:
+                context.expected_type = key_type
+            emit_nested(state, index)
+            context.expected_type = previous_expected
+            builder.append("; __auto_type ")
+            append_path_temporary_name(builder, "index_result", result_temporary)
+            builder.append(" = ")
+        else:
+            builder.append("(*")
         codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
         builder.append("_at_ref(")
         if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
             builder.append("&")
         emit_nested(state, receiver)
         builder.append(", ")
-        previous_expected = context.expected_type
-        key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
-        if key_type.index >= 0:
-            context.expected_type = key_type
-        emit_nested(state, index)
+        if index_owned_path:
+            append_path_temporary_name(builder, "index", index_temporary)
+        else:
+            if key_type.index >= 0:
+                context.expected_type = key_type
+            emit_nested(state, index)
         context.expected_type = previous_expected
-        builder.append("))")
+        builder.append(")")
+        if index_owned_path:
+            builder.append("; cinder_string_drop(&")
+            append_path_temporary_name(builder, "index", index_temporary)
+            builder.append("); ")
+            append_path_temporary_name(builder, "index_result", result_temporary)
+            builder.append("; }))")
+        else:
+            builder.append(")")
         return
     if emit_known_list_index(arena, receiver, index, source, builder, prefix, project_name, imports, context, state, emit_nested):
         return
