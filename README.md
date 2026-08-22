@@ -161,6 +161,10 @@ def main() -> i32:
 Concrete calls stay as direct C function calls.
 Only a value with type `&dyn Shape` uses an interface table.
 
+For a compact, recipe-oriented reference to syntax, built-ins, ownership,
+collections, FFI, and compiler pitfalls, see
+[`docs/cookbook.md`](docs/cookbook.md).
+
 ## Classes and object layout
 
 Classes are values.
