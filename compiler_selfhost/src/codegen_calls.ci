@@ -187,6 +187,33 @@ def emit_module_call_body(
     return
 
 
+def callee_is_cinder_output_builtin(
+    arena: &const SyntaxArena,
+    callee: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+) -> bool:
+    if callee.index < 0 or arena.nodes[callee.index].kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    receiver = codegen_names.first_child(arena, callee)
+    member = codegen_names.second_child(arena, callee)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    member_node = arena.nodes[member.index]
+    is_output = (
+        codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "write_stdout")
+        or codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "write_stderr")
+    )
+    if not is_output:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind != SyntaxKind.EXPR_NAME:
+        return false
+    receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    imported = codegen_names.find_import_alias(imports, &receiver_name)
+    return imported.virtual_builtin and imported.module_name == "cinder"
+
+
 def emit_owned_path_borrowing_call(
     arena: &const SyntaxArena,
     id: NodeId,
@@ -248,7 +275,10 @@ def emit_owned_path_borrowing_call(
         argument_index += 1
 
     result_type = codegen_context.context_semantic_type(context, id)
-    returns_void = codegen_type_names.semantic_type_is_kind(context.type_table, result_type, types.TypeKind.VOID)
+    returns_void = (
+        codegen_type_names.semantic_type_is_kind(context.type_table, result_type, types.TypeKind.VOID)
+        or callee_is_cinder_output_builtin(arena, callee, source, imports)
+    )
     result_temporary: i32 = -1
     if not returns_void:
         result_temporary = context.temporary_index
@@ -296,11 +326,13 @@ def owned_path_call_argument_is_borrowed(
             return argument_index < 2
         if name == "access":
             return argument_index == 0
-        if name == "String" or name == "len" or name == "panic" or is_parse_builtin_name(&name):
+        if name == "String" or name == "input" or name == "len" or name == "panic" or is_parse_builtin_name(&name):
             return argument_index == 0
         return false
     if callee_node.kind != SyntaxKind.EXPR_ATTRIBUTE or argument_index != 0:
         return false
+    if callee_is_cinder_output_builtin(arena, callee, source, imports):
+        return true
     receiver = codegen_names.first_child(arena, callee)
     member = codegen_names.second_child(arena, callee)
     if member.index < 0:

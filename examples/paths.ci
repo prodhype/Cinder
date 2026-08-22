@@ -1,3 +1,4 @@
+import cinder
 from std.path import Path
 
 
@@ -11,6 +12,14 @@ def make_path_holder() -> PathHolder:
 
 def string_length_is_one(value: &const String) -> bool:
     return len(value) == 1
+
+
+def borrowed_path_input_codegen() -> String:
+    return input(Path.name("a/prompt.txt"))
+
+
+def borrowed_path_stderr_codegen() -> void:
+    cinder.write_stderr(Path.name("a/prompt.txt"))
 
 
 def fail(code: i32, message: String) -> i32:
