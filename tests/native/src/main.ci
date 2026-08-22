@@ -52,6 +52,8 @@ def main(argc: i32, argv: **char) -> i32:
     test_path_codegen(&state)
     test_path_runtime(&state)
     test_path_diagnostics(&state)
+    test_path_alias_shadowing(&state)
+    test_builtin_module_shadowing(&state)
     test_context_capsule(&state)
     test_impact_report(&state)
     test_inherited_field_resolution(&state)
@@ -298,6 +300,12 @@ def test_path_codegen(state: &TestState) -> void:
         and contains(&result.stdout, "cinder_path_create_dir_all")
         and contains(&result.stdout, "cinder_path_remove_file")
         and contains(&result.stdout, "cinder_path_rename")
+        and contains(&result.stdout, "CinderString cinder_path_argument_")
+        and contains(&result.stdout, "CinderString cinder_path_result_")
+        and contains(&result.stdout, "bool cinder_path_result_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_argument_")
+        and contains(&result.stdout, "cinder_selfhost_print_string_value(cinder_path_parent")
+        and not contains(&result.stdout, "cinder_string_cstr(&cinder_path_with_suffix")
     )
     expect(state, "emit-c lowers Path calls to runtime functions", ok)
     if not ok:
@@ -350,6 +358,66 @@ def test_path_diagnostics(state: &TestState) -> void:
     if not ok:
         report_process_failure(&member_result.stdout, &member_result.stderr)
         report_process_failure(&argument_result.stdout, &argument_result.stderr)
+
+
+def test_path_alias_shadowing(state: &TestState) -> void:
+    source = state.root + "/tests/cases/path_shadowed_alias.ci"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/path-shadowed-alias",
+        "--build-dir",
+        state.workspace + "/path-shadowed-alias-build",
+    ]
+    emitted = process.run(emit_command)
+    ran = process.run(run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "PathProbe_exists")
+        and not contains(&emitted.stdout, "cinder_path_exists")
+    )
+    expect(state, "Path aliases respect lexical shadowing", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
+
+
+def test_builtin_module_shadowing(state: &TestState) -> void:
+    source = state.root + "/examples/path_shadow_project"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/path-shadow-project",
+        "--build-dir",
+        state.workspace + "/path-shadow-project-build",
+    ]
+    emitted = process.run(emit_command)
+    ran = process.run(run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "path_shadow_demo_std_path__shadow_answer")
+        and not contains(&emitted.stdout, "cinder_path_exists")
+    )
+    expect(state, "local modules shadow compiler-provided module names", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
 
 
 def test_context_capsule(state: &TestState) -> void:

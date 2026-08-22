@@ -1,0 +1,7 @@
+from std.path import shadow_answer
+
+
+def main() -> i32:
+    if shadow_answer() == 42:
+        return 0
+    return 1

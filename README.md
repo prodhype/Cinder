@@ -1022,7 +1022,7 @@ ownership constraints that still apply.
 
 ## Development
 
-Run the native bootstrap, fixed-point proofs, Cinder test runner, and 42-target
+Run the native bootstrap, fixed-point proofs, Cinder test runner, and 43-target
 example smoke suite with:
 
 ```sh

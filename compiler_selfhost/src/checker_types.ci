@@ -1,5 +1,4 @@
 import checker_core
-import checker_imports
 import collections
 import generics
 import lock_order
@@ -402,11 +401,18 @@ def validate_path_namespace_call(
     receiver_node = arena.nodes[receiver.index]
     if receiver_node.kind != syntax.SyntaxKind.EXPR_NAME:
         return false
+    found = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
+    if found.index < 0:
+        return false
+    resolved = checker.symbols.symbols[found.index]
+    if resolved.kind != symbols.SymbolKind.BUILTIN or resolved.node.index < 0 or arena.nodes[resolved.node.index].kind != syntax.SyntaxKind.IMPORT_NAME:
+        return false
+    checker.model.record_name_symbol(receiver, found)
     receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
     matched = false
     module_imports: &const List[project.ImportBinding] = &checker.module_imports
     for imported in module_imports:
-        if imported.alias == receiver_name and checker_imports.imported_member_is_path_namespace(&imported.module_name, &imported.member):
+        if imported.alias == receiver_name and imported.virtual_builtin and imported.module_name == "std.path" and imported.member == "Path":
             matched = true
     if not matched:
         return false

@@ -1358,7 +1358,7 @@ def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenCo
                         receiver_type = context_expression_type(arena, context, receiver, source)
                         if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "List"):
                             return context_generic_argument(context.type_arena, receiver_type, 0)
-            if context_type_is_string(arena, id, source):
+            if context_type_is_string(arena, id, source) or context_semantic_type_is_kind(context, semantic_type, types.TypeKind.STRING):
                 return id
     if node.kind == SyntaxKind.EXPR_UNARY:
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
@@ -1671,7 +1671,7 @@ def emit_context_drop(
         builder.append(name[0:len(name)])
         builder.append(");\n")
         return
-    if node.kind == SyntaxKind.EXPR_CALL and context_type_is_string(arena, type_id, source):
+    if node.kind == SyntaxKind.EXPR_CALL and (context_type_is_string(arena, type_id, source) or context_semantic_type_is_kind(context, context_semantic_type(context, type_id), types.TypeKind.STRING)):
         builder.append("    cinder_string_drop(&")
         builder.append(name[0:len(name)])
         builder.append(");\n")
@@ -1834,6 +1834,9 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenC
             if codegen_names.range_text_equals(source, callee_node.value_start, callee_node.value_length, "type_name"):
                 return true
     if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
+        return true
+    semantic_type = context_semantic_type(context, id)
+    if context_semantic_type_is_kind(context, semantic_type, types.TypeKind.STRING):
         return true
     if node.kind == SyntaxKind.EXPR_NAME:
         semantic_type = context_semantic_name_type(context, source, node.value_start, node.value_length)

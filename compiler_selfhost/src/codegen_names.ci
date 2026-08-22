@@ -310,8 +310,9 @@ def find_import_alias(imports: &const List[project.ImportBinding], alias: &const
                 alias=item.alias[0:len(item.alias)],
                 module_name=item.module_name[0:len(item.module_name)],
                 member=item.member[0:len(item.member)],
+                virtual_builtin=item.virtual_builtin,
             )
-    return project.ImportBinding(alias="", module_name="", member="")
+    return project.ImportBinding(alias="", module_name="", member="", virtual_builtin=false)
 
 def find_import_member(imports: &const List[project.ImportBinding], alias: &const String) -> project.ImportBinding:
     for item in imports:
@@ -320,8 +321,9 @@ def find_import_member(imports: &const List[project.ImportBinding], alias: &cons
                 alias=item.alias[0:len(item.alias)],
                 module_name=item.module_name[0:len(item.module_name)],
                 member=item.member[0:len(item.member)],
+                virtual_builtin=item.virtual_builtin,
             )
-    return project.ImportBinding(alias="", module_name="", member="")
+    return project.ImportBinding(alias="", module_name="", member="", virtual_builtin=false)
 
 def generated_header_name(module_name: &const String) -> String:
     return "cinder_gen/" + fs.replace_char(module_name, 46, 47) + ".cinder.h"

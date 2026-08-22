@@ -225,12 +225,12 @@ def emit_attribute_call(
                 if codegen_names.is_uppercase_start(source, member_node.value_start):
                     emit_imported_nominal_constructor(arena, call_id, source, builder, prefix, project_name, imports, &imported.module_name, &member_name, context, state, emit_nested)
                     return
-                if imported.module_name == "process" and member_name == "run":
+                if imported.virtual_builtin and imported.module_name == "process" and member_name == "run":
                     builder.append("({ __auto_type cinder_process_args = &(")
                     emit_nested(state, codegen_names.first_call_argument(arena, call_id))
                     builder.append("); cinder_selfhost_process_run_list(cinder_process_args->data, cinder_process_args->length); })")
                     return
-                if imported.module_name == "cinder" and (member_name == "write_stdout" or member_name == "write_stderr"):
+                if imported.virtual_builtin and imported.module_name == "cinder" and (member_name == "write_stdout" or member_name == "write_stderr"):
                     if member_name == "write_stdout":
                         builder.append("cinder_write_stdout")
                     else:
@@ -239,7 +239,7 @@ def emit_attribute_call(
                     emit_nested(state, codegen_names.first_call_argument(arena, call_id))
                     builder.append(")")
                     return
-                if project.is_builtin_module(&imported.module_name):
+                if imported.virtual_builtin:
                     codegen_names.emit_builtin_function_name(builder, &imported.module_name, &member_name)
                     builder.append("(")
                     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
@@ -254,10 +254,11 @@ def emit_attribute_call(
                     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
                 builder.append(")")
                 return
-            imported_member = codegen_names.find_import_member(imports, &receiver_name)
-            if imported_member.module_name == "std.path" and imported_member.member == "Path":
-                emit_path_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
-                return
+            if not codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length):
+                imported_member = codegen_names.find_import_member(imports, &receiver_name)
+                if imported_member.virtual_builtin and imported_member.module_name == "std.path" and imported_member.member == "Path":
+                    emit_path_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                    return
     dyn_interface = codegen_context.context_expression_dyn_interface(arena, context, receiver, source)
     if dyn_interface >= 0:
         emit_dynamic_method_call(arena, call_id, receiver, &member_name, dyn_interface, source, builder, context, state, emit_nested)
@@ -554,18 +555,129 @@ def emit_path_namespace_call(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> void:
-    builder.append("cinder_path_")
-    builder.append(member_name[0:len(member_name)])
-    builder.append("(")
     expected: i32 = 1
     if member_name == "join" or member_name == "with_suffix" or member_name == "rename":
         expected = 2
-    for argument_index in range(0, expected):
-        if argument_index > 0:
-            builder.append(", ")
-        argument = path_call_argument(arena, call_id, source, member_name, argument_index)
-        emit_c_string_argument(arena, argument, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    first = path_call_argument(arena, call_id, source, member_name, 0)
+    second = syntax.missing_node()
+    if expected == 2:
+        second = path_call_argument(arena, call_id, source, member_name, 1)
+    materialize_first = path_argument_needs_materialization(arena, context, first, source)
+    materialize_second = expected == 2 and path_argument_needs_materialization(arena, context, second, source)
+    if not materialize_first and not materialize_second:
+        emit_path_runtime_call(arena, member_name, first, second, false, false, -1, -1, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+
+    builder.append("({ ")
+    first_temporary: i32 = -1
+    second_temporary: i32 = -1
+    if materialize_first:
+        first_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        append_path_temporary_name(builder, "argument", first_temporary)
+        builder.append(" = ")
+        emit_nested(state, first)
+        builder.append("; ")
+    if materialize_second:
+        second_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        append_path_temporary_name(builder, "argument", second_temporary)
+        builder.append(" = ")
+        emit_nested(state, second)
+        builder.append("; ")
+
+    returns_string = path_member_returns_string(member_name)
+    returns_bool = member_name == "exists" or member_name == "is_file" or member_name == "is_dir"
+    result_temporary: i32 = -1
+    if returns_string or returns_bool:
+        result_temporary = context.temporary_index
+        context.temporary_index += 1
+        if returns_string:
+            builder.append("CinderString ")
+        else:
+            builder.append("bool ")
+        append_path_temporary_name(builder, "result", result_temporary)
+        builder.append(" = ")
+    emit_path_runtime_call(arena, member_name, first, second, materialize_first, materialize_second, first_temporary, second_temporary, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append("; ")
+    if materialize_second:
+        builder.append("cinder_string_drop(&")
+        append_path_temporary_name(builder, "argument", second_temporary)
+        builder.append("); ")
+    if materialize_first:
+        builder.append("cinder_string_drop(&")
+        append_path_temporary_name(builder, "argument", first_temporary)
+        builder.append("); ")
+    if returns_string or returns_bool:
+        append_path_temporary_name(builder, "result", result_temporary)
+        builder.append("; ")
+    builder.append("})")
+
+
+def emit_path_runtime_call(
+    arena: &const SyntaxArena,
+    member_name: &const String,
+    first: NodeId,
+    second: NodeId,
+    materialized_first: bool,
+    materialized_second: bool,
+    first_temporary: i32,
+    second_temporary: i32,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    builder.append("cinder_path_")
+    builder.append(member_name[0:len(member_name)])
+    builder.append("(")
+    if materialized_first:
+        builder.append("cinder_string_cstr(&")
+        append_path_temporary_name(builder, "argument", first_temporary)
+        builder.append(")")
+    else:
+        emit_c_string_argument(arena, first, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    if second.index >= 0:
+        builder.append(", ")
+        if materialized_second:
+            builder.append("cinder_string_cstr(&")
+            append_path_temporary_name(builder, "argument", second_temporary)
+            builder.append(")")
+        else:
+            emit_c_string_argument(arena, second, source, builder, prefix, project_name, imports, context, state, emit_nested)
     builder.append(")")
+
+
+def path_argument_needs_materialization(
+    arena: &const SyntaxArena,
+    context: &codegen_model.ModuleCodegenContext,
+    argument: NodeId,
+    source: &const String,
+) -> bool:
+    if argument.index < 0 or codegen_context.context_expression_is_pointer_like(arena, context, argument, source):
+        return false
+    node = arena.nodes[argument.index]
+    addressable = node.kind == SyntaxKind.EXPR_NAME or node.kind == SyntaxKind.EXPR_ATTRIBUTE or node.kind == SyntaxKind.EXPR_LITERAL or node.kind == SyntaxKind.EXPR_INDEX
+    if node.kind == SyntaxKind.EXPR_INDEX and codegen_context.context_expression_is_collection(arena, context, codegen_names.first_child(arena, argument), source, "Map", types.TypeKind.MAP):
+        addressable = false
+    return not addressable
+
+
+def path_member_returns_string(member_name: &const String) -> bool:
+    return member_name == "parent" or member_name == "name" or member_name == "stem" or member_name == "join" or member_name == "with_suffix"
+
+
+def append_path_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:
+    builder.append("cinder_path_")
+    builder.append(role)
+    builder.append("_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](index))
 
 
 def path_call_argument(
@@ -1444,7 +1556,7 @@ def emit_module_attribute(
             receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
             imported = codegen_names.find_import_alias(imports, &receiver_name)
             if len(imported.module_name) > 0:
-                if imported.module_name == "math" and codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "pi"):
+                if imported.virtual_builtin and imported.module_name == "math" and codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "pi"):
                     builder.append("CINDER_PI")
                     return
                 builder.append(codegen_names.c_prefix(project_name, &imported.module_name))

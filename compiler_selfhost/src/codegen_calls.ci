@@ -97,7 +97,7 @@ def emit_module_call(
                     return
                 imported = codegen_names.find_import_member(imports, &name)
                 if len(imported.module_name) > 0 and len(imported.member) > 0:
-                    if project.is_builtin_module(&imported.module_name):
+                    if imported.virtual_builtin:
                         codegen_names.emit_builtin_function_name(builder, &imported.module_name, &imported.member)
                     else:
                         builder.append(codegen_names.c_prefix(project_name, &imported.module_name))

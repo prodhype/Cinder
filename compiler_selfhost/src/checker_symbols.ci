@@ -48,7 +48,7 @@ def collect_qualified_atomic_template_names_in_node(
                 if child.kind == syntax.SyntaxKind.NAME and child.flags == 1:
                     binding_node = child
             binding_name = source[binding_node.value_start:binding_node.value_start + binding_node.value_length]
-            if module_name == "std.atomic":
+            if module_name == "std.atomic" and project.module_name_is_virtual_builtin(&module_name, modules):
                 record_qualified_atomic_template_name(checker, binding_name[0:len(binding_name)] + ".Atomic")
             for module in modules:
                 if not (module.name == module_name):
@@ -279,7 +279,7 @@ def collect_from_import_symbols(
                     if checker_imports.imported_member_is_atomic_template(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.BUILTIN
                         imported_type = checker.type_table.atomic_of(types.type_error(), types.AtomicElementKind.INVALID)
-                    elif checker_imports.imported_member_is_path_namespace(&module_name, &original_text):
+                    elif checker_imports.imported_member_is_path_namespace(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.BUILTIN
                     elif checker_imports.imported_member_is_lock(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.LOCK

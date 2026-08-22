@@ -14,7 +14,7 @@ or incompatible hosts before executing either binary.
 
 The Python stage0 compiler, its packaging, implementation-specific pytest
 suite, and incremental parity projects have been removed. Native Cinder tests,
-direct generated-C compilation, runtime-independence checks, and the 42-target
+direct generated-C compilation, runtime-independence checks, and the 43-target
 example smoke suite now run through `./test.sh`. The C runtime has moved to the
 top-level `runtime/` directory.
 

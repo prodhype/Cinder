@@ -78,6 +78,8 @@ Its temporary text file also lives under `.cinder/example-output/`.
 
 `module_project/` is a complete manifest-driven multi-file project. It demonstrates dotted local modules, aliases, transitive imports, generated headers and translation units, cross-module nominal types, Result propagation across module boundaries, qualified `atom.Atomic[T]` syntax, re-exported `Atomic` templates in function and closure signatures, exported Atomic globals, chained operations on imported functions returning `*Atomic[T]`, and specialization-safe generic Atomic loads for both `u32` and `u64`.
 
+`path_shadow_project/` verifies that a local `src/std/path.ci` module takes precedence over the compiler-provided `std.path` namespace and emits ordinary project symbols.
+
 `class_project/` is a complete multi-file class ABI example. It defines a reflected abstract interface in one module, implements it in another, and performs dynamic dispatch from the entry module through separately generated headers and C translation units.
 
 `large_project/` is a larger multi-module Breakout demo. It binds SDL2 and SDL_mixer via `extern import` / `extern "C"`, opens a window, draws paddle/ball/bricks across nested `sdl/` and `game/` modules, and plays WAV sound effects. See `large_project/README.md` for install and link flags (manual run; not part of CI).
