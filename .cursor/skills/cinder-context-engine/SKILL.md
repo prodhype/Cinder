@@ -1,11 +1,19 @@
 ---
 name: cinder-context-engine
-description: Uses Cinder's compiler-derived context, impact, and semantic-diff commands to select exact program context and assess semantic changes. Apply automatically when inspecting, modifying, debugging, or reviewing Cinder .ci source code.
+description: Uses Cinder's authoritative language cookbook and compiler-derived context, impact, and semantic-diff commands to write correct code, select exact program context, and assess semantic changes. Apply automatically when authoring, inspecting, modifying, debugging, or reviewing Cinder .ci source code.
 ---
 
 # Cinder Context Engine
 
 Use compiler facts before reasoning about non-trivial Cinder source changes. These commands complement source inspection and tests; they do not replace them.
+
+## Language cookbook
+
+Before writing Cinder or broadly searching for syntax, standard APIs, FFI,
+ownership, collections, or compiler pitfalls, read the repository-root
+`docs/cookbook.md`. Use its focused source links only when the cookbook does not
+answer the question or the behavior is version-sensitive. Preserve the
+documented language contract when the current checker is more permissive.
 
 ## Compiler command
 
