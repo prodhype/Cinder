@@ -60,6 +60,7 @@ def emit_module_block(
             with_resource_start=len(context.with_resources),
             iterator_guard_start=len(context.iterator_guard_names),
             lock_cleanup_start=lock_cleanup_start,
+            value_cleanup_start=len(context.value_cleanups),
             loop_body=loop_body,
         )
     )
@@ -186,6 +187,23 @@ def emit_module_lock_cleanups_until(builder: &StringBuilder, context: &const cod
         builder.append(");\n")
 
 
+def emit_module_value_cleanups_until(
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    start: usize,
+    end: usize,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    value_cleanups: &const List[codegen_context.CodegenValueCleanup] = &context.value_cleanups
+    index = end
+    while index > start:
+        index -= 1
+        cleanup: &const codegen_context.CodegenValueCleanup = &value_cleanups[index]
+        codegen_context.emit_context_semantic_drop(context, cleanup.semantic_type, builder, &cleanup.name, prefix, project_name, imports)
+
+
 def emit_module_cleanup_segment(
     arena: &const SyntaxArena,
     source: &const String,
@@ -204,12 +222,15 @@ def emit_module_cleanup_segment(
     iterator_guard_end: usize,
     lock_cleanup_start: usize,
     lock_cleanup_end: usize,
+    value_cleanup_start: usize,
+    value_cleanup_end: usize,
 ) -> void:
     emit_module_iterator_guard_cleanups_until(builder, context, iterator_guard_start, iterator_guard_end)
     emit_module_defers_until(arena, source, builder, prefix, project_name, imports, context, defer_start, defer_end)
     emit_module_with_resource_cleanups_until(builder, context, with_resource_start, with_resource_end)
     codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, local_end, prefix, project_name, imports)
     emit_module_lock_cleanups_until(builder, context, lock_cleanup_start, lock_cleanup_end)
+    emit_module_value_cleanups_until(builder, context, value_cleanup_start, value_cleanup_end, prefix, project_name, imports)
 
 
 def emit_module_active_cleanups(
@@ -227,6 +248,7 @@ def emit_module_active_cleanups(
     with_resource_end = len(context.with_resources)
     iterator_guard_end = len(context.iterator_guard_names)
     lock_cleanup_end = len(context.lock_cleanups)
+    value_cleanup_end = len(context.value_cleanups)
     boundary_index = len(context.cleanup_boundaries)
     while boundary_index > boundary_start:
         boundary_index -= 1
@@ -248,12 +270,15 @@ def emit_module_active_cleanups(
             iterator_guard_end,
             codegen_context.context_scope_lock_cleanup_start(context, boundary_index),
             lock_cleanup_end,
+            codegen_context.context_scope_value_cleanup_start(context, boundary_index),
+            value_cleanup_end,
         )
         local_end = codegen_context.context_scope_local_start(context, boundary_index)
         defer_end = codegen_context.context_scope_defer_start(context, boundary_index)
         with_resource_end = codegen_context.context_scope_with_resource_start(context, boundary_index)
         iterator_guard_end = codegen_context.context_scope_iterator_guard_start(context, boundary_index)
         lock_cleanup_end = codegen_context.context_scope_lock_cleanup_start(context, boundary_index)
+        value_cleanup_end = codegen_context.context_scope_value_cleanup_start(context, boundary_index)
     if boundary_start == 0:
         emit_module_cleanup_segment(
             arena,
@@ -273,6 +298,8 @@ def emit_module_active_cleanups(
             iterator_guard_end,
             0,
             lock_cleanup_end,
+            0,
+            value_cleanup_end,
         )
 
 
@@ -326,7 +353,7 @@ def emit_module_statement(
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
         expr = codegen_names.first_child(arena, id)
-        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or len(context.iterator_guard_names) > 0 or len(context.lock_cleanups) > 0 or codegen_context.context_has_live_drops(arena, context, source)
+        has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or len(context.iterator_guard_names) > 0 or len(context.lock_cleanups) > 0 or len(context.value_cleanups) > 0 or codegen_context.context_has_live_drops(arena, context, source)
         if not has_cleanups:
             builder.append("    return")
             if expr.index >= 0:
@@ -655,6 +682,7 @@ def emit_module_critical_section(
             with_resource_start=len(context.with_resources),
             iterator_guard_start=len(context.iterator_guard_names),
             lock_cleanup_start=cleanup_start,
+            value_cleanup_start=len(context.value_cleanups),
             loop_body=false,
         )
     )
@@ -927,12 +955,48 @@ def emit_module_match(
 ) -> void:
     subject = codegen_names.first_child(arena, id)
     subject_info = match_subject_value_info(arena, subject, source, prefix, project_name, imports, context)
-    builder.append("    {\n    __auto_type cinder_match_value = ")
+    subject_owned_path = codegen_access.expression_is_owned_path_string(arena, subject, source, imports, context)
+    value_name = "cinder_match_value"
+    found_name = "cinder_match_found"
+    if subject_owned_path:
+        temporary_index = context.temporary_index
+        context.temporary_index += 1
+        value_name_builder = StringBuilder()
+        value_name_builder.append("cinder_match_value_")
+        codegen_type_names.append_specialization_decimal(&value_name_builder, cast[usize](temporary_index))
+        value_name = value_name_builder.finish()
+        found_name_builder = StringBuilder()
+        found_name_builder.append("cinder_match_found_")
+        codegen_type_names.append_specialization_decimal(&found_name_builder, cast[usize](temporary_index))
+        found_name = found_name_builder.finish()
+    builder.append("    {\n    __auto_type ")
+    builder.append(value_name[0:len(value_name)])
+    builder.append(" = ")
     previous_expected = context.expected_type
     context.expected_type = subject_info.syntax_type
     codegen_expr.emit_module_expression(arena, subject, source, builder, prefix, project_name, imports, context)
     context.expected_type = previous_expected
-    builder.append(";\n    bool cinder_match_found = false;\n")
+    builder.append(";\n    bool ")
+    builder.append(found_name[0:len(found_name)])
+    builder.append(" = false;\n")
+    if subject_owned_path:
+        context.cleanup_boundaries.append(
+            codegen_context.CodegenCleanupBoundary(
+                local_start=len(context.local_types),
+                defer_start=len(context.deferred_expressions),
+                with_resource_start=len(context.with_resources),
+                iterator_guard_start=len(context.iterator_guard_names),
+                lock_cleanup_start=len(context.lock_cleanups),
+                value_cleanup_start=len(context.value_cleanups),
+                loop_body=false,
+            )
+        )
+        context.value_cleanups.append(
+            codegen_context.CodegenValueCleanup(
+                name=value_name[0:len(value_name)],
+                semantic_type=subject_info.semantic_type,
+            )
+        )
     node = arena.nodes[id.index]
     for offset in range(1, node.child_count):
         case_id = arena.children[node.first_child + offset]
@@ -940,26 +1004,32 @@ def emit_module_match(
         if case_node.kind != SyntaxKind.MATCH_CASE:
             continue
         pattern = codegen_names.first_child(arena, case_id)
-        builder.append("    if (!cinder_match_found) {\n    if (")
-        root_access = "cinder_match_value"
+        builder.append("    if (!")
+        builder.append(found_name[0:len(found_name)])
+        builder.append(") {\n    if (")
+        root_access = value_name[0:len(value_name)]
         emit_match_pattern_condition(arena, pattern, source, builder, prefix, project_name, imports, context, &root_access, &subject_info)
         builder.append(") {\n")
         local_start = len(context.local_types)
         semantic_name_start = len(context.semantic_name_types)
         pointer_start = len(context.pointer_names)
         emitted_bindings: List[String] = []
-        emit_match_binding_declarations(arena, pattern, pattern, source, builder, prefix, project_name, imports, context, &root_access, &subject_info, emitted_bindings)
+        emit_match_binding_declarations(arena, pattern, pattern, source, builder, prefix, project_name, imports, context, &root_access, &subject_info, subject_owned_path, emitted_bindings)
         guard = match_case_guard(arena, case_id)
         body = codegen_names.find_child_kind(arena, case_id, SyntaxKind.BLOCK)
         if guard.index >= 0:
             builder.append("    if (")
             codegen_expr.emit_module_expression(arena, guard, source, builder, prefix, project_name, imports, context)
-            builder.append(") {\n    cinder_match_found = true;\n")
+            builder.append(") {\n    ")
+            builder.append(found_name[0:len(found_name)])
+            builder.append(" = true;\n")
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
             builder.append("    }\n")
         else:
-            builder.append("    cinder_match_found = true;\n")
+            builder.append("    ")
+            builder.append(found_name[0:len(found_name)])
+            builder.append(" = true;\n")
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
         while len(context.local_types) > local_start:
@@ -969,6 +1039,10 @@ def emit_module_match(
         while len(context.pointer_names) > pointer_start:
             context.pointer_names.pop()
         builder.append("    }\n    }\n")
+    if subject_owned_path:
+        emit_module_value_cleanups_until(builder, context, len(context.value_cleanups) - 1, len(context.value_cleanups), prefix, project_name, imports)
+        context.value_cleanups.pop()
+        context.cleanup_boundaries.pop()
     builder.append("    }\n")
 
 def match_case_guard(arena: &const SyntaxArena, case_id: NodeId) -> NodeId:
@@ -1202,17 +1276,18 @@ def emit_match_binding_declarations(
     context: &codegen_model.ModuleCodegenContext,
     root_value: &const String,
     root_info: &const MatchValueInfo,
+    borrowed: bool,
     emitted: &List[String],
 ) -> void:
     if pattern.index < 0:
         return
     node = arena.nodes[pattern.index]
     if node.kind == SyntaxKind.PATTERN_PATH and node.flags == 1:
-        emit_match_binding_declarations(arena, root_pattern, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
+        emit_match_binding_declarations(arena, root_pattern, codegen_names.first_child(arena, pattern), source, builder, prefix, project_name, imports, context, root_value, root_info, borrowed, emitted)
         return
     if node.kind == SyntaxKind.PATTERN_CAPTURE or node.kind == SyntaxKind.PATTERN_OR:
         for offset in range(0, node.child_count):
-            emit_match_binding_declarations(arena, root_pattern, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
+            emit_match_binding_declarations(arena, root_pattern, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, root_value, root_info, borrowed, emitted)
         return
     if node.kind != SyntaxKind.PATTERN_PATH:
         return
@@ -1221,10 +1296,10 @@ def emit_match_binding_declarations(
         name_id = arena.children[node.first_child]
         name = arena.nodes[name_id.index]
         if codegen_names.is_lowercase_start(source, name.value_start):
-            emit_match_binding_declaration_once(arena, root_pattern, name_id, source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
+            emit_match_binding_declaration_once(arena, root_pattern, name_id, source, builder, prefix, project_name, imports, context, root_value, root_info, borrowed, emitted)
         return
     for offset in range(name_count, node.child_count):
-        emit_match_binding_declarations(arena, root_pattern, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, root_value, root_info, emitted)
+        emit_match_binding_declarations(arena, root_pattern, arena.children[node.first_child + offset], source, builder, prefix, project_name, imports, context, root_value, root_info, borrowed, emitted)
 
 def emit_match_binding_declaration_once(
     arena: &const SyntaxArena,
@@ -1238,6 +1313,7 @@ def emit_match_binding_declaration_once(
     context: &codegen_model.ModuleCodegenContext,
     root_value: &const String,
     root_info: &const MatchValueInfo,
+    borrowed: bool,
     emitted: &List[String],
 ) -> void:
     name = arena.nodes[name_id.index]
@@ -1252,7 +1328,10 @@ def emit_match_binding_declaration_once(
     binding_info = emit_match_binding_value(arena, root_pattern, &name_text, source, builder, prefix, project_name, imports, context, root_value, root_info)
     builder.append(";\n")
     if binding_info.syntax_type.index >= 0:
-        codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
+        if borrowed:
+            codegen_context.register_context_borrowed_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
+        else:
+            codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
     if binding_info.semantic_type.index >= 0:
         codegen_context.register_context_semantic_name_type(context, source, name.value_start, name.value_length, binding_info.semantic_type)
 

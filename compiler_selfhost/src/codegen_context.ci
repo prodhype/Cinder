@@ -54,12 +54,18 @@ struct CodegenCleanupBoundary:
     with_resource_start: usize
     iterator_guard_start: usize
     lock_cleanup_start: usize
+    value_cleanup_start: usize
     loop_body: bool
 
 
 struct CodegenLockCleanup:
     name: String
     collection: bool
+
+
+struct CodegenValueCleanup:
+    name: String
+    semantic_type: types.TypeId
 
 
 struct ModulePathBorrowBinding:
@@ -90,6 +96,7 @@ struct ModuleCodegenContext:
     semantic_string_names: List[String]
     iterator_guard_names: List[String]
     lock_cleanups: List[CodegenLockCleanup]
+    value_cleanups: List[CodegenValueCleanup]
     cleanup_boundaries: List[CodegenCleanupBoundary]
     field_types: List[ModuleFieldTypeBinding]
     current_owner: String
@@ -139,6 +146,7 @@ def make_module_codegen_context(
     semantic_string_names: List[String] = []
     iterator_guard_names: List[String] = []
     lock_cleanups: List[CodegenLockCleanup] = []
+    value_cleanups: List[CodegenValueCleanup] = []
     cleanup_boundaries: List[CodegenCleanupBoundary] = []
     field_types: List[ModuleFieldTypeBinding] = []
     deferred_expressions: List[NodeId] = []
@@ -169,6 +177,7 @@ def make_module_codegen_context(
         semantic_string_names=semantic_string_names,
         iterator_guard_names=iterator_guard_names,
         lock_cleanups=lock_cleanups,
+        value_cleanups=value_cleanups,
         cleanup_boundaries=cleanup_boundaries,
         field_types=field_types,
         current_owner="",
@@ -228,6 +237,10 @@ def context_scope_iterator_guard_start(context: &const ModuleCodegenContext, ind
 
 def context_scope_lock_cleanup_start(context: &const ModuleCodegenContext, index: usize) -> usize:
     return context.cleanup_boundaries[index].lock_cleanup_start
+
+
+def context_scope_value_cleanup_start(context: &const ModuleCodegenContext, index: usize) -> usize:
+    return context.cleanup_boundaries[index].value_cleanup_start
 
 
 def context_lock_kind(context: &ModuleCodegenContext, syntax_id: NodeId) -> i32:

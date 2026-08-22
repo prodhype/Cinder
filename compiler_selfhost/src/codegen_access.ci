@@ -1688,6 +1688,31 @@ def emit_module_attribute(
     if receiver.index >= 0 and member.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         member_node = arena.nodes[member.index]
+        member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+        if (
+            (member_name == "length" or member_name == "capacity")
+            and expression_is_owned_path_string(arena, receiver, source, imports, context)
+        ):
+            receiver_temporary = context.temporary_index
+            context.temporary_index += 1
+            result_temporary = context.temporary_index
+            context.temporary_index += 1
+            builder.append("({ CinderString ")
+            append_path_temporary_name(builder, "attribute", receiver_temporary)
+            builder.append(" = ")
+            emit_nested(state, receiver)
+            builder.append("; __auto_type ")
+            append_path_temporary_name(builder, "attribute_result", result_temporary)
+            builder.append(" = ")
+            append_path_temporary_name(builder, "attribute", receiver_temporary)
+            builder.append(".")
+            builder.append(member_name[0:len(member_name)])
+            builder.append("; cinder_string_drop(&")
+            append_path_temporary_name(builder, "attribute", receiver_temporary)
+            builder.append("); ")
+            append_path_temporary_name(builder, "attribute_result", result_temporary)
+            builder.append("; })")
+            return
         if receiver_node.kind == SyntaxKind.EXPR_ATTRIBUTE and codegen_names.is_uppercase_start(source, member_node.value_start):
             emit_nested(state, receiver)
             builder.append("_")
