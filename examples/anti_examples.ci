@@ -354,8 +354,8 @@ variant Token:
 #     case Token.Integer(value):
 #         return value
 
-# WRONG: a wildcard must be the final case; guards and nested patterns are not
-# supported in Cinder 0.5.
+# WRONG: a wildcard must be the final case. Cinder still omits literal
+# patterns, tuple and struct destructuring, and match expressions.
 # match token:
 #     case _:
 #         return 0
