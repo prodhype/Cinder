@@ -73,6 +73,7 @@ struct IRNode:
     first_child: i32
     child_count: i32
     flags: i32
+    resolves_to_import: bool
     atomic_kind: semantic.AtomicIntrinsicKind
     atomic_element_kind: types.AtomicElementKind
     atomic_type: TypeId
@@ -138,6 +139,7 @@ struct IRModule:
                 first_child=first_child,
                 child_count=child_count,
                 flags=flags,
+                resolves_to_import=false,
                 atomic_kind=semantic.AtomicIntrinsicKind.NONE,
                 atomic_element_kind=types.AtomicElementKind.INVALID,
                 atomic_type=types.missing_type(),
@@ -314,9 +316,24 @@ def lower_node(module: &IRModule, arena: &const SyntaxArena, id: NodeId, model: 
             child_nodes.append(lowered)
         offset += 1
     lowered = module.add_node(ir_kind_for_syntax(node.kind), id, specialization, ir_type_for_node(node.kind, id, model, specialization), child_nodes, node.flags)
+    if node.kind == SyntaxKind.EXPR_NAME:
+        attach_name_resolution(module, lowered, arena, id, model)
     attach_atomic_metadata(module, lowered, id, model, specialization)
     attach_lock_metadata(module, lowered, id, model)
     return lowered
+
+
+def attach_name_resolution(module: &IRModule, lowered: IRNodeId, arena: &const SyntaxArena, syntax_id: NodeId, model: &const semantic.SemanticModel) -> void:
+    name_bindings: &const List[semantic.NodeSymbolBinding] = &model.name_symbols
+    for binding in name_bindings:
+        if binding.node.index != syntax_id.index:
+            continue
+        declaration_bindings: &const List[semantic.NodeSymbolBinding] = &model.declaration_symbols
+        for declaration in declaration_bindings:
+            if declaration.symbol.index == binding.symbol.index and declaration.node.index >= 0 and arena.nodes[declaration.node.index].kind == SyntaxKind.IMPORT_NAME:
+                module.nodes[lowered.index].resolves_to_import = true
+                return
+        return
 
 
 def attach_atomic_metadata(module: &IRModule, lowered: IRNodeId, syntax_id: NodeId, model: &const semantic.SemanticModel, specialization: i32) -> void:

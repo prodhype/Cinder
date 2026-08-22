@@ -441,7 +441,7 @@ def test_path_alias_shadowing(state: &TestState) -> void:
         and contains(&emitted.stdout, "PathProbe_exists")
         and not contains(&emitted.stdout, "cinder_path_exists")
     )
-    expect(state, "Path aliases respect lexical shadowing", ok)
+    expect(state, "Path imports respect local and module-level shadowing", ok)
     if not ok:
         report_process_failure(&emitted.stdout, &emitted.stderr)
         report_process_failure(&ran.stdout, &ran.stderr)

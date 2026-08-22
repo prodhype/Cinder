@@ -1,19 +1,20 @@
-from std.path import Path as p
+from std.path import Path
 
 
-struct PathProbe:
-    marker: i32
-
+class PathProbe:
     def exists(self: &const PathProbe, path: String) -> bool:
-        return self.marker == 42 and path == "shadow"
+        return path == "shadow"
 
 
-def shadowed_call(p: &const PathProbe) -> bool:
+Path: PathProbe
+
+
+def locally_shadowed_call(p: &const PathProbe) -> bool:
     return p.exists("shadow")
 
 
 def main() -> i32:
-    probe = PathProbe(marker=42)
-    if shadowed_call(&probe):
+    probe = PathProbe()
+    if locally_shadowed_call(&probe) and Path.exists("shadow"):
         return 0
     return 1

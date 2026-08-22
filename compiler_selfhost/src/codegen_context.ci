@@ -267,6 +267,20 @@ def context_class_for_name(context: &ModuleCodegenContext, name: &const String) 
     return classes.find_class(context.class_model, &module_name, name)
 
 
+def context_class_for_semantic_type(context: &ModuleCodegenContext, type_id: types.TypeId) -> i32:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(context.type_table.types)):
+        record = context.type_table.types[current.index]
+        if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.POINTER:
+            current = record.inner
+            continue
+        if record.kind != types.TypeKind.CLASS:
+            return -1
+        name = context.type_source[record.name_start:record.name_start + record.name_length]
+        return context_class_for_name(context, &name)
+    return -1
+
+
 def context_class_for_type(
     arena: &const SyntaxArena,
     context: &ModuleCodegenContext,
@@ -377,6 +391,9 @@ def context_expression_class(
         name = source[node.value_start:node.value_start + node.value_length]
         if name == "self" and context.current_class >= 0:
             return context.current_class
+    semantic_class = context_class_for_semantic_type(context, context_semantic_type(context, id))
+    if semantic_class >= 0:
+        return semantic_class
     expression_type = context_expression_type(arena, context, id, source)
     result = context_class_for_type(context.type_arena, context, expression_type, context.type_source)
     if result >= 0:
@@ -1129,6 +1146,19 @@ def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.T
             if node.syntax.index == id.index and node.specialization < 0:
                 return node.type_id
     return types.missing_type()
+
+
+def context_expression_resolves_to_import(context: &ModuleCodegenContext, id: NodeId) -> bool:
+    semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
+    for node in semantic_nodes:
+        if node.syntax.index == id.index:
+            if not node.resolves_to_import or id.index < 0:
+                return false
+            type_arena: &const SyntaxArena = context.type_arena
+            expression = type_arena.nodes[id.index]
+            name = context.type_source[expression.value_start:expression.value_start + expression.value_length]
+            return not context_name_is_global(context, &name)
+    return false
 
 
 def context_semantic_type_is_kind(context: &ModuleCodegenContext, type_id: types.TypeId, kind: types.TypeKind) -> bool:

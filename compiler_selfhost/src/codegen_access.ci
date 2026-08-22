@@ -250,7 +250,7 @@ def emit_attribute_call(
                     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
                 builder.append(")")
                 return
-            if not codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length):
+            if codegen_context.context_expression_resolves_to_import(context, receiver):
                 imported_member = codegen_names.find_import_member(imports, &receiver_name)
                 if imported_member.virtual_builtin and imported_member.module_name == "std.path" and imported_member.member == "Path":
                     emit_path_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
@@ -688,7 +688,7 @@ def expression_is_owned_path_string(
     if receiver.index < 0 or member.index < 0 or arena.nodes[receiver.index].kind != SyntaxKind.EXPR_NAME:
         return false
     receiver_node = arena.nodes[receiver.index]
-    if codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length):
+    if not codegen_context.context_expression_resolves_to_import(context, receiver):
         return false
     receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
     imported = codegen_names.find_import_member(imports, &receiver_name)
