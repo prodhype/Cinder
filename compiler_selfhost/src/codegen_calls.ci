@@ -306,7 +306,12 @@ def owned_path_call_argument_is_borrowed(
     if member.index < 0:
         return false
     member_node = arena.nodes[member.index]
-    return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "write") and codegen_access.receiver_is_file(arena, receiver, source, context)
+    if codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "write"):
+        return codegen_access.receiver_is_file(arena, receiver, source, context)
+    return (
+        codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "get")
+        and codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP)
+    )
 
 
 def emit_reflection_call(

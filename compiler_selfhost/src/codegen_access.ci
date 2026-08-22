@@ -1441,11 +1441,30 @@ def emit_module_slice(
             builder.append("char")
         builder.append("))")
         return
+    materialize_receiver = expression_is_owned_path_string(arena, receiver, source, imports, context)
+    receiver_temporary: i32 = -1
+    result_temporary: i32 = -1
+    if materialize_receiver:
+        receiver_temporary = context.temporary_index
+        context.temporary_index += 1
+        result_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("({ CinderString ")
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+        builder.append(" = ")
+        emit_nested(state, receiver)
+        builder.append("; CinderString ")
+        append_path_temporary_name(builder, "slice_result", result_temporary)
+        builder.append(" = ")
     builder.append("cinder_string_slice(")
     receiver_is_pointer = codegen_context.context_expression_is_pointer_like(arena, context, receiver, source)
-    if not receiver_is_pointer:
+    if materialize_receiver:
         builder.append("&")
-    emit_nested(state, receiver)
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+    else:
+        if not receiver_is_pointer:
+            builder.append("&")
+        emit_nested(state, receiver)
     builder.append(", ")
     if start.index >= 0 and start.index != stop.index:
         emit_nested(state, start)
@@ -1454,6 +1473,9 @@ def emit_module_slice(
     builder.append(", ")
     if stop.index >= 0 and stop.index != receiver.index:
         emit_nested(state, stop)
+    elif materialize_receiver:
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+        builder.append(".length")
     else:
         emit_nested(state, receiver)
         if receiver_is_pointer:
@@ -1461,6 +1483,12 @@ def emit_module_slice(
         else:
             builder.append(".length")
     builder.append(")")
+    if materialize_receiver:
+        builder.append("; cinder_string_drop(&")
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+        builder.append("); ")
+        append_path_temporary_name(builder, "slice_result", result_temporary)
+        builder.append("; })")
 
 def emit_nominal_member_expression(
     arena: &const SyntaxArena,

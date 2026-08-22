@@ -65,6 +65,16 @@ def main() -> i32:
     names: Set[String] = {"b"}
     if not (Path.name("a/b") in names):
         return fail(15, "Path result collection membership")
+    sliced_name = Path.name("a/b")[0:1]
+    if sliced_name != "b":
+        return fail(20, "Path result slice")
+    names_by_path: Map[String, i32] = {"b": 7}
+    match names_by_path.get(Path.name("a/b")):
+        case Some(mapped_name):
+            if mapped_name != 7:
+                return fail(21, "Path result map key")
+        case None:
+            return fail(21, "Path result map key")
 
     with open(Path.join(nested, "borrowed.tmp"), "wb") as borrowed_file:
         borrowed_file.write("borrowed path result\n")
