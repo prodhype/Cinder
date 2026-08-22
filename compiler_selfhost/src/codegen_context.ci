@@ -1918,11 +1918,26 @@ def call_is_name(arena: &const SyntaxArena, callee: NodeId, source: &const Strin
             return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, name[0:len(name)])
     return false
 
-def context_expression_is_addressable_for_borrow(arena: &const SyntaxArena, id: NodeId) -> bool:
+def context_expression_is_addressable_for_borrow(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> bool:
     if id.index < 0:
         return false
     node = arena.nodes[id.index]
-    return node.kind == SyntaxKind.EXPR_NAME or node.kind == SyntaxKind.EXPR_ATTRIBUTE or node.kind == SyntaxKind.EXPR_INDEX
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return true
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        return context_expression_is_addressable_for_borrow(arena, context, codegen_names.first_child(arena, id), source)
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver = codegen_names.first_child(arena, id)
+        if context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+            return false
+        return context_expression_is_addressable_for_borrow(arena, context, receiver, source)
+    return false
+
 
 def should_borrow_for_callee(
     arena: &const SyntaxArena,
@@ -1948,7 +1963,7 @@ def should_borrow_for_callee(
     if context_type_is_list(context.type_arena, arg_type, context.type_source):
         if call_is_name(arena, callee, source, "parse_options") or call_is_name(arena, callee, source, "emit_ok") or call_is_name(arena, callee, source, "resolve_paths"):
             return false
-        if not context_expression_is_addressable_for_borrow(arena, arg):
+        if not context_expression_is_addressable_for_borrow(arena, context, arg, source):
             return false
         return true
     if arg_node.kind != SyntaxKind.EXPR_NAME:

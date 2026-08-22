@@ -1,3 +1,4 @@
+import codegen_access
 import codegen_context
 import codegen_model
 import codegen_names
@@ -127,6 +128,23 @@ def emit_print_argument(
         builder.append("); ")
         return
     elif codegen_context.expression_may_be_string(arena, context, id, source):
+        if codegen_access.expression_is_owned_path_string(arena, id, source, imports, context):
+            temporary_index = context.temporary_index
+            context.temporary_index += 1
+            builder.append("({ CinderString ")
+            codegen_access.append_path_temporary_name(builder, "consumer", temporary_index)
+            builder.append(" = ")
+            emit_nested(state, id)
+            builder.append("; cinder_selfhost_print_string_value(")
+            codegen_access.append_path_temporary_name(builder, "consumer", temporary_index)
+            if first:
+                builder.append(", true); ")
+            else:
+                builder.append(", false); ")
+            builder.append("cinder_string_drop(&")
+            codegen_access.append_path_temporary_name(builder, "consumer", temporary_index)
+            builder.append("); }); ")
+            return
         builder.append("cinder_selfhost_print_string_value(")
         emit_string_value_expression(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
     elif codegen_type_names.context_type_name_equals(context.type_arena, type_id, context.type_source, "bool"):
@@ -375,9 +393,22 @@ def emit_fstring_replacement(
         return
     if conversion == 115 or (conversion == 0 and string_value):
         if string_value:
-            builder.append("cinder_selfhost_print_string_fragment(")
-            emit_string_value_expression(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
-            builder.append("); ")
+            if codegen_access.expression_is_owned_path_string(arena, id, source, imports, context):
+                temporary_index = context.temporary_index
+                context.temporary_index += 1
+                builder.append("({ CinderString ")
+                codegen_access.append_path_temporary_name(builder, "consumer", temporary_index)
+                builder.append(" = ")
+                emit_nested(state, id)
+                builder.append("; cinder_selfhost_print_string_fragment(")
+                codegen_access.append_path_temporary_name(builder, "consumer", temporary_index)
+                builder.append("); cinder_string_drop(&")
+                codegen_access.append_path_temporary_name(builder, "consumer", temporary_index)
+                builder.append("); }); ")
+            else:
+                builder.append("cinder_selfhost_print_string_fragment(")
+                emit_string_value_expression(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+                builder.append("); ")
         else:
             builder.append("printf(\"%s\", ")
             emit_nested(state, id)

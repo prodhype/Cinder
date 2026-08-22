@@ -663,14 +663,44 @@ def path_argument_needs_materialization(
     if argument.index < 0 or codegen_context.context_expression_is_pointer_like(arena, context, argument, source):
         return false
     node = arena.nodes[argument.index]
-    addressable = node.kind == SyntaxKind.EXPR_NAME or node.kind == SyntaxKind.EXPR_ATTRIBUTE or node.kind == SyntaxKind.EXPR_LITERAL or node.kind == SyntaxKind.EXPR_INDEX
-    if node.kind == SyntaxKind.EXPR_INDEX and codegen_context.context_expression_is_collection(arena, context, codegen_names.first_child(arena, argument), source, "Map", types.TypeKind.MAP):
-        addressable = false
-    return not addressable
+    if node.kind == SyntaxKind.EXPR_LITERAL:
+        return false
+    return not codegen_context.context_expression_is_addressable_for_borrow(arena, context, argument, source)
 
 
 def path_member_returns_string(member_name: &const String) -> bool:
     return member_name == "parent" or member_name == "name" or member_name == "stem" or member_name == "join" or member_name == "with_suffix"
+
+
+def expression_is_owned_path_string(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0 or arena.nodes[callee.index].kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    receiver = codegen_names.first_child(arena, callee)
+    member = codegen_names.second_child(arena, callee)
+    if receiver.index < 0 or member.index < 0 or arena.nodes[receiver.index].kind != SyntaxKind.EXPR_NAME:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    if codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length):
+        return false
+    receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    imported = codegen_names.find_import_member(imports, &receiver_name)
+    if not imported.virtual_builtin or imported.module_name != "std.path" or imported.member != "Path":
+        return false
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    return path_member_returns_string(&member_name)
 
 
 def append_path_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:

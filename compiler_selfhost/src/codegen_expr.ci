@@ -424,6 +424,9 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
             left = codegen_names.first_child(arena, id)
             right = codegen_names.second_child(arena, id)
             if codegen_context.expression_may_be_string(arena, context, left, source) or codegen_context.expression_may_be_string(arena, context, right, source):
+                if codegen_access.expression_is_owned_path_string(arena, left, source, imports, context) or codegen_access.expression_is_owned_path_string(arena, right, source, imports, context):
+                    emit_owned_path_string_comparison(arena, id, left, right, source, builder, prefix, project_name, imports, context, state)
+                    return
                 if node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
                     builder.append("!")
                 if node.flags == cast[i32](token.TokenKind.EQUAL) or node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
@@ -528,6 +531,84 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         codegen_access.emit_module_attribute(arena, id, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
         return
     codegen_names.append_source(builder, source, node.start, node.length)
+
+
+def emit_owned_path_string_comparison(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    left: NodeId,
+    right: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+) -> void:
+    left_owned = codegen_access.expression_is_owned_path_string(arena, left, source, imports, context)
+    right_owned = codegen_access.expression_is_owned_path_string(arena, right, source, imports, context)
+    builder.append("({ ")
+    left_temporary: i32 = -1
+    right_temporary: i32 = -1
+    if left_owned:
+        left_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, left)
+        builder.append("; ")
+    if right_owned:
+        right_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, right)
+        builder.append("; ")
+    result_temporary = context.temporary_index
+    context.temporary_index += 1
+    builder.append("bool ")
+    codegen_access.append_path_temporary_name(builder, "comparison", result_temporary)
+    builder.append(" = ")
+    node = arena.nodes[id.index]
+    if node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
+        builder.append("!")
+    if node.flags == cast[i32](token.TokenKind.EQUAL) or node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
+        builder.append("cinder_selfhost_string_equal(")
+    else:
+        builder.append("(cinder_selfhost_string_compare(")
+    if left_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, left, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append(", ")
+    if right_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, right, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append(")")
+    if node.flags == cast[i32](token.TokenKind.LESS):
+        builder.append(" < 0)")
+    elif node.flags == cast[i32](token.TokenKind.LESS_EQUAL):
+        builder.append(" <= 0)")
+    elif node.flags == cast[i32](token.TokenKind.GREATER):
+        builder.append(" > 0)")
+    elif node.flags == cast[i32](token.TokenKind.GREATER_EQUAL):
+        builder.append(" >= 0)")
+    builder.append("; ")
+    if right_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append("); ")
+    if left_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append("); ")
+    codegen_access.append_path_temporary_name(builder, "comparison", result_temporary)
+    builder.append("; })")
+
 
 def emit_set_algebra_binary(
     arena: &const SyntaxArena,

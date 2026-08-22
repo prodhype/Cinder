@@ -1,6 +1,14 @@
 from std.path import Path
 
 
+struct PathHolder:
+    path: String
+
+
+def make_path_holder() -> PathHolder:
+    return PathHolder(path=".cinder/example-output/path-api/missing-holder.txt")
+
+
 def fail(code: i32, message: String) -> i32:
     print("path example failed:", message)
     return code
@@ -32,22 +40,24 @@ def main() -> i32:
         return fail(7, "computed String arguments")
     if Path.exists(Path.with_suffix(Path.join(nested, "missing.tmp"), ".txt")):
         return fail(8, "nested predicate")
+    if Path.exists(make_path_holder().path):
+        return fail(9, "temporary aggregate field")
     Path.create_dir_all(Path.join(root, "computed"))
     if not Path.is_dir(Path.join(root, "computed")):
-        return fail(9, "computed mutator argument")
+        return fail(10, "computed mutator argument")
     print(Path.parent("a/b"))
 
     with open(original, "wb") as file:
         file.write("native path API\n")
     if not Path.is_file(original) or Path.is_dir(original):
-        return fail(10, "file predicates")
+        return fail(11, "file predicates")
 
     renamed = Path.with_suffix(path=original, suffix=".txt")
     Path.rename(destination=renamed, source=original)
     if Path.exists(original) or not Path.is_file(renamed):
-        return fail(11, "rename")
+        return fail(12, "rename")
 
     Path.remove_file(renamed)
     if Path.exists(renamed):
-        return fail(12, "remove_file")
+        return fail(13, "remove_file")
     return 0
