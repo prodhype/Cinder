@@ -39,6 +39,7 @@ def main(argc: i32, argv: **char) -> i32:
         return 2
 
     test_check_valid(&state)
+    test_anti_example_pattern_documentation(&state)
     test_check_diagnostic(&state)
     test_check_ir_validation(&state)
     test_emit_c(&state)
@@ -85,6 +86,18 @@ def test_check_valid(state: &TestState) -> void:
     expect(state, "check accepts a valid source file", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_anti_example_pattern_documentation(state: &TestState) -> void:
+    source_path = state.root + "/examples/anti_examples.ci"
+    with open(source_path, "rb") as file:
+        source = file.read_text()
+        expected = "# WRONG: a wildcard must be the final case. Cinder still omits literal\n# patterns, tuple and struct destructuring, and match expressions."
+        stale = "guards and nested patterns are not"
+        ok = contains(&source, expected) and not contains(&source, stale)
+        expect(state, "anti-example documents only unsupported match forms", ok)
+        if not ok:
+            cinder.write_stderr("examples/anti_examples.ci has stale match-pattern documentation\n")
 
 
 def test_check_diagnostic(state: &TestState) -> void:
