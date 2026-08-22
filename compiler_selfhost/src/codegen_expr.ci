@@ -761,22 +761,43 @@ def emit_collection_membership_binary(
         name_builder = StringBuilder()
         codegen_type_names.emit_semantic_specialized_type_name(table, collection_type, context.type_source, &name_builder, context.specialization_names)
         name = name_builder.finish()
+        member_owned_path = codegen_access.expression_is_owned_path_string(arena, member, source, imports, context)
+        member_temporary: i32 = -1
         builder.append("({ ")
         builder.append(name[0:len(name)])
         builder.append(" cinder_collection = ")
         emit_module_expression_state(state, collection)
-        builder.append("; bool cinder_contains = ")
+        builder.append("; ")
+        if member_owned_path:
+            member_temporary = context.temporary_index
+            context.temporary_index += 1
+            builder.append("CinderString ")
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            builder.append(" = ")
+            emit_module_expression_state(state, member)
+            builder.append("; ")
+        builder.append("bool cinder_contains = ")
         if record.kind == types.TypeKind.SET:
             builder.append(name[0:len(name)])
             builder.append("_contains(&cinder_collection, ")
-            emit_module_expression_state(state, member)
+            if member_owned_path:
+                codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            else:
+                emit_module_expression_state(state, member)
             builder.append(")")
         else:
             builder.append(name[0:len(name)])
             builder.append("_lookup(&cinder_collection, ")
-            emit_module_expression_state(state, member)
+            if member_owned_path:
+                codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            else:
+                emit_module_expression_state(state, member)
             builder.append(") != NULL")
         builder.append("; ")
+        if member_owned_path:
+            builder.append("cinder_string_drop(&")
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            builder.append("); ")
         if expression_creates_owned_collection(arena, collection, source):
             builder.append(name[0:len(name)])
             builder.append("_drop(&cinder_collection); ")
@@ -791,25 +812,47 @@ def emit_collection_membership_binary(
     map_name_builder = StringBuilder()
     codegen_type_names.emit_semantic_specialized_type_name(table, record.inner, context.type_source, &map_name_builder, context.specialization_names)
     map_name = map_name_builder.finish()
+    member_owned_path = codegen_access.expression_is_owned_path_string(arena, member, source, imports, context)
+    member_temporary: i32 = -1
     builder.append("({ __auto_type cinder_view = ")
     emit_module_expression_state(state, collection)
     builder.append("; ")
+    if member_owned_path:
+        member_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, member)
+        builder.append("; ")
     if record.kind == types.TypeKind.MAP_ITEMS:
         builder.append("__auto_type cinder_item = ")
         emit_module_expression_state(state, member)
         builder.append("; ")
+    builder.append("bool cinder_contains = ")
     if is_not_in:
         builder.append("!")
     builder.append(map_name[0:len(map_name)])
     if record.kind == types.TypeKind.MAP_KEYS:
         builder.append("_keys_contains(&cinder_view, ")
-        emit_module_expression_state(state, member)
+        if member_owned_path:
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        else:
+            emit_module_expression_state(state, member)
     elif record.kind == types.TypeKind.MAP_VALUES:
         builder.append("_values_contains(&cinder_view, ")
-        emit_module_expression_state(state, member)
+        if member_owned_path:
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        else:
+            emit_module_expression_state(state, member)
     else:
         builder.append("_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1")
-    builder.append("); })")
+    builder.append("); ")
+    if member_owned_path:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        builder.append("); ")
+    builder.append("cinder_contains; })")
     return true
 
 

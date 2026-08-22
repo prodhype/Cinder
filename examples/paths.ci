@@ -55,25 +55,35 @@ def main() -> i32:
     combined = Path.parent("alpha/file.tmp") + Path.name("beta/result.txt")
     if combined != "alpharesult.txt":
         return fail(12, "Path result concatenation")
+    path_value = "alpha/file.tmp"
+    path_pointer: *String = &path_value
+    if Path.name(*path_pointer) != "file.tmp" or path_value != "alpha/file.tmp":
+        return fail(13, "dereferenced String argument")
+    cloned_name = Path.name("a/b").clone()
+    if cloned_name != "b":
+        return fail(14, "Path result method receiver")
+    names: Set[String] = {"b"}
+    if not (Path.name("a/b") in names):
+        return fail(15, "Path result collection membership")
 
     with open(Path.join(nested, "borrowed.tmp"), "wb") as borrowed_file:
         borrowed_file.write("borrowed path result\n")
     borrowed_path = Path.join(nested, "borrowed.tmp")
     if not Path.is_file(borrowed_path):
-        return fail(13, "borrowed open path")
+        return fail(16, "borrowed open path")
     Path.remove_file(borrowed_path)
 
     with open(original, "wb") as file:
         file.write("native path API\n")
     if not Path.is_file(original) or Path.is_dir(original):
-        return fail(14, "file predicates")
+        return fail(17, "file predicates")
 
     renamed = Path.with_suffix(path=original, suffix=".txt")
     Path.rename(destination=renamed, source=original)
     if Path.exists(original) or not Path.is_file(renamed):
-        return fail(15, "rename")
+        return fail(18, "rename")
 
     Path.remove_file(renamed)
     if Path.exists(renamed):
-        return fail(16, "remove_file")
+        return fail(19, "remove_file")
     return 0

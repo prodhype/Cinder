@@ -201,8 +201,13 @@ def emit_owned_path_borrowing_call(
 ) -> bool:
     call = arena.nodes[id.index]
     callee = codegen_names.first_child(arena, id)
+    receiver = syntax.missing_node()
+    materialize_receiver = false
+    if callee.index >= 0 and arena.nodes[callee.index].kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, callee)
+        materialize_receiver = codegen_access.expression_is_owned_path_string(arena, receiver, source, imports, context)
     argument_index: usize = 0
-    needs_materialization = false
+    needs_materialization = materialize_receiver
     for offset in range(1, call.child_count):
         child_id = arena.children[call.first_child + offset]
         if arena.nodes[child_id.index].kind != SyntaxKind.EXPR_ARGUMENT:
@@ -216,6 +221,15 @@ def emit_owned_path_borrowing_call(
 
     binding_start = len(context.path_borrow_bindings)
     builder.append("({ ")
+    if materialize_receiver:
+        receiver_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "borrow", receiver_temporary)
+        builder.append(" = ")
+        emit_nested(state, receiver)
+        builder.append("; ")
+        context.path_borrow_bindings.append(codegen_context.ModulePathBorrowBinding(node=receiver, temporary_index=receiver_temporary))
     argument_index = 0
     for offset in range(1, call.child_count):
         child_id = arena.children[call.first_child + offset]

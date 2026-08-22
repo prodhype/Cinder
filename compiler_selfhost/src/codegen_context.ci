@@ -1947,6 +1947,8 @@ def context_expression_is_addressable_for_borrow(
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.EXPR_NAME:
         return true
+    if node.kind == SyntaxKind.EXPR_UNARY and node.flags == cast[i32](token.TokenKind.STAR):
+        return true
     if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
         return context_expression_is_addressable_for_borrow(arena, context, codegen_names.first_child(arena, id), source)
     if node.kind == SyntaxKind.EXPR_INDEX:
