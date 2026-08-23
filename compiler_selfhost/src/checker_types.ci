@@ -39,9 +39,47 @@ def checker_expression_is_derived_from_owned_temporary(
     node = arena.nodes[id.index]
     if node.kind == syntax.SyntaxKind.EXPR_CALL:
         return checker_type_needs_drop(checker, arena, checker.model.expr_type(id), source)
+    if node.kind == syntax.SyntaxKind.EXPR_CAST:
+        operand = checker_core.last_child(arena, id)
+        if operand.index < 0:
+            return false
+        cast_type = checker.model.expr_type(id)
+        operand_type = checker.model.expr_type(operand)
+        if not checker.type_table.same(cast_type, operand_type):
+            return false
+        return checker_expression_is_derived_from_owned_temporary(checker, arena, operand, source)
     if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE or node.kind == syntax.SyntaxKind.EXPR_INDEX or node.kind == syntax.SyntaxKind.EXPR_SLICE:
         return checker_expression_is_derived_from_owned_temporary(checker, arena, checker_core.first_child(arena, id), source)
     return false
+
+
+def type_is_string_reference(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if record.kind != types.TypeKind.REFERENCE:
+        return false
+    inner = types.strip_const(table, record.inner)
+    return inner.index >= 0 and inner.index < cast[i32](len(table.types)) and table.types[inner.index].kind == types.TypeKind.STRING
+
+
+def validate_temporary_reference_escape(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    argument: NodeId,
+    destination_type: types.TypeId,
+    source: &const String,
+) -> void:
+    if (
+        not type_is_string_reference(&checker.type_table, checker.model.expr_type(call_id))
+        or not type_is_string_reference(&checker.type_table, destination_type)
+        or not checker_expression_is_derived_from_owned_temporary(checker, arena, argument, source)
+    ):
+        return
+    node = arena.nodes[argument.index]
+    checker_core.emit_error(checker, 421, node.start, node.length, node.line, node.column)
 
 
 def checker_type_can_clone(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
@@ -1076,6 +1114,7 @@ def validate_declared_call_move_arguments(
         destination_type = value_type
         if parameter.index >= 0:
             destination_type = checker_core.resolve_declared_type_or_default(checker, arena, parameter, source, value_type)
+        validate_temporary_reference_escape(checker, arena, call_id, value, destination_type, source)
         if is_mutable_reference_type(&checker.type_table, destination_type):
             validate_ordered_lock_element_mutation(checker, arena, value, source, current_scope)
         validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)
@@ -1102,6 +1141,7 @@ def validate_callable_call_move_arguments(
         destination_type = generic_actual_argument(checker.type_table, callable_type, argument_index)
         if destination_type.index < 0:
             destination_type = value_type
+        validate_temporary_reference_escape(checker, arena, call_id, value, destination_type, source)
         if is_mutable_reference_type(&checker.type_table, destination_type):
             validate_ordered_lock_element_mutation(checker, arena, value, source, current_scope)
         validate_atomic_call_argument_type(checker, arena, value, value_type, destination_type, source)

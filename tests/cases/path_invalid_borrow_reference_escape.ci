@@ -1,0 +1,11 @@
+from std.path import Path
+
+
+def identity(value: &const String) -> &const String:
+    return value
+
+
+def main() -> i32:
+    escaped = identity(Path.name("a/long-name"))
+    print(*escaped)
+    return 0

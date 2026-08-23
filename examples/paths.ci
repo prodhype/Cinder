@@ -112,7 +112,7 @@ def main() -> i32:
     if not Path.is_dir(Path.join(root, "computed")):
         return fail(10, "computed mutator argument")
     print(Path.parent("a/b"))
-    if not string_length_is_one(Path.parent("a/b")):
+    if not string_length_is_one(cast[String](Path.name("a/b"))):
         return fail(11, "borrowed Path result")
     if not invoke_path_name_function(string_length_is_one):
         return fail(35, "function-pointer borrowed Path result")

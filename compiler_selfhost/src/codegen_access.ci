@@ -700,6 +700,17 @@ def expression_is_owned_path_string(
     if id.index < 0:
         return false
     node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_CAST:
+        cast_type = codegen_type_names.find_child_type(arena, id)
+        if not codegen_context.context_type_is_string(arena, cast_type, source):
+            return false
+        return expression_is_owned_path_string(
+            arena,
+            codegen_names.last_child(arena, id),
+            source,
+            imports,
+            context,
+        )
     if node.kind != SyntaxKind.EXPR_CALL:
         return false
     callee = codegen_names.first_child(arena, id)

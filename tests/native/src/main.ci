@@ -383,6 +383,7 @@ def test_path_codegen(state: &TestState) -> void:
         and not contains(&result.stdout, "cinder_write_stderr(&cinder_path_name(")
         and not contains(&result.stdout, "callback(cinder_path_name(")
         and not contains(&result.stdout, "->env, &cinder_path_name(")
+        and not contains(&result.stdout, "&(CinderString)(cinder_path_name(")
         and not contains(&result.stdout, "&cinder_path_parent(")
         and not contains(&result.stdout, "cinder_string_cstr(&cinder_path_join(")
         and not contains(&result.stdout, "cinder_string_cstr(&cinder_path_with_suffix")
@@ -494,6 +495,11 @@ def test_path_diagnostics(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/path_invalid_temporary_projection_address.ci",
     ]
+    bad_borrow_reference_escape: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_borrow_reference_escape.ci",
+    ]
     member_result = process.run(bad_member)
     argument_result = process.run(bad_argument)
     module_member_result = process.run(bad_module_member)
@@ -501,8 +507,9 @@ def test_path_diagnostics(state: &TestState) -> void:
     string_index_result = process.run(bad_string_index)
     temporary_address_result = process.run(bad_temporary_address)
     temporary_projection_address_result = process.run(bad_temporary_projection_address)
-    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and module_member_result.exit_code == 1 and indirection_result.exit_code == 1 and string_index_result.exit_code == 1 and temporary_address_result.exit_code == 1 and temporary_projection_address_result.exit_code == 1
-    expect(state, "Path rejects invalid members, String uses, and temporary addresses", ok)
+    borrow_reference_escape_result = process.run(bad_borrow_reference_escape)
+    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and module_member_result.exit_code == 1 and indirection_result.exit_code == 1 and string_index_result.exit_code == 1 and temporary_address_result.exit_code == 1 and temporary_projection_address_result.exit_code == 1 and borrow_reference_escape_result.exit_code == 1
+    expect(state, "Path rejects invalid members, String uses, temporary addresses, and escaping borrows", ok)
     if not ok:
         report_process_failure(&member_result.stdout, &member_result.stderr)
         report_process_failure(&argument_result.stdout, &argument_result.stderr)
@@ -511,6 +518,7 @@ def test_path_diagnostics(state: &TestState) -> void:
         report_process_failure(&string_index_result.stdout, &string_index_result.stderr)
         report_process_failure(&temporary_address_result.stdout, &temporary_address_result.stderr)
         report_process_failure(&temporary_projection_address_result.stdout, &temporary_projection_address_result.stderr)
+        report_process_failure(&borrow_reference_escape_result.stdout, &borrow_reference_escape_result.stderr)
 
 
 def test_path_alias_shadowing(state: &TestState) -> void:
