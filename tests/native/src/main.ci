@@ -109,6 +109,11 @@ def test_anti_example_pattern_documentation(state: &TestState) -> void:
 
 
 def test_check_diagnostic(state: &TestState) -> void:
+    continuation_path = state.workspace + "/diagnostic_continuation_eof.ci"
+    write_test_text(
+        continuation_path.clone(),
+        "def main() -> i32:\n    return \\",
+    )
     syntax_command: List[String] = [
         state.compiler.clone(),
         "check",
@@ -138,6 +143,16 @@ def test_check_diagnostic(state: &TestState) -> void:
         state.compiler.clone(),
         "check",
         state.root + "/tests/cases/diagnostic_unicode_marker.ci",
+    ]
+    nonascii_character_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_nonascii_character.ci",
+    ]
+    continuation_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        continuation_path.clone(),
     ]
     ownership_command: List[String] = [
         state.compiler.clone(),
@@ -180,6 +195,8 @@ def test_check_diagnostic(state: &TestState) -> void:
     override_result = process.run(override_command)
     tab_marker_result = process.run(tab_marker_command)
     unicode_marker_result = process.run(unicode_marker_command)
+    nonascii_character_result = process.run(nonascii_character_command)
+    continuation_result = process.run(continuation_command)
     ownership_result = process.run(ownership_command)
     atomic_import_result = process.run(atomic_import_command)
     lock_result = process.run(lock_command)
@@ -189,7 +206,11 @@ def test_check_diagnostic(state: &TestState) -> void:
     unresolved_after_decl_result = process.run(unresolved_after_decl_command)
     override_excerpt = "   |\n10 |     def value(self, input: String) -> i32:\n   |     ^"
     tab_marker_excerpt = "  |\n2 |     return\tmissing\n  |             ^^^^^^^"
-    unicode_marker_excerpt = "  |\n2 |     print(\"界\", \"é\n  |                 ^^"
+    unicode_marker_excerpt = "  |\n2 |     print(\"👨‍👩‍👧‍👦\", \"é\n  |                 ^^"
+    nonascii_character_excerpt = "  |\n1 | def 界() -> i32:\n  |     ^^"
+    continuation_excerpt = "  |\n2 |     return \\\n  |             ^"
+    nonascii_character_location = state.root + "/tests/cases/diagnostic_nonascii_character.ci:1:5"
+    continuation_location = continuation_path + ":2:13"
     cross_module_related_location = "= related: conflicting lock order declared here at " + state.root + "/tests/cases/diagnostic_lock_cross_module/src/locks.ci:2:1"
     unresolved_before_location = state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci:2:11"
     unresolved_after_location = state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci:2:24"
@@ -217,6 +238,16 @@ def test_check_diagnostic(state: &TestState) -> void:
         and unicode_marker_result.exit_code == 1
         and contains(&unicode_marker_result.stderr, "lexer.L006/5")
         and contains(&unicode_marker_result.stderr, unicode_marker_excerpt)
+        and nonascii_character_result.exit_code == 1
+        and contains(&nonascii_character_result.stderr, "lexer.L005/4")
+        and contains(&nonascii_character_result.stderr, "the character 界 is not valid here")
+        and contains(&nonascii_character_result.stderr, nonascii_character_location)
+        and contains(&nonascii_character_result.stderr, nonascii_character_excerpt)
+        and not contains(&nonascii_character_result.stderr, "panic: invalid UTF-8 string")
+        and continuation_result.exit_code == 1
+        and contains(&continuation_result.stderr, "lexer.L002/1")
+        and contains(&continuation_result.stderr, continuation_location)
+        and contains(&continuation_result.stderr, continuation_excerpt)
         and ownership_result.exit_code == 1
         and contains(&ownership_result.stderr, "checker.atomic-value-move/399")
         and contains(&ownership_result.stderr, "Atomic owner source")
@@ -255,6 +286,8 @@ def test_check_diagnostic(state: &TestState) -> void:
         report_process_failure(&override_result.stdout, &override_result.stderr)
         report_process_failure(&tab_marker_result.stdout, &tab_marker_result.stderr)
         report_process_failure(&unicode_marker_result.stdout, &unicode_marker_result.stderr)
+        report_process_failure(&nonascii_character_result.stdout, &nonascii_character_result.stderr)
+        report_process_failure(&continuation_result.stdout, &continuation_result.stderr)
         report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
         report_process_failure(&atomic_import_result.stdout, &atomic_import_result.stderr)
         report_process_failure(&lock_result.stdout, &lock_result.stderr)

@@ -345,6 +345,141 @@ int32_t cinder_unicode_display_width(uint32_t scalar)
     return 1;
 }
 
+static uint32_t cinder_unicode_decode_utf8_scalar(
+    const char *source,
+    size_t end,
+    size_t *index
+)
+{
+    const unsigned char first = (unsigned char)source[*index];
+    if (first <= UINT8_C(0x7f)) {
+        *index += 1;
+        return first;
+    }
+    if (first <= UINT8_C(0xdf) && *index + 1 < end) {
+        const uint32_t second = (unsigned char)source[*index + 1];
+        *index += 2;
+        return ((uint32_t)(first & UINT8_C(0x1f)) << 6) |
+               (second & UINT32_C(0x3f));
+    }
+    if (first <= UINT8_C(0xef) && *index + 2 < end) {
+        const uint32_t second = (unsigned char)source[*index + 1];
+        const uint32_t third = (unsigned char)source[*index + 2];
+        *index += 3;
+        return ((uint32_t)(first & UINT8_C(0x0f)) << 12) |
+               ((second & UINT32_C(0x3f)) << 6) |
+               (third & UINT32_C(0x3f));
+    }
+    if (*index + 3 < end) {
+        const uint32_t second = (unsigned char)source[*index + 1];
+        const uint32_t third = (unsigned char)source[*index + 2];
+        const uint32_t fourth = (unsigned char)source[*index + 3];
+        *index += 4;
+        return ((uint32_t)(first & UINT8_C(0x07)) << 18) |
+               ((second & UINT32_C(0x3f)) << 12) |
+               ((third & UINT32_C(0x3f)) << 6) |
+               (fourth & UINT32_C(0x3f));
+    }
+    *index += 1;
+    return first;
+}
+
+static bool cinder_unicode_is_regional_indicator(uint32_t scalar)
+{
+    return scalar >= UINT32_C(0x1f1e6) && scalar <= UINT32_C(0x1f1ff);
+}
+
+int32_t cinder_unicode_display_column(
+    const char *source,
+    size_t source_length,
+    size_t start,
+    size_t end,
+    int32_t initial_column
+)
+{
+    if ((source == NULL && source_length != 0) ||
+        start > end ||
+        end > source_length) {
+        cinder_panic("invalid Unicode display range");
+    }
+
+    size_t index = start;
+    int32_t column = initial_column;
+    int32_t cluster_width = 0;
+    size_t regional_count = 0;
+    bool have_cluster = false;
+    bool join_next = false;
+
+    while (index < end) {
+        if ((unsigned char)source[index] == UINT8_C(0x09)) {
+            if (have_cluster) {
+                column += cluster_width;
+                have_cluster = false;
+                cluster_width = 0;
+                regional_count = 0;
+                join_next = false;
+            }
+            column += 8 - column % 8;
+            index += 1;
+            continue;
+        }
+
+        const uint32_t scalar =
+            cinder_unicode_decode_utf8_scalar(source, end, &index);
+        const int32_t scalar_width = cinder_unicode_display_width(scalar);
+        const bool is_regional =
+            cinder_unicode_is_regional_indicator(scalar);
+
+        if (!have_cluster) {
+            have_cluster = true;
+            cluster_width = scalar_width;
+            regional_count = is_regional ? 1 : 0;
+            join_next = false;
+            continue;
+        }
+
+        if (regional_count == 1 && is_regional) {
+            if (scalar_width > cluster_width) {
+                cluster_width = scalar_width;
+            }
+            regional_count = 2;
+            continue;
+        }
+
+        if (scalar_width == 0) {
+            if (scalar == UINT32_C(0xfe0f) ||
+                scalar == UINT32_C(0x20e3)) {
+                if (cluster_width < 2) {
+                    cluster_width = 2;
+                }
+            }
+            if (scalar == UINT32_C(0x200d)) {
+                join_next = true;
+            }
+            continue;
+        }
+
+        if (join_next) {
+            if (scalar_width > cluster_width) {
+                cluster_width = scalar_width;
+            }
+            regional_count = 0;
+            join_next = false;
+            continue;
+        }
+
+        column += cluster_width;
+        cluster_width = scalar_width;
+        regional_count = is_regional ? 1 : 0;
+        join_next = false;
+    }
+
+    if (have_cluster) {
+        column += cluster_width;
+    }
+    return column;
+}
+
 static bool cinder_utf8_is_valid(const char *data, size_t length)
 {
     if (data == NULL) {

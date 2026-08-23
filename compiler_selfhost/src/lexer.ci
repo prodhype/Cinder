@@ -20,20 +20,20 @@ struct Lexer:
             diagnostics.new_diagnostic(id, diagnostics.source_span(start, length, line, column))
         )
 
-    def emit_actual_character_diagnostic(
+    def emit_actual_text_diagnostic(
         self: &Lexer,
         id: diagnostics.DiagnosticId,
         start: usize,
         length: usize,
         line: i32,
         column: i32,
-        actual: char,
+        actual: String,
     ) -> void:
         self.diagnostic_values.append(
             diagnostics.diagnostic_with_argument(
                 id,
                 diagnostics.source_span(start, length, line, column),
-                diagnostics.argument_character("actual", actual),
+                diagnostics.argument_text("actual", actual),
             )
         )
 
@@ -143,10 +143,7 @@ struct Lexer:
             line_number += 1
 
         if explicit_continuation:
-            error_line = line_count
-            if error_line < 1:
-                error_line = 1
-            self.emit_diagnostic(diagnostics.DiagnosticId.LEX_002, source_len, 0, error_line, 1)
+            self.emit_diagnostic(diagnostics.DiagnosticId.LEX_002, source_len, 0, 0, 0)
 
         if len(self.brackets) > 0:
             frame = self.brackets[len(self.brackets) - 1]
@@ -309,15 +306,19 @@ struct Lexer:
                 index = end
                 continue
 
-            self.emit_actual_character_diagnostic(
+            end = index + 1
+            while end < line_end and is_utf8_continuation(self.source.byte_at(end)):
+                end += 1
+            actual = self.source[index:end]
+            self.emit_actual_text_diagnostic(
                 diagnostics.DiagnosticId.LEX_005,
                 index,
-                1,
+                end - index,
                 line_number,
                 column,
-                cast[char](byte),
+                actual,
             )
-            index += 1
+            index = end
             ignored_column += 1
 
         return explicit_continuation
