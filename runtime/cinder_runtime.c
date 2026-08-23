@@ -664,6 +664,23 @@ static size_t cinder_path_component_start(const char *path, size_t end)
     return start;
 }
 
+static size_t cinder_path_suffix_start(
+    const char *path,
+    size_t component_start,
+    size_t end)
+{
+    size_t search_start = component_start;
+    while (search_start < end && path[search_start] == '.') {
+        search_start += 1;
+    }
+    for (size_t index = end; index > search_start; --index) {
+        if (path[index - 1] == '.') {
+            return index - 1;
+        }
+    }
+    return end;
+}
+
 CinderString cinder_path_parent(const char *path)
 {
     const size_t length = cinder_path_validated_length(path);
@@ -700,15 +717,7 @@ CinderString cinder_path_stem(const char *path)
     const size_t length = cinder_path_validated_length(path);
     const size_t end = cinder_path_trimmed_end(path, length);
     const size_t start = cinder_path_component_start(path, end);
-    size_t stem_end = end;
-    for (size_t index = end; index > start; --index) {
-        if (path[index - 1] == '.') {
-            if (index - 1 > start) {
-                stem_end = index - 1;
-            }
-            break;
-        }
-    }
+    const size_t stem_end = cinder_path_suffix_start(path, start, end);
     return cinder_string_from_bytes(path + start, stem_end - start);
 }
 
@@ -763,15 +772,7 @@ CinderString cinder_path_with_suffix(const char *path, const char *suffix)
         cinder_panic("cannot set suffix on a path without a name");
     }
 
-    size_t prefix_end = end;
-    for (size_t index = end; index > start; --index) {
-        if (path[index - 1] == '.') {
-            if (index - 1 > start) {
-                prefix_end = index - 1;
-            }
-            break;
-        }
-    }
+    const size_t prefix_end = cinder_path_suffix_start(path, start, end);
     if (prefix_end > SIZE_MAX - suffix_length) {
         cinder_panic("suffixed path length overflow");
     }
