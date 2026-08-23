@@ -415,22 +415,23 @@ def validate_path_namespace_call(
     if receiver.index < 0 or member.index < 0:
         return false
     receiver_node = arena.nodes[receiver.index]
-    if receiver_node.kind != syntax.SyntaxKind.EXPR_NAME:
-        return false
-    found = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
-    if found.index < 0:
-        return false
-    resolved = checker.symbols.symbols[found.index]
-    if resolved.kind != symbols.SymbolKind.BUILTIN or resolved.node.index < 0 or arena.nodes[resolved.node.index].kind != syntax.SyntaxKind.IMPORT_NAME:
-        return false
-    checker.model.record_name_symbol(receiver, found)
-    receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
-    matched = false
-    module_imports: &const List[project.ImportBinding] = &checker.module_imports
-    for imported in module_imports:
-        if imported.alias == receiver_name and imported.virtual_builtin and imported.module_name == "std.path" and imported.member == "Path":
-            matched = true
-    if not matched:
+    if receiver_node.kind == syntax.SyntaxKind.EXPR_NAME:
+        found = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
+        if found.index < 0:
+            return false
+        resolved = checker.symbols.symbols[found.index]
+        if resolved.kind != symbols.SymbolKind.BUILTIN or resolved.node.index < 0 or arena.nodes[resolved.node.index].kind != syntax.SyntaxKind.IMPORT_NAME:
+            return false
+        receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+        matched = false
+        module_imports: &const List[project.ImportBinding] = &checker.module_imports
+        for imported in module_imports:
+            if imported.alias == receiver_name and imported.virtual_builtin and imported.module_name == "std.path" and imported.member == "Path":
+                matched = true
+        if not matched:
+            return false
+        checker.model.record_name_symbol(receiver, found)
+    elif not qualified_path_namespace_receiver_is_imported(checker, arena, receiver, source, current_scope):
         return false
 
     member_node = arena.nodes[member.index]
@@ -495,6 +496,53 @@ def validate_path_namespace_call(
     checker.model.record_expr_type(callee_id, result_type)
     checker.model.record_expr_type(call_id, result_type)
     return true
+
+
+def qualified_path_namespace_receiver_is_imported(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    receiver: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind != syntax.SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    name = checker_core.first_child(arena, receiver)
+    namespace = checker_core.second_child(arena, receiver)
+    if name.index < 0 or namespace.index < 0:
+        return false
+    name_node = arena.nodes[name.index]
+    namespace_node = arena.nodes[namespace.index]
+    if (
+        name_node.kind != syntax.SyntaxKind.EXPR_NAME
+        or namespace_node.kind != syntax.SyntaxKind.NAME
+        or not checker_core.range_text_equals(source, namespace_node.value_start, namespace_node.value_length, "Path")
+    ):
+        return false
+    found = checker.symbols.find_in_scope(source, current_scope, name_node.value_start, name_node.value_length)
+    if found.index < 0:
+        return false
+    resolved = checker.symbols.symbols[found.index]
+    if (
+        resolved.kind != symbols.SymbolKind.GLOBAL
+        or resolved.node.index < 0
+        or arena.nodes[resolved.node.index].kind != syntax.SyntaxKind.IMPORT_DECL
+    ):
+        return false
+
+    receiver_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    module_imports: &const List[project.ImportBinding] = &checker.module_imports
+    for imported in module_imports:
+        if (
+            imported.alias == receiver_name
+            and imported.virtual_builtin
+            and imported.module_name == "std.path"
+            and len(imported.member) == 0
+        ):
+            checker.model.record_name_symbol(name, found)
+            return true
+    return false
 
 
 def path_named_argument_index(

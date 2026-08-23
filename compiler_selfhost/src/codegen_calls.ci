@@ -246,6 +246,11 @@ def emit_owned_path_borrowing_call(
     if not needs_materialization:
         return false
 
+    result_type = codegen_context.context_semantic_type(context, id)
+    returns_void = (
+        result_type.index == types.type_void().index
+        or callee_is_cinder_output_builtin(arena, callee, source, imports)
+    )
     binding_start = len(context.path_borrow_bindings)
     builder.append("({ ")
     if materialize_receiver:
@@ -274,11 +279,6 @@ def emit_owned_path_borrowing_call(
             context.path_borrow_bindings.append(codegen_context.ModulePathBorrowBinding(node=argument, temporary_index=temporary_index))
         argument_index += 1
 
-    result_type = codegen_context.context_semantic_type(context, id)
-    returns_void = (
-        codegen_type_names.semantic_type_is_kind(context.type_table, result_type, types.TypeKind.VOID)
-        or callee_is_cinder_output_builtin(arena, callee, source, imports)
-    )
     result_temporary: i32 = -1
     if not returns_void:
         result_temporary = context.temporary_index

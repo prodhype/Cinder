@@ -212,6 +212,9 @@ def emit_attribute_call(
     member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
     if emit_super_call(arena, call_id, receiver, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested):
         return
+    if expression_is_qualified_path_namespace(arena, receiver, source, imports, context):
+        emit_path_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
     if receiver.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         if receiver_node.kind == SyntaxKind.EXPR_NAME:
@@ -638,7 +641,11 @@ def emit_path_runtime_call(
         append_path_temporary_name(builder, "argument", first_temporary)
         builder.append(")")
     else:
-        emit_c_string_argument(arena, first, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        first_node = arena.nodes[first.index]
+        if first_node.kind == SyntaxKind.EXPR_LITERAL and first_node.flags == cast[i32](token.TokenKind.STRING):
+            emit_validated_path_literal(first_node, source, builder)
+        else:
+            emit_c_string_argument(arena, first, source, builder, prefix, project_name, imports, context, state, emit_nested)
     if second.index >= 0:
         builder.append(", ")
         if materialized_second:
@@ -646,8 +653,24 @@ def emit_path_runtime_call(
             append_path_temporary_name(builder, "argument", second_temporary)
             builder.append(")")
         else:
-            emit_c_string_argument(arena, second, source, builder, prefix, project_name, imports, context, state, emit_nested)
+            second_node = arena.nodes[second.index]
+            if second_node.kind == SyntaxKind.EXPR_LITERAL and second_node.flags == cast[i32](token.TokenKind.STRING):
+                emit_validated_path_literal(second_node, source, builder)
+            else:
+                emit_c_string_argument(arena, second, source, builder, prefix, project_name, imports, context, state, emit_nested)
     builder.append(")")
+
+
+def emit_validated_path_literal(
+    node: &const syntax.SyntaxNode,
+    source: &const String,
+    builder: &StringBuilder,
+) -> void:
+    builder.append("cinder_string_cstr(&((CinderString){ .data = (char *)")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(", .length = sizeof(")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(") - 1, .capacity = 0 }))")
 
 
 def path_argument_needs_materialization(
@@ -685,18 +708,52 @@ def expression_is_owned_path_string(
         return false
     receiver = codegen_names.first_child(arena, callee)
     member = codegen_names.second_child(arena, callee)
-    if receiver.index < 0 or member.index < 0 or arena.nodes[receiver.index].kind != SyntaxKind.EXPR_NAME:
+    if receiver.index < 0 or member.index < 0:
         return false
     receiver_node = arena.nodes[receiver.index]
-    if not codegen_context.context_expression_resolves_to_import(context, receiver):
-        return false
-    receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
-    imported = codegen_names.find_import_member(imports, &receiver_name)
-    if not imported.virtual_builtin or imported.module_name != "std.path" or imported.member != "Path":
+    if receiver_node.kind == SyntaxKind.EXPR_NAME:
+        if not codegen_context.context_expression_resolves_to_import(context, receiver):
+            return false
+        receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+        imported = codegen_names.find_import_member(imports, &receiver_name)
+        if not imported.virtual_builtin or imported.module_name != "std.path" or imported.member != "Path":
+            return false
+    elif not expression_is_qualified_path_namespace(arena, receiver, source, imports, context):
         return false
     member_node = arena.nodes[member.index]
     member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
     return path_member_returns_string(&member_name)
+
+
+def expression_is_qualified_path_namespace(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &const codegen_model.ModuleCodegenContext,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    receiver = codegen_names.first_child(arena, id)
+    member = codegen_names.second_child(arena, id)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    member_node = arena.nodes[member.index]
+    if (
+        receiver_node.kind != SyntaxKind.EXPR_NAME
+        or member_node.kind != SyntaxKind.NAME
+        or not codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "Path")
+    ):
+        return false
+    if codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length):
+        return false
+    name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    imported = codegen_names.find_import_alias(imports, &name)
+    return imported.virtual_builtin and imported.module_name == "std.path"
 
 
 def append_path_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:
