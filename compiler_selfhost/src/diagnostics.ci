@@ -1127,7 +1127,7 @@ def render_diagnostic(diagnostic: &const Diagnostic, path: &const String, source
 
     builder = StringBuilder()
     if len(effective_path) > 0:
-        builder.append(effective_path)
+        append_escaped_diagnostic_range(&builder, &effective_path, 0, len(effective_path))
     else:
         builder.append("<source>")
     builder.append(":")
@@ -1166,7 +1166,7 @@ def render_diagnostic(diagnostic: &const Diagnostic, path: &const String, source
         builder.append(related.label[0:len(related.label)])
         builder.append(" at ")
         if len(related_path) > 0:
-            builder.append(related_path)
+            append_escaped_diagnostic_range(&builder, &related_path, 0, len(related_path))
         else:
             builder.append("<source>")
         builder.append(":")

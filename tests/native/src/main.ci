@@ -119,6 +119,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         control_path.clone(),
         "def main() -> i32:\n    \x1b[2J\n    return 0\n",
     )
+    path_control_path = state.workspace + "/diagnostic_\x1b[2J_path.ci"
+    write_test_text(
+        path_control_path.clone(),
+        "abstract class DiagnosticBase[T]:\n    @abstractmethod\n    def value(self, input: T) -> i32:\n        pass\n\n\nclass DiagnosticOverride(\n    DiagnosticBase[i32],\n):\n    def value(self, input: String) -> i32:\n        return 0\n\n\ndef main() -> i32:\n    return 0\n",
+    )
     syntax_command: List[String] = [
         state.compiler.clone(),
         "check",
@@ -158,6 +163,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         state.compiler.clone(),
         "check",
         control_path.clone(),
+    ]
+    path_control_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        path_control_path.clone(),
     ]
     continuation_command: List[String] = [
         state.compiler.clone(),
@@ -207,6 +217,7 @@ def test_check_diagnostic(state: &TestState) -> void:
     unicode_marker_result = process.run(unicode_marker_command)
     nonascii_character_result = process.run(nonascii_character_command)
     control_result = process.run(control_command)
+    path_control_result = process.run(path_control_command)
     continuation_result = process.run(continuation_command)
     ownership_result = process.run(ownership_command)
     atomic_import_result = process.run(atomic_import_command)
@@ -222,6 +233,9 @@ def test_check_diagnostic(state: &TestState) -> void:
     control_excerpt = "  |\n2 |     \\x1b[2J\n  |     ^^^^"
     continuation_excerpt = "  |\n2 |     return \\\n  |             ^"
     nonascii_character_location = state.root + "/tests/cases/diagnostic_nonascii_character.ci:1:5"
+    escaped_path_control_path = state.workspace + "/diagnostic_\\x1b[2J_path.ci"
+    path_control_location = escaped_path_control_path + ":10:5"
+    path_control_related_location = "= related: base declaration is here at " + escaped_path_control_path + ":3:5"
     continuation_location = continuation_path + ":2:13"
     cross_module_related_location = "= related: conflicting lock order declared here at " + state.root + "/tests/cases/diagnostic_lock_cross_module/src/locks.ci:2:1"
     unresolved_before_location = state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci:2:11"
@@ -261,6 +275,10 @@ def test_check_diagnostic(state: &TestState) -> void:
         and contains(&control_result.stderr, "the character \\x1b is not valid here")
         and contains(&control_result.stderr, control_excerpt)
         and not contains(&control_result.stderr, "\x1b")
+        and path_control_result.exit_code == 1
+        and contains(&path_control_result.stderr, path_control_location)
+        and contains(&path_control_result.stderr, path_control_related_location)
+        and not contains(&path_control_result.stderr, "\x1b")
         and continuation_result.exit_code == 1
         and contains(&continuation_result.stderr, "lexer.L002/1")
         and contains(&continuation_result.stderr, continuation_location)
@@ -305,6 +323,7 @@ def test_check_diagnostic(state: &TestState) -> void:
         report_process_failure(&unicode_marker_result.stdout, &unicode_marker_result.stderr)
         report_process_failure(&nonascii_character_result.stdout, &nonascii_character_result.stderr)
         report_process_failure(&control_result.stdout, &control_result.stderr)
+        report_process_failure(&path_control_result.stdout, &path_control_result.stderr)
         report_process_failure(&continuation_result.stdout, &continuation_result.stderr)
         report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
         report_process_failure(&atomic_import_result.stdout, &atomic_import_result.stderr)
