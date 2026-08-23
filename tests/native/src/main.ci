@@ -114,6 +114,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         continuation_path.clone(),
         "def main() -> i32:\n    return \\",
     )
+    control_path = state.workspace + "/diagnostic_control_byte.ci"
+    write_test_text(
+        control_path.clone(),
+        "def main() -> i32:\n    \x1b[2J\n    return 0\n",
+    )
     syntax_command: List[String] = [
         state.compiler.clone(),
         "check",
@@ -148,6 +153,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         state.compiler.clone(),
         "check",
         state.root + "/tests/cases/diagnostic_nonascii_character.ci",
+    ]
+    control_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        control_path.clone(),
     ]
     continuation_command: List[String] = [
         state.compiler.clone(),
@@ -196,6 +206,7 @@ def test_check_diagnostic(state: &TestState) -> void:
     tab_marker_result = process.run(tab_marker_command)
     unicode_marker_result = process.run(unicode_marker_command)
     nonascii_character_result = process.run(nonascii_character_command)
+    control_result = process.run(control_command)
     continuation_result = process.run(continuation_command)
     ownership_result = process.run(ownership_command)
     atomic_import_result = process.run(atomic_import_command)
@@ -205,9 +216,10 @@ def test_check_diagnostic(state: &TestState) -> void:
     unresolved_after_result = process.run(unresolved_after_command)
     unresolved_after_decl_result = process.run(unresolved_after_decl_command)
     override_excerpt = "   |\n10 |     def value(self, input: String) -> i32:\n   |     ^"
-    tab_marker_excerpt = "  |\n2 |     return\tmissing\n  |             ^^^^^^^"
+    tab_marker_excerpt = "  |\n2 |     return\\x09missing\n  |               ^^^^^^^"
     unicode_marker_excerpt = "  |\n2 |     print(\"👨‍👩‍👧‍👦\", \"é\n  |                 ^^"
     nonascii_character_excerpt = "  |\n1 | def 界() -> i32:\n  |     ^^"
+    control_excerpt = "  |\n2 |     \\x1b[2J\n  |     ^^^^"
     continuation_excerpt = "  |\n2 |     return \\\n  |             ^"
     nonascii_character_location = state.root + "/tests/cases/diagnostic_nonascii_character.ci:1:5"
     continuation_location = continuation_path + ":2:13"
@@ -244,6 +256,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         and contains(&nonascii_character_result.stderr, nonascii_character_location)
         and contains(&nonascii_character_result.stderr, nonascii_character_excerpt)
         and not contains(&nonascii_character_result.stderr, "panic: invalid UTF-8 string")
+        and control_result.exit_code == 1
+        and contains(&control_result.stderr, "lexer.L005/4")
+        and contains(&control_result.stderr, "the character \\x1b is not valid here")
+        and contains(&control_result.stderr, control_excerpt)
+        and not contains(&control_result.stderr, "\x1b")
         and continuation_result.exit_code == 1
         and contains(&continuation_result.stderr, "lexer.L002/1")
         and contains(&continuation_result.stderr, continuation_location)
@@ -287,6 +304,7 @@ def test_check_diagnostic(state: &TestState) -> void:
         report_process_failure(&tab_marker_result.stdout, &tab_marker_result.stderr)
         report_process_failure(&unicode_marker_result.stdout, &unicode_marker_result.stderr)
         report_process_failure(&nonascii_character_result.stdout, &nonascii_character_result.stderr)
+        report_process_failure(&control_result.stdout, &control_result.stderr)
         report_process_failure(&continuation_result.stdout, &continuation_result.stderr)
         report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
         report_process_failure(&atomic_import_result.stdout, &atomic_import_result.stderr)

@@ -1101,7 +1101,7 @@ def append_named_argument(
 
 def append_argument_value(builder: &StringBuilder, argument: &const DiagnosticArgument) -> void:
     if argument.kind == DiagnosticArgumentKind.TEXT or argument.kind == DiagnosticArgumentKind.TYPE or argument.kind == DiagnosticArgumentKind.TOKEN or argument.kind == DiagnosticArgumentKind.SYMBOL or argument.kind == DiagnosticArgumentKind.PATH:
-        builder.append(argument.text[0:len(argument.text)])
+        append_escaped_diagnostic_range(builder, &argument.text, 0, len(argument.text))
     elif argument.kind == DiagnosticArgumentKind.SIGNED_INTEGER or argument.kind == DiagnosticArgumentKind.COUNT:
         builder.append(to_string(argument.signed_value))
     elif argument.kind == DiagnosticArgumentKind.UNSIGNED_INTEGER:
@@ -1109,7 +1109,8 @@ def append_argument_value(builder: &StringBuilder, argument: &const DiagnosticAr
     elif argument.kind == DiagnosticArgumentKind.BOOLEAN:
         builder.append(to_string(argument.bool_value))
     else:
-        builder.append(to_string(argument.char_value))
+        value = to_string(argument.char_value)
+        append_escaped_diagnostic_range(builder, &value, 0, len(value))
 
 
 def render_diagnostic(diagnostic: &const Diagnostic, path: &const String, source: &const String) -> String:
@@ -1241,7 +1242,7 @@ def append_source_excerpt(
     builder.append(" |\n")
     builder.append(rendered_line)
     builder.append(" | ")
-    append_range(builder, source, line_start, line_end)
+    append_escaped_diagnostic_range(builder, source, line_start, line_end)
     builder.append("\n")
     gutter_width = 0
     while gutter_width < line_width:
@@ -1273,11 +1274,14 @@ def display_column_at(
     end = target
     if end > len(source):
         end = len(source)
+    escaped = StringBuilder()
+    append_escaped_diagnostic_range(&escaped, source, start, end)
+    rendered = escaped.finish()
     return cinder_unicode_display_column(
-        source,
-        len(source),
-        start,
-        end,
+        rendered,
+        len(rendered),
+        0,
+        len(rendered),
         initial_column,
     )
 
@@ -1327,3 +1331,33 @@ def append_range(builder: &StringBuilder, value: &const String, start: usize, en
     if bounded_end > len(value):
         bounded_end = len(value)
     builder.append(value[start:bounded_end])
+
+
+def append_escaped_diagnostic_range(
+    builder: &StringBuilder,
+    value: &const String,
+    start: usize,
+    end: usize,
+) -> void:
+    if start >= end or start >= len(value):
+        return
+    bounded_end = end
+    if bounded_end > len(value):
+        bounded_end = len(value)
+    literal_start = start
+    index = start
+    while index < bounded_end:
+        byte = value.byte_at(index)
+        if byte < 32 or byte == 127:
+            append_range(builder, value, literal_start, index)
+            append_escaped_diagnostic_byte(builder, byte)
+            literal_start = index + 1
+        index += 1
+    append_range(builder, value, literal_start, bounded_end)
+
+
+def append_escaped_diagnostic_byte(builder: &StringBuilder, value: u8) -> void:
+    digits = "0123456789abcdef"
+    builder.append("\\x")
+    builder.append_char(cast[char](digits.byte_at(cast[usize](value / 16))))
+    builder.append_char(cast[char](digits.byte_at(cast[usize](value % 16))))
