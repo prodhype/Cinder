@@ -22,6 +22,10 @@ def borrowed_path_stderr_codegen() -> void:
     cinder.write_stderr(Path.name("a/prompt.txt"))
 
 
+def print_formatted_path_name(path: &const String) -> void:
+    print(f"{Path.name(path)}")
+
+
 def matched_path_name_codegen() -> bool:
     match Path.name("a/b"):
         case matched_name:
@@ -56,6 +60,7 @@ def main() -> i32:
         return fail(2, "parent")
     if Path.name(original) != "sample.tar.gz":
         return fail(3, "name")
+    print_formatted_path_name(&original)
     if Path.stem(original) != "sample.tar":
         return fail(4, "stem")
     if Path.stem(".profile") != ".profile":

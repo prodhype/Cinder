@@ -380,7 +380,8 @@ def emit_fstring_replacement(
     conversion: u8 = 0
     if format_length > 0:
         conversion = format_source.byte_at(format_start + format_length - 1)
-    string_value = codegen_context.expression_may_be_string(arena, context, id, source)
+    owned_path_string = codegen_access.expression_is_owned_path_string(arena, id, source, imports, context)
+    string_value = owned_path_string or codegen_context.expression_may_be_string(arena, context, id, source)
     if reflection_attribute_is_c_string(arena, id, source, context):
         builder.append("printf(\"%s\", ")
         emit_nested(state, id)
@@ -393,7 +394,7 @@ def emit_fstring_replacement(
         return
     if conversion == 115 or (conversion == 0 and string_value):
         if string_value:
-            if codegen_access.expression_is_owned_path_string(arena, id, source, imports, context):
+            if owned_path_string:
                 temporary_index = context.temporary_index
                 context.temporary_index += 1
                 builder.append("({ CinderString ")

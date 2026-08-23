@@ -311,6 +311,7 @@ def test_path_codegen(state: &TestState) -> void:
         and contains(&result.stdout, "bool cinder_path_comparison_")
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_consumer_")
         and contains(&result.stdout, "cinder_selfhost_print_string_value(cinder_path_consumer_")
+        and contains(&result.stdout, "cinder_selfhost_print_string_fragment(cinder_path_consumer_")
         and contains(&result.stdout, "CinderString cinder_path_borrow_")
         and contains(&result.stdout, "__auto_type cinder_path_borrow_result_")
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_borrow_")
@@ -373,6 +374,7 @@ def test_path_codegen(state: &TestState) -> void:
         and not contains(&result.stdout, "cinder_string_cstr(&cinder_paths_paths__make_path_holder().path")
         and not contains(&result.stdout, "std_path__Path")
         and not contains(&result.stdout, "cinder_path_exists(\"")
+        and not contains(&result.stdout, "name(&Path")
     )
     expect(state, "emit-c lowers Path calls to runtime functions", ok)
     if not ok:
