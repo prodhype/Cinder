@@ -128,13 +128,17 @@ struct SymbolTable:
     def find_in_current_scope(self: &const SymbolTable, source: &const String, scope: ScopeId, start: usize, length: usize) -> SymbolId:
         if scope.index < 0:
             return missing_symbol()
+        builtin = missing_symbol()
         index: usize = 0
         while index < len(self.symbols):
             symbol = self.symbols[index]
             if symbol.scope.index == scope.index and range_equals(source, symbol.name_start, symbol.name_length, start, length):
-                return SymbolId(index=cast[i32](index))
+                found = SymbolId(index=cast[i32](index))
+                if symbol.kind != SymbolKind.BUILTIN:
+                    return found
+                builtin = found
             index += 1
-        return missing_symbol()
+        return builtin
 
     def find_in_scope(self: &const SymbolTable, source: &const String, scope: ScopeId, start: usize, length: usize) -> SymbolId:
         current_scope = scope

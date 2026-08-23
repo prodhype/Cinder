@@ -257,9 +257,9 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             checker.model.record_expr_type(id, checker.symbols.symbols[found.index].type_id)
     elif node.kind == syntax.SyntaxKind.EXPR_CALL:
         checker_types.validate_call(checker, arena, id, source, current_scope)
-    elif node.kind == syntax.SyntaxKind.EXPR_TUPLE:
-        inferred_tuple = checker_types.infer_expression_type(checker, arena, id, source, current_scope)
-        ignored_inferred_tuple = inferred_tuple
+    elif node.kind == syntax.SyntaxKind.EXPR_TUPLE or node.kind == syntax.SyntaxKind.EXPR_INDEX or node.kind == syntax.SyntaxKind.EXPR_UNARY:
+        inferred_expression = checker_types.infer_expression_type(checker, arena, id, source, current_scope)
+        ignored_inferred_expression = inferred_expression
     elif node.kind == syntax.SyntaxKind.EXPR_STMT:
         expression = checker_core.first_child(arena, id)
         if expression.index >= 0:

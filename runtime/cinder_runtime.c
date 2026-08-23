@@ -13,6 +13,7 @@
 
 #if !defined(_WIN32)
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -630,6 +631,315 @@ CinderProcessResult cinder_process_run_argv(
     result.stdout = cinder_process_buffer_to_string(&stdout_buffer);
     result.stderr = cinder_process_buffer_to_string(&stderr_buffer);
     return result;
+}
+#endif
+
+static size_t cinder_path_validated_length(const char *path)
+{
+    if (path == NULL) {
+        cinder_panic("path is null");
+    }
+    const size_t length = strlen(path);
+    if (!cinder_utf8_is_valid(path, length)) {
+        cinder_panic("path is not valid UTF-8");
+    }
+    return length;
+}
+
+static size_t cinder_path_trimmed_end(const char *path, size_t length)
+{
+    size_t end = length;
+    while (end > 1 && path[end - 1] == '/') {
+        end -= 1;
+    }
+    return end;
+}
+
+static size_t cinder_path_component_start(const char *path, size_t end)
+{
+    size_t start = end;
+    while (start > 0 && path[start - 1] != '/') {
+        start -= 1;
+    }
+    return start;
+}
+
+static size_t cinder_path_suffix_start(
+    const char *path,
+    size_t component_start,
+    size_t end)
+{
+    size_t search_start = component_start;
+    while (search_start < end && path[search_start] == '.') {
+        search_start += 1;
+    }
+    for (size_t index = end; index > search_start; --index) {
+        if (path[index - 1] == '.') {
+            return index - 1;
+        }
+    }
+    return end;
+}
+
+CinderString cinder_path_parent(const char *path)
+{
+    const size_t length = cinder_path_validated_length(path);
+    const size_t end = cinder_path_trimmed_end(path, length);
+    if (end == 0) {
+        return cinder_string_from_cstr(".");
+    }
+    if (end == 1 && path[0] == '/') {
+        return cinder_string_from_cstr("/");
+    }
+
+    const size_t component_start = cinder_path_component_start(path, end);
+    if (component_start == 0) {
+        return cinder_string_from_cstr(".");
+    }
+
+    size_t parent_end = component_start - 1;
+    while (parent_end > 1 && path[parent_end - 1] == '/') {
+        parent_end -= 1;
+    }
+    if (parent_end == 0) {
+        return cinder_string_from_cstr("/");
+    }
+    return cinder_string_from_bytes(path, parent_end);
+}
+
+CinderString cinder_path_name(const char *path)
+{
+    const size_t length = cinder_path_validated_length(path);
+    const size_t end = cinder_path_trimmed_end(path, length);
+    const size_t start = cinder_path_component_start(path, end);
+    return cinder_string_from_bytes(path + start, end - start);
+}
+
+CinderString cinder_path_stem(const char *path)
+{
+    const size_t length = cinder_path_validated_length(path);
+    const size_t end = cinder_path_trimmed_end(path, length);
+    const size_t start = cinder_path_component_start(path, end);
+    const size_t stem_end = cinder_path_suffix_start(path, start, end);
+    return cinder_string_from_bytes(path + start, stem_end - start);
+}
+
+CinderString cinder_path_join(const char *left, const char *right)
+{
+    const size_t left_length = cinder_path_validated_length(left);
+    const size_t right_length = cinder_path_validated_length(right);
+    if (right_length > 0 && right[0] == '/') {
+        return cinder_string_from_bytes(right, right_length);
+    }
+    if (left_length == 0 || (left_length == 1 && left[0] == '.')) {
+        return cinder_string_from_bytes(right, right_length);
+    }
+    if (right_length == 0) {
+        return cinder_string_from_bytes(left, left_length);
+    }
+
+    const bool needs_separator = left[left_length - 1] != '/';
+    const size_t separator_length = needs_separator ? 1 : 0;
+    if (left_length > SIZE_MAX - separator_length ||
+        left_length + separator_length > SIZE_MAX - right_length) {
+        cinder_panic("joined path length overflow");
+    }
+    CinderString result =
+        cinder_allocate_string(left_length + separator_length + right_length);
+    (void)memcpy(result.data, left, left_length);
+    size_t offset = left_length;
+    if (needs_separator) {
+        result.data[offset] = '/';
+        offset += 1;
+    }
+    (void)memcpy(result.data + offset, right, right_length);
+    return result;
+}
+
+CinderString cinder_path_with_suffix(const char *path, const char *suffix)
+{
+    const size_t length = cinder_path_validated_length(path);
+    const size_t suffix_length = cinder_path_validated_length(suffix);
+    if (suffix_length > 0 && suffix[0] != '.') {
+        cinder_panic("path suffix must be empty or begin with '.'");
+    }
+    for (size_t index = 0; index < suffix_length; ++index) {
+        if (suffix[index] == '/') {
+            cinder_panic("path suffix cannot contain '/'");
+        }
+    }
+
+    const size_t end = cinder_path_trimmed_end(path, length);
+    const size_t start = cinder_path_component_start(path, end);
+    if (start == end) {
+        cinder_panic("cannot set suffix on a path without a name");
+    }
+
+    const size_t prefix_end = cinder_path_suffix_start(path, start, end);
+    if (prefix_end > SIZE_MAX - suffix_length) {
+        cinder_panic("suffixed path length overflow");
+    }
+    CinderString result = cinder_allocate_string(prefix_end + suffix_length);
+    (void)memcpy(result.data, path, prefix_end);
+    (void)memcpy(result.data + prefix_end, suffix, suffix_length);
+    return result;
+}
+
+#if defined(_WIN32)
+static CINDER_NORETURN void cinder_path_unsupported(void)
+{
+    cinder_panic("std.path filesystem operations are not implemented on Windows");
+}
+
+bool cinder_path_exists(const char *path)
+{
+    (void)path;
+    cinder_path_unsupported();
+}
+
+bool cinder_path_is_file(const char *path)
+{
+    (void)path;
+    cinder_path_unsupported();
+}
+
+bool cinder_path_is_dir(const char *path)
+{
+    (void)path;
+    cinder_path_unsupported();
+}
+
+void cinder_path_create_dir(const char *path)
+{
+    (void)path;
+    cinder_path_unsupported();
+}
+
+void cinder_path_create_dir_all(const char *path)
+{
+    (void)path;
+    cinder_path_unsupported();
+}
+
+void cinder_path_remove_file(const char *path)
+{
+    (void)path;
+    cinder_path_unsupported();
+}
+
+void cinder_path_rename(const char *source, const char *destination)
+{
+    (void)source;
+    (void)destination;
+    cinder_path_unsupported();
+}
+#else
+static CINDER_NORETURN void cinder_path_panic_errno(
+    const char *operation,
+    const char *path
+)
+{
+    const int error = errno;
+    char message[512];
+    (void)snprintf(
+        message,
+        sizeof(message),
+        "%s '%s': %s",
+        operation,
+        path,
+        strerror(error)
+    );
+    cinder_panic(message);
+}
+
+static void cinder_path_create_dir_component(const char *path)
+{
+    if (mkdir(path, 0777) == 0) {
+        return;
+    }
+    if (errno == EEXIST) {
+        struct stat status;
+        if (stat(path, &status) == 0 && S_ISDIR(status.st_mode)) {
+            return;
+        }
+    }
+    cinder_path_panic_errno("failed to create directory", path);
+}
+
+bool cinder_path_exists(const char *path)
+{
+    (void)cinder_path_validated_length(path);
+    struct stat status;
+    return stat(path, &status) == 0;
+}
+
+bool cinder_path_is_file(const char *path)
+{
+    (void)cinder_path_validated_length(path);
+    struct stat status;
+    return stat(path, &status) == 0 && S_ISREG(status.st_mode);
+}
+
+bool cinder_path_is_dir(const char *path)
+{
+    (void)cinder_path_validated_length(path);
+    struct stat status;
+    return stat(path, &status) == 0 && S_ISDIR(status.st_mode);
+}
+
+void cinder_path_create_dir(const char *path)
+{
+    (void)cinder_path_validated_length(path);
+    if (mkdir(path, 0777) != 0) {
+        cinder_path_panic_errno("failed to create directory", path);
+    }
+}
+
+void cinder_path_create_dir_all(const char *path)
+{
+    size_t length = cinder_path_validated_length(path);
+    if (length == 0) {
+        return;
+    }
+
+    char *copy = cinder_alloc(length + 1, sizeof(*copy));
+    (void)memcpy(copy, path, length + 1);
+    while (length > 1 && copy[length - 1] == '/') {
+        copy[length - 1] = '\0';
+        length -= 1;
+    }
+    if (length == 1 && copy[0] == '/') {
+        free(copy);
+        return;
+    }
+
+    for (size_t index = 1; index < length; ++index) {
+        if (copy[index] != '/') {
+            continue;
+        }
+        copy[index] = '\0';
+        cinder_path_create_dir_component(copy);
+        copy[index] = '/';
+    }
+    cinder_path_create_dir_component(copy);
+    free(copy);
+}
+
+void cinder_path_remove_file(const char *path)
+{
+    (void)cinder_path_validated_length(path);
+    if (unlink(path) != 0) {
+        cinder_path_panic_errno("failed to remove file", path);
+    }
+}
+
+void cinder_path_rename(const char *source, const char *destination)
+{
+    (void)cinder_path_validated_length(source);
+    (void)cinder_path_validated_length(destination);
+    if (rename(source, destination) != 0) {
+        cinder_path_panic_errno("failed to rename path", source);
+    }
 }
 #endif
 

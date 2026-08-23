@@ -1,0 +1,6 @@
+import std.path as p
+
+
+def main() -> i32:
+    p.Path.missing("file.txt")
+    return 0

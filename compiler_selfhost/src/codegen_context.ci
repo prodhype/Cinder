@@ -18,6 +18,7 @@ struct ModuleNameTypeBinding:
     name: String
     type_id: NodeId
     moved: bool
+    borrowed_owner: String
 
 
 struct ModuleSemanticNameTypeBinding:
@@ -54,12 +55,23 @@ struct CodegenCleanupBoundary:
     with_resource_start: usize
     iterator_guard_start: usize
     lock_cleanup_start: usize
+    value_cleanup_start: usize
     loop_body: bool
 
 
 struct CodegenLockCleanup:
     name: String
     collection: bool
+
+
+struct CodegenValueCleanup:
+    name: String
+    semantic_type: types.TypeId
+
+
+struct ModulePathBorrowBinding:
+    node: NodeId
+    temporary_index: i32
 
 
 struct ModuleCodegenContext:
@@ -85,6 +97,7 @@ struct ModuleCodegenContext:
     semantic_string_names: List[String]
     iterator_guard_names: List[String]
     lock_cleanups: List[CodegenLockCleanup]
+    value_cleanups: List[CodegenValueCleanup]
     cleanup_boundaries: List[CodegenCleanupBoundary]
     field_types: List[ModuleFieldTypeBinding]
     current_owner: String
@@ -99,6 +112,7 @@ struct ModuleCodegenContext:
     current_return_type: NodeId
     expected_type: NodeId
     temporary_index: i32
+    path_borrow_bindings: List[ModulePathBorrowBinding]
 
 struct ModuleExpressionState:
     arena: &const SyntaxArena
@@ -133,12 +147,14 @@ def make_module_codegen_context(
     semantic_string_names: List[String] = []
     iterator_guard_names: List[String] = []
     lock_cleanups: List[CodegenLockCleanup] = []
+    value_cleanups: List[CodegenValueCleanup] = []
     cleanup_boundaries: List[CodegenCleanupBoundary] = []
     field_types: List[ModuleFieldTypeBinding] = []
     deferred_expressions: List[NodeId] = []
     with_resources: List[String] = []
     global_names: List[String] = []
     extern_names: List[String] = []
+    path_borrow_bindings: List[ModulePathBorrowBinding] = []
     context = ModuleCodegenContext(
         root=root,
         module_name=module_name[0:len(module_name)],
@@ -162,6 +178,7 @@ def make_module_codegen_context(
         semantic_string_names=semantic_string_names,
         iterator_guard_names=iterator_guard_names,
         lock_cleanups=lock_cleanups,
+        value_cleanups=value_cleanups,
         cleanup_boundaries=cleanup_boundaries,
         field_types=field_types,
         current_owner="",
@@ -176,11 +193,22 @@ def make_module_codegen_context(
         current_return_type=syntax.missing_node(),
         expected_type=syntax.missing_node(),
         temporary_index=0,
+        path_borrow_bindings=path_borrow_bindings,
     )
     collect_module_field_types(arena, root, source, context)
     collect_module_global_names(arena, root, source, context)
     collect_module_extern_names(arena, root, source, context)
     return context
+
+
+def context_path_borrow_temporary(context: &const ModuleCodegenContext, id: NodeId) -> i32:
+    index = len(context.path_borrow_bindings)
+    while index > 0:
+        index -= 1
+        binding: &const ModulePathBorrowBinding = &context.path_borrow_bindings[index]
+        if binding.node.index == id.index:
+            return binding.temporary_index
+    return -1
 
 
 def context_nearest_loop_scope(context: &const ModuleCodegenContext) -> i32:
@@ -212,6 +240,10 @@ def context_scope_lock_cleanup_start(context: &const ModuleCodegenContext, index
     return context.cleanup_boundaries[index].lock_cleanup_start
 
 
+def context_scope_value_cleanup_start(context: &const ModuleCodegenContext, index: usize) -> usize:
+    return context.cleanup_boundaries[index].value_cleanup_start
+
+
 def context_lock_kind(context: &ModuleCodegenContext, syntax_id: NodeId) -> i32:
     semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
     for node in semantic_nodes:
@@ -234,6 +266,20 @@ def context_lock_key(context: &ModuleCodegenContext, syntax_id: NodeId) -> i32:
 def context_class_for_name(context: &ModuleCodegenContext, name: &const String) -> i32:
     module_name = classes.module_for_name(context.imports, &context.module_name, name)
     return classes.find_class(context.class_model, &module_name, name)
+
+
+def context_class_for_semantic_type(context: &ModuleCodegenContext, type_id: types.TypeId) -> i32:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(context.type_table.types)):
+        record = context.type_table.types[current.index]
+        if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.POINTER:
+            current = record.inner
+            continue
+        if record.kind != types.TypeKind.CLASS:
+            return -1
+        name = context.type_source[record.name_start:record.name_start + record.name_length]
+        return context_class_for_name(context, &name)
+    return -1
 
 
 def context_class_for_type(
@@ -346,6 +392,9 @@ def context_expression_class(
         name = source[node.value_start:node.value_start + node.value_length]
         if name == "self" and context.current_class >= 0:
             return context.current_class
+    semantic_class = context_class_for_semantic_type(context, context_semantic_type(context, id))
+    if semantic_class >= 0:
+        return semantic_class
     expression_type = context_expression_type(arena, context, id, source)
     result = context_class_for_type(context.type_arena, context, expression_type, context.type_source)
     if result >= 0:
@@ -534,7 +583,7 @@ def register_context_name_type(arena: &const SyntaxArena, context: &ModuleCodege
     if length == 0:
         return
     name = source[start:start + length]
-    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false))
+    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false, borrowed_owner=""))
     if type_id.index >= 0 and context_type_is_pointer_like(arena, type_id):
         context.pointer_names.append(name[0:len(name)])
 
@@ -544,10 +593,24 @@ def register_context_borrowed_name_type(arena: &const SyntaxArena, context: &Mod
         context.local_types[len(context.local_types) - 1].moved = true
 
 
+def register_context_borrowed_name_type_with_owner(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    source: &const String,
+    start: usize,
+    length: usize,
+    type_id: NodeId,
+    owner: &const String,
+) -> void:
+    register_context_borrowed_name_type(arena, context, source, start, length, type_id)
+    if length > 0 and len(context.local_types) > 0:
+        context.local_types[len(context.local_types) - 1].borrowed_owner = owner[0:len(owner)]
+
+
 def register_context_generated_name_type(context: &ModuleCodegenContext, name: String, type_id: NodeId) -> void:
     if len(name) == 0:
         return
-    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false))
+    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false, borrowed_owner=""))
 
 
 def register_context_pointer_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
@@ -716,6 +779,21 @@ def context_expression_is_moved(context: &ModuleCodegenContext, id: NodeId, aren
         if context.local_types[index].name == name[0:len(name)]:
             return context.local_types[index].moved
     return false
+
+
+def context_expression_borrowed_owner(context: &ModuleCodegenContext, id: NodeId, arena: &const SyntaxArena, source: &const String) -> String:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_NAME:
+        return ""
+    node = arena.nodes[id.index]
+    name = source[node.value_start:node.value_start + node.value_length]
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        binding: &const ModuleNameTypeBinding = &context.local_types[index]
+        if binding.name == name[0:len(name)]:
+            return binding.borrowed_owner[0:len(binding.borrowed_owner)]
+    return ""
+
 
 def mark_context_expression_live(context: &ModuleCodegenContext, id: NodeId, arena: &const SyntaxArena, source: &const String) -> void:
     if id.index < 0:
@@ -1100,6 +1178,19 @@ def context_semantic_type(context: &ModuleCodegenContext, id: NodeId) -> types.T
     return types.missing_type()
 
 
+def context_expression_resolves_to_import(context: &ModuleCodegenContext, id: NodeId) -> bool:
+    semantic_nodes: &const List[backend_ir.IRNode] = context.semantic_nodes
+    for node in semantic_nodes:
+        if node.syntax.index == id.index:
+            if not node.resolves_to_import or id.index < 0:
+                return false
+            type_arena: &const SyntaxArena = context.type_arena
+            expression = type_arena.nodes[id.index]
+            name = context.type_source[expression.value_start:expression.value_start + expression.value_length]
+            return not context_name_is_global(context, &name)
+    return false
+
+
 def context_semantic_type_is_kind(context: &ModuleCodegenContext, type_id: types.TypeId, kind: types.TypeKind) -> bool:
     current = type_id
     while current.index >= 0 and current.index < cast[i32](len(context.type_table.types)):
@@ -1358,7 +1449,7 @@ def context_expression_type(arena: &const SyntaxArena, context: &ModuleCodegenCo
                         receiver_type = context_expression_type(arena, context, receiver, source)
                         if context_type_is_runtime_generic(context.type_arena, receiver_type, context.type_source, "List"):
                             return context_generic_argument(context.type_arena, receiver_type, 0)
-            if context_type_is_string(arena, id, source):
+            if context_type_is_string(arena, id, source) or context_semantic_type_is_kind(context, semantic_type, types.TypeKind.STRING):
                 return id
     if node.kind == SyntaxKind.EXPR_UNARY:
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
@@ -1671,7 +1762,7 @@ def emit_context_drop(
         builder.append(name[0:len(name)])
         builder.append(");\n")
         return
-    if node.kind == SyntaxKind.EXPR_CALL and context_type_is_string(arena, type_id, source):
+    if node.kind == SyntaxKind.EXPR_CALL and (context_type_is_string(arena, type_id, source) or context_semantic_type_is_kind(context, context_semantic_type(context, type_id), types.TypeKind.STRING)):
         builder.append("    cinder_string_drop(&")
         builder.append(name[0:len(name)])
         builder.append(");\n")
@@ -1835,6 +1926,9 @@ def expression_may_be_string(arena: &const SyntaxArena, context: &ModuleCodegenC
                 return true
     if node.kind == SyntaxKind.EXPR_LITERAL and node.flags == cast[i32](token.TokenKind.STRING):
         return true
+    semantic_type = context_semantic_type(context, id)
+    if context_semantic_type_is_kind(context, semantic_type, types.TypeKind.STRING):
+        return true
     if node.kind == SyntaxKind.EXPR_NAME:
         semantic_type = context_semantic_name_type(context, source, node.value_start, node.value_length)
         if semantic_type.index >= 0:
@@ -1915,11 +2009,28 @@ def call_is_name(arena: &const SyntaxArena, callee: NodeId, source: &const Strin
             return codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, name[0:len(name)])
     return false
 
-def context_expression_is_addressable_for_borrow(arena: &const SyntaxArena, id: NodeId) -> bool:
+def context_expression_is_addressable_for_borrow(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> bool:
     if id.index < 0:
         return false
     node = arena.nodes[id.index]
-    return node.kind == SyntaxKind.EXPR_NAME or node.kind == SyntaxKind.EXPR_ATTRIBUTE or node.kind == SyntaxKind.EXPR_INDEX
+    if node.kind == SyntaxKind.EXPR_NAME:
+        return true
+    if node.kind == SyntaxKind.EXPR_UNARY and node.flags == cast[i32](token.TokenKind.STAR):
+        return true
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        return context_expression_is_addressable_for_borrow(arena, context, codegen_names.first_child(arena, id), source)
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver = codegen_names.first_child(arena, id)
+        if context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+            return false
+        return context_expression_is_addressable_for_borrow(arena, context, receiver, source)
+    return false
+
 
 def should_borrow_for_callee(
     arena: &const SyntaxArena,
@@ -1935,17 +2046,17 @@ def should_borrow_for_callee(
     if arg_node.kind == SyntaxKind.EXPR_UNARY and arg_node.flags == cast[i32](token.TokenKind.AMPERSAND):
         return false
     expected_type = context_callee_parameter_type(arena, context, callee, source, argument_index)
-    if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE:
-        return true
     if expected_type.index >= 0:
-        return false
+        return codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE
+    if context_path_borrow_temporary(context, arg) >= 0 and context_callee_parameter_is_reference(arena, context, callee, source, argument_index, expected_type):
+        return true
     if arg_node.kind == SyntaxKind.EXPR_NAME and (codegen_names.range_text_equals(source, arg_node.value_start, arg_node.value_length, "decorators") or codegen_names.range_text_equals(source, arg_node.value_start, arg_node.value_length, "member_decorators")):
         return true
     arg_type = context_expression_type(arena, context, arg, source)
     if context_type_is_list(context.type_arena, arg_type, context.type_source):
         if call_is_name(arena, callee, source, "parse_options") or call_is_name(arena, callee, source, "emit_ok") or call_is_name(arena, callee, source, "resolve_paths"):
             return false
-        if not context_expression_is_addressable_for_borrow(arena, arg):
+        if not context_expression_is_addressable_for_borrow(arena, context, arg, source):
             return false
         return true
     if arg_node.kind != SyntaxKind.EXPR_NAME:
@@ -1985,6 +2096,53 @@ def context_callee_parameter_type(
         &name,
         argument_index,
     )
+
+
+def context_callable_parameter_type(
+    context: &ModuleCodegenContext,
+    callable_type: types.TypeId,
+    argument_index: usize,
+) -> types.TypeId:
+    table: &const types.TypeTable = context.type_table
+    if callable_type.index < 0 or callable_type.index >= cast[i32](len(table.types)):
+        return types.missing_type()
+    record = table.types[callable_type.index]
+    if record.kind != types.TypeKind.FUNCTION and record.kind != types.TypeKind.CLOSURE:
+        return types.missing_type()
+    if record.flags < 0 or argument_index >= cast[usize](record.flags):
+        return types.missing_type()
+    parameter_index = record.extra + cast[i32](argument_index)
+    if parameter_index < 0 or parameter_index >= cast[i32](len(table.type_args)):
+        return types.missing_type()
+    return table.type_args[cast[usize](parameter_index)]
+
+
+def context_callee_parameter_is_reference(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    callee: NodeId,
+    source: &const String,
+    argument_index: usize,
+    expected_type: NodeId,
+) -> bool:
+    if expected_type.index >= 0:
+        return codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE
+    semantic_parameter_type = context_callable_parameter_type(
+        context,
+        context_semantic_type(context, callee),
+        argument_index,
+    )
+    if semantic_parameter_type.index >= 0:
+        return codegen_type_names.semantic_type_is_kind(context.type_table, semantic_parameter_type, types.TypeKind.REFERENCE)
+    model: &const classes.ProjectClassModel = context.class_model
+    function_index = context_callee_function(arena, context, callee, source)
+    if function_index < 0:
+        return false
+    function: &const classes.ClassFunctionInfo = &model.functions[cast[usize](function_index)]
+    if argument_index >= cast[usize](function.parameter_count):
+        return false
+    parameter: &const classes.ClassParameterInfo = &model.parameters[cast[usize](function.first_parameter) + argument_index]
+    return parameter.type_info.kind == classes.ClassValueKind.REFERENCE
 
 
 def context_class_method_parameter_type(

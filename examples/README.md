@@ -26,6 +26,8 @@
 
 `atomics.ci` demonstrates `std.atomic.Atomic`: integer and bool cells, load/store/exchange/fetch ops, compare-exchange results, sharing via `&Atomic[T]`, and generic inference from `*Atomic[T]`.
 
+`paths.ci` demonstrates the native `std.path.Path` namespace: lexical path transforms, file and directory predicates, recursive and single-directory creation, rename, and file removal without invoking shell utilities.
+
 `unsafe.ci` demonstrates explicit `unsafe` blocks for raw-address casts: store an array element address as `usize`, cast it back to `*u8`, and read a byte while keeping the dangerous boundary visible.
 
 `function_pointers.ci` demonstrates transparent function pointer types: annotate with `def(T…) -> R`, pass a named function by name, store it, and call through the value.
@@ -75,6 +77,8 @@ Its temporary text file also lives under `.cinder/example-output/`.
 `anti_examples.ci` pairs commented-out code that Cinder rejects with explanations and live corrected versions. The file itself remains checkable and runnable.
 
 `module_project/` is a complete manifest-driven multi-file project. It demonstrates dotted local modules, aliases, transitive imports, generated headers and translation units, cross-module nominal types, Result propagation across module boundaries, qualified `atom.Atomic[T]` syntax, re-exported `Atomic` templates in function and closure signatures, exported Atomic globals, chained operations on imported functions returning `*Atomic[T]`, and specialization-safe generic Atomic loads for both `u32` and `u64`.
+
+`path_shadow_project/` verifies that a local `src/std/path.ci` module takes precedence over the compiler-provided `std.path` namespace and emits ordinary project symbols.
 
 `class_project/` is a complete multi-file class ABI example. It defines a reflected abstract interface in one module, implements it in another, and performs dynamic dispatch from the entry module through separately generated headers and C translation units.
 

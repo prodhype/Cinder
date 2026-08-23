@@ -6,6 +6,7 @@
 #     cinder check examples/anti_examples.ci
 
 from std.atomic import Atomic
+from std.path import Path
 
 
 # -----------------------------------------------------------------------------
@@ -131,6 +132,28 @@ def read_byte(address: usize) -> u8:
     unsafe:
         pointer = cast[*u8](address)
         return pointer[0]
+
+
+# WRONG: direct String indexing is ambiguous between bytes and Unicode
+# characters, including on an owned String returned by Path.
+# first_byte = Path.name("a/b")[0]
+
+# CORRECT: request a byte explicitly. The temporary Path result is dropped
+# after the method call.
+def path_name_first_byte() -> char:
+    return Path.name("a/b").byte_at(0)
+
+
+# WRONG: an owned Path result is a temporary, so neither it nor a projected
+# field can be addressed.
+# path_pointer = &Path.name("a/b")
+# path_length_pointer = &Path.name("a/b").length
+
+# CORRECT: bind the owner to a local before taking its address.
+def addressable_path_name() -> bool:
+    path_name = Path.name("a/b")
+    path_pointer: *String = &path_name
+    return Path.name(*path_pointer) == "b"
 
 
 # WRONG: `cast` only reinterprets numbers and pointers. It does not parse text,

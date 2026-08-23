@@ -14,9 +14,21 @@ or incompatible hosts before executing either binary.
 
 The Python stage0 compiler, its packaging, implementation-specific pytest
 suite, and incremental parity projects have been removed. Native Cinder tests,
-direct generated-C compilation, runtime-independence checks, and the 41-target
+direct generated-C compilation, runtime-independence checks, and the 43-target
 example smoke suite now run through `./test.sh`. The C runtime has moved to the
 top-level `runtime/` directory.
+
+### Native paths and filesystem operations
+
+`from std.path import Path` adds checked path predicates, lexical transforms,
+single and recursive directory creation, file removal, and rename. Path
+arguments are borrowed Strings, lexical results are owned Strings, predicates
+return `bool`, and mutation failures panic.
+
+The POSIX runtime implements filesystem operations directly with native APIs;
+it does not launch `mkdir`, `rm`, or other process utilities. Generated Windows
+programs retain a compilable API whose filesystem operations currently panic as
+unsupported.
 
 ### Owned UTF-8 text
 

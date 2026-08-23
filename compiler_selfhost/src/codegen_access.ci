@@ -154,11 +154,9 @@ def emit_access_call(
     model: &const classes.ProjectClassModel = context.class_model
     path = codegen_names.first_call_argument(arena, id)
     mode = codegen_names.second_call_argument(arena, id)
-    builder.append("access(cinder_string_cstr(")
-    if not codegen_context.context_expression_is_pointer_like(arena, context, path, source):
-        builder.append("&")
-    emit_nested(state, path)
-    builder.append("), ")
+    builder.append("access(")
+    emit_c_string_argument(arena, path, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(", ")
     emit_nested(state, mode)
     builder.append(")")
 
@@ -185,11 +183,9 @@ def emit_open_call(
             emit_c_string_argument(arena, mode, source, builder, prefix, project_name, imports, context, state, emit_nested)
             builder.append(")")
             return
-    builder.append("fopen(cinder_string_cstr(")
-    if not codegen_context.context_expression_is_pointer_like(arena, context, path, source):
-        builder.append("&")
-    emit_nested(state, path)
-    builder.append("), ")
+    builder.append("fopen(")
+    emit_c_string_argument(arena, path, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(", ")
     emit_c_string_argument(arena, mode, source, builder, prefix, project_name, imports, context, state, emit_nested)
     builder.append(")")
 
@@ -216,6 +212,9 @@ def emit_attribute_call(
     member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
     if emit_super_call(arena, call_id, receiver, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested):
         return
+    if expression_is_path_namespace(arena, receiver, source, imports, context):
+        emit_path_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
     if receiver.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         if receiver_node.kind == SyntaxKind.EXPR_NAME:
@@ -225,12 +224,12 @@ def emit_attribute_call(
                 if codegen_names.is_uppercase_start(source, member_node.value_start):
                     emit_imported_nominal_constructor(arena, call_id, source, builder, prefix, project_name, imports, &imported.module_name, &member_name, context, state, emit_nested)
                     return
-                if imported.module_name == "process" and member_name == "run":
+                if imported.virtual_builtin and imported.module_name == "process" and member_name == "run":
                     builder.append("({ __auto_type cinder_process_args = &(")
                     emit_nested(state, codegen_names.first_call_argument(arena, call_id))
                     builder.append("); cinder_selfhost_process_run_list(cinder_process_args->data, cinder_process_args->length); })")
                     return
-                if imported.module_name == "cinder" and (member_name == "write_stdout" or member_name == "write_stderr"):
+                if imported.virtual_builtin and imported.module_name == "cinder" and (member_name == "write_stdout" or member_name == "write_stderr"):
                     if member_name == "write_stdout":
                         builder.append("cinder_write_stdout")
                     else:
@@ -239,7 +238,7 @@ def emit_attribute_call(
                     emit_nested(state, codegen_names.first_call_argument(arena, call_id))
                     builder.append(")")
                     return
-                if project.is_builtin_module(&imported.module_name):
+                if imported.virtual_builtin:
                     codegen_names.emit_builtin_function_name(builder, &imported.module_name, &member_name)
                     builder.append("(")
                     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
@@ -535,6 +534,341 @@ def emit_attribute_call(
     emit_receiver_argument(arena, receiver, source, builder, prefix, project_name, imports, context, state, emit_nested)
     emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, true, context, state, emit_nested)
     builder.append(")")
+
+
+def emit_path_namespace_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    member_name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    expected: i32 = 1
+    if member_name == "join" or member_name == "with_suffix" or member_name == "rename":
+        expected = 2
+    first = path_call_argument(arena, call_id, source, member_name, 0)
+    second = syntax.missing_node()
+    if expected == 2:
+        second = path_call_argument(arena, call_id, source, member_name, 1)
+    materialize_first = path_argument_needs_materialization(arena, context, first, source)
+    materialize_second = expected == 2 and path_argument_needs_materialization(arena, context, second, source)
+    if not materialize_first and not materialize_second:
+        emit_path_runtime_call(arena, member_name, first, second, false, false, -1, -1, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+
+    builder.append("({ ")
+    first_temporary: i32 = -1
+    second_temporary: i32 = -1
+    if materialize_first:
+        first_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        append_path_temporary_name(builder, "argument", first_temporary)
+        builder.append(" = ")
+        emit_nested(state, first)
+        builder.append("; ")
+    if materialize_second:
+        second_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        append_path_temporary_name(builder, "argument", second_temporary)
+        builder.append(" = ")
+        emit_nested(state, second)
+        builder.append("; ")
+
+    returns_string = path_member_returns_string(member_name)
+    returns_bool = member_name == "exists" or member_name == "is_file" or member_name == "is_dir"
+    result_temporary: i32 = -1
+    if returns_string or returns_bool:
+        result_temporary = context.temporary_index
+        context.temporary_index += 1
+        if returns_string:
+            builder.append("CinderString ")
+        else:
+            builder.append("bool ")
+        append_path_temporary_name(builder, "result", result_temporary)
+        builder.append(" = ")
+    emit_path_runtime_call(arena, member_name, first, second, materialize_first, materialize_second, first_temporary, second_temporary, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append("; ")
+    if materialize_second:
+        builder.append("cinder_string_drop(&")
+        append_path_temporary_name(builder, "argument", second_temporary)
+        builder.append("); ")
+    if materialize_first:
+        builder.append("cinder_string_drop(&")
+        append_path_temporary_name(builder, "argument", first_temporary)
+        builder.append("); ")
+    if returns_string or returns_bool:
+        append_path_temporary_name(builder, "result", result_temporary)
+        builder.append("; ")
+    builder.append("})")
+
+
+def emit_path_runtime_call(
+    arena: &const SyntaxArena,
+    member_name: &const String,
+    first: NodeId,
+    second: NodeId,
+    materialized_first: bool,
+    materialized_second: bool,
+    first_temporary: i32,
+    second_temporary: i32,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    builder.append("cinder_path_")
+    builder.append(member_name[0:len(member_name)])
+    builder.append("(")
+    if materialized_first:
+        builder.append("cinder_string_cstr(&")
+        append_path_temporary_name(builder, "argument", first_temporary)
+        builder.append(")")
+    else:
+        first_node = arena.nodes[first.index]
+        if first_node.kind == SyntaxKind.EXPR_LITERAL and first_node.flags == cast[i32](token.TokenKind.STRING):
+            emit_validated_path_literal(first_node, source, builder)
+        else:
+            emit_c_string_argument(arena, first, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    if second.index >= 0:
+        builder.append(", ")
+        if materialized_second:
+            builder.append("cinder_string_cstr(&")
+            append_path_temporary_name(builder, "argument", second_temporary)
+            builder.append(")")
+        else:
+            second_node = arena.nodes[second.index]
+            if second_node.kind == SyntaxKind.EXPR_LITERAL and second_node.flags == cast[i32](token.TokenKind.STRING):
+                emit_validated_path_literal(second_node, source, builder)
+            else:
+                emit_c_string_argument(arena, second, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    builder.append(")")
+
+
+def emit_validated_path_literal(
+    node: &const syntax.SyntaxNode,
+    source: &const String,
+    builder: &StringBuilder,
+) -> void:
+    builder.append("cinder_string_cstr(&((CinderString){ .data = (char *)")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(", .length = sizeof(")
+    codegen_names.append_source(builder, source, node.value_start, node.value_length)
+    builder.append(") - 1, .capacity = 0 }))")
+
+
+def path_argument_needs_materialization(
+    arena: &const SyntaxArena,
+    context: &codegen_model.ModuleCodegenContext,
+    argument: NodeId,
+    source: &const String,
+) -> bool:
+    if argument.index < 0 or codegen_context.context_expression_is_pointer_like(arena, context, argument, source):
+        return false
+    node = arena.nodes[argument.index]
+    if node.kind == SyntaxKind.EXPR_LITERAL:
+        return false
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver = codegen_names.first_child(arena, argument)
+        if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+            return false
+    return not codegen_context.context_expression_is_addressable_for_borrow(arena, context, argument, source)
+
+
+def expression_is_borrowed_map_projection(
+    arena: &const SyntaxArena,
+    context: &codegen_model.ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        return expression_is_borrowed_map_projection(
+            arena,
+            context,
+            codegen_names.first_child(arena, id),
+            source,
+        )
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver = codegen_names.first_child(arena, id)
+        if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+            return true
+        return expression_is_borrowed_map_projection(arena, context, receiver, source)
+    if node.kind != SyntaxKind.EXPR_CAST:
+        return false
+    operand = codegen_names.last_child(arena, id)
+    if operand.index < 0:
+        return false
+    cast_type = codegen_context.context_semantic_type(context, id)
+    operand_type = codegen_context.context_semantic_type(context, operand)
+    if not context.type_table.same(cast_type, operand_type):
+        return false
+    return expression_is_borrowed_map_projection(arena, context, operand, source)
+
+
+def path_member_returns_string(member_name: &const String) -> bool:
+    return member_name == "parent" or member_name == "name" or member_name == "stem" or member_name == "join" or member_name == "with_suffix"
+
+
+def expression_is_owned_path_string(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_CAST:
+        cast_type = codegen_type_names.find_child_type(arena, id)
+        if not codegen_context.context_type_is_string(arena, cast_type, source):
+            return false
+        return expression_is_owned_path_string(
+            arena,
+            codegen_names.last_child(arena, id),
+            source,
+            imports,
+            context,
+        )
+    if node.kind != SyntaxKind.EXPR_CALL:
+        return false
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0 or arena.nodes[callee.index].kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    receiver = codegen_names.first_child(arena, callee)
+    member = codegen_names.second_child(arena, callee)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    if not expression_is_path_namespace(arena, receiver, source, imports, context):
+        return false
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    return path_member_returns_string(&member_name)
+
+
+def expression_is_path_namespace(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &const codegen_model.ModuleCodegenContext,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_NAME:
+        name = source[node.value_start:node.value_start + node.value_length]
+        imported = codegen_names.find_import_member(imports, &name)
+        if not imported.virtual_builtin or imported.module_name != "std.path" or imported.member != "Path":
+            return false
+        if codegen_context.context_expression_resolves_to_import(context, id):
+            return true
+        return (
+            not codegen_context.context_has_name(context, source, node.value_start, node.value_length)
+            and not codegen_context.context_name_is_global(context, &name)
+        )
+    if node.kind != SyntaxKind.EXPR_ATTRIBUTE:
+        return false
+    receiver = codegen_names.first_child(arena, id)
+    member = codegen_names.second_child(arena, id)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    member_node = arena.nodes[member.index]
+    if (
+        receiver_node.kind != SyntaxKind.EXPR_NAME
+        or member_node.kind != SyntaxKind.NAME
+        or not codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "Path")
+    ):
+        return false
+    name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    imported = codegen_names.find_import_alias(imports, &name)
+    if not imported.virtual_builtin or imported.module_name != "std.path":
+        return false
+    if codegen_context.context_expression_resolves_to_import(context, receiver):
+        return true
+    return (
+        not codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length)
+        and not codegen_context.context_name_is_global(context, &name)
+    )
+
+
+def append_path_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:
+    builder.append("cinder_path_")
+    builder.append(role)
+    builder.append("_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](index))
+
+
+def path_call_argument(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    member_name: &const String,
+    wanted: i32,
+) -> NodeId:
+    call = arena.nodes[call_id.index]
+    source_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        role = source_index
+        if argument.flags == 1:
+            role = path_codegen_named_argument_index(arena, argument_id, source, member_name)
+        if role == wanted:
+            return codegen_names.last_child(arena, argument_id)
+        source_index += 1
+    return syntax.missing_node()
+
+
+def path_codegen_named_argument_index(
+    arena: &const SyntaxArena,
+    argument_id: NodeId,
+    source: &const String,
+    member_name: &const String,
+) -> i32:
+    name = codegen_names.first_child(arena, argument_id)
+    if name.index < 0:
+        return -1
+    name_node = arena.nodes[name.index]
+    argument_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    if member_name == "join":
+        if argument_name == "left":
+            return 0
+        if argument_name == "right":
+            return 1
+        return -1
+    if member_name == "rename":
+        if argument_name == "source":
+            return 0
+        if argument_name == "destination":
+            return 1
+        return -1
+    if member_name == "with_suffix":
+        if argument_name == "path":
+            return 0
+        if argument_name == "suffix":
+            return 1
+        return -1
+    if argument_name == "path":
+        return 0
+    return -1
 
 
 def emit_dynamic_method_call(
@@ -945,20 +1279,50 @@ def emit_module_index(
         builder.append("]")
         return
     if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
-        builder.append("(*")
+        previous_expected = context.expected_type
+        key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
+        index_owned_path = expression_is_owned_path_string(arena, index, source, imports, context)
+        index_temporary: i32 = -1
+        result_temporary: i32 = -1
+        if index_owned_path:
+            index_temporary = context.temporary_index
+            context.temporary_index += 1
+            result_temporary = context.temporary_index
+            context.temporary_index += 1
+            builder.append("(*({ CinderString ")
+            append_path_temporary_name(builder, "index", index_temporary)
+            builder.append(" = ")
+            if key_type.index >= 0:
+                context.expected_type = key_type
+            emit_nested(state, index)
+            context.expected_type = previous_expected
+            builder.append("; __auto_type ")
+            append_path_temporary_name(builder, "index_result", result_temporary)
+            builder.append(" = ")
+        else:
+            builder.append("(*")
         codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
         builder.append("_at_ref(")
         if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
             builder.append("&")
         emit_nested(state, receiver)
         builder.append(", ")
-        previous_expected = context.expected_type
-        key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
-        if key_type.index >= 0:
-            context.expected_type = key_type
-        emit_nested(state, index)
+        if index_owned_path:
+            append_path_temporary_name(builder, "index", index_temporary)
+        else:
+            if key_type.index >= 0:
+                context.expected_type = key_type
+            emit_nested(state, index)
         context.expected_type = previous_expected
-        builder.append("))")
+        builder.append(")")
+        if index_owned_path:
+            builder.append("; cinder_string_drop(&")
+            append_path_temporary_name(builder, "index", index_temporary)
+            builder.append("); ")
+            append_path_temporary_name(builder, "index_result", result_temporary)
+            builder.append("; }))")
+        else:
+            builder.append(")")
         return
     if emit_known_list_index(arena, receiver, index, source, builder, prefix, project_name, imports, context, state, emit_nested):
         return
@@ -1215,11 +1579,30 @@ def emit_module_slice(
             builder.append("char")
         builder.append("))")
         return
+    materialize_receiver = expression_is_owned_path_string(arena, receiver, source, imports, context)
+    receiver_temporary: i32 = -1
+    result_temporary: i32 = -1
+    if materialize_receiver:
+        receiver_temporary = context.temporary_index
+        context.temporary_index += 1
+        result_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("({ CinderString ")
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+        builder.append(" = ")
+        emit_nested(state, receiver)
+        builder.append("; CinderString ")
+        append_path_temporary_name(builder, "slice_result", result_temporary)
+        builder.append(" = ")
     builder.append("cinder_string_slice(")
     receiver_is_pointer = codegen_context.context_expression_is_pointer_like(arena, context, receiver, source)
-    if not receiver_is_pointer:
+    if materialize_receiver:
         builder.append("&")
-    emit_nested(state, receiver)
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+    else:
+        if not receiver_is_pointer:
+            builder.append("&")
+        emit_nested(state, receiver)
     builder.append(", ")
     if start.index >= 0 and start.index != stop.index:
         emit_nested(state, start)
@@ -1228,6 +1611,9 @@ def emit_module_slice(
     builder.append(", ")
     if stop.index >= 0 and stop.index != receiver.index:
         emit_nested(state, stop)
+    elif materialize_receiver:
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+        builder.append(".length")
     else:
         emit_nested(state, receiver)
         if receiver_is_pointer:
@@ -1235,6 +1621,12 @@ def emit_module_slice(
         else:
             builder.append(".length")
     builder.append(")")
+    if materialize_receiver:
+        builder.append("; cinder_string_drop(&")
+        append_path_temporary_name(builder, "slice", receiver_temporary)
+        builder.append("); ")
+        append_path_temporary_name(builder, "slice_result", result_temporary)
+        builder.append("; })")
 
 def emit_nominal_member_expression(
     arena: &const SyntaxArena,
@@ -1355,8 +1747,18 @@ def emit_module_attribute(
         if receiver_node.kind == SyntaxKind.EXPR_NAME and member_node.kind == SyntaxKind.NAME:
             receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
             imported = codegen_names.find_import_alias(imports, &receiver_name)
-            if len(imported.module_name) > 0:
-                if imported.module_name == "math" and codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "pi"):
+            resolves_to_import = codegen_context.context_expression_resolves_to_import(context, receiver)
+            if (
+                len(imported.module_name) > 0
+                and (
+                    resolves_to_import
+                    or (
+                        not codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length)
+                        and not codegen_context.context_name_is_global(context, &receiver_name)
+                    )
+                )
+            ):
+                if imported.virtual_builtin and imported.module_name == "math" and codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "pi"):
                     builder.append("CINDER_PI")
                     return
                 builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
@@ -1404,6 +1806,31 @@ def emit_module_attribute(
     if receiver.index >= 0 and member.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         member_node = arena.nodes[member.index]
+        member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+        if (
+            (member_name == "length" or member_name == "capacity")
+            and expression_is_owned_path_string(arena, receiver, source, imports, context)
+        ):
+            receiver_temporary = context.temporary_index
+            context.temporary_index += 1
+            result_temporary = context.temporary_index
+            context.temporary_index += 1
+            builder.append("({ CinderString ")
+            append_path_temporary_name(builder, "attribute", receiver_temporary)
+            builder.append(" = ")
+            emit_nested(state, receiver)
+            builder.append("; __auto_type ")
+            append_path_temporary_name(builder, "attribute_result", result_temporary)
+            builder.append(" = ")
+            append_path_temporary_name(builder, "attribute", receiver_temporary)
+            builder.append(".")
+            builder.append(member_name[0:len(member_name)])
+            builder.append("; cinder_string_drop(&")
+            append_path_temporary_name(builder, "attribute", receiver_temporary)
+            builder.append("); ")
+            append_path_temporary_name(builder, "attribute_result", result_temporary)
+            builder.append("; })")
+            return
         if receiver_node.kind == SyntaxKind.EXPR_ATTRIBUTE and codegen_names.is_uppercase_start(source, member_node.value_start):
             emit_nested(state, receiver)
             builder.append("_")

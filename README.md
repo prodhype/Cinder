@@ -943,6 +943,28 @@ if result.exit_code != 0:
 The initial runtime implementation supports POSIX platforms. Windows builds
 compile the API but currently return an unsupported result.
 
+The compiler-provided `std.path.Path` namespace performs lexical path work and
+filesystem mutations without invoking shell utilities:
+
+```python
+from std.path import Path
+
+output_dir = Path.join("build", "generated")
+Path.create_dir_all(output_dir)
+temporary = Path.join(output_dir, "result.tmp")
+with open(temporary, "wb") as file:
+    file.write("ready\n")
+final = Path.with_suffix(temporary, ".txt")
+Path.rename(temporary, final)
+```
+
+`exists`, `is_file`, and `is_dir` return `bool`. `parent`, `name`, `stem`,
+`join`, and `with_suffix` borrow their String arguments and return owned
+Strings. `create_dir`, `create_dir_all`, `remove_file`, and `rename` return
+`void` and panic on failure. The initial contract uses POSIX `/` path rules and
+follows symlinks for predicates; Windows filesystem operations compile but
+panic as unsupported.
+
 `@export` keeps the C symbol name of a top-level function:
 
 ```python
@@ -1000,7 +1022,7 @@ ownership constraints that still apply.
 
 ## Development
 
-Run the native bootstrap, fixed-point proofs, Cinder test runner, and 41-target
+Run the native bootstrap, fixed-point proofs, Cinder test runner, and 43-target
 example smoke suite with:
 
 ```sh

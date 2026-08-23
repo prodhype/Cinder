@@ -1,5 +1,6 @@
 import cinder
 import process
+from std.path import Path as NativePath
 
 
 struct TestState:
@@ -48,6 +49,13 @@ def main(argc: i32, argv: **char) -> i32:
     test_build_and_run(&state)
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
+    test_path_codegen(&state)
+    test_path_match_capture_escape(&state)
+    test_path_embedded_nul(&state)
+    test_path_runtime(&state)
+    test_path_diagnostics(&state)
+    test_path_alias_shadowing(&state)
+    test_builtin_module_shadowing(&state)
     test_context_capsule(&state)
     test_impact_report(&state)
     test_inherited_field_resolution(&state)
@@ -203,12 +211,22 @@ def test_emit_project(state: &TestState) -> void:
     source_test: List[String] = ["test", "-f", generated_source]
     has_header = process.run(header_test)
     has_source = process.run(source_test)
+    imported_path_borrow = false
+    if has_source.exit_code == 0:
+        with open(generated_source, "rb") as file:
+            generated = file.read_text()
+            imported_path_borrow = (
+                contains(&generated, "CinderString cinder_path_borrow_")
+                and contains(&generated, "module_demo_api__one(&cinder_path_borrow_")
+                and contains(&generated, "cinder_string_drop(&cinder_path_borrow_")
+            )
     ok = (
         result.exit_code == 0
         and has_header.exit_code == 0
         and has_source.exit_code == 0
+        and imported_path_borrow
     )
-    expect(state, "emit-project writes module headers and sources", ok)
+    expect(state, "emit-project writes modules and borrows imported Path results", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
 
@@ -270,6 +288,324 @@ def test_atomic_codegen(state: &TestState) -> void:
     expect(state, "emit-c lowers atomic operations to C11 atomics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_path_codegen(state: &TestState) -> void:
+    source = state.root + "/examples/paths.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "cinder_path_exists")
+        and contains(&result.stdout, "cinder_path_is_file")
+        and contains(&result.stdout, "cinder_path_is_dir")
+        and contains(&result.stdout, "cinder_path_parent")
+        and contains(&result.stdout, "cinder_path_name")
+        and contains(&result.stdout, "cinder_path_stem")
+        and contains(&result.stdout, "cinder_path_join")
+        and contains(&result.stdout, "cinder_path_with_suffix")
+        and contains(&result.stdout, "cinder_path_create_dir")
+        and contains(&result.stdout, "cinder_path_create_dir_all")
+        and contains(&result.stdout, "cinder_path_remove_file")
+        and contains(&result.stdout, "cinder_path_rename")
+        and contains(&result.stdout, "cinder_path_name(cinder_string_cstr(&((CinderString)")
+        and contains(&result.stdout, "CinderString cinder_path_argument_")
+        and contains(&result.stdout, "CinderString cinder_path_result_")
+        and contains(&result.stdout, "bool cinder_path_result_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_argument_")
+        and contains(&result.stdout, "CinderString cinder_path_consumer_")
+        and contains(&result.stdout, "bool cinder_path_comparison_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_consumer_")
+        and contains(&result.stdout, "cinder_selfhost_print_string_value(cinder_path_consumer_")
+        and contains(&result.stdout, "cinder_selfhost_print_string_fragment(cinder_path_consumer_")
+        and contains(&result.stdout, "CinderString cinder_path_borrow_")
+        and contains(&result.stdout, "__auto_type cinder_path_borrow_result_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_borrow_")
+        and contains(&result.stdout, "cinder_selfhost_input_string(cinder_path_borrow_")
+        and contains(&result.stdout, "cinder_write_stderr(&cinder_path_borrow_")
+        and contains(&result.stdout, "callback(&cinder_path_borrow_")
+        and contains(&result.stdout, "->env, &cinder_path_borrow_")
+        and contains(&result.stdout, "CinderString cinder_path_concat_")
+        and contains(&result.stdout, "= cinder_selfhost_string_concat(cinder_path_consumer_")
+        and contains(&result.stdout, "cinder_string_cstr(&*path_pointer)")
+        and contains(&result.stdout, "cinder_string_clone(&cinder_path_borrow_")
+        and contains(&result.stdout, "CinderString cinder_path_attribute_")
+        and contains(&result.stdout, "__auto_type cinder_path_attribute_result_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_attribute_")
+        and contains(&result.stdout, "__auto_type cinder_match_value_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_match_value_")
+        and contains(&result.stdout, "__auto_type matched_name = cinder_string_clone(&(cinder_match_value_")
+        and contains(&result.stdout, "cinder_string_drop(&matched_name)")
+        and contains(&result.stdout, "    }\n    cinder_string_drop(&matched_name);\n    }\n    }\n    if (!cinder_match_found_")
+        and contains(&result.stdout, "CinderString cinder_path_membership_")
+        and contains(&result.stdout, "_contains(&cinder_collection, cinder_path_membership_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_membership_")
+        and contains(&result.stdout, "_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1); cinder_string_drop(&cinder_item.item_0);")
+        and contains(&result.stdout, "_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1); cinder_string_drop(&cinder_item.item_1);")
+        and not contains(&result.stdout, "cinder_string_drop(&cinder_item.item_0); cinder_contains; })) {\n    {\n    __auto_type cinder_return_value = cinder_paths_paths__fail(39")
+        and not contains(&result.stdout, "cinder_string_drop(&cinder_item.item_1); cinder_contains; })) {\n    {\n    __auto_type cinder_return_value = cinder_paths_paths__fail(40")
+        and contains(&result.stdout, "CinderString cinder_path_slice_")
+        and contains(&result.stdout, "CinderString cinder_path_slice_result_")
+        and contains(&result.stdout, "cinder_string_slice(&cinder_path_slice_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_slice_")
+        and contains(&result.stdout, "CinderString cinder_path_iteration_")
+        and contains(&result.stdout, "cinder_index < cinder_path_iteration_")
+        and contains(&result.stdout, "*)cinder_path_iteration_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_iteration_")
+        and contains(&result.stdout, "_get(&names_by_path, cinder_path_borrow_")
+        and contains(&result.stdout, "CinderString cinder_path_set_literal_")
+        and contains(&result.stdout, "_add(&cinder_set, cinder_path_set_literal_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_set_literal_")
+        and contains(&result.stdout, "CinderString cinder_path_map_literal_key_")
+        and contains(&result.stdout, "_set(&cinder_map, cinder_path_map_literal_key_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_map_literal_key_")
+        and contains(&result.stdout, "CinderString cinder_path_index_")
+        and contains(&result.stdout, "__auto_type cinder_path_index_result_")
+        and contains(&result.stdout, "_at_ref(&names_by_path, cinder_path_index_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_index_")
+        and contains(&result.stdout, "CinderString cinder_path_assignment_key_")
+        and contains(&result.stdout, "__auto_type cinder_path_assignment_result_")
+        and contains(&result.stdout, "_at_mut(&names_by_path, cinder_path_assignment_key_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_assignment_key_")
+        and contains(&result.stdout, "= cinder_paths_paths__make_path_holder().path")
+        and not contains(&result.stdout, " = *path_pointer;")
+        and not contains(&result.stdout, "cinder_string_clone(&cinder_path_name(")
+        and not contains(&result.stdout, "cinder_path_name(\"a/b\").length")
+        and not contains(&result.stdout, "cinder_index < cinder_path_name(")
+        and not contains(&result.stdout, "cinder_path_name(\"a/b\").data)[cinder_index]")
+        and not contains(&result.stdout, "cinder_string_slice(&cinder_path_name(")
+        and not contains(&result.stdout, "_get(&names_by_path, cinder_path_name(")
+        and not contains(&result.stdout, "_add(&cinder_set, cinder_path_name(")
+        and not contains(&result.stdout, "_set(&cinder_map, cinder_path_name(")
+        and not contains(&result.stdout, "_at_ref(&names_by_path, cinder_path_name(")
+        and not contains(&result.stdout, "_at_mut(&names_by_path, cinder_path_name(")
+        and not contains(&result.stdout, "cinder_selfhost_input_string(cinder_path_name(")
+        and not contains(&result.stdout, "cinder_write_stderr(&cinder_path_name(")
+        and not contains(&result.stdout, "callback(cinder_path_name(")
+        and not contains(&result.stdout, "->env, &cinder_path_name(")
+        and not contains(&result.stdout, "&(CinderString)(cinder_path_name(")
+        and not contains(&result.stdout, "&cinder_path_parent(")
+        and not contains(&result.stdout, "cinder_string_cstr(&cinder_path_join(")
+        and not contains(&result.stdout, "cinder_string_cstr(&cinder_path_with_suffix")
+        and not contains(&result.stdout, "cinder_string_cstr(&cinder_paths_paths__make_path_holder().path")
+        and not contains(&result.stdout, "std_path__Path")
+        and not contains(&result.stdout, "cinder_path_exists(\"")
+        and not contains(&result.stdout, "name(&Path")
+    )
+    expect(state, "emit-c lowers Path calls to runtime functions", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_path_match_capture_escape(state: &TestState) -> void:
+    command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        state.root + "/tests/cases/path_match_capture_escape.ci",
+        "-o",
+        state.workspace + "/path-match-capture-escape",
+        "--build-dir",
+        state.workspace + "/path-match-capture-escape-build",
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 0
+    expect(state, "Path match captures escape without aliasing temporary storage", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_path_embedded_nul(state: &TestState) -> void:
+    command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        state.root + "/tests/cases/path_embedded_nul.ci",
+        "-o",
+        state.workspace + "/path-embedded-nul",
+        "--build-dir",
+        state.workspace + "/path-embedded-nul-build",
+    ]
+    result = process.run(command)
+    ok = result.exit_code != 0 and contains(&result.stderr, "panic: invalid UTF-8 string")
+    expect(state, "Path rejects embedded NUL before truncating a String", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_path_runtime(state: &TestState) -> void:
+    root = state.workspace + "/path-runtime"
+    nested = NativePath.join(root, "nested")
+    NativePath.create_dir_all(nested)
+    single = NativePath.join(nested, "single")
+    NativePath.create_dir(single)
+    NativePath.create_dir_all("")
+
+    source = NativePath.join(right="item.tar.gz", left=nested)
+    write_test_text(source.clone(), "path runtime\n")
+    renamed = NativePath.with_suffix(source, ".txt")
+    before = (
+        NativePath.exists(source)
+        and NativePath.is_file(source)
+        and not NativePath.is_dir(source)
+        and NativePath.is_dir(single)
+        and NativePath.parent(source) == nested
+        and NativePath.name(source) == "item.tar.gz"
+        and NativePath.stem(source) == "item.tar"
+        and NativePath.stem(".profile") == ".profile"
+    )
+    NativePath.rename(source, renamed)
+    after_rename = not NativePath.exists(source) and NativePath.is_file(renamed)
+    NativePath.remove_file(renamed)
+    after_remove = not NativePath.exists(renamed)
+    expect(state, "Path performs native lexical and filesystem operations", before and after_rename and after_remove)
+
+
+def test_path_diagnostics(state: &TestState) -> void:
+    bad_member: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_member.ci",
+    ]
+    bad_argument: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_argument.ci",
+    ]
+    bad_module_member: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_module_member.ci",
+    ]
+    bad_indirection: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_string_indirection.ci",
+    ]
+    bad_string_index: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_string_index.ci",
+    ]
+    bad_temporary_address: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_temporary_address.ci",
+    ]
+    bad_temporary_projection_address: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_temporary_projection_address.ci",
+    ]
+    bad_borrow_reference_escape: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_borrow_reference_escape.ci",
+    ]
+    member_result = process.run(bad_member)
+    argument_result = process.run(bad_argument)
+    module_member_result = process.run(bad_module_member)
+    indirection_result = process.run(bad_indirection)
+    string_index_result = process.run(bad_string_index)
+    temporary_address_result = process.run(bad_temporary_address)
+    temporary_projection_address_result = process.run(bad_temporary_projection_address)
+    borrow_reference_escape_result = process.run(bad_borrow_reference_escape)
+    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and module_member_result.exit_code == 1 and indirection_result.exit_code == 1 and string_index_result.exit_code == 1 and temporary_address_result.exit_code == 1 and temporary_projection_address_result.exit_code == 1 and borrow_reference_escape_result.exit_code == 1
+    expect(state, "Path rejects invalid members, String uses, temporary addresses, and escaping borrows", ok)
+    if not ok:
+        report_process_failure(&member_result.stdout, &member_result.stderr)
+        report_process_failure(&argument_result.stdout, &argument_result.stderr)
+        report_process_failure(&module_member_result.stdout, &module_member_result.stderr)
+        report_process_failure(&indirection_result.stdout, &indirection_result.stderr)
+        report_process_failure(&string_index_result.stdout, &string_index_result.stderr)
+        report_process_failure(&temporary_address_result.stdout, &temporary_address_result.stderr)
+        report_process_failure(&temporary_projection_address_result.stdout, &temporary_projection_address_result.stderr)
+        report_process_failure(&borrow_reference_escape_result.stdout, &borrow_reference_escape_result.stderr)
+
+
+def test_path_alias_shadowing(state: &TestState) -> void:
+    source = state.root + "/tests/cases/path_shadowed_alias.ci"
+    qualified_source = state.root + "/tests/cases/path_shadowed_import_alias.ci"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    qualified_emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        qualified_source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/path-shadowed-alias",
+        "--build-dir",
+        state.workspace + "/path-shadowed-alias-build",
+    ]
+    qualified_run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        qualified_source,
+        "-o",
+        state.workspace + "/path-shadowed-import-alias",
+        "--build-dir",
+        state.workspace + "/path-shadowed-import-alias-build",
+    ]
+    emitted = process.run(emit_command)
+    qualified_emitted = process.run(qualified_emit_command)
+    ran = process.run(run_command)
+    qualified_ran = process.run(qualified_run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "PathProbe_exists")
+        and not contains(&emitted.stdout, "cinder_path_exists")
+        and qualified_emitted.exit_code == 0
+        and qualified_ran.exit_code == 0
+        and contains(&qualified_emitted.stdout, "PathProbe_exists")
+        and not contains(&qualified_emitted.stdout, "cinder_path_exists")
+    )
+    expect(state, "Path imports and qualified aliases respect local and module-level shadowing", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
+        report_process_failure(&qualified_emitted.stdout, &qualified_emitted.stderr)
+        report_process_failure(&qualified_ran.stdout, &qualified_ran.stderr)
+
+
+def test_builtin_module_shadowing(state: &TestState) -> void:
+    source = state.root + "/examples/path_shadow_project"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/path-shadow-project",
+        "--build-dir",
+        state.workspace + "/path-shadow-project-build",
+    ]
+    emitted = process.run(emit_command)
+    ran = process.run(run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "path_shadow_demo_std_path__shadow_answer")
+        and not contains(&emitted.stdout, "cinder_path_exists")
+    )
+    expect(state, "local modules shadow compiler-provided module names", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
 
 
 def test_context_capsule(state: &TestState) -> void:

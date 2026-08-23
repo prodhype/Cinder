@@ -208,6 +208,10 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     if id.index < 0:
         builder.append("0")
         return
+    path_borrow_temporary = codegen_context.context_path_borrow_temporary(context, id)
+    if path_borrow_temporary >= 0:
+        codegen_access.append_path_temporary_name(builder, "borrow", path_borrow_temporary)
+        return
     atomic_index = codegen_atomics.atomic_node_index(context.semantic_nodes, id, context.active_user_specialization)
     if atomic_index >= 0:
         atomic_node = codegen_atomics.atomic_node_at(context.semantic_nodes, atomic_index)
@@ -297,15 +301,36 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         element_type = codegen_context.context_generic_argument(context.type_arena, set_type, 0)
         for offset in range(0, node.child_count):
             child_id = arena.children[node.first_child + offset]
+            child_owned_path = codegen_access.expression_is_owned_path_string(arena, child_id, source, imports, context)
+            child_temporary: i32 = -1
+            if child_owned_path:
+                child_temporary = context.temporary_index
+                context.temporary_index += 1
+                builder.append(" CinderString ")
+                codegen_access.append_path_temporary_name(builder, "set_literal", child_temporary)
+                builder.append(" = ")
+                previous_expected = context.expected_type
+                if element_type.index >= 0:
+                    context.expected_type = element_type
+                emit_module_expression_state(state, child_id)
+                context.expected_type = previous_expected
+                builder.append(";")
             builder.append(" (void)")
             builder.append(set_name[0:len(set_name)])
             builder.append("_add(&cinder_set, ")
-            previous_expected = context.expected_type
-            if element_type.index >= 0:
-                context.expected_type = element_type
-            emit_module_expression_state(state, child_id)
-            context.expected_type = previous_expected
+            if child_owned_path:
+                codegen_access.append_path_temporary_name(builder, "set_literal", child_temporary)
+            else:
+                previous_expected = context.expected_type
+                if element_type.index >= 0:
+                    context.expected_type = element_type
+                emit_module_expression_state(state, child_id)
+                context.expected_type = previous_expected
             builder.append(");")
+            if child_owned_path:
+                builder.append(" cinder_string_drop(&")
+                codegen_access.append_path_temporary_name(builder, "set_literal", child_temporary)
+                builder.append(");")
         builder.append(" cinder_set; })")
         return
     if node.kind == SyntaxKind.EXPR_MAP:
@@ -332,19 +357,41 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
             entry = arena.nodes[entry_id.index]
             if entry.kind != SyntaxKind.EXPR_MAP_ENTRY or entry.child_count < 2:
                 continue
+            key = arena.children[entry.first_child]
+            key_owned_path = codegen_access.expression_is_owned_path_string(arena, key, source, imports, context)
+            key_temporary: i32 = -1
+            if key_owned_path:
+                key_temporary = context.temporary_index
+                context.temporary_index += 1
+                builder.append(" CinderString ")
+                codegen_access.append_path_temporary_name(builder, "map_literal_key", key_temporary)
+                builder.append(" = ")
+                previous_expected = context.expected_type
+                if key_type.index >= 0:
+                    context.expected_type = key_type
+                emit_module_expression_state(state, key)
+                context.expected_type = previous_expected
+                builder.append(";")
             builder.append(" ")
             builder.append(map_name[0:len(map_name)])
             builder.append("_set(&cinder_map, ")
             previous_expected = context.expected_type
-            if key_type.index >= 0:
-                context.expected_type = key_type
-            emit_module_expression_state(state, arena.children[entry.first_child])
+            if key_owned_path:
+                codegen_access.append_path_temporary_name(builder, "map_literal_key", key_temporary)
+            else:
+                if key_type.index >= 0:
+                    context.expected_type = key_type
+                emit_module_expression_state(state, key)
             builder.append(", ")
             if value_type.index >= 0:
                 context.expected_type = value_type
             emit_module_expression_state(state, arena.children[entry.first_child + 1])
             context.expected_type = previous_expected
             builder.append(");")
+            if key_owned_path:
+                builder.append(" cinder_string_drop(&")
+                codegen_access.append_path_temporary_name(builder, "map_literal_key", key_temporary)
+                builder.append(");")
         builder.append(" cinder_map; })")
         return
     if node.kind == SyntaxKind.EXPR_TUPLE:
@@ -392,7 +439,7 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     if node.kind == SyntaxKind.EXPR_NAME:
         name = source[node.value_start:node.value_start + node.value_length]
         imported = codegen_names.find_import_member(imports, &name)
-        if len(imported.module_name) > 0 and len(imported.member) > 0 and not project.is_builtin_module(&imported.module_name):
+        if len(imported.module_name) > 0 and len(imported.member) > 0 and not imported.virtual_builtin:
             builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
             builder.append(imported.member)
             return
@@ -424,6 +471,9 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
             left = codegen_names.first_child(arena, id)
             right = codegen_names.second_child(arena, id)
             if codegen_context.expression_may_be_string(arena, context, left, source) or codegen_context.expression_may_be_string(arena, context, right, source):
+                if codegen_access.expression_is_owned_path_string(arena, left, source, imports, context) or codegen_access.expression_is_owned_path_string(arena, right, source, imports, context):
+                    emit_owned_path_string_comparison(arena, id, left, right, source, builder, prefix, project_name, imports, context, state)
+                    return
                 if node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
                     builder.append("!")
                 if node.flags == cast[i32](token.TokenKind.EQUAL) or node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
@@ -444,10 +494,15 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
                     builder.append(" >= 0)")
                 return
         if node.flags == cast[i32](token.TokenKind.PLUS) and (codegen_context.expression_may_be_string(arena, context, codegen_names.first_child(arena, id), source) or codegen_context.expression_may_be_string(arena, context, codegen_names.second_child(arena, id), source)):
+            left = codegen_names.first_child(arena, id)
+            right = codegen_names.second_child(arena, id)
+            if codegen_access.expression_is_owned_path_string(arena, left, source, imports, context) or codegen_access.expression_is_owned_path_string(arena, right, source, imports, context):
+                emit_owned_path_string_concat(arena, left, right, source, builder, prefix, project_name, imports, context, state)
+                return
             builder.append("cinder_selfhost_string_concat(")
-            codegen_format.emit_string_value_expression(arena, codegen_names.first_child(arena, id), source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+            codegen_format.emit_string_value_expression(arena, left, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
             builder.append(", ")
-            codegen_format.emit_string_value_expression(arena, codegen_names.second_child(arena, id), source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+            codegen_format.emit_string_value_expression(arena, right, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
             builder.append(")")
             return
         builder.append("(")
@@ -528,6 +583,144 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
         codegen_access.emit_module_attribute(arena, id, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
         return
     codegen_names.append_source(builder, source, node.start, node.length)
+
+
+def emit_owned_path_string_concat(
+    arena: &const SyntaxArena,
+    left: NodeId,
+    right: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+) -> void:
+    left_owned = codegen_access.expression_is_owned_path_string(arena, left, source, imports, context)
+    right_owned = codegen_access.expression_is_owned_path_string(arena, right, source, imports, context)
+    builder.append("({ ")
+    left_temporary: i32 = -1
+    right_temporary: i32 = -1
+    if left_owned:
+        left_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, left)
+        builder.append("; ")
+    if right_owned:
+        right_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, right)
+        builder.append("; ")
+    result_temporary = context.temporary_index
+    context.temporary_index += 1
+    builder.append("CinderString ")
+    codegen_access.append_path_temporary_name(builder, "concat", result_temporary)
+    builder.append(" = cinder_selfhost_string_concat(")
+    if left_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, left, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append(", ")
+    if right_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, right, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append("); ")
+    if right_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append("); ")
+    if left_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append("); ")
+    codegen_access.append_path_temporary_name(builder, "concat", result_temporary)
+    builder.append("; })")
+
+
+def emit_owned_path_string_comparison(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    left: NodeId,
+    right: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+) -> void:
+    left_owned = codegen_access.expression_is_owned_path_string(arena, left, source, imports, context)
+    right_owned = codegen_access.expression_is_owned_path_string(arena, right, source, imports, context)
+    builder.append("({ ")
+    left_temporary: i32 = -1
+    right_temporary: i32 = -1
+    if left_owned:
+        left_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, left)
+        builder.append("; ")
+    if right_owned:
+        right_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, right)
+        builder.append("; ")
+    result_temporary = context.temporary_index
+    context.temporary_index += 1
+    builder.append("bool ")
+    codegen_access.append_path_temporary_name(builder, "comparison", result_temporary)
+    builder.append(" = ")
+    node = arena.nodes[id.index]
+    if node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
+        builder.append("!")
+    if node.flags == cast[i32](token.TokenKind.EQUAL) or node.flags == cast[i32](token.TokenKind.NOT_EQUAL):
+        builder.append("cinder_selfhost_string_equal(")
+    else:
+        builder.append("(cinder_selfhost_string_compare(")
+    if left_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, left, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append(", ")
+    if right_owned:
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+    else:
+        codegen_format.emit_string_value_expression(arena, right, source, builder, prefix, project_name, imports, context, state, emit_module_expression_state)
+    builder.append(")")
+    if node.flags == cast[i32](token.TokenKind.LESS):
+        builder.append(" < 0)")
+    elif node.flags == cast[i32](token.TokenKind.LESS_EQUAL):
+        builder.append(" <= 0)")
+    elif node.flags == cast[i32](token.TokenKind.GREATER):
+        builder.append(" > 0)")
+    elif node.flags == cast[i32](token.TokenKind.GREATER_EQUAL):
+        builder.append(" >= 0)")
+    builder.append("; ")
+    if right_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", right_temporary)
+        builder.append("); ")
+    if left_owned:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "consumer", left_temporary)
+        builder.append("); ")
+    codegen_access.append_path_temporary_name(builder, "comparison", result_temporary)
+    builder.append("; })")
+
 
 def emit_set_algebra_binary(
     arena: &const SyntaxArena,
@@ -611,22 +804,43 @@ def emit_collection_membership_binary(
         name_builder = StringBuilder()
         codegen_type_names.emit_semantic_specialized_type_name(table, collection_type, context.type_source, &name_builder, context.specialization_names)
         name = name_builder.finish()
+        member_owned_path = codegen_access.expression_is_owned_path_string(arena, member, source, imports, context)
+        member_temporary: i32 = -1
         builder.append("({ ")
         builder.append(name[0:len(name)])
         builder.append(" cinder_collection = ")
         emit_module_expression_state(state, collection)
-        builder.append("; bool cinder_contains = ")
+        builder.append("; ")
+        if member_owned_path:
+            member_temporary = context.temporary_index
+            context.temporary_index += 1
+            builder.append("CinderString ")
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            builder.append(" = ")
+            emit_module_expression_state(state, member)
+            builder.append("; ")
+        builder.append("bool cinder_contains = ")
         if record.kind == types.TypeKind.SET:
             builder.append(name[0:len(name)])
             builder.append("_contains(&cinder_collection, ")
-            emit_module_expression_state(state, member)
+            if member_owned_path:
+                codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            else:
+                emit_module_expression_state(state, member)
             builder.append(")")
         else:
             builder.append(name[0:len(name)])
             builder.append("_lookup(&cinder_collection, ")
-            emit_module_expression_state(state, member)
+            if member_owned_path:
+                codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            else:
+                emit_module_expression_state(state, member)
             builder.append(") != NULL")
         builder.append("; ")
+        if member_owned_path:
+            builder.append("cinder_string_drop(&")
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+            builder.append("); ")
         if expression_creates_owned_collection(arena, collection, source):
             builder.append(name[0:len(name)])
             builder.append("_drop(&cinder_collection); ")
@@ -641,25 +855,69 @@ def emit_collection_membership_binary(
     map_name_builder = StringBuilder()
     codegen_type_names.emit_semantic_specialized_type_name(table, record.inner, context.type_source, &map_name_builder, context.specialization_names)
     map_name = map_name_builder.finish()
+    member_owned_path = codegen_access.expression_is_owned_path_string(arena, member, source, imports, context)
+    item_key_needs_drop = false
+    item_value_needs_drop = false
+    if record.kind == types.TypeKind.MAP_ITEMS and member.index >= 0:
+        member_node = arena.nodes[member.index]
+        map_record = table.types[record.inner.index]
+        if member_node.kind == SyntaxKind.EXPR_TUPLE and member_node.child_count >= 2 and map_record.kind == types.TypeKind.MAP:
+            item_key = arena.children[member_node.first_child]
+            item_value = arena.children[member_node.first_child + 1]
+            item_key_needs_drop = (
+                codegen_context.context_semantic_type_is_kind(context, map_record.inner, types.TypeKind.STRING)
+                and codegen_access.path_argument_needs_materialization(arena, context, item_key, source)
+                and not codegen_access.expression_is_borrowed_map_projection(arena, context, item_key, source)
+            )
+            item_value_needs_drop = (
+                codegen_context.context_semantic_type_is_kind(context, map_record.second, types.TypeKind.STRING)
+                and codegen_access.path_argument_needs_materialization(arena, context, item_value, source)
+                and not codegen_access.expression_is_borrowed_map_projection(arena, context, item_value, source)
+            )
+    member_temporary: i32 = -1
     builder.append("({ __auto_type cinder_view = ")
     emit_module_expression_state(state, collection)
     builder.append("; ")
+    if member_owned_path:
+        member_temporary = context.temporary_index
+        context.temporary_index += 1
+        builder.append("CinderString ")
+        codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        builder.append(" = ")
+        emit_module_expression_state(state, member)
+        builder.append("; ")
     if record.kind == types.TypeKind.MAP_ITEMS:
         builder.append("__auto_type cinder_item = ")
         emit_module_expression_state(state, member)
         builder.append("; ")
+    builder.append("bool cinder_contains = ")
     if is_not_in:
         builder.append("!")
     builder.append(map_name[0:len(map_name)])
     if record.kind == types.TypeKind.MAP_KEYS:
         builder.append("_keys_contains(&cinder_view, ")
-        emit_module_expression_state(state, member)
+        if member_owned_path:
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        else:
+            emit_module_expression_state(state, member)
     elif record.kind == types.TypeKind.MAP_VALUES:
         builder.append("_values_contains(&cinder_view, ")
-        emit_module_expression_state(state, member)
+        if member_owned_path:
+            codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        else:
+            emit_module_expression_state(state, member)
     else:
         builder.append("_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1")
-    builder.append("); })")
+    builder.append("); ")
+    if item_value_needs_drop:
+        builder.append("cinder_string_drop(&cinder_item.item_1); ")
+    if item_key_needs_drop:
+        builder.append("cinder_string_drop(&cinder_item.item_0); ")
+    if member_owned_path:
+        builder.append("cinder_string_drop(&")
+        codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
+        builder.append("); ")
+    builder.append("cinder_contains; })")
     return true
 
 
@@ -839,6 +1097,23 @@ def emit_module_propagate_lock_cleanups_until(builder: &StringBuilder, context: 
         builder.append("); ")
 
 
+def emit_module_propagate_value_cleanups_until(
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    start: usize,
+    end: usize,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+) -> void:
+    value_cleanups: &const List[codegen_context.CodegenValueCleanup] = &context.value_cleanups
+    index = end
+    while index > start:
+        index -= 1
+        cleanup: &const codegen_context.CodegenValueCleanup = &value_cleanups[index]
+        codegen_context.emit_context_semantic_drop(context, cleanup.semantic_type, builder, &cleanup.name, prefix, project_name, imports)
+
+
 def emit_module_propagate_cleanup_segment(
     arena: &const SyntaxArena,
     source: &const String,
@@ -857,12 +1132,15 @@ def emit_module_propagate_cleanup_segment(
     iterator_guard_end: usize,
     lock_cleanup_start: usize,
     lock_cleanup_end: usize,
+    value_cleanup_start: usize,
+    value_cleanup_end: usize,
 ) -> void:
     emit_module_propagate_iterator_guard_cleanups_until(builder, context, iterator_guard_start, iterator_guard_end)
     emit_module_propagate_defers_until(arena, source, builder, prefix, project_name, imports, context, defer_start, defer_end)
     emit_module_propagate_with_resource_cleanups_until(builder, context, with_resource_start, with_resource_end)
     codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, local_end, prefix, project_name, imports)
     emit_module_propagate_lock_cleanups_until(builder, context, lock_cleanup_start, lock_cleanup_end)
+    emit_module_propagate_value_cleanups_until(builder, context, value_cleanup_start, value_cleanup_end, prefix, project_name, imports)
 
 
 def emit_module_propagate_active_cleanups(
@@ -880,6 +1158,7 @@ def emit_module_propagate_active_cleanups(
     with_resource_end = len(context.with_resources)
     iterator_guard_end = len(context.iterator_guard_names)
     lock_cleanup_end = len(context.lock_cleanups)
+    value_cleanup_end = len(context.value_cleanups)
     boundary_index = len(context.cleanup_boundaries)
     while boundary_index > boundary_start:
         boundary_index -= 1
@@ -901,12 +1180,15 @@ def emit_module_propagate_active_cleanups(
             iterator_guard_end,
             codegen_context.context_scope_lock_cleanup_start(context, boundary_index),
             lock_cleanup_end,
+            codegen_context.context_scope_value_cleanup_start(context, boundary_index),
+            value_cleanup_end,
         )
         local_end = codegen_context.context_scope_local_start(context, boundary_index)
         defer_end = codegen_context.context_scope_defer_start(context, boundary_index)
         with_resource_end = codegen_context.context_scope_with_resource_start(context, boundary_index)
         iterator_guard_end = codegen_context.context_scope_iterator_guard_start(context, boundary_index)
         lock_cleanup_end = codegen_context.context_scope_lock_cleanup_start(context, boundary_index)
+        value_cleanup_end = codegen_context.context_scope_value_cleanup_start(context, boundary_index)
     if boundary_start == 0:
         emit_module_propagate_cleanup_segment(
             arena,
@@ -926,4 +1208,6 @@ def emit_module_propagate_active_cleanups(
             iterator_guard_end,
             0,
             lock_cleanup_end,
+            0,
+            value_cleanup_end,
         )

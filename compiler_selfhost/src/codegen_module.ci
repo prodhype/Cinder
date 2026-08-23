@@ -149,7 +149,7 @@ def emit_module_header_with_semantics_and_models(
         codegen_atomics.emit_atomic_header_support(builder)
     emit_common_support(builder)
     for dependency in dependencies:
-        if not project.is_builtin_module(&dependency):
+        if not project.import_module_is_virtual_builtin(imports, &dependency):
             builder.append("#include \"")
             builder.append(codegen_names.generated_header_name(&dependency))
             builder.append("\"\n")

@@ -1,0 +1,213 @@
+import cinder
+from std.path import Path
+
+
+struct PathHolder:
+    path: String
+
+
+def make_path_holder() -> PathHolder:
+    return PathHolder(path=".cinder/example-output/path-api/missing-holder.txt")
+
+
+def string_length_is_one(value: &const String) -> bool:
+    return len(value) == 1
+
+
+def path_name_matches_holder(holder: &const PathHolder, value: &const String) -> bool:
+    return value == holder.path
+
+
+def invoke_path_name_function(callback: def(&const String) -> bool) -> bool:
+    return callback(Path.name("a/b"))
+
+
+def invoke_path_name_closure(callback: closure[const PathHolder](&const String) -> bool) -> bool:
+    return callback(Path.name("a/b"))
+
+
+def borrowed_path_input_codegen() -> String:
+    return input(Path.name("a/prompt.txt"))
+
+
+def borrowed_path_stderr_codegen() -> void:
+    cinder.write_stderr(Path.name("a/prompt.txt"))
+
+
+def print_formatted_path_name(path: &const String) -> void:
+    print(f"{Path.name(path)}")
+
+
+def matched_path_name_codegen() -> bool:
+    match Path.name("a/b"):
+        case matched_name:
+            return matched_name == "b"
+    return false
+
+
+def returned_path_match_capture_codegen() -> String:
+    match Path.name("a/b"):
+        case matched_name:
+            return matched_name
+    return ""
+
+
+def guarded_path_match_capture_codegen() -> bool:
+    match Path.name("a/b"):
+        case matched_name if matched_name == "nope":
+            return false
+        case matched_name:
+            return matched_name == "b"
+    return false
+
+
+def mapped_path_argument_codegen(root: &const String) -> bool:
+    paths: Map[String, String] = {
+        "missing": Path.join(root, "missing-map-value"),
+    }
+    return not Path.exists(paths["missing"])
+
+
+def fail(code: i32, message: String) -> i32:
+    print("path example failed:", message)
+    return code
+
+
+def main() -> i32:
+    root = ".cinder/example-output/path-api"
+    nested = Path.join(root, "nested")
+    leaf = Path.join(nested, "leaf")
+    if not mapped_path_argument_codegen(&root):
+        return fail(34, "mapped Path argument")
+    Path.create_dir_all(nested)
+    if not Path.exists(leaf):
+        Path.create_dir(leaf)
+    if not Path.exists(root) or not Path.is_dir(nested) or not Path.is_dir(leaf):
+        return fail(1, "directory creation")
+
+    original = Path.join(right="sample.tar.gz", left=nested)
+    if Path.parent(original) != nested:
+        return fail(2, "parent")
+    if Path.name(original) != "sample.tar.gz":
+        return fail(3, "name")
+    print_formatted_path_name(&original)
+    if Path.stem(original) != "sample.tar":
+        return fail(4, "stem")
+    if Path.stem(".profile") != ".profile":
+        return fail(5, "hidden-file stem")
+    if Path.stem("..profile") != "..profile":
+        return fail(27, "multi-dot hidden-file stem")
+    if Path.with_suffix("..profile", ".txt") != "..profile.txt":
+        return fail(28, "multi-dot hidden-file suffix")
+    if (
+        Path.parent("/") != "/"
+        or Path.parent("////") != "/"
+        or Path.name("/") != ""
+    ):
+        return fail(6, "root handling")
+    computed = Path.join(Path.parent("alpha/file.tmp"), Path.name("beta/result.txt"))
+    if computed != "alpha/result.txt":
+        return fail(7, "computed String arguments")
+    if Path.exists(Path.with_suffix(Path.join(nested, "missing.tmp"), ".txt")):
+        return fail(8, "nested predicate")
+    if Path.exists(make_path_holder().path):
+        return fail(9, "temporary aggregate field")
+    Path.create_dir_all(Path.join(root, "computed"))
+    if not Path.is_dir(Path.join(root, "computed")):
+        return fail(10, "computed mutator argument")
+    print(Path.parent("a/b"))
+    if not string_length_is_one(cast[String](Path.name("a/b"))):
+        return fail(11, "borrowed Path result")
+    if not invoke_path_name_function(string_length_is_one):
+        return fail(35, "function-pointer borrowed Path result")
+    path_name_checker = closure(PathHolder(path="b"), path_name_matches_holder)
+    if not invoke_path_name_closure(path_name_checker):
+        return fail(36, "closure borrowed Path result")
+    combined = Path.parent("alpha/file.tmp") + Path.name("beta/result.txt")
+    if combined != "alpharesult.txt":
+        return fail(12, "Path result concatenation")
+    path_value = "alpha/file.tmp"
+    path_pointer: *String = &path_value
+    if Path.name(*path_pointer) != "file.tmp" or path_value != "alpha/file.tmp":
+        return fail(13, "dereferenced String argument")
+    cloned_name = Path.name("a/b").clone()
+    if cloned_name != "b":
+        return fail(14, "Path result method receiver")
+    print(Path.name("a/b").length)
+    if not matched_path_name_codegen():
+        return fail(26, "Path result match subject")
+    if returned_path_match_capture_codegen() != "b":
+        return fail(32, "returned Path match capture")
+    if not guarded_path_match_capture_codegen():
+        return fail(33, "guarded Path match capture")
+    names: Set[String] = {"b"}
+    if not (Path.name("a/b") in names):
+        return fail(15, "Path result collection membership")
+    sliced_name = Path.name("a/b")[0:1]
+    if sliced_name != "b":
+        return fail(20, "Path result slice")
+    if Path.name("a/b").byte_at(0) != 98:
+        return fail(30, "Path result byte access")
+    path_byte_total: i32 = 0
+    for path_byte: char in Path.name("a/b"):
+        path_byte_total += cast[i32](path_byte)
+    if path_byte_total != 98:
+        return fail(31, "Path result for-each")
+    names_by_path: Map[String, i32] = {"b": 7}
+    match names_by_path.get(Path.name("a/b")):
+        case Some(mapped_name):
+            if mapped_name != 7:
+                return fail(21, "Path result map key")
+        case None:
+            return fail(21, "Path result map key")
+
+    literal_names: Set[String] = {Path.name("a/b")}
+    if not ("b" in literal_names):
+        return fail(22, "Path result set literal element")
+    literal_values: Map[String, i32] = {Path.name("a/b"): 7}
+    if literal_values["b"] != 7:
+        return fail(23, "Path result map literal key")
+    if names_by_path[Path.name("a/b")] != 7:
+        return fail(24, "Path result indexed map key")
+    names_by_path[Path.name("a/b")] += 1
+    if names_by_path["b"] != 8:
+        return fail(29, "Path result compound map key")
+    if not ((Path.name("a/b"), 8) in names_by_path.items()):
+        return fail(37, "Path result map items key")
+    paths_by_rank: Map[i32, String] = {1: "b"}
+    if not ((1, Path.name("a/b")) in paths_by_rank.items()):
+        return fail(38, "Path result map items value")
+    borrowed_holders: Map[String, PathHolder] = {
+        "key": PathHolder(path=Path.name("owned/key")),
+        "value": PathHolder(path=Path.name("owned/value")),
+    }
+    borrowed_values: Map[String, i32] = {"key": 1}
+    if not ((borrowed_holders["key"].path, 1) in borrowed_values.items()):
+        return fail(39, "borrowed map field map items key")
+    borrowed_paths_by_rank: Map[i32, String] = {1: "value"}
+    if not ((1, borrowed_holders["value"].path) in borrowed_paths_by_rank.items()):
+        return fail(40, "borrowed map field map items value")
+    if borrowed_holders["key"].path != "key" or borrowed_holders["value"].path != "value":
+        return fail(41, "borrowed map field remains live")
+
+    with open(Path.join(nested, "borrowed.tmp"), "wb") as borrowed_file:
+        borrowed_file.write("borrowed path result\n")
+    borrowed_path = Path.join(nested, "borrowed.tmp")
+    if not Path.is_file(borrowed_path):
+        return fail(16, "borrowed open path")
+    Path.remove_file(borrowed_path)
+
+    with open(original, "wb") as file:
+        file.write("native path API\n")
+    if not Path.is_file(original) or Path.is_dir(original):
+        return fail(17, "file predicates")
+
+    renamed = Path.with_suffix(path=original, suffix=".txt")
+    Path.rename(destination=renamed, source=original)
+    if Path.exists(original) or not Path.is_file(renamed):
+        return fail(18, "rename")
+
+    Path.remove_file(renamed)
+    if Path.exists(renamed):
+        return fail(19, "remove_file")
+    return 0

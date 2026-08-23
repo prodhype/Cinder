@@ -1,0 +1,20 @@
+from std.path import Path
+
+
+class PathProbe:
+    def exists(self: &const PathProbe, path: String) -> bool:
+        return path == "shadow"
+
+
+Path: PathProbe
+
+
+def locally_shadowed_call(p: &const PathProbe) -> bool:
+    return p.exists("shadow")
+
+
+def main() -> i32:
+    probe = PathProbe()
+    if locally_shadowed_call(&probe) and Path.exists("shadow"):
+        return 0
+    return 1

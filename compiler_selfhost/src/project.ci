@@ -11,6 +11,7 @@ struct ImportBinding:
     alias: String
     module_name: String
     member: String
+    virtual_builtin: bool
 
 
 struct ParsedModule:
@@ -214,15 +215,15 @@ def visit_module(
         index: usize = 0
         while index < len(dependencies):
             dependency = dependencies[index][0:len(dependencies[index])]
-            if not is_builtin_module(&dependency):
-                resolved = resolve_module_path(config, &dependency, error_parts)
-                if len(error_parts) > 0:
+            resolved = resolve_module_path(config, &dependency, error_parts)
+            if len(error_parts) > 0:
+                visiting.pop()
+                return false
+            if len(resolved) > 0:
+                mark_import_module_local(imports, &dependency)
+                if not visit_module(config, modules, names, visiting, dependency[0:len(dependency)], resolved, error_parts):
                     visiting.pop()
                     return false
-                if len(resolved) > 0:
-                    if not visit_module(config, modules, names, visiting, dependency[0:len(dependency)], resolved, error_parts):
-                        visiting.pop()
-                        return false
             index += 1
 
         names.append(module_name[0:len(module_name)])
@@ -299,7 +300,7 @@ def collect_imports(arena: &const SyntaxArena, root: NodeId, source: &const Stri
             if len(module_name) > 0 and not contains_string(dependencies, &module_name):
                 dependencies.append(module_name[0:len(module_name)])
             alias = import_alias(arena, child_id, source, &module_name)
-            imports.append(ImportBinding(alias=alias, module_name=module_name, member=""))
+            imports.append(ImportBinding(alias=alias, module_name=module_name, member="", virtual_builtin=is_builtin_module(&module_name)))
         elif child.kind == SyntaxKind.FROM_IMPORT_DECL:
             module_name = dotted_child_text(arena, child_id, source)
             if len(module_name) > 0 and not contains_string(dependencies, &module_name):
@@ -344,7 +345,7 @@ def collect_from_imports(arena: &const SyntaxArena, id: NodeId, source: &const S
                         name = text[0:len(text)]
             if len(alias) == 0:
                 alias = name[0:len(name)]
-            imports.append(ImportBinding(alias=alias, module_name=module_name[0:len(module_name)], member=name))
+            imports.append(ImportBinding(alias=alias, module_name=module_name[0:len(module_name)], member=name, virtual_builtin=is_builtin_module(module_name)))
 
 
 def final_module_part(module_name: &const String) -> String:
@@ -371,6 +372,21 @@ def contains_string(values: &const List[String], value: &const String) -> bool:
     return false
 
 
+def mark_import_module_local(imports: &List[ImportBinding], module_name: &const String) -> void:
+    index: usize = 0
+    while index < len(imports):
+        if imports[index].module_name == module_name[0:len(module_name)]:
+            imports[index].virtual_builtin = false
+        index += 1
+
+
+def import_module_is_virtual_builtin(imports: &const List[ImportBinding], module_name: &const String) -> bool:
+    for imported in imports:
+        if imported.module_name == module_name[0:len(module_name)]:
+            return imported.virtual_builtin
+    return false
+
+
 def index_of_string(values: &const List[String], value: &const String) -> i32:
     index: usize = 0
     while index < len(values):
@@ -393,4 +409,15 @@ def dump_parse_diagnostics(diagnostics: &const List[ParseDiagnostic]) -> void:
 
 
 def is_builtin_module(module_name: &const String) -> bool:
-    return module_name == "stdio" or module_name == "math" or module_name == "stdlib" or module_name == "string" or module_name == "cinder" or module_name == "process" or module_name == "std.atomic"
+    return module_name == "stdio" or module_name == "math" or module_name == "stdlib" or module_name == "string" or module_name == "cinder" or module_name == "process" or module_name == "std.atomic" or module_name == "std.path"
+
+
+def module_is_loaded(modules: &const List[ParsedModule], module_name: &const String) -> bool:
+    for module in modules:
+        if module.name == module_name[0:len(module_name)]:
+            return true
+    return false
+
+
+def module_name_is_virtual_builtin(module_name: &const String, modules: &const List[ParsedModule]) -> bool:
+    return is_builtin_module(module_name) and not module_is_loaded(modules, module_name)

@@ -1,0 +1,19 @@
+class PathProbe:
+    def exists(self: &const PathProbe, path: String) -> bool:
+        return path == "shadow"
+
+
+struct PathNamespace:
+    Path: PathProbe
+
+
+p: PathNamespace
+
+
+import std.path as p
+
+
+def main() -> i32:
+    if p.Path.exists("shadow"):
+        return 0
+    return 1

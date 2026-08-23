@@ -41,14 +41,14 @@ def collect_qualified_atomic_template_names_in_node(
         if imported.index >= 0:
             imported_node = arena.nodes[imported.index]
             module_name = source[imported_node.start:imported_node.start + imported_node.length]
-            binding_node = imported_node
+            binding_node = arena.nodes[checker_core.last_child(arena, imported).index]
             for offset in range(0, node.child_count):
                 child_id = arena.children[node.first_child + offset]
                 child = arena.nodes[child_id.index]
                 if child.kind == syntax.SyntaxKind.NAME and child.flags == 1:
                     binding_node = child
             binding_name = source[binding_node.value_start:binding_node.value_start + binding_node.value_length]
-            if module_name == "std.atomic":
+            if module_name == "std.atomic" and project.module_name_is_virtual_builtin(&module_name, modules):
                 record_qualified_atomic_template_name(checker, binding_name[0:len(binding_name)] + ".Atomic")
             for module in modules:
                 if not (module.name == module_name):
@@ -117,8 +117,7 @@ def collect_symbols_in_node(
     elif node.kind == syntax.SyntaxKind.IMPORT_DECL:
         imported = checker_core.find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
         if imported.index >= 0:
-            imported_node = arena.nodes[imported.index]
-            binding_node = imported_node
+            binding_node = arena.nodes[checker_core.last_child(arena, imported).index]
             for offset in range(0, node.child_count):
                 child_id = arena.children[node.first_child + offset]
                 child = arena.nodes[child_id.index]
@@ -279,6 +278,8 @@ def collect_from_import_symbols(
                     if checker_imports.imported_member_is_atomic_template(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.BUILTIN
                         imported_type = checker.type_table.atomic_of(types.type_error(), types.AtomicElementKind.INVALID)
+                    elif checker_imports.imported_member_is_path_namespace(&module_name, &original_text, modules):
+                        symbol_kind = symbols.SymbolKind.BUILTIN
                     elif checker_imports.imported_member_is_lock(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.LOCK
                         imported_type = types.type_lock()

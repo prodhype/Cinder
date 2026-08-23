@@ -86,6 +86,7 @@ def prepare_lock_context(checker: &Checker, source: &const String, modules: &con
                         alias=imported.alias[0:len(imported.alias)],
                         module_name=imported.module_name[0:len(imported.module_name)],
                         member=imported.member[0:len(imported.member)],
+                        virtual_builtin=imported.virtual_builtin,
                     )
                 )
                 import_index += 1

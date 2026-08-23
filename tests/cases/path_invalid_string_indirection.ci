@@ -1,0 +1,9 @@
+from std.path import Path
+
+
+def path_exists(path: **String) -> bool:
+    return Path.exists(path)
+
+
+def main() -> i32:
+    return 0
