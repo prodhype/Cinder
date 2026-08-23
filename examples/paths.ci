@@ -49,6 +49,13 @@ def guarded_path_match_capture_codegen() -> bool:
     return false
 
 
+def mapped_path_argument_codegen(root: &const String) -> bool:
+    paths: Map[String, String] = {
+        "missing": Path.join(root, "missing-map-value"),
+    }
+    return not Path.exists(paths["missing"])
+
+
 def fail(code: i32, message: String) -> i32:
     print("path example failed:", message)
     return code
@@ -58,6 +65,8 @@ def main() -> i32:
     root = ".cinder/example-output/path-api"
     nested = Path.join(root, "nested")
     leaf = Path.join(nested, "leaf")
+    if not mapped_path_argument_codegen(&root):
+        return fail(34, "mapped Path argument")
     Path.create_dir_all(nested)
     if not Path.exists(leaf):
         Path.create_dir(leaf)

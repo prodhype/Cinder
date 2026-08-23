@@ -679,6 +679,10 @@ def path_argument_needs_materialization(
     node = arena.nodes[argument.index]
     if node.kind == SyntaxKind.EXPR_LITERAL:
         return false
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver = codegen_names.first_child(arena, argument)
+        if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+            return false
     return not codegen_context.context_expression_is_addressable_for_borrow(arena, context, argument, source)
 
 
