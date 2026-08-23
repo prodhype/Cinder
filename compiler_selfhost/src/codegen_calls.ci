@@ -315,7 +315,7 @@ def owned_path_call_argument_is_borrowed(
     expected_type = codegen_context.context_callee_parameter_type(arena, context, callee, source, argument_index)
     if codegen_specializations.module_type_is_c_string(context.type_arena, expected_type, context.type_source):
         return true
-    if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE:
+    if codegen_context.context_callee_parameter_is_reference(arena, context, callee, source, argument_index, expected_type):
         return true
     if callee.index < 0:
         return false

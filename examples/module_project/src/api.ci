@@ -1,1 +1,5 @@
 from std.atomic import Atomic as Cell
+
+
+def one(value: &const String) -> bool:
+    return len(value) == 1

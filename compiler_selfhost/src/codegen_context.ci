@@ -2046,10 +2046,10 @@ def should_borrow_for_callee(
     if arg_node.kind == SyntaxKind.EXPR_UNARY and arg_node.flags == cast[i32](token.TokenKind.AMPERSAND):
         return false
     expected_type = context_callee_parameter_type(arena, context, callee, source, argument_index)
-    if expected_type.index >= 0 and codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE:
-        return true
     if expected_type.index >= 0:
-        return false
+        return codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE
+    if context_path_borrow_temporary(context, arg) >= 0 and context_callee_parameter_is_reference(arena, context, callee, source, argument_index, expected_type):
+        return true
     if arg_node.kind == SyntaxKind.EXPR_NAME and (codegen_names.range_text_equals(source, arg_node.value_start, arg_node.value_length, "decorators") or codegen_names.range_text_equals(source, arg_node.value_start, arg_node.value_length, "member_decorators")):
         return true
     arg_type = context_expression_type(arena, context, arg, source)
@@ -2096,6 +2096,27 @@ def context_callee_parameter_type(
         &name,
         argument_index,
     )
+
+
+def context_callee_parameter_is_reference(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    callee: NodeId,
+    source: &const String,
+    argument_index: usize,
+    expected_type: NodeId,
+) -> bool:
+    if expected_type.index >= 0:
+        return codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE
+    model: &const classes.ProjectClassModel = context.class_model
+    function_index = context_callee_function(arena, context, callee, source)
+    if function_index < 0:
+        return false
+    function: &const classes.ClassFunctionInfo = &model.functions[cast[usize](function_index)]
+    if argument_index >= cast[usize](function.parameter_count):
+        return false
+    parameter: &const classes.ClassParameterInfo = &model.parameters[cast[usize](function.first_parameter) + argument_index]
+    return parameter.type_info.kind == classes.ClassValueKind.REFERENCE
 
 
 def context_class_method_parameter_type(

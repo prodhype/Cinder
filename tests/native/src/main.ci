@@ -211,12 +211,22 @@ def test_emit_project(state: &TestState) -> void:
     source_test: List[String] = ["test", "-f", generated_source]
     has_header = process.run(header_test)
     has_source = process.run(source_test)
+    imported_path_borrow = false
+    if has_source.exit_code == 0:
+        with open(generated_source, "rb") as file:
+            generated = file.read_text()
+            imported_path_borrow = (
+                contains(&generated, "CinderString cinder_path_borrow_")
+                and contains(&generated, "module_demo_api__one(&cinder_path_borrow_")
+                and contains(&generated, "cinder_string_drop(&cinder_path_borrow_")
+            )
     ok = (
         result.exit_code == 0
         and has_header.exit_code == 0
         and has_source.exit_code == 0
+        and imported_path_borrow
     )
-    expect(state, "emit-project writes module headers and sources", ok)
+    expect(state, "emit-project writes modules and borrows imported Path results", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
 

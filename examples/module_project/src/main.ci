@@ -4,6 +4,7 @@ import api
 import model
 import state
 import support.parser as parser
+from api import one
 from model import ParseError, Token
 from state import Atomic
 
@@ -71,6 +72,8 @@ def increment(value: i32) -> Result[i32, ParseError]:
 def main() -> i32:
     if not p.Path.exists(".") or p.Path.name("a/b") != "b":
         return 14
+    if not one(p.Path.name("a/b")):
+        return 15
     if qualified_counter.fetch_add(2) != 4 or qualified_counter.load() != 6:
         return 1
     if renamed_qualified_reexported_counter.exchange(12) != 0 or renamed_qualified_reexported_counter.load() != 12:
