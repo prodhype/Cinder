@@ -489,9 +489,9 @@ def append_type_display(builder: &StringBuilder, table: &const TypeTable, type_i
         builder.append(") -> ")
         append_type_display(builder, table, record.inner, source)
     elif record.kind == TypeKind.ATOMIC:
-        append_unary_type_display(builder, "Atomic", table, record.inner, source)
+        append_atomic_type_display(builder, "Atomic", table, type_id, record.inner, source)
     elif record.kind == TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
-        append_unary_type_display(builder, "AtomicCompareExchangeResult", table, record.inner, source)
+        append_atomic_type_display(builder, "AtomicCompareExchangeResult", table, type_id, record.inner, source)
     elif record.kind == TypeKind.FILE:
         if record.name_length > 0:
             append_type_source_name(builder, source, record.name_start, record.name_length)
@@ -517,6 +517,30 @@ def append_unary_type_display(
     builder.append(name)
     builder.append("[")
     append_type_display(builder, table, inner, source)
+    builder.append("]")
+
+
+def append_atomic_type_display(
+    builder: &StringBuilder,
+    name: String,
+    table: &const TypeTable,
+    type_id: TypeId,
+    inner: TypeId,
+    source: &const String,
+) -> void:
+    builder.append(name)
+    builder.append("[")
+    element_kind = atomic_type_element_kind(table, type_id)
+    if element_kind == AtomicElementKind.BOOL:
+        builder.append("bool")
+    elif element_kind == AtomicElementKind.U32:
+        builder.append("u32")
+    elif element_kind == AtomicElementKind.U64:
+        builder.append("u64")
+    elif element_kind == AtomicElementKind.USIZE:
+        builder.append("usize")
+    else:
+        append_type_display(builder, table, inner, source)
     builder.append("]")
 
 

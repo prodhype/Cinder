@@ -134,6 +134,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/diagnostic_ownership.ci",
     ]
+    atomic_import_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_atomic_import/src/main.ci",
+    ]
     lock_command: List[String] = [
         state.compiler.clone(),
         "check",
@@ -159,6 +164,7 @@ def test_check_diagnostic(state: &TestState) -> void:
     import_result = process.run(import_command)
     override_result = process.run(override_command)
     ownership_result = process.run(ownership_command)
+    atomic_import_result = process.run(atomic_import_command)
     lock_result = process.run(lock_command)
     cross_module_lock_result = process.run(cross_module_lock_command)
     unresolved_before_result = process.run(unresolved_before_command)
@@ -185,6 +191,9 @@ def test_check_diagnostic(state: &TestState) -> void:
         and ownership_result.exit_code == 1
         and contains(&ownership_result.stderr, "checker.atomic-value-move/399")
         and contains(&ownership_result.stderr, "Atomic owner source")
+        and atomic_import_result.exit_code == 1
+        and contains(&atomic_import_result.stderr, "checker.atomic-used-as-value/400")
+        and contains(&atomic_import_result.stderr, "Atomic value Atomic[u64]")
         and lock_result.exit_code == 1
         and contains(&lock_result.stderr, "lock.order-cycle/410")
         and contains(&lock_result.stderr, "lock order contains a cycle near second -> first")
@@ -211,6 +220,7 @@ def test_check_diagnostic(state: &TestState) -> void:
         report_process_failure(&import_result.stdout, &import_result.stderr)
         report_process_failure(&override_result.stdout, &override_result.stderr)
         report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
+        report_process_failure(&atomic_import_result.stdout, &atomic_import_result.stderr)
         report_process_failure(&lock_result.stdout, &lock_result.stderr)
         report_process_failure(&cross_module_lock_result.stdout, &cross_module_lock_result.stderr)
         report_process_failure(&unresolved_before_result.stdout, &unresolved_before_result.stderr)
