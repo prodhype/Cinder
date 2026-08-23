@@ -811,15 +811,48 @@ def emit_module_assignment_target(
             receiver = codegen_names.first_child(arena, id)
             key = codegen_names.second_child(arena, id)
             if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
-                builder.append("(*")
+                receiver_type = codegen_context.context_expression_type(arena, context, receiver, source)
+                key_type = codegen_context.context_generic_argument(context.type_arena, receiver_type, 0)
+                key_owned_path = codegen_access.expression_is_owned_path_string(arena, key, source, imports, context)
+                key_temporary: i32 = -1
+                result_temporary: i32 = -1
+                previous_expected = context.expected_type
+                if key_owned_path:
+                    key_temporary = context.temporary_index
+                    context.temporary_index += 1
+                    result_temporary = context.temporary_index
+                    context.temporary_index += 1
+                    builder.append("(*({ CinderString ")
+                    codegen_access.append_path_temporary_name(builder, "assignment_key", key_temporary)
+                    builder.append(" = ")
+                    if key_type.index >= 0:
+                        context.expected_type = key_type
+                    codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
+                    context.expected_type = previous_expected
+                    builder.append("; __auto_type ")
+                    codegen_access.append_path_temporary_name(builder, "assignment_result", result_temporary)
+                    builder.append(" = ")
+                else:
+                    builder.append("(*")
                 codegen_context.emit_context_expression_specialization_name(arena, context, receiver, source, builder, prefix, project_name, imports, "Map", types.TypeKind.MAP)
                 builder.append("_at_mut(")
                 if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
                     builder.append("&")
                 codegen_expr.emit_module_expression(arena, receiver, source, builder, prefix, project_name, imports, context)
                 builder.append(", ")
-                codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
-                builder.append("))")
+                if key_owned_path:
+                    codegen_access.append_path_temporary_name(builder, "assignment_key", key_temporary)
+                else:
+                    codegen_expr.emit_module_expression(arena, key, source, builder, prefix, project_name, imports, context)
+                builder.append(")")
+                if key_owned_path:
+                    builder.append("; cinder_string_drop(&")
+                    codegen_access.append_path_temporary_name(builder, "assignment_key", key_temporary)
+                    builder.append("); ")
+                    codegen_access.append_path_temporary_name(builder, "assignment_result", result_temporary)
+                    builder.append("; }))")
+                else:
+                    builder.append(")")
                 return
         if node.kind == SyntaxKind.EXPR_NAME:
             name = source[node.value_start:node.value_start + node.value_length]
