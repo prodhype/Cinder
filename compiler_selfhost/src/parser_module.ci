@@ -1,3 +1,4 @@
+import diagnostics
 import parser_core
 import parser_declarations
 import syntax
@@ -38,32 +39,37 @@ def parse_module(context: &parser_core.ParserContext) -> NodeId:
         elif parser_core.at(context, TokenKind.CONST) or (parser_core.at(context, TokenKind.NAME) and (parser_core.peek(context, 1).kind == TokenKind.COLON or parser_core.peek(context, 1).kind == TokenKind.ASSIGN)):
             syntax.append_valid(children, parser_declarations.parse_global(context))
         else:
-            parser_core.emit_error(context, 2, parser_core.current(context))
+            parser_core.emit_error(
+                context,
+                diagnostics.DiagnosticId.PARSE_002,
+                "top-level declaration",
+                parser_core.current(context),
+            )
             break
-    end = parser_core.expect(context, TokenKind.EOF, 3)
+    end = parser_core.expect(context, TokenKind.EOF, diagnostics.DiagnosticId.PARSE_003)
     return parser_core.make_node_from_range(context, SyntaxKind.MODULE, start, end, children, 0)
 
 
 def parse_lock_reference(context: &parser_core.ParserContext) -> NodeId:
-    start = parser_core.expect(context, TokenKind.NAME, 149)
+    start = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_149)
     children: List[NodeId] = []
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, start, 0))
     end = start
     while parser_core.match_kind(context, TokenKind.DOT):
-        name = parser_core.expect(context, TokenKind.NAME, 150)
+        name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_150)
         syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
         end = name
     return parser_core.make_node(context, SyntaxKind.DOTTED_NAME, start, end, start, children, 0)
 
 
 def parse_lock(context: &parser_core.ParserContext) -> NodeId:
-    start = parser_core.expect(context, TokenKind.LOCK, 3)
-    name = parser_core.expect(context, TokenKind.NAME, 151)
+    start = parser_core.expect(context, TokenKind.LOCK, diagnostics.DiagnosticId.PARSE_003)
+    name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_151)
     children: List[NodeId] = []
     if parser_core.at(context, TokenKind.NAME) and parser_core.token_text_equals(context, parser_core.current(context), "after"):
         parser_core.advance(context)
         syntax.append_valid(children, parse_lock_reference(context))
-    end = parser_core.expect(context, TokenKind.NEWLINE, 152)
+    end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_152)
     return parser_core.make_node(context, SyntaxKind.LOCK_DECL, start, end, name, children, 0)
 
 
@@ -71,9 +77,9 @@ def parse_lock_order(context: &parser_core.ParserContext) -> NodeId:
     start = parser_core.advance(context)
     children: List[NodeId] = []
     syntax.append_valid(children, parse_lock_reference(context))
-    relation = parser_core.expect(context, TokenKind.NAME, 153)
+    relation = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_153)
     if not parser_core.token_text_equals(context, relation, "before"):
-        parser_core.emit_error(context, 153, relation)
+        parser_core.emit_error(context, diagnostics.DiagnosticId.PARSE_153, "'before'", relation)
     syntax.append_valid(children, parse_lock_reference(context))
-    end = parser_core.expect(context, TokenKind.NEWLINE, 154)
+    end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_154)
     return parser_core.make_node_from_range(context, SyntaxKind.LOCK_ORDER_DECL, start, end, children, 0)

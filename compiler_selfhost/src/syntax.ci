@@ -99,14 +99,6 @@ struct SyntaxNode:
     flags: i32
 
 
-struct ParseDiagnostic:
-    code: i32
-    start: usize
-    length: usize
-    line: i32
-    column: i32
-
-
 struct SyntaxArena:
     nodes: List[SyntaxNode]
     children: List[NodeId]

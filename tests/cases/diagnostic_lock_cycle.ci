@@ -1,0 +1,7 @@
+lock first
+lock second after first
+lockorder second before first
+
+
+def main() -> i32:
+    return 0

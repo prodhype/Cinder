@@ -1,10 +1,11 @@
-from token import BracketFrame, LexerCode, LexerDiagnostic, Token, TokenKind
+import diagnostics
+from token import BracketFrame, Token, TokenKind, token_kind_display
 
 
 struct Lexer:
     source: String
     tokens: List[Token]
-    diagnostics: List[LexerDiagnostic]
+    diagnostic_values: List[diagnostics.Diagnostic]
     indent_stack: List[i32]
     brackets: List[BracketFrame]
 
@@ -14,9 +15,45 @@ struct Lexer:
     def emit_zero_token(self: &Lexer, kind: TokenKind, start: usize, line: i32, column: i32) -> void:
         self.tokens.append(Token(kind=kind, start=start, length=0, line=line, column=column))
 
-    def emit_diagnostic(self: &Lexer, code: LexerCode, start: usize, length: usize, line: i32, column: i32) -> void:
-        self.diagnostics.append(
-            LexerDiagnostic(code=code, start=start, length=length, line=line, column=column)
+    def emit_diagnostic(self: &Lexer, id: diagnostics.DiagnosticId, start: usize, length: usize, line: i32, column: i32) -> void:
+        self.diagnostic_values.append(
+            diagnostics.new_diagnostic(id, diagnostics.source_span(start, length, line, column))
+        )
+
+    def emit_actual_character_diagnostic(
+        self: &Lexer,
+        id: diagnostics.DiagnosticId,
+        start: usize,
+        length: usize,
+        line: i32,
+        column: i32,
+        actual: char,
+    ) -> void:
+        self.diagnostic_values.append(
+            diagnostics.diagnostic_with_argument(
+                id,
+                diagnostics.source_span(start, length, line, column),
+                diagnostics.argument_character("actual", actual),
+            )
+        )
+
+    def emit_expected_token_diagnostic(
+        self: &Lexer,
+        id: diagnostics.DiagnosticId,
+        start: usize,
+        length: usize,
+        line: i32,
+        column: i32,
+        expected: TokenKind,
+        actual: TokenKind,
+    ) -> void:
+        self.diagnostic_values.append(
+            diagnostics.parser_expected_diagnostic(
+                id,
+                diagnostics.source_span(start, length, line, column),
+                token_kind_display(expected),
+                token_kind_display(actual),
+            )
         )
 
     def emit_indentation(self: &Lexer, indentation: i32, line_number: i32, line_start: usize) -> void:
@@ -35,7 +72,7 @@ struct Lexer:
             self.emit_token(TokenKind.DEDENT, line_start, line_start + length, line_number, 1)
 
         if indentation != self.indent_stack[len(self.indent_stack) - 1]:
-            self.emit_diagnostic(LexerCode.L004, line_start, length, line_number, 1)
+            self.emit_diagnostic(diagnostics.DiagnosticId.LEX_004, line_start, length, line_number, 1)
 
     def tokenize(self: &Lexer) -> void:
         source_len = len(self.source)
@@ -79,7 +116,7 @@ struct Lexer:
 
                 if saw_tab:
                     self.emit_diagnostic(
-                        LexerCode.L001,
+                        diagnostics.DiagnosticId.LEX_001,
                         line_start,
                         indent_end - line_start,
                         line_number,
@@ -109,11 +146,11 @@ struct Lexer:
             error_line = line_count
             if error_line < 1:
                 error_line = 1
-            self.emit_diagnostic(LexerCode.L002, source_len, 0, error_line, 1)
+            self.emit_diagnostic(diagnostics.DiagnosticId.LEX_002, source_len, 0, error_line, 1)
 
         if len(self.brackets) > 0:
             frame = self.brackets[len(self.brackets) - 1]
-            self.emit_diagnostic(LexerCode.L003, frame.start, frame.length, frame.line, frame.column)
+            self.emit_diagnostic(diagnostics.DiagnosticId.LEX_003, frame.start, frame.length, frame.line, frame.column)
 
         eof_line = line_count + 1
         if source_len > 0:
@@ -130,16 +167,12 @@ struct Lexer:
         self.emit_zero_token(TokenKind.EOF, source_len, eof_line, 1)
 
     def dump(self: &const Lexer) -> i32:
-        if len(self.diagnostics) > 0:
-            for diagnostic in self.diagnostics:
-                print(
-                    "E",
-                    cast[i32](diagnostic.code),
-                    diagnostic.start,
-                    diagnostic.length,
-                    diagnostic.line,
-                    diagnostic.column,
-                )
+        path: String = ""
+        return self.dump_with_path(&path)
+
+    def dump_with_path(self: &const Lexer, path: &const String) -> i32:
+        if len(self.diagnostic_values) > 0:
+            diagnostics.write_diagnostics_stderr(&self.diagnostic_values, path, &self.source)
             return 1
 
         for token in self.tokens:
@@ -276,7 +309,14 @@ struct Lexer:
                 index = end
                 continue
 
-            self.emit_diagnostic(LexerCode.L005, index, 1, line_number, column)
+            self.emit_actual_character_diagnostic(
+                diagnostics.DiagnosticId.LEX_005,
+                index,
+                1,
+                line_number,
+                column,
+                cast[char](byte),
+            )
             index += 1
             ignored_column += 1
 
@@ -321,7 +361,7 @@ struct Lexer:
             index += 1
 
         self.emit_diagnostic(
-            LexerCode.L006,
+            diagnostics.DiagnosticId.LEX_006,
             start,
             line_end - start,
             line_number,
@@ -377,7 +417,7 @@ struct Lexer:
             index += 1
 
         self.emit_diagnostic(
-            LexerCode.L006,
+            diagnostics.DiagnosticId.LEX_006,
             start,
             line_end - start,
             line_number,
@@ -397,7 +437,7 @@ struct Lexer:
             if valid_prefixed_digits(self.source, digit_start, index, 16):
                 self.emit_token(TokenKind.INTEGER, start, index, line_number, column_at(self.source, line_start, start))
             else:
-                self.emit_diagnostic(LexerCode.L009, start, index - start, line_number, column_at(self.source, line_start, start))
+                self.emit_diagnostic(diagnostics.DiagnosticId.LEX_009, start, index - start, line_number, column_at(self.source, line_start, start))
             return index
 
         if range_equals(self.source, index, 2, "0b") or range_equals(self.source, index, 2, "0B"):
@@ -408,7 +448,7 @@ struct Lexer:
             if valid_prefixed_digits(self.source, digit_start, index, 2):
                 self.emit_token(TokenKind.INTEGER, start, index, line_number, column_at(self.source, line_start, start))
             else:
-                self.emit_diagnostic(LexerCode.L009, start, index - start, line_number, column_at(self.source, line_start, start))
+                self.emit_diagnostic(diagnostics.DiagnosticId.LEX_009, start, index - start, line_number, column_at(self.source, line_start, start))
             return index
 
         if range_equals(self.source, index, 2, "0o") or range_equals(self.source, index, 2, "0O"):
@@ -419,7 +459,7 @@ struct Lexer:
             if valid_prefixed_digits(self.source, digit_start, index, 8):
                 self.emit_token(TokenKind.INTEGER, start, index, line_number, column_at(self.source, line_start, start))
             else:
-                self.emit_diagnostic(LexerCode.L009, start, index - start, line_number, column_at(self.source, line_start, start))
+                self.emit_diagnostic(diagnostics.DiagnosticId.LEX_009, start, index - start, line_number, column_at(self.source, line_start, start))
             return index
 
         integer_start = index
@@ -459,7 +499,7 @@ struct Lexer:
                 if exponent_digits_start == exponent_digits_end:
                     exponent_missing_digits = true
                     self.emit_diagnostic(
-                        LexerCode.L007,
+                        diagnostics.DiagnosticId.LEX_007,
                         start,
                         index - start,
                         line_number,
@@ -484,7 +524,7 @@ struct Lexer:
             else:
                 self.emit_token(TokenKind.INTEGER, start, index, line_number, column_at(self.source, line_start, start))
         else:
-            self.emit_diagnostic(LexerCode.L008, start, index - start, line_number, column_at(self.source, line_start, start))
+            self.emit_diagnostic(diagnostics.DiagnosticId.LEX_008, start, index - start, line_number, column_at(self.source, line_start, start))
 
         ignored_exponent_start = exponent_start
         return index
@@ -505,13 +545,21 @@ struct Lexer:
             return
 
         if len(self.brackets) == 0:
-            self.emit_diagnostic(LexerCode.L010, start, length, line, column)
+            self.emit_diagnostic(diagnostics.DiagnosticId.LEX_010, start, length, line, column)
             return
 
         opening = self.brackets[len(self.brackets) - 1]
         expected = matching_close(opening.kind)
         if expected != kind:
-            self.emit_diagnostic(LexerCode.L011, start, length, line, column)
+            self.emit_expected_token_diagnostic(
+                diagnostics.DiagnosticId.LEX_011,
+                start,
+                length,
+                line,
+                column,
+                expected,
+                kind,
+            )
             self.brackets.pop()
             return
 
@@ -520,13 +568,13 @@ struct Lexer:
 
 def new_lexer(source: String) -> Lexer:
     tokens: List[Token] = []
-    diagnostics: List[LexerDiagnostic] = []
+    diagnostic_values: List[diagnostics.Diagnostic] = []
     indent_stack: List[i32] = [0]
     brackets: List[BracketFrame] = []
     return Lexer(
         source=source,
         tokens=tokens,
-        diagnostics=diagnostics,
+        diagnostic_values=diagnostic_values,
         indent_stack=indent_stack,
         brackets=brackets,
     )

@@ -270,7 +270,7 @@ def emit_print_fstring_segments(
                 scan.tokenize()
                 parsed = parser.new_parser(&scan)
                 expression = parsed.parse_expression(0)
-                if len(scan.diagnostics) == 0 and len(parsed.diagnostics) == 0 and expression.index >= 0:
+                if len(scan.diagnostic_values) == 0 and len(parsed.diagnostic_values) == 0 and expression.index >= 0:
                     format_start = field.format_start
                     format_length: usize = 0
                     if format_start < field.close:

@@ -1,3 +1,4 @@
+import diagnostics
 import semantic
 import symbols
 import syntax
@@ -9,19 +10,11 @@ import project
 from syntax import NodeId
 
 
-struct CheckerDiagnostic:
-    code: i32
-    start: usize
-    length: usize
-    line: i32
-    column: i32
-
-
 struct Checker:
     type_table: types.TypeTable
     symbols: symbols.SymbolTable
     model: semantic.SemanticModel
-    diagnostics: List[CheckerDiagnostic]
+    diagnostic_values: List[diagnostics.Diagnostic]
     imported_enum_names: List[String]
     qualified_atomic_template_names: List[String]
     specialization_declaration: NodeId
@@ -30,16 +23,14 @@ struct Checker:
     module_name: String
     module_imports: List[project.ImportBinding]
 
-    def emit_error(self: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
-        if len(self.diagnostics) > 0:
+    def emit_diagnostic(self: &Checker, diagnostic: diagnostics.Diagnostic) -> void:
+        if len(self.diagnostic_values) > 0:
             return
-        self.diagnostics.append(
-            CheckerDiagnostic(code=code, start=start, length=length, line=line, column=column)
-        )
+        self.diagnostic_values.append(diagnostic)
 
 
 def new_checker() -> Checker:
-    diagnostics: List[CheckerDiagnostic] = []
+    diagnostic_values: List[diagnostics.Diagnostic] = []
     imported_enum_names: List[String] = []
     qualified_atomic_template_names: List[String] = []
     specialization_args: List[types.TypeId] = []
@@ -48,7 +39,7 @@ def new_checker() -> Checker:
         type_table=types.new_type_table(),
         symbols=symbols.new_symbol_table(),
         model=semantic.new_semantic_model(),
-        diagnostics=diagnostics,
+        diagnostic_values=diagnostic_values,
         imported_enum_names=imported_enum_names,
         qualified_atomic_template_names=qualified_atomic_template_names,
         specialization_declaration=syntax.missing_node(),
@@ -59,13 +50,150 @@ def new_checker() -> Checker:
     )
 
 
-def emit_error(checker: &Checker, code: i32, start: usize, length: usize, line: i32, column: i32) -> void:
-    checker.emit_error(code, start, length, line, column)
+def emit_diagnostic(checker: &Checker, diagnostic: diagnostics.Diagnostic) -> void:
+    checker.emit_diagnostic(diagnostic)
 
 
-def dump_diagnostics(checker: &const Checker) -> void:
-    for diagnostic in checker.diagnostics:
-        print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+def emit_error(
+    checker: &Checker,
+    id: diagnostics.DiagnosticId,
+    start: usize,
+    length: usize,
+    line: i32,
+    column: i32,
+) -> void:
+    checker.emit_diagnostic(
+        diagnostics.new_diagnostic(id, diagnostics.source_span(start, length, line, column))
+    )
+
+
+def emit_error_at(
+    checker: &Checker,
+    id: diagnostics.DiagnosticId,
+    node: &const syntax.SyntaxNode,
+) -> void:
+    emit_error(checker, id, node.start, node.length, node.line, node.column)
+
+
+def emit_type_mismatch(
+    checker: &Checker,
+    node: &const syntax.SyntaxNode,
+    expected: types.TypeId,
+    actual: types.TypeId,
+    source: &const String,
+) -> void:
+    diagnostic = diagnostics.type_mismatch_diagnostic(
+        source_span_from_node(node),
+        types.display_type(&checker.type_table, expected, source),
+        types.display_type(&checker.type_table, actual, source),
+    )
+    checker.emit_diagnostic(diagnostic)
+
+
+def emit_actual_type_error(
+    checker: &Checker,
+    id: diagnostics.DiagnosticId,
+    node: &const syntax.SyntaxNode,
+    actual: types.TypeId,
+    source: &const String,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_argument(
+        id,
+        source_span_from_node(node),
+        diagnostics.argument_type("actual", types.display_type(&checker.type_table, actual, source)),
+    )
+    checker.emit_diagnostic(diagnostic)
+
+
+def emit_expected_type_error(
+    checker: &Checker,
+    id: diagnostics.DiagnosticId,
+    node: &const syntax.SyntaxNode,
+    expected: types.TypeId,
+    source: &const String,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_argument(
+        id,
+        source_span_from_node(node),
+        diagnostics.argument_type("expected", types.display_type(&checker.type_table, expected, source)),
+    )
+    checker.emit_diagnostic(diagnostic)
+
+
+def emit_argument_count_error(
+    checker: &Checker,
+    id: diagnostics.DiagnosticId,
+    node: &const syntax.SyntaxNode,
+    expected: i32,
+    actual: i32,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_arguments(
+        id,
+        source_span_from_node(node),
+        diagnostics.argument_count("expected", expected),
+        diagnostics.argument_count("actual", actual),
+    )
+    checker.emit_diagnostic(diagnostic)
+
+
+def emit_symbol_error(
+    checker: &Checker,
+    id: diagnostics.DiagnosticId,
+    node: &const syntax.SyntaxNode,
+    name: String,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_argument(
+        id,
+        source_span_from_node(node),
+        diagnostics.argument_symbol("name", name),
+    )
+    checker.emit_diagnostic(diagnostic)
+
+
+def emit_import_member_error(
+    checker: &Checker,
+    node: &const syntax.SyntaxNode,
+    module_name: String,
+    member_name: String,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_three_arguments(
+        diagnostics.DiagnosticId.CHECK_048,
+        source_span_from_node(node),
+        diagnostics.argument_symbol("name", module_name[0:len(module_name)] + "." + member_name[0:len(member_name)]),
+        diagnostics.argument_path("module", module_name),
+        diagnostics.argument_symbol("member", member_name),
+    )
+    checker.emit_diagnostic(diagnostic)
+
+
+def emit_override_error(
+    checker: &Checker,
+    node: &const syntax.SyntaxNode,
+    method_name: String,
+    base_declaration: &const syntax.SyntaxNode,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_argument(
+        diagnostics.DiagnosticId.CHECK_179,
+        source_span_from_node(node),
+        diagnostics.argument_symbol("name", method_name),
+    )
+    diagnostic.add_related(
+        diagnostics.related_span("base declaration is here", source_span_from_node(base_declaration))
+    )
+    diagnostic.add_note("the base declaration is shown as a related source location")
+    checker.emit_diagnostic(diagnostic)
+
+
+def source_span_from_node(node: &const syntax.SyntaxNode) -> diagnostics.SourceSpan:
+    return diagnostics.source_span(node.start, node.length, node.line, node.column)
+
+
+def dump_diagnostics(
+    checker: &const Checker,
+    path: &const String,
+    source: &const String,
+) -> void:
+    diagnostics.write_diagnostics_stderr(&checker.diagnostic_values, path, source)
 
 
 def prepare_lock_context(checker: &Checker, source: &const String, modules: &const List[project.ParsedModule]) -> void:
@@ -91,19 +219,14 @@ def prepare_lock_context(checker: &Checker, source: &const String, modules: &con
                 )
                 import_index += 1
             diagnostic_index: usize = 0
-            lock_diagnostics: &const List[lock_order.LockDiagnostic] = &checker.lock_model.diagnostics
+            lock_diagnostics: &const List[diagnostics.Diagnostic] = &checker.lock_model.diagnostic_values
+            diagnostic_modules: &const List[String] = &checker.lock_model.diagnostic_modules
             while diagnostic_index < len(lock_diagnostics):
-                diagnostic: &const lock_order.LockDiagnostic = &lock_diagnostics[diagnostic_index]
-                if diagnostic.module_name == module.name:
-                    emit_error(
+                if diagnostic_modules[diagnostic_index] == module.name:
+                    emit_diagnostic(
                         checker,
-                        diagnostic.code,
-                        diagnostic.start,
-                        diagnostic.length,
-                        diagnostic.line,
-                        diagnostic.column,
+                        diagnostics.clone_diagnostic_at(lock_diagnostics, diagnostic_index),
                     )
-                    lock_order.print_diagnostic(diagnostic)
                 diagnostic_index += 1
             return
         module_index += 1
@@ -176,10 +299,23 @@ def resolve_type_node_unsubstituted(checker: &Checker, arena: &const syntax.Synt
             symbol = checker.symbols.symbols[found.index]
             if symbol.kind == symbols.SymbolKind.TYPE_PARAMETER or is_nominal_symbol_kind(symbol.kind):
                 if is_nominal_symbol_kind(symbol.kind) and generics.has_type_params(arena, symbol.node):
-                    emit_error(checker, 352, node.start, node.length, node.line, node.column)
+                    expected_args = generics.type_param_count(arena, symbol.node)
+                    emit_argument_count_error(
+                        checker,
+                        diagnostics.DiagnosticId.CHECK_352,
+                        &node,
+                        expected_args,
+                        0,
+                    )
                 return symbol.type_id
             if symbol.type_id.index >= 0 and symbol.type_id.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[symbol.type_id.index].kind == types.TypeKind.ATOMIC:
-                emit_error(checker, 351, node.start, node.length, node.line, node.column)
+                emit_argument_count_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_351,
+                    &node,
+                    1,
+                    0,
+                )
                 return types.type_error()
         return checker.type_table.resolve_type_name(source, node.value_start, node.value_length)
     if node.kind == syntax.SyntaxKind.TYPE_POINTER:
@@ -252,7 +388,13 @@ def resolve_generic_type_node(checker: &Checker, arena: &const syntax.SyntaxAren
         expected_args = generics.type_param_count(arena, found_symbol.node)
         actual_args = node.child_count - 1
         if expected_args > 0 and expected_args != actual_args:
-            emit_error(checker, 352, node.start, node.length, node.line, node.column)
+            emit_argument_count_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_352,
+                &node,
+                expected_args,
+                actual_args,
+            )
         symbol_type = found_symbol.type_id
         is_atomic_template = is_qualified_atomic_type_import(checker, arena, base_id, source, found)
         if symbol_type.index >= 0 and symbol_type.index < cast[i32](len(checker.type_table.types)):
@@ -261,14 +403,26 @@ def resolve_generic_type_node(checker: &Checker, arena: &const syntax.SyntaxAren
                 is_atomic_template = true
         if is_atomic_template:
             if actual_args != 1:
-                emit_error(checker, 352, node.start, node.length, node.line, node.column)
+                emit_argument_count_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_352,
+                    &node,
+                    1,
+                    actual_args,
+                )
                 return types.type_error()
             element_kind = types.atomic_element_kind(&checker.type_table, args[0], source)
             if element_kind == types.AtomicElementKind.INVALID:
                 if type_is_unbound_parameter(checker, args[0], source):
                     return checker.type_table.atomic_of(types.strip_const(&checker.type_table, args[0]), element_kind)
                 argument_node = arena.nodes[arena.children[node.first_child + 1].index]
-                emit_error(checker, 394, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+                emit_actual_type_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_394,
+                    &argument_node,
+                    args[0],
+                    source,
+                )
                 return types.type_error()
             return checker.type_table.atomic_of(types.strip_const(&checker.type_table, args[0]), element_kind)
     return checker.type_table.generic_from_args(kind, base.value_start, base.value_length, args)
@@ -313,12 +467,12 @@ def resolve_callable_type_node(checker: &Checker, arena: &const syntax.SyntaxAre
         parameter_type = resolve_type_node(checker, arena, parameter_node, source)
         if ownership.type_contains_atomic_storage(&checker.type_table, parameter_type):
             parameter_syntax = arena.nodes[parameter_node.index]
-            emit_error(checker, 396, parameter_syntax.start, parameter_syntax.length, parameter_syntax.line, parameter_syntax.column)
+            emit_error_at(checker, diagnostics.DiagnosticId.CHECK_396, &parameter_syntax)
         args.append(parameter_type)
         offset += 1
     if ownership.type_contains_atomic_storage(&checker.type_table, return_type):
         return_node = arena.nodes[arena.children[node.first_child + parameter_end].index]
-        emit_error(checker, 396, return_node.start, return_node.length, return_node.line, return_node.column)
+        emit_error_at(checker, diagnostics.DiagnosticId.CHECK_396, &return_node)
     if is_closure:
         return checker.type_table.closure_from_args(environment, args, return_type)
     return checker.type_table.function_from_args(args, return_type)

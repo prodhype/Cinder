@@ -92,30 +92,8 @@ enum TokenKind:
     SHIFT_RIGHT_ASSIGN
 
 
-enum LexerCode:
-    L001
-    L002
-    L003
-    L004
-    L005
-    L006
-    L007
-    L008
-    L009
-    L010
-    L011
-
-
 struct Token:
     kind: TokenKind
-    start: usize
-    length: usize
-    line: i32
-    column: i32
-
-
-struct LexerDiagnostic:
-    code: LexerCode
     start: usize
     length: usize
     line: i32
@@ -128,3 +106,187 @@ struct BracketFrame:
     length: usize
     line: i32
     column: i32
+
+
+def token_kind_display(kind: TokenKind) -> String:
+    if kind == TokenKind.EOF:
+        return "end of file"
+    if kind == TokenKind.NEWLINE:
+        return "newline"
+    if kind == TokenKind.INDENT:
+        return "indent"
+    if kind == TokenKind.DEDENT:
+        return "dedent"
+    if kind == TokenKind.NAME:
+        return "name"
+    if kind == TokenKind.INTEGER:
+        return "integer"
+    if kind == TokenKind.FLOAT:
+        return "float"
+    if kind == TokenKind.STRING:
+        return "string"
+    if kind == TokenKind.FSTRING:
+        return "f-string"
+    if kind == TokenKind.CHAR:
+        return "character"
+    if kind == TokenKind.IMPORT:
+        return "'import'"
+    if kind == TokenKind.FROM:
+        return "'from'"
+    if kind == TokenKind.AS:
+        return "'as'"
+    if kind == TokenKind.EXTERN:
+        return "'extern'"
+    if kind == TokenKind.DEF:
+        return "'def'"
+    if kind == TokenKind.STRUCT:
+        return "'struct'"
+    if kind == TokenKind.ENUM:
+        return "'enum'"
+    if kind == TokenKind.UNION:
+        return "'union'"
+    if kind == TokenKind.VARIANT:
+        return "'variant'"
+    if kind == TokenKind.CLASS:
+        return "'class'"
+    if kind == TokenKind.ABSTRACT:
+        return "'abstract'"
+    if kind == TokenKind.DYN:
+        return "'dyn'"
+    if kind == TokenKind.COMPTIME:
+        return "'comptime'"
+    if kind == TokenKind.IF:
+        return "'if'"
+    if kind == TokenKind.ELIF:
+        return "'elif'"
+    if kind == TokenKind.ELSE:
+        return "'else'"
+    if kind == TokenKind.WHILE:
+        return "'while'"
+    if kind == TokenKind.FOR:
+        return "'for'"
+    if kind == TokenKind.MATCH:
+        return "'match'"
+    if kind == TokenKind.CASE:
+        return "'case'"
+    if kind == TokenKind.IN:
+        return "'in'"
+    if kind == TokenKind.RETURN:
+        return "'return'"
+    if kind == TokenKind.BREAK:
+        return "'break'"
+    if kind == TokenKind.CONTINUE:
+        return "'continue'"
+    if kind == TokenKind.PASS:
+        return "'pass'"
+    if kind == TokenKind.CONST:
+        return "'const'"
+    if kind == TokenKind.TRUE:
+        return "'true'"
+    if kind == TokenKind.FALSE:
+        return "'false'"
+    if kind == TokenKind.NULL:
+        return "'null'"
+    if kind == TokenKind.NONE:
+        return "'None'"
+    if kind == TokenKind.AND:
+        return "'and'"
+    if kind == TokenKind.OR:
+        return "'or'"
+    if kind == TokenKind.NOT:
+        return "'not'"
+    if kind == TokenKind.UNSAFE:
+        return "'unsafe'"
+    if kind == TokenKind.DEFER:
+        return "'defer'"
+    if kind == TokenKind.WITH:
+        return "'with'"
+    if kind == TokenKind.PRIVATE:
+        return "'private'"
+    if kind == TokenKind.LOCK:
+        return "'lock'"
+    if kind == TokenKind.LEFT_PAREN:
+        return "'('"
+    if kind == TokenKind.RIGHT_PAREN:
+        return "')'"
+    if kind == TokenKind.LEFT_BRACKET:
+        return "'['"
+    if kind == TokenKind.RIGHT_BRACKET:
+        return "']'"
+    if kind == TokenKind.LEFT_BRACE:
+        return "'{'"
+    if kind == TokenKind.RIGHT_BRACE:
+        return "'}'"
+    if kind == TokenKind.COLON:
+        return "':'"
+    if kind == TokenKind.COMMA:
+        return "','"
+    if kind == TokenKind.DOT:
+        return "'.'"
+    if kind == TokenKind.SEMICOLON:
+        return "';'"
+    if kind == TokenKind.AT:
+        return "'@'"
+    if kind == TokenKind.ARROW:
+        return "'->'"
+    if kind == TokenKind.ELLIPSIS:
+        return "'...'"
+    if kind == TokenKind.QUESTION:
+        return "'?'"
+    if kind == TokenKind.ASSIGN:
+        return "'='"
+    if kind == TokenKind.PLUS:
+        return "'+'"
+    if kind == TokenKind.MINUS:
+        return "'-'"
+    if kind == TokenKind.STAR:
+        return "'*'"
+    if kind == TokenKind.SLASH:
+        return "'/'"
+    if kind == TokenKind.PERCENT:
+        return "'%'"
+    if kind == TokenKind.AMPERSAND:
+        return "'&'"
+    if kind == TokenKind.PIPE:
+        return "'|'"
+    if kind == TokenKind.CARET:
+        return "'^'"
+    if kind == TokenKind.TILDE:
+        return "'~'"
+    if kind == TokenKind.BANG:
+        return "'!'"
+    if kind == TokenKind.EQUAL:
+        return "'=='"
+    if kind == TokenKind.NOT_EQUAL:
+        return "'!='"
+    if kind == TokenKind.LESS:
+        return "'<'"
+    if kind == TokenKind.LESS_EQUAL:
+        return "'<='"
+    if kind == TokenKind.GREATER:
+        return "'>'"
+    if kind == TokenKind.GREATER_EQUAL:
+        return "'>='"
+    if kind == TokenKind.SHIFT_LEFT:
+        return "'<<'"
+    if kind == TokenKind.SHIFT_RIGHT:
+        return "'>>'"
+    if kind == TokenKind.PLUS_ASSIGN:
+        return "'+='"
+    if kind == TokenKind.MINUS_ASSIGN:
+        return "'-='"
+    if kind == TokenKind.STAR_ASSIGN:
+        return "'*='"
+    if kind == TokenKind.SLASH_ASSIGN:
+        return "'/='"
+    if kind == TokenKind.PERCENT_ASSIGN:
+        return "'%='"
+    if kind == TokenKind.AMPERSAND_ASSIGN:
+        return "'&='"
+    if kind == TokenKind.PIPE_ASSIGN:
+        return "'|='"
+    if kind == TokenKind.CARET_ASSIGN:
+        return "'^='"
+    if kind == TokenKind.SHIFT_LEFT_ASSIGN:
+        return "'<<='"
+    return "'>>='"

@@ -1,5 +1,6 @@
 import checker_core
 import collections
+import diagnostics
 import generics
 import lock_order
 import ownership
@@ -78,8 +79,16 @@ def validate_temporary_reference_escape(
         or not checker_expression_is_derived_from_owned_temporary(checker, arena, argument, source)
     ):
         return
-    node = arena.nodes[argument.index]
-    checker_core.emit_error(checker, 421, node.start, node.length, node.line, node.column)
+    emit_ownership_failure(
+        checker,
+        arena,
+        diagnostics.DiagnosticId.CHECK_421,
+        argument,
+        checker.model.expr_type(argument),
+        destination_type,
+        source,
+        "reference escape",
+    )
 
 
 def checker_type_can_clone(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
@@ -227,11 +236,19 @@ def validate_partial_move_source_impl(
     if type_is_borrowed_for_transfer(checker.type_table, destination_type):
         return
     if ownership.type_contains_atomic_storage(&checker.type_table, value_type):
-        node = arena.nodes[expression.index]
-        code: i32 = 395
+        id = diagnostics.DiagnosticId.CHECK_395
         if types.is_atomic_type(&checker.type_table, value_type):
-            code = 399
-        checker_core.emit_error(checker, code, node.start, node.length, node.line, node.column)
+            id = diagnostics.DiagnosticId.CHECK_399
+        emit_ownership_failure(
+            checker,
+            arena,
+            id,
+            expression,
+            value_type,
+            destination_type,
+            source,
+            "transfer",
+        )
         return
     kind = arena.nodes[expression.index].kind
     if kind == syntax.SyntaxKind.EXPR_SET:
@@ -265,14 +282,31 @@ def validate_partial_move_source_impl(
             and checker.symbols.symbols[found.index].flags == 1
             and checker_type_needs_drop(checker, arena, destination_type, source)
         ):
-            checker_core.emit_error(checker, 254, node.start, node.length, node.line, node.column)
+            emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_254,
+                expression,
+                value_type,
+                destination_type,
+                source,
+                "move",
+            )
         return
     if kind != syntax.SyntaxKind.EXPR_ATTRIBUTE and kind != syntax.SyntaxKind.EXPR_INDEX:
         return
     if not checker_type_needs_drop(checker, arena, value_type, source):
         return
-    node = arena.nodes[expression.index]
-    checker_core.emit_error(checker, 254, node.start, node.length, node.line, node.column)
+    emit_ownership_failure(
+        checker,
+        arena,
+        diagnostics.DiagnosticId.CHECK_254,
+        expression,
+        value_type,
+        destination_type,
+        source,
+        "partial move",
+    )
 
 
 def record_transfer_value_use(
@@ -302,7 +336,51 @@ def record_transfer_value_use(
     for binding: semantic.NodeSymbolBinding in name_bindings:
         if binding.node.index == expression.index:
             symbol = binding.symbol
-    checker.model.record_value_use(expression, kind, symbol, value_type)
+    checker.model.record_value_use(expression, kind, symbol, value_type, destination_type)
+
+
+def emit_ownership_failure(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: diagnostics.DiagnosticId,
+    expression: NodeId,
+    value_type: types.TypeId,
+    destination_type: types.TypeId,
+    source: &const String,
+    transfer_kind: String,
+) -> void:
+    if expression.index < 0:
+        return
+    node = arena.nodes[expression.index]
+    owner = source[node.start:node.start + node.length]
+    previous_move = syntax.missing_node()
+    value_uses: &const List[semantic.ValueUseResolution] = &checker.model.value_use_resolutions
+    for use in value_uses:
+        if use.node.index == expression.index:
+            previous_move = use.previous_move
+            if use.symbol.index >= 0 and use.symbol.index < cast[i32](len(checker.symbols.symbols)):
+                owner_symbol = checker.symbols.symbols[use.symbol.index]
+                owner = source[owner_symbol.name_start:owner_symbol.name_start + owner_symbol.name_length]
+    transfer = transfer_kind[0:len(transfer_kind)]
+    transfer.append(": ")
+    transfer.append(types.display_type(&checker.type_table, value_type, source))
+    transfer.append(" -> ")
+    transfer.append(types.display_type(&checker.type_table, destination_type, source))
+    diagnostic = diagnostics.diagnostic_with_three_arguments(
+        id,
+        checker_core.source_span_from_node(&node),
+        diagnostics.argument_symbol("owner", owner),
+        diagnostics.argument_text("transfer", transfer),
+        diagnostics.argument_type("actual", types.display_type(&checker.type_table, value_type, source)),
+    )
+    if previous_move.index >= 0 and previous_move.index < cast[i32](len(arena.nodes)):
+        diagnostic.add_related(
+            diagnostics.related_span(
+                "previous move occurred here",
+                checker_core.source_span_from_node(&arena.nodes[previous_move.index]),
+            )
+        )
+    checker_core.emit_diagnostic(checker, diagnostic)
 
 
 def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
@@ -380,7 +458,12 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         return
     found = checker.symbols.find_in_scope(source, current_scope, callee_node.value_start, callee_node.value_length)
     if found.index < 0:
-        checker_core.emit_error(checker, 48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_048,
+            &callee_node,
+            source[callee_node.value_start:callee_node.value_start + callee_node.value_length],
+        )
         return
     symbol = checker.symbols.symbols[found.index]
     if symbol.type_id.index >= 0 and symbol.type_id.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[symbol.type_id.index].kind == types.TypeKind.ATOMIC:
@@ -394,7 +477,7 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
                 argument_value = checker_core.last_child(arena, child_id)
                 argument_type = infer_expression_type(checker, arena, argument_value, source, current_scope)
                 ignored_argument_type = argument_type
-        checker_core.emit_error(checker, 359, call.start, call.length, call.line, call.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_359, &call)
         checker.model.record_expr_type(id, types.type_error())
         return
     if is_nominal_constructor_symbol(symbol.kind) or symbol.kind == symbols.SymbolKind.GLOBAL:
@@ -412,9 +495,21 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
             actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
             expected = callable_type.flags
             if actual < expected:
-                checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+                checker_core.emit_argument_count_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_078,
+                    &call,
+                    expected,
+                    actual,
+                )
             elif actual > expected:
-                checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+                checker_core.emit_argument_count_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_077,
+                    &call,
+                    expected,
+                    actual,
+                )
             validate_callable_call_move_arguments(checker, arena, id, callable_type, source, current_scope)
             return
     if symbol.kind == symbols.SymbolKind.LOCAL or symbol.kind == symbols.SymbolKind.PARAMETER or symbol.kind == symbols.SymbolKind.CONSTANT:
@@ -422,7 +517,12 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         checker.model.record_expr_type(id, types.type_i32())
         return
     if symbol.kind != symbols.SymbolKind.FUNCTION and symbol.kind != symbols.SymbolKind.FUNCTION_TEMPLATE:
-        checker_core.emit_error(checker, 48, callee_node.start, callee_node.length, callee_node.line, callee_node.column)
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_048,
+            &callee_node,
+            source[callee_node.value_start:callee_node.value_start + callee_node.value_length],
+        )
         return
     checker.model.record_name_symbol(callee, found)
     checker.model.record_call(id, found, symbol.type_id, 0)
@@ -435,9 +535,21 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
     expected = symbol.flags
     if actual < expected:
-        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_078,
+            &call,
+            expected,
+            actual,
+        )
     elif actual > expected:
-        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_077,
+            &call,
+            expected,
+            actual,
+        )
 
 
 def validate_path_namespace_call(
@@ -486,16 +598,28 @@ def validate_path_namespace_call(
     elif member_name == "rename":
         expected = 2
     elif member_name != "create_dir" and member_name != "create_dir_all" and member_name != "remove_file":
-        checker_core.emit_error(checker, 48, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker_core.emit_import_member_error(checker, &member_node, "std.path", member_name)
         checker.model.record_expr_type(call_id, types.type_error())
         return true
 
     call = arena.nodes[call_id.index]
     actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
     if actual < expected:
-        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_078,
+            &call,
+            expected,
+            actual,
+        )
     elif actual > expected:
-        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_077,
+            &call,
+            expected,
+            actual,
+        )
 
     seen_first = false
     seen_second = false
@@ -511,22 +635,46 @@ def validate_path_namespace_call(
             seen_named = true
             role = path_named_argument_index(arena, argument_id, source, &member_name)
         elif seen_named:
-            checker_core.emit_error(checker, 76, argument.start, argument.length, argument.line, argument.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_076, &argument)
         if role < 0 or role >= expected:
-            checker_core.emit_error(checker, 48, argument.start, argument.length, argument.line, argument.column)
+            checker_core.emit_symbol_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_048,
+                &argument,
+                source[argument.start:argument.start + argument.length],
+            )
         elif role == 0:
             if seen_first:
-                checker_core.emit_error(checker, 48, argument.start, argument.length, argument.line, argument.column)
+                checker_core.emit_symbol_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_048,
+                    &argument,
+                    source[argument.start:argument.start + argument.length],
+                )
             seen_first = true
         else:
             if seen_second:
-                checker_core.emit_error(checker, 48, argument.start, argument.length, argument.line, argument.column)
+                checker_core.emit_symbol_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_048,
+                    &argument,
+                    source[argument.start:argument.start + argument.length],
+                )
             seen_second = true
         value = checker_core.last_child(arena, argument_id)
         value_type = infer_expression_type(checker, arena, value, source, current_scope)
         if not path_argument_type_is_string(checker.type_table, value_type):
             value_node = arena.nodes[value.index]
-            checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
+            expected_type = checker.type_table.reference_to(
+                checker.type_table.const_of(types.type_string())
+            )
+            checker_core.emit_type_mismatch(
+                checker,
+                &value_node,
+                expected_type,
+                value_type,
+                source,
+            )
         destination_type = checker.type_table.reference_to(checker.type_table.const_of(types.type_string()))
         record_transfer_value_use(checker, value, value_type, destination_type)
         source_index += 1
@@ -646,24 +794,36 @@ def validate_sorted_call(
     argument_count = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
     argument = call_argument_value(arena, id, 0)
     if argument_count != 1 or call_argument_is_named(arena, id, 0):
-        checker_core.emit_error(checker, 405, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_405,
+            &call,
+            1,
+            argument_count,
+        )
         checker.model.record_expr_type(id, collections.list_type(checker.type_table, types.type_error()))
         return
     argument_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, argument, source, current_scope))
     if argument_type.index < 0 or argument_type.index >= cast[i32](len(checker.type_table.types)):
-        checker_core.emit_error(checker, 406, call.start, call.length, call.line, call.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_406, &call)
         checker.model.record_expr_type(id, collections.list_type(checker.type_table, types.type_error()))
         return
     record = checker.type_table.types[argument_type.index]
     if record.kind != types.TypeKind.LIST and record.kind != types.TypeKind.ARRAY and record.kind != types.TypeKind.SLICE:
         argument_node = arena.nodes[argument.index]
-        checker_core.emit_error(checker, 406, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_406, &argument_node)
         checker.model.record_expr_type(id, collections.list_type(checker.type_table, types.type_error()))
         return
     element = types.strip_const(&checker.type_table, record.inner)
     if not semantic_type_is_sortable(checker.type_table, element, source):
         argument_node = arena.nodes[argument.index]
-        checker_core.emit_error(checker, 407, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+        checker_core.emit_actual_type_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_407,
+            &argument_node,
+            element,
+            source,
+        )
     if element.index == types.type_lock().index:
         checker.model.record_expr_type(id, checker.type_table.ordered_lock_list())
     else:
@@ -702,11 +862,23 @@ def validate_owned_constructor(
     call = arena.nodes[id.index]
     actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
     if actual < 1:
-        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_078,
+            &call,
+            1,
+            actual,
+        )
         checker.model.record_expr_type(id, types.type_error())
         return
     if actual > 1:
-        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_077,
+            &call,
+            1,
+            actual,
+        )
     argument = call_argument_value(arena, id, 0)
     payload_type = infer_expression_type(checker, arena, argument, source, current_scope)
     validate_partial_move_source(checker, arena, argument, payload_type, payload_type, source, current_scope)
@@ -724,14 +896,20 @@ def validate_closure_constructor(checker: &checker_core.Checker, arena: &const s
     call = arena.nodes[id.index]
     actual = checker_core.count_direct_children(arena, id, syntax.SyntaxKind.EXPR_ARGUMENT)
     if actual != 2:
-        checker_core.emit_error(checker, 378, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_378,
+            &call,
+            2,
+            actual,
+        )
         checker.model.record_expr_type(id, types.type_error())
         return
     for offset in range(0, call.child_count):
         child_id = arena.children[call.first_child + offset]
         child = arena.nodes[child_id.index]
         if child.kind == syntax.SyntaxKind.EXPR_ARGUMENT and child.flags == 1:
-            checker_core.emit_error(checker, 379, child.start, child.length, child.line, child.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_379, &child)
             checker.model.record_expr_type(id, types.type_error())
             return
     environment_expression = call_argument_value(arena, id, 0)
@@ -743,7 +921,7 @@ def validate_closure_constructor(checker: &checker_core.Checker, arena: &const s
     environment_record = checker.type_table.types[environment_type.index]
     if environment_record.kind != types.TypeKind.STRUCT:
         environment_node = arena.nodes[environment_expression.index]
-        checker_core.emit_error(checker, 380, environment_node.start, environment_node.length, environment_node.line, environment_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_380, &environment_node)
         checker.model.record_expr_type(id, types.type_error())
         return
     validate_partial_move_source(checker, arena, environment_expression, environment_type, environment_type, source, current_scope)
@@ -752,17 +930,22 @@ def validate_closure_constructor(checker: &checker_core.Checker, arena: &const s
         return
     adapter_node = arena.nodes[adapter_expression.index]
     if adapter_node.kind != syntax.SyntaxKind.EXPR_NAME:
-        checker_core.emit_error(checker, 383, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_383, &adapter_node)
         checker.model.record_expr_type(id, types.type_error())
         return
     adapter_symbol_id = checker.symbols.find_in_scope(source, current_scope, adapter_node.value_start, adapter_node.value_length)
     if adapter_symbol_id.index < 0:
-        checker_core.emit_error(checker, 48, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_048,
+            &adapter_node,
+            source[adapter_node.value_start:adapter_node.value_start + adapter_node.value_length],
+        )
         checker.model.record_expr_type(id, types.type_error())
         return
     adapter_symbol = checker.symbols.symbols[adapter_symbol_id.index]
     if adapter_symbol.kind != symbols.SymbolKind.FUNCTION:
-        checker_core.emit_error(checker, 383, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_383, &adapter_node)
         checker.model.record_expr_type(id, types.type_error())
         return
     declaration = arena.nodes[adapter_symbol.node.index]
@@ -779,7 +962,7 @@ def validate_closure_constructor(checker: &checker_core.Checker, arena: &const s
         adapter_args.append(parameter_type)
         if parameter_index == 0:
             if parameter_type.index < 0 or parameter_type.index >= cast[i32](len(checker.type_table.types)) or checker.type_table.types[parameter_type.index].kind != types.TypeKind.REFERENCE:
-                checker_core.emit_error(checker, 385, parameter.start, parameter.length, parameter.line, parameter.column)
+                checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_385, &parameter)
                 checker.model.record_expr_type(id, types.type_error())
                 return
             closure_environment = checker.type_table.types[parameter_type.index].inner
@@ -787,13 +970,19 @@ def validate_closure_constructor(checker: &checker_core.Checker, arena: &const s
             visible_args.append(parameter_type)
         parameter_index += 1
     if parameter_index == 0:
-        checker_core.emit_error(checker, 384, adapter_node.start, adapter_node.length, adapter_node.line, adapter_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_384, &adapter_node)
         checker.model.record_expr_type(id, types.type_error())
         return
     expected_environment = strip_const_type(checker.type_table, closure_environment)
     if not closure_environment_types_match(checker.type_table, expected_environment, environment_type, source):
         environment_node = arena.nodes[environment_expression.index]
-        checker_core.emit_error(checker, 107, environment_node.start, environment_node.length, environment_node.line, environment_node.column)
+        checker_core.emit_type_mismatch(
+            checker,
+            &environment_node,
+            expected_environment,
+            environment_type,
+            source,
+        )
     adapter_type = checker.type_table.function_from_args(adapter_args, adapter_symbol.type_id)
     checker.model.record_name_symbol(adapter_expression, adapter_symbol_id)
     checker.model.record_expr_type(adapter_expression, adapter_type)
@@ -839,28 +1028,33 @@ def validate_atomic_method_call(
         return false
     if indirection_count > 1:
         receiver_node = arena.nodes[receiver.index]
-        checker_core.emit_error(checker, 403, receiver_node.start, receiver_node.length, receiver_node.line, receiver_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &receiver_node)
         checker.model.record_expr_type(call_id, types.type_error())
         return true
 
     call = arena.nodes[call_id.index]
     if call.flags == 1:
-        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &call)
     member_node = arena.nodes[member.index]
     kind = atomic_intrinsic_kind(source, &member_node)
     if kind == semantic.AtomicIntrinsicKind.NONE:
-        checker_core.emit_error(checker, 402, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_402,
+            &member_node,
+            source[member_node.value_start:member_node.value_start + member_node.value_length],
+        )
         checker.model.record_expr_type(call_id, types.type_error())
         return true
     if not pointer_receiver and not atomic_receiver_is_addressable(arena, receiver):
         receiver_node = arena.nodes[receiver.index]
-        checker_core.emit_error(checker, 403, receiver_node.start, receiver_node.length, receiver_node.line, receiver_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &receiver_node)
     if kind != semantic.AtomicIntrinsicKind.LOAD and (flags & 2) != 0:
-        checker_core.emit_error(checker, 403, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &member_node)
 
     element_kind = types.atomic_type_element_kind(&checker.type_table, current)
     if is_atomic_fetch_intrinsic(kind) and not types.atomic_element_is_integer(element_kind):
-        checker_core.emit_error(checker, 403, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &member_node)
 
     expected: i32 = 1
     result_type = atomic_record.inner
@@ -873,11 +1067,23 @@ def validate_atomic_method_call(
         result_type = checker.type_table.atomic_compare_exchange_result(atomic_record.inner, element_kind)
     actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
     if actual < expected:
-        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_403,
+            &call,
+            expected,
+            actual,
+        )
         checker.model.record_expr_type(call_id, types.type_error())
         return true
     if actual > expected:
-        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_403,
+            &call,
+            expected,
+            actual,
+        )
         checker.model.record_expr_type(call_id, types.type_error())
         return true
 
@@ -898,7 +1104,7 @@ def validate_atomic_method_call(
         if argument.flags == 1:
             seen_named = true
         elif seen_named:
-            checker_core.emit_error(checker, 76, argument.start, argument.length, argument.line, argument.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_076, &argument)
         role = semantic.AtomicArgumentRole.VALUE
         if kind == semantic.AtomicIntrinsicKind.COMPARE_EXCHANGE:
             if argument.flags == 1:
@@ -908,18 +1114,18 @@ def validate_atomic_method_call(
             else:
                 role = semantic.AtomicArgumentRole.DESIRED
             if role == semantic.AtomicArgumentRole.NONE:
-                checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+                checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &argument)
             elif role == semantic.AtomicArgumentRole.EXPECTED:
                 if operand0.index >= 0:
-                    checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+                    checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &argument)
                 operand0 = value
             elif role == semantic.AtomicArgumentRole.DESIRED:
                 if operand1.index >= 0:
-                    checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+                    checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &argument)
                 operand1 = value
         else:
             if argument.flags == 1 and not atomic_argument_name_is(arena, argument_id, source, "value"):
-                checker_core.emit_error(checker, 403, argument.start, argument.length, argument.line, argument.column)
+                checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_403, &argument)
             operand0 = value
         if source_index == 0:
             first_evaluated = value
@@ -930,18 +1136,36 @@ def validate_atomic_method_call(
         value_type = infer_expression_type(checker, arena, value, source, current_scope)
         value_node = arena.nodes[value.index]
         if types.is_atomic_type(&checker.type_table, value_type):
-            checker_core.emit_error(checker, 400, value_node.start, value_node.length, value_node.line, value_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_400,
+                &value_node,
+                value_type,
+                source,
+            )
         elif not atomic_value_type_is_compatible(checker, element_kind, value_type, source):
-            checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
+            checker_core.emit_type_mismatch(
+                checker,
+                &value_node,
+                atomic_record.inner,
+                value_type,
+                source,
+            )
         source_index += 1
     if expected == 2 and (operand0.index < 0 or operand1.index < 0):
-        checker_core.emit_error(checker, 403, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_403,
+            &call,
+            expected,
+            actual,
+        )
 
     receiver_symbol = symbols.missing_symbol()
     receiver_node = arena.nodes[receiver.index]
     if receiver_node.kind == syntax.SyntaxKind.EXPR_NAME:
         receiver_symbol = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
-    checker.model.record_value_use(receiver, semantic.ValueUseKind.ADDRESS, receiver_symbol, current)
+    checker.model.record_value_use(receiver, semantic.ValueUseKind.ADDRESS, receiver_symbol, current, current)
     checker.model.record_atomic_intrinsic(
         call_id,
         kind,
@@ -1068,7 +1292,7 @@ def validate_ordered_lock_element_mutation(
     collection = checker_core.first_child(arena, expression)
     collection_type = infer_expression_type(checker, arena, collection, source, current_scope)
     if types.is_ordered_lock_list(&checker.type_table, collection_type):
-        checker_core.emit_error(checker, 419, expression_node.start, expression_node.length, expression_node.line, expression_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_419, &expression_node)
 
 
 def validate_atomic_call_argument_type(
@@ -1089,7 +1313,7 @@ def validate_atomic_call_argument_type(
     if types_compatible(checker, destination_type, value_type):
         return
     node = arena.nodes[value.index]
-    checker_core.emit_error(checker, 107, node.start, node.length, node.line, node.column)
+    checker_core.emit_type_mismatch(checker, &node, destination_type, value_type, source)
 
 
 def validate_declared_call_move_arguments(
@@ -1251,8 +1475,16 @@ def record_generic_call_specialization(checker: &checker_core.Checker, arena: &c
             args.append(type_id)
         offset += 1
     declaration = checker.symbols.symbols[callee.index].node
-    if cast[i32](len(args)) != generics.type_param_count(arena, declaration):
-        checker_core.emit_error(checker, 354, call.start, call.length, call.line, call.column)
+    expected_count = generics.type_param_count(arena, declaration)
+    actual_count = cast[i32](len(args))
+    if actual_count != expected_count:
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_354,
+            &call,
+            expected_count,
+            actual_count,
+        )
         return
     suffix = generics.specialization_suffix(checker.type_table, &args, source)
     user_suffix = suffix[0:len(suffix)]
@@ -1364,7 +1596,7 @@ def infer_generic_call_specialization(
         inferred_type = inferred[inferred_index]
         if inferred_type.index < 0 or inferred_type.index == types.type_error().index:
             call_node = arena.nodes[call_id.index]
-            checker_core.emit_error(checker, 355, call_node.start, call_node.length, call_node.line, call_node.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_355, &call_node)
             return
         inferred_index += 1
     suffix = generics.specialization_suffix(checker.type_table, &inferred, source)
@@ -1396,7 +1628,13 @@ def infer_type_arguments_from_pattern(
                 inferred[cast[usize](parameter)] = actual
             elif not checker.type_table.same(existing, actual):
                 pattern_span = arena.nodes[pattern.index]
-                checker_core.emit_error(checker, 107, pattern_span.start, pattern_span.length, pattern_span.line, pattern_span.column)
+                checker_core.emit_type_mismatch(
+                    checker,
+                    &pattern_span,
+                    existing,
+                    actual,
+                    source,
+                )
         return
     actual_record = checker.type_table.types[actual.index]
     if pattern_node.kind == syntax.SyntaxKind.TYPE_POINTER or pattern_node.kind == syntax.SyntaxKind.TYPE_REFERENCE or pattern_node.kind == syntax.SyntaxKind.TYPE_CONST or pattern_node.kind == syntax.SyntaxKind.TYPE_SLICE or pattern_node.kind == syntax.SyntaxKind.TYPE_ARRAY or pattern_node.kind == syntax.SyntaxKind.TYPE_DYN:
@@ -1440,7 +1678,16 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
     if node.kind == syntax.SyntaxKind.EXPR_INDEX:
         receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope))
         if receiver_type.index >= 0 and receiver_type.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[receiver_type.index].kind == types.TypeKind.STRING:
-            checker_core.emit_error(checker, 420, node.start, node.length, node.line, node.column)
+            emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_420,
+                id,
+                receiver_type,
+                receiver_type,
+                source,
+                "index",
+            )
             checker.model.record_expr_type(id, types.type_error())
             return types.type_error()
     existing = checker.model.expr_type(id)
@@ -1477,7 +1724,13 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
             operand_type = infer_expression_type(checker, arena, operand, source, current_scope)
             if types.is_atomic_type(&checker.type_table, operand_type):
                 operand_node = arena.nodes[operand.index]
-                checker_core.emit_error(checker, 400, operand_node.start, operand_node.length, operand_node.line, operand_node.column)
+                checker_core.emit_actual_type_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_400,
+                    &operand_node,
+                    operand_type,
+                    source,
+                )
                 result = types.type_error()
     elif node.kind == syntax.SyntaxKind.EXPR_LIST:
         result = infer_list_literal_type(checker, arena, id, source, current_scope)
@@ -1501,7 +1754,16 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
             operand_is_owned_temporary = checker_expression_is_derived_from_owned_temporary(checker, arena, operand, source)
             if operand_is_owned_temporary:
-                checker_core.emit_error(checker, 421, node.start, node.length, node.line, node.column)
+                emit_ownership_failure(
+                    checker,
+                    arena,
+                    diagnostics.DiagnosticId.CHECK_421,
+                    id,
+                    operand_type,
+                    operand_type,
+                    source,
+                    "reference escape",
+                )
                 result = types.type_error()
             else:
                 validate_ordered_lock_element_mutation(checker, arena, operand, source, current_scope)
@@ -1510,11 +1772,23 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
                     operand_node = arena.nodes[operand.index]
                     if operand_node.kind == syntax.SyntaxKind.EXPR_NAME:
                         address_symbol = checker.symbols.find_in_scope(source, current_scope, operand_node.value_start, operand_node.value_length)
-                    checker.model.record_value_use(operand, semantic.ValueUseKind.ADDRESS, address_symbol, operand_type)
+                    checker.model.record_value_use(
+                        operand,
+                        semantic.ValueUseKind.ADDRESS,
+                        address_symbol,
+                        operand_type,
+                        operand_type,
+                    )
                 result = checker.type_table.pointer_to(operand_type)
         elif types.is_atomic_type(&checker.type_table, operand_type):
             operand_node = arena.nodes[operand.index]
-            checker_core.emit_error(checker, 400, operand_node.start, operand_node.length, operand_node.line, operand_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_400,
+                &operand_node,
+                operand_type,
+                source,
+            )
             result = types.type_error()
         elif node.flags == cast[i32](token.TokenKind.STAR) and operand_type.index >= 0 and operand_type.index < cast[i32](len(checker.type_table.types)):
             operand_record = checker.type_table.types[operand_type.index]
@@ -1531,7 +1805,16 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
             if not types.is_atomic_type(&checker.type_table, left_type):
                 operand = right
             operand_node = arena.nodes[operand.index]
-            checker_core.emit_error(checker, 400, operand_node.start, operand_node.length, operand_node.line, operand_node.column)
+            actual_type = left_type
+            if operand.index == right.index:
+                actual_type = right_type
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_400,
+                &operand_node,
+                actual_type,
+                source,
+            )
             result = types.type_error()
         elif operator == cast[i32](token.TokenKind.EQUAL) or operator == cast[i32](token.TokenKind.NOT_EQUAL) or operator == cast[i32](token.TokenKind.LESS) or operator == cast[i32](token.TokenKind.LESS_EQUAL) or operator == cast[i32](token.TokenKind.GREATER) or operator == cast[i32](token.TokenKind.GREATER_EQUAL) or operator == cast[i32](token.TokenKind.AND) or operator == cast[i32](token.TokenKind.OR) or operator == cast[i32](token.TokenKind.IN) or operator == cast[i32](token.TokenKind.NOT):
             result = types.type_bool()
@@ -1539,13 +1822,25 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
             if is_set_algebra_operator(operator) and semantic_type_is_kind(checker.type_table, left_type, types.TypeKind.SET):
                 if not checker.type_table.same(left_type, right_type):
                     right_node = arena.nodes[right.index]
-                    checker_core.emit_error(checker, 107, right_node.start, right_node.length, right_node.line, right_node.column)
+                    checker_core.emit_type_mismatch(
+                        checker,
+                        &right_node,
+                        left_type,
+                        right_type,
+                        source,
+                    )
                     result = types.type_error()
                 else:
                     result = left_type
             elif checker.specialization_declaration.index >= 0 and not specialized_operand_types_compatible(checker, left_type, right_type):
                 right_node = arena.nodes[right.index]
-                checker_core.emit_error(checker, 107, right_node.start, right_node.length, right_node.line, right_node.column)
+                checker_core.emit_type_mismatch(
+                    checker,
+                    &right_node,
+                    left_type,
+                    right_type,
+                    source,
+                )
                 result = types.type_error()
             else:
                 result = left_type
@@ -1591,7 +1886,12 @@ def infer_attribute_expression_type(
             kind = semantic.AtomicIntrinsicKind.RESULT_OBSERVED
             result = receiver_record.inner
         else:
-            checker_core.emit_error(checker, 402, member_node.start, member_node.length, member_node.line, member_node.column)
+            checker_core.emit_symbol_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_402,
+                &member_node,
+                source[member_node.value_start:member_node.value_start + member_node.value_length],
+            )
             return types.type_error()
         missing = syntax.missing_node()
         checker.model.record_atomic_intrinsic(
@@ -1613,7 +1913,12 @@ def infer_attribute_expression_type(
         return result
     if receiver_record.kind == types.TypeKind.ATOMIC:
         if atomic_intrinsic_kind(source, &member_node) == semantic.AtomicIntrinsicKind.NONE:
-            checker_core.emit_error(checker, 402, member_node.start, member_node.length, member_node.line, member_node.column)
+            checker_core.emit_symbol_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_402,
+                &member_node,
+                source[member_node.value_start:member_node.value_start + member_node.value_length],
+            )
             return types.type_error()
         return receiver_type
     if not types.is_nominal_kind(receiver_record.kind) or receiver_record.name_length == 0:
@@ -1752,7 +2057,7 @@ def validate_collection_method_call(
         return
     if receiver_record.kind == types.TypeKind.LIST:
         if types.is_ordered_lock_list(&checker.type_table, receiver_type) and not collections.text_equals(&member_name, "sort"):
-            checker_core.emit_error(checker, 419, member_node.start, member_node.length, member_node.line, member_node.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_419, &member_node)
         expected: i32 = 0
         result = types.type_void()
         takes_element = false
@@ -1781,8 +2086,16 @@ def validate_collection_method_call(
         if argument.index >= 0:
             infer_expression_type(checker, arena, argument, source, current_scope)
         if not checker_type_can_clone(checker.type_table, receiver_record.second) and not checker_named_scalar_can_clone(checker.type_table, receiver_record.second, source):
-            call = arena.nodes[call_id.index]
-            checker_core.emit_error(checker, 254, call.start, call.length, call.line, call.column)
+            emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_254,
+                call_id,
+                receiver_record.second,
+                receiver_record.second,
+                source,
+                "clone",
+            )
         checker.model.record_expr_type(call_id, checker.type_table.generic1(types.TypeKind.OPTION, 0, 0, receiver_record.second))
         return
     if receiver_record.kind == types.TypeKind.SET:
@@ -1795,7 +2108,13 @@ def validate_collection_method_call(
                 argument_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, argument, source, current_scope))
                 if not checker.type_table.same(receiver_type, argument_type):
                     argument_node = arena.nodes[argument.index]
-                    checker_core.emit_error(checker, 107, argument_node.start, argument_node.length, argument_node.line, argument_node.column)
+                    checker_core.emit_type_mismatch(
+                        checker,
+                        &argument_node,
+                        receiver_type,
+                        argument_type,
+                        source,
+                    )
             if is_algebra:
                 checker.model.record_expr_type(call_id, receiver_type)
             else:
@@ -1806,9 +2125,21 @@ def validate_collection_method_argument_count(checker: &checker_core.Checker, ar
     call = arena.nodes[call_id.index]
     actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
     if actual < expected:
-        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_078,
+            &call,
+            expected,
+            actual,
+        )
     elif actual > expected:
-        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_077,
+            &call,
+            expected,
+            actual,
+        )
 
 
 def strip_collection_indirection(table: &const types.TypeTable, type_id: types.TypeId) -> types.TypeId:
@@ -2020,18 +2351,33 @@ def validate_hashable_collection_type(checker: &checker_core.Checker, arena: &co
         return
     base_id = arena.children[node.first_child]
     base = arena.nodes[base_id.index]
-    code: i32 = 0
     if checker_core.range_text_equals(source, base.value_start, base.value_length, "Map"):
-        code = 297
+        item_id = arena.children[node.first_child + 1]
+        if type_node_is_hashable(checker, arena, item_id, source, current_scope):
+            return
+        item = arena.nodes[item_id.index]
+        item_type = checker_core.resolve_type_node(checker, arena, item_id, source)
+        checker_core.emit_actual_type_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_297,
+            &item,
+            item_type,
+            source,
+        )
+        return
     elif checker_core.range_text_equals(source, base.value_start, base.value_length, "Set"):
-        code = 300
-    if code == 0:
-        return
-    item_id = arena.children[node.first_child + 1]
-    if type_node_is_hashable(checker, arena, item_id, source, current_scope):
-        return
-    item = arena.nodes[item_id.index]
-    checker_core.emit_error(checker, code, item.start, item.length, item.line, item.column)
+        item_id = arena.children[node.first_child + 1]
+        if type_node_is_hashable(checker, arena, item_id, source, current_scope):
+            return
+        item = arena.nodes[item_id.index]
+        item_type = checker_core.resolve_type_node(checker, arena, item_id, source)
+        checker_core.emit_actual_type_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_300,
+            &item,
+            item_type,
+            source,
+        )
 
 
 def type_node_is_hashable(checker: &const checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> bool:

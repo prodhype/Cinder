@@ -56,6 +56,8 @@ struct ValueUseResolution:
     kind: ValueUseKind
     symbol: SymbolId
     type_id: TypeId
+    destination_type: TypeId
+    previous_move: NodeId
 
 
 struct CleanupBinding:
@@ -218,16 +220,43 @@ struct SemanticModel:
             index += 1
         self.cleanups.append(CleanupBinding(node=node, type_id=type_id, flags=flags))
 
-    def record_value_use(self: &SemanticModel, node: NodeId, kind: ValueUseKind, symbol: SymbolId, type_id: TypeId) -> void:
+    def record_value_use(
+        self: &SemanticModel,
+        node: NodeId,
+        kind: ValueUseKind,
+        symbol: SymbolId,
+        type_id: TypeId,
+        destination_type: TypeId,
+    ) -> void:
+        previous_move = NodeId(index=-1)
         index: usize = 0
         while index < len(self.value_use_resolutions):
+            existing: &const ValueUseResolution = &self.value_use_resolutions[index]
+            if (
+                kind == ValueUseKind.MOVE
+                and symbol.index >= 0
+                and existing.kind == ValueUseKind.MOVE
+                and existing.symbol.index == symbol.index
+            ):
+                previous_move = existing.node
             if self.value_use_resolutions[index].node.index == node.index:
                 self.value_use_resolutions[index].kind = kind
                 self.value_use_resolutions[index].symbol = symbol
                 self.value_use_resolutions[index].type_id = type_id
+                self.value_use_resolutions[index].destination_type = destination_type
+                self.value_use_resolutions[index].previous_move = previous_move
                 return
             index += 1
-        self.value_use_resolutions.append(ValueUseResolution(node=node, kind=kind, symbol=symbol, type_id=type_id))
+        self.value_use_resolutions.append(
+            ValueUseResolution(
+                node=node,
+                kind=kind,
+                symbol=symbol,
+                type_id=type_id,
+                destination_type=destination_type,
+                previous_move=previous_move,
+            )
+        )
 
     def record_lock(self: &SemanticModel, node: NodeId, lock_index: i32, canonical_key: i32) -> void:
         index: usize = 0

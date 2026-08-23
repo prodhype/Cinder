@@ -1,3 +1,4 @@
+import diagnostics
 import lexer
 import parser_core
 import parser_types
@@ -38,9 +39,9 @@ def parse_postfix(context: &parser_core.ParserContext) -> NodeId:
     while not *context.failed:
         if looks_like_generic_call(context):
             type_children: List[NodeId] = []
-            parser_core.expect(context, TokenKind.LEFT_BRACKET, 68)
+            parser_core.expect(context, TokenKind.LEFT_BRACKET, diagnostics.DiagnosticId.PARSE_068)
             parser_types.parse_type_list(context, type_children, TokenKind.RIGHT_BRACKET)
-            parser_core.expect(context, TokenKind.RIGHT_BRACKET, 68)
+            parser_core.expect(context, TokenKind.RIGHT_BRACKET, diagnostics.DiagnosticId.PARSE_068)
             call_children: List[NodeId] = []
             syntax.append_valid(call_children, expression)
             for child in type_children:
@@ -60,7 +61,7 @@ def parse_postfix(context: &parser_core.ParserContext) -> NodeId:
             if parser_core.at(context, TokenKind.UNION):
                 parser_core.advance(context)
             else:
-                name = parser_core.expect(context, TokenKind.NAME, 71)
+                name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_071)
             children: List[NodeId] = []
             syntax.append_valid(children, expression)
             syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
@@ -73,17 +74,17 @@ def parse_postfix(context: &parser_core.ParserContext) -> NodeId:
             if parser_core.match_kind(context, TokenKind.COLON):
                 if not parser_core.at(context, TokenKind.RIGHT_BRACKET):
                     syntax.append_valid(children, parse_expression(context, 0))
-                close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 73)
+                close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, diagnostics.DiagnosticId.PARSE_073)
                 expression = parser_core.make_node(context, SyntaxKind.EXPR_SLICE, bracket, close, bracket, children, 1)
                 continue
             syntax.append_valid(children, parse_expression(context, 0))
             if parser_core.match_kind(context, TokenKind.COLON):
                 if not parser_core.at(context, TokenKind.RIGHT_BRACKET):
                     syntax.append_valid(children, parse_expression(context, 0))
-                close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 74)
+                close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, diagnostics.DiagnosticId.PARSE_074)
                 expression = parser_core.make_node(context, SyntaxKind.EXPR_SLICE, bracket, close, bracket, children, 0)
                 continue
-            close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 75)
+            close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, diagnostics.DiagnosticId.PARSE_075)
             expression = parser_core.make_node(context, SyntaxKind.EXPR_INDEX, bracket, close, bracket, children, 0)
             continue
         if parser_core.match_kind(context, TokenKind.QUESTION):
@@ -96,7 +97,7 @@ def parse_postfix(context: &parser_core.ParserContext) -> NodeId:
     return expression
 
 def parse_call_arguments(context: &parser_core.ParserContext, children: &List[NodeId]) -> void:
-    start = parser_core.expect(context, TokenKind.LEFT_PAREN, 72)
+    start = parser_core.expect(context, TokenKind.LEFT_PAREN, diagnostics.DiagnosticId.PARSE_072)
     if not parser_core.at(context, TokenKind.RIGHT_PAREN):
         while not *context.failed:
             arg_start = parser_core.current(context)
@@ -113,7 +114,7 @@ def parse_call_arguments(context: &parser_core.ParserContext, children: &List[No
                 break
             if parser_core.at(context, TokenKind.RIGHT_PAREN):
                 break
-    close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 76)
+    close = parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_076)
     ignored_start = start
     ignored_close = close
 
@@ -128,13 +129,13 @@ def parse_primary(context: &parser_core.ParserContext) -> NodeId:
     if parser_core.at(context, TokenKind.NAME) and (parser_core.token_text_equals(context, parser_core.current(context), "cast") or parser_core.token_text_equals(context, parser_core.current(context), "alloc")) and parser_core.peek(context, 1).kind == TokenKind.LEFT_BRACKET:
         builtin = parser_core.advance(context)
         children: List[NodeId] = []
-        parser_core.expect(context, TokenKind.LEFT_BRACKET, 77)
+        parser_core.expect(context, TokenKind.LEFT_BRACKET, diagnostics.DiagnosticId.PARSE_077)
         syntax.append_valid(children, parser_types.parse_type(context))
-        parser_core.expect(context, TokenKind.RIGHT_BRACKET, 77)
-        parser_core.expect(context, TokenKind.LEFT_PAREN, 77)
+        parser_core.expect(context, TokenKind.RIGHT_BRACKET, diagnostics.DiagnosticId.PARSE_077)
+        parser_core.expect(context, TokenKind.LEFT_PAREN, diagnostics.DiagnosticId.PARSE_077)
         if not parser_core.at(context, TokenKind.RIGHT_PAREN):
             syntax.append_valid(children, parse_expression(context, 0))
-        close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 78)
+        close = parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_078)
         if parser_core.token_text_equals(context, builtin, "cast"):
             return parser_core.make_node(context, SyntaxKind.EXPR_CAST, builtin, close, builtin, children, 0)
         return parser_core.make_node(context, SyntaxKind.EXPR_ALLOC, builtin, close, builtin, children, 0)
@@ -155,9 +156,9 @@ def parse_primary(context: &parser_core.ParserContext) -> NodeId:
                     break
                 if parser_core.at(context, TokenKind.RIGHT_PAREN):
                     break
-            close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 80)
+            close = parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_080)
             return parser_core.make_node(context, SyntaxKind.EXPR_TUPLE, start, close, start, children, 0)
-        close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 81)
+        close = parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_081)
         ignored_close = close
         return first
     if parser_core.match_kind(context, TokenKind.LEFT_BRACKET):
@@ -170,7 +171,7 @@ def parse_primary(context: &parser_core.ParserContext) -> NodeId:
                     break
                 if parser_core.at(context, TokenKind.RIGHT_BRACKET):
                     break
-        close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 80)
+        close = parser_core.expect(context, TokenKind.RIGHT_BRACKET, diagnostics.DiagnosticId.PARSE_080)
         return parser_core.make_node(context, SyntaxKind.EXPR_LIST, start, close, start, children, 0)
     if parser_core.match_kind(context, TokenKind.LEFT_BRACE):
         start = parser_core.previous(context)
@@ -188,22 +189,22 @@ def parse_primary(context: &parser_core.ParserContext) -> NodeId:
                     break
                 entry_start = parser_core.current(context)
                 key = parse_expression(context, 0)
-                parser_core.expect(context, TokenKind.COLON, 144)
+                parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_144)
                 value = parse_expression(context, 0)
                 more_children: List[NodeId] = []
                 syntax.append_valid(more_children, key)
                 syntax.append_valid(more_children, value)
                 syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.EXPR_MAP_ENTRY, entry_start, parser_core.previous(context), entry_start, more_children, 0))
-            close = parser_core.expect(context, TokenKind.RIGHT_BRACE, 80)
+            close = parser_core.expect(context, TokenKind.RIGHT_BRACE, diagnostics.DiagnosticId.PARSE_080)
             return parser_core.make_node(context, SyntaxKind.EXPR_MAP, start, close, start, children, 0)
         syntax.append_valid(children, first)
         while parser_core.match_kind(context, TokenKind.COMMA):
             if parser_core.at(context, TokenKind.RIGHT_BRACE):
                 break
             syntax.append_valid(children, parse_expression(context, 0))
-        close = parser_core.expect(context, TokenKind.RIGHT_BRACE, 80)
+        close = parser_core.expect(context, TokenKind.RIGHT_BRACE, diagnostics.DiagnosticId.PARSE_080)
         return parser_core.make_node(context, SyntaxKind.EXPR_SET, start, close, start, children, 0)
-    parser_core.emit_error(context, 82, token)
+    parser_core.emit_error(context, diagnostics.DiagnosticId.PARSE_082, "expression", token)
     return syntax.missing_node()
 
 def looks_like_generic_call(context: &parser_core.ParserContext) -> bool:

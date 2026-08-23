@@ -392,6 +392,175 @@ def is_ordered_lock_list(table: &const TypeTable, type_id: TypeId) -> bool:
     return record.kind == TypeKind.LIST and record.extra == 1 and strip_const(table, record.inner).index == type_lock().index
 
 
+def display_type(table: &const TypeTable, type_id: TypeId, source: &const String) -> String:
+    builder = StringBuilder()
+    append_type_display(&builder, table, type_id, source)
+    return builder.finish()
+
+
+def append_type_display(builder: &StringBuilder, table: &const TypeTable, type_id: TypeId, source: &const String) -> void:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        builder.append("<error>")
+        return
+    record = table.types[type_id.index]
+    if record.kind == TypeKind.ERROR:
+        builder.append("<error>")
+    elif record.kind == TypeKind.VOID:
+        builder.append("void")
+    elif record.kind == TypeKind.BOOL:
+        builder.append("bool")
+    elif record.kind == TypeKind.I32:
+        builder.append("i32")
+    elif record.kind == TypeKind.I64:
+        builder.append("i64")
+    elif record.kind == TypeKind.F64:
+        builder.append("f64")
+    elif record.kind == TypeKind.CHAR:
+        builder.append("char")
+    elif record.kind == TypeKind.STRING:
+        builder.append("String")
+    elif record.kind == TypeKind.STRING_BUILDER:
+        builder.append("StringBuilder")
+    elif record.kind == TypeKind.CONVERT_ERROR:
+        builder.append("ConvertError")
+    elif record.kind == TypeKind.LOCK:
+        builder.append("Lock")
+    elif record.kind == TypeKind.POINTER:
+        builder.append("*")
+        append_type_display(builder, table, record.inner, source)
+    elif record.kind == TypeKind.REFERENCE:
+        builder.append("&")
+        append_type_display(builder, table, record.inner, source)
+    elif record.kind == TypeKind.CONST:
+        builder.append("const ")
+        append_type_display(builder, table, record.inner, source)
+    elif record.kind == TypeKind.SLICE:
+        builder.append("[]")
+        append_type_display(builder, table, record.inner, source)
+    elif record.kind == TypeKind.ARRAY:
+        append_type_display(builder, table, record.inner, source)
+        builder.append("[")
+        builder.append(to_string(record.extra))
+        builder.append("]")
+    elif record.kind == TypeKind.DYN:
+        builder.append("&dyn ")
+        append_type_display(builder, table, record.inner, source)
+    elif record.kind == TypeKind.OPTION:
+        append_unary_type_display(builder, "Option", table, record.inner, source)
+    elif record.kind == TypeKind.OWNED:
+        append_unary_type_display(builder, "Owned", table, record.inner, source)
+    elif record.kind == TypeKind.LIST:
+        append_unary_type_display(builder, "List", table, record.inner, source)
+    elif record.kind == TypeKind.SET:
+        append_unary_type_display(builder, "Set", table, record.inner, source)
+    elif record.kind == TypeKind.MAP:
+        append_binary_type_display(builder, "Map", table, record.inner, record.second, source)
+    elif record.kind == TypeKind.RESULT:
+        append_binary_type_display(builder, "Result", table, record.inner, record.second, source)
+    elif record.kind == TypeKind.MAP_KEYS or record.kind == TypeKind.MAP_VALUES or record.kind == TypeKind.MAP_ITEMS:
+        if record.kind == TypeKind.MAP_KEYS:
+            builder.append("MapKeys[")
+        elif record.kind == TypeKind.MAP_VALUES:
+            builder.append("MapValues[")
+        else:
+            builder.append("MapItems[")
+        if record.inner.index >= 0 and record.inner.index < cast[i32](len(table.types)) and table.types[record.inner.index].kind == TypeKind.MAP:
+            map_record = table.types[record.inner.index]
+            append_type_display(builder, table, map_record.inner, source)
+            builder.append(", ")
+            append_type_display(builder, table, map_record.second, source)
+        else:
+            builder.append("<error>, <error>")
+        builder.append("]")
+    elif record.kind == TypeKind.TUPLE:
+        builder.append("Tuple[")
+        append_stored_type_arguments(builder, table, &record, source)
+        builder.append("]")
+    elif record.kind == TypeKind.FUNCTION:
+        builder.append("def(")
+        append_stored_type_arguments(builder, table, &record, source)
+        builder.append(") -> ")
+        append_type_display(builder, table, record.inner, source)
+    elif record.kind == TypeKind.CLOSURE:
+        builder.append("closure[")
+        append_type_display(builder, table, record.second, source)
+        builder.append("](")
+        append_stored_type_arguments(builder, table, &record, source)
+        builder.append(") -> ")
+        append_type_display(builder, table, record.inner, source)
+    elif record.kind == TypeKind.ATOMIC:
+        append_unary_type_display(builder, "Atomic", table, record.inner, source)
+    elif record.kind == TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
+        append_unary_type_display(builder, "AtomicCompareExchangeResult", table, record.inner, source)
+    elif record.kind == TypeKind.FILE:
+        if record.name_length > 0:
+            append_type_source_name(builder, source, record.name_start, record.name_length)
+        else:
+            builder.append("File")
+    elif is_nominal_kind(record.kind):
+        append_type_source_name(builder, source, record.name_start, record.name_length)
+        if record.flags > 0:
+            builder.append("[")
+            append_stored_type_arguments(builder, table, &record, source)
+            builder.append("]")
+    else:
+        builder.append("<type>")
+
+
+def append_unary_type_display(
+    builder: &StringBuilder,
+    name: String,
+    table: &const TypeTable,
+    inner: TypeId,
+    source: &const String,
+) -> void:
+    builder.append(name)
+    builder.append("[")
+    append_type_display(builder, table, inner, source)
+    builder.append("]")
+
+
+def append_binary_type_display(
+    builder: &StringBuilder,
+    name: String,
+    table: &const TypeTable,
+    first: TypeId,
+    second: TypeId,
+    source: &const String,
+) -> void:
+    builder.append(name)
+    builder.append("[")
+    append_type_display(builder, table, first, source)
+    builder.append(", ")
+    append_type_display(builder, table, second, source)
+    builder.append("]")
+
+
+def append_stored_type_arguments(
+    builder: &StringBuilder,
+    table: &const TypeTable,
+    record: &const TypeRecord,
+    source: &const String,
+) -> void:
+    offset: i32 = 0
+    while offset < record.flags:
+        if offset > 0:
+            builder.append(", ")
+        argument_index = record.extra + offset
+        if argument_index < 0 or argument_index >= cast[i32](len(table.type_args)):
+            builder.append("<error>")
+        else:
+            append_type_display(builder, table, table.type_args[cast[usize](argument_index)], source)
+        offset += 1
+
+
+def append_type_source_name(builder: &StringBuilder, source: &const String, start: usize, length: usize) -> void:
+    if length == 0 or start > len(source) or length > len(source) - start:
+        builder.append("<anonymous>")
+        return
+    builder.append(source[start:start + length])
+
+
 def new_type_table() -> TypeTable:
     records: List[TypeRecord] = []
     args: List[TypeId] = []

@@ -109,17 +109,74 @@ def test_anti_example_pattern_documentation(state: &TestState) -> void:
 
 
 def test_check_diagnostic(state: &TestState) -> void:
-    source_path = state.root + "/tests/cases/invalid_syntax.ci"
-    command: List[String] = [
+    syntax_command: List[String] = [
         state.compiler.clone(),
         "check",
-        source_path,
+        state.root + "/tests/cases/invalid_syntax.ci",
     ]
-    result = process.run(command)
-    ok = result.exit_code == 1 and contains(&result.stderr, "project error: lexing failed")
-    expect(state, "check reports source diagnostics", ok)
+    type_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_argument.ci",
+    ]
+    import_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_module_member.ci",
+    ]
+    override_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_override.ci",
+    ]
+    ownership_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_ownership.ci",
+    ]
+    lock_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_cycle.ci",
+    ]
+    syntax_result = process.run(syntax_command)
+    type_result = process.run(type_command)
+    import_result = process.run(import_command)
+    override_result = process.run(override_command)
+    ownership_result = process.run(ownership_command)
+    lock_result = process.run(lock_command)
+    ok = (
+        syntax_result.exit_code == 1
+        and contains(&syntax_result.stderr, "error[lexical lexer.L003/2]: Unclosed delimiter")
+        and contains(&syntax_result.stderr, "= help: add the matching closing delimiter")
+        and not contains(&syntax_result.stdout, "E ")
+        and type_result.exit_code == 1
+        and contains(&type_result.stderr, "checker.type-mismatch/107")
+        and contains(&type_result.stderr, "expected &const String, found i32")
+        and import_result.exit_code == 1
+        and contains(&import_result.stderr, "checker.unresolved-name-or-member/48")
+        and contains(&import_result.stderr, "cannot resolve std.path.missing")
+        and override_result.exit_code == 1
+        and contains(&override_result.stderr, "checker.override-mismatch/179")
+        and contains(&override_result.stderr, "implementation of value")
+        and contains(&override_result.stderr, "= related: base declaration is here")
+        and contains(&override_result.stderr, "= note: the base declaration is shown as a related source location")
+        and ownership_result.exit_code == 1
+        and contains(&ownership_result.stderr, "checker.atomic-value-move/399")
+        and contains(&ownership_result.stderr, "Atomic owner source")
+        and lock_result.exit_code == 1
+        and contains(&lock_result.stderr, "lock.order-cycle/410")
+        and contains(&lock_result.stderr, "lock order contains a cycle near second -> first")
+        and contains(&lock_result.stderr, "= related: conflicting lock order declared here")
+    )
+    expect(state, "check reports structured rich source diagnostics", ok)
     if not ok:
-        report_process_failure(&result.stdout, &result.stderr)
+        report_process_failure(&syntax_result.stdout, &syntax_result.stderr)
+        report_process_failure(&type_result.stdout, &type_result.stderr)
+        report_process_failure(&import_result.stdout, &import_result.stderr)
+        report_process_failure(&override_result.stdout, &override_result.stderr)
+        report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
+        report_process_failure(&lock_result.stdout, &lock_result.stderr)
 
 
 def test_check_ir_validation(state: &TestState) -> void:

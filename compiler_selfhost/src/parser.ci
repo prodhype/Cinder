@@ -1,3 +1,4 @@
+import diagnostics
 import lexer
 import parser_core
 import parser_declarations
@@ -6,7 +7,7 @@ import parser_module
 import parser_statements
 import parser_types
 import syntax
-from syntax import NodeId, ParseDiagnostic, SyntaxArena, SyntaxKind
+from syntax import NodeId, SyntaxArena, SyntaxKind
 from token import Token, TokenKind
 
 
@@ -14,7 +15,7 @@ struct Parser:
     scan: &const lexer.Lexer
     index: usize
     arena: SyntaxArena
-    diagnostics: List[ParseDiagnostic]
+    diagnostic_values: List[diagnostics.Diagnostic]
     failed: bool
 
     def current(self: &const Parser) -> Token:
@@ -35,31 +36,34 @@ struct Parser:
         return self.current().kind == kind
 
     def advance(self: &Parser) -> Token:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_core.advance(context)
 
     def match_kind(self: &Parser, kind: TokenKind) -> bool:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_core.match_kind(context, kind)
 
-    def emit_error(self: &Parser, code: i32, token: Token) -> void:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
-        parser_core.emit_error(context, code, token)
+    def emit_error(self: &Parser, id: diagnostics.DiagnosticId, expected: String, token: Token) -> void:
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
+        parser_core.emit_error(context, id, expected, token)
 
     def dump_diagnostics(self: &const Parser) -> void:
-        for diagnostic in self.diagnostics:
-            print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+        path: String = ""
+        self.dump_diagnostics_with_path(&path)
 
-    def expect(self: &Parser, kind: TokenKind, code: i32) -> Token:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
-        return parser_core.expect(context, kind, code)
+    def dump_diagnostics_with_path(self: &const Parser, path: &const String) -> void:
+        diagnostics.write_diagnostics_stderr(&self.diagnostic_values, path, &self.scan.source)
+
+    def expect(self: &Parser, kind: TokenKind, id: diagnostics.DiagnosticId) -> Token:
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
+        return parser_core.expect(context, kind, id)
 
     def make_token_node(self: &Parser, kind: SyntaxKind, token: Token, flags: i32) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_core.make_token_node(context, kind, token, flags)
 
     def make_leaf(self: &Parser, kind: SyntaxKind, start: Token, end: Token, value: Token, flags: i32) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_core.make_leaf(context, kind, start, end, value, flags)
 
     def make_node(
@@ -71,7 +75,7 @@ struct Parser:
         children: &const List[NodeId],
         flags: i32,
     ) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_core.make_node(context, kind, start, end, value, children, flags)
 
     def make_node_from_range(
@@ -82,7 +86,7 @@ struct Parser:
         children: &const List[NodeId],
         flags: i32,
     ) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_core.make_node_from_range(context, kind, start, end, children, flags)
 
     def token_text_equals(self: &const Parser, token: Token, text: String) -> bool:
@@ -96,51 +100,51 @@ struct Parser:
         return true
 
     def parse_module(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_module.parse_module(context)
 
     def parse_decorators(self: &Parser) -> List[NodeId]:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_decorators(context)
 
     def parse_import(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_import(context, decorators)
 
     def parse_from_import(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_from_import(context, decorators)
 
     def parse_extern(self: &Parser, parent_children: &List[NodeId], decorators: &const List[NodeId]) -> void:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         parser_declarations.parse_extern(context, parent_children, decorators)
 
     def parse_extern_type(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_extern_type(context)
 
     def parse_dotted_name(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_dotted_name(context)
 
     def parse_type_params(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_type_params(context)
 
     def parse_function(self: &Parser, decorators: &const List[NodeId], is_extern: bool) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_function(context, decorators, is_extern)
 
     def parse_parameters(self: &Parser, children: &List[NodeId]) -> void:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         parser_declarations.parse_parameters(context, children)
 
     def parse_struct(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_struct(context, decorators)
 
     def parse_union(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_union(context, decorators)
 
     def parse_field_method_decl(
@@ -148,105 +152,109 @@ struct Parser:
         kind: SyntaxKind,
         opening: TokenKind,
         decorators: &const List[NodeId],
-        name_code: i32,
-        colon_code: i32,
-        newline_code: i32,
-        indent_code: i32,
-        dedent_code: i32,
+        name_id: diagnostics.DiagnosticId,
+        colon_id: diagnostics.DiagnosticId,
+        newline_id: diagnostics.DiagnosticId,
+        indent_id: diagnostics.DiagnosticId,
+        dedent_id: diagnostics.DiagnosticId,
     ) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
-        return parser_declarations.parse_field_method_decl(context, kind, opening, decorators, name_code, colon_code, newline_code, indent_code, dedent_code)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
+        return parser_declarations.parse_field_method_decl(context, kind, opening, decorators, name_id, colon_id, newline_id, indent_id, dedent_id)
 
     def parse_class(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_class(context, decorators)
 
     def parse_enum(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_enum(context, decorators)
 
     def parse_variant(self: &Parser, decorators: &const List[NodeId]) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_variant(context, decorators)
 
     def parse_global(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_global(context)
 
     def parse_static_assert(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_declarations.parse_static_assert(context)
 
-    def parse_suite_after_colon(self: &Parser, newline_code: i32, indent_code: i32) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
-        return parser_statements.parse_suite_after_colon(context, newline_code, indent_code)
+    def parse_suite_after_colon(
+        self: &Parser,
+        newline_id: diagnostics.DiagnosticId,
+        indent_id: diagnostics.DiagnosticId,
+    ) -> NodeId:
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
+        return parser_statements.parse_suite_after_colon(context, newline_id, indent_id)
 
     def parse_statement(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_statement(context)
 
     def parse_simple_statement(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_simple_statement(context)
 
     def parse_if(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_if(context)
 
     def parse_while(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_while(context)
 
     def parse_with(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_with(context)
 
     def parse_for(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_for(context)
 
     def parse_match(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_match(context)
 
     def parse_match_pattern(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_match_pattern(context)
 
     def parse_match_capture_pattern(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_match_capture_pattern(context)
 
     def parse_match_pattern_atom(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_statements.parse_match_pattern_atom(context)
 
     def parse_type(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_types.parse_type(context)
 
     def parse_type_list(self: &Parser, children: &List[NodeId], closing: TokenKind) -> void:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         parser_types.parse_type_list(context, children, closing)
 
     def parse_expression(self: &Parser, minimum_precedence: i32) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_expressions.parse_expression(context, minimum_precedence)
 
     def parse_unary(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_expressions.parse_unary(context)
 
     def parse_postfix(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_expressions.parse_postfix(context)
 
     def parse_call_arguments(self: &Parser, children: &List[NodeId]) -> void:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         parser_expressions.parse_call_arguments(context, children)
 
     def parse_primary(self: &Parser) -> NodeId:
-        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostics, &self.failed)
+        context = parser_core.new_context(self.scan, &self.index, self.arena, self.diagnostic_values, &self.failed)
         return parser_expressions.parse_primary(context)
 
     def looks_like_generic_call(self: &const Parser) -> bool:
@@ -269,19 +277,24 @@ struct Parser:
 
 
 def new_parser(scan: &const lexer.Lexer) -> Parser:
-    diagnostics: List[ParseDiagnostic] = []
-    return Parser(scan=scan, index=0, arena=syntax.new_arena(), diagnostics=diagnostics, failed=false)
+    diagnostic_values: List[diagnostics.Diagnostic] = []
+    return Parser(scan=scan, index=0, arena=syntax.new_arena(), diagnostic_values=diagnostic_values, failed=false)
 
 
 def parse_and_dump(source: String) -> i32:
+    path: String = ""
+    return parse_and_dump_with_path(source, &path)
+
+
+def parse_and_dump_with_path(source: String, path: &const String) -> i32:
     scan = lexer.new_lexer(source)
     scan.tokenize()
-    if len(scan.diagnostics) > 0:
-        return scan.dump()
+    if len(scan.diagnostic_values) > 0:
+        return scan.dump_with_path(path)
     parser = new_parser(scan)
     root = parser.parse_module()
-    if len(parser.diagnostics) > 0:
-        parser.dump_diagnostics()
+    if len(parser.diagnostic_values) > 0:
+        parser.dump_diagnostics_with_path(path)
         return 1
     parser.arena.dump(root)
     return 0

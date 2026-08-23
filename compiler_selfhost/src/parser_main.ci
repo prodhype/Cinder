@@ -2,5 +2,6 @@ import parser
 
 
 def main() -> i32:
-    with open("bootstrap_parser_input.ci", "rb") as file:
-        return parser.parse_and_dump(file.read_text())
+    path: String = "bootstrap_parser_input.ci"
+    with open(path, "rb") as file:
+        return parser.parse_and_dump_with_path(file.read_text(), &path)

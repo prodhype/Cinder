@@ -1,0 +1,1291 @@
+import cinder
+
+
+# DiagnosticId is intentionally phase-qualified. Legacy numeric codes overlap
+# between phases, so the enum value is an identity only; diagnostic_code()
+# is the sole stable numeric mapping.
+enum DiagnosticId:
+    LEX_001
+    LEX_002
+    LEX_003
+    LEX_004
+    LEX_005
+    LEX_006
+    LEX_007
+    LEX_008
+    LEX_009
+    LEX_010
+    LEX_011
+    PARSE_002
+    PARSE_003
+    PARSE_005
+    PARSE_006
+    PARSE_007
+    PARSE_008
+    PARSE_009
+    PARSE_010
+    PARSE_011
+    PARSE_012
+    PARSE_013
+    PARSE_014
+    PARSE_015
+    PARSE_017
+    PARSE_018
+    PARSE_019
+    PARSE_020
+    PARSE_021
+    PARSE_022
+    PARSE_023
+    PARSE_024
+    PARSE_025
+    PARSE_026
+    PARSE_027
+    PARSE_029
+    PARSE_030
+    PARSE_031
+    PARSE_032
+    PARSE_034
+    PARSE_035
+    PARSE_036
+    PARSE_040
+    PARSE_041
+    PARSE_044
+    PARSE_045
+    PARSE_046
+    PARSE_047
+    PARSE_048
+    PARSE_049
+    PARSE_050
+    PARSE_051
+    PARSE_052
+    PARSE_053
+    PARSE_054
+    PARSE_055
+    PARSE_056
+    PARSE_057
+    PARSE_058
+    PARSE_059
+    PARSE_060
+    PARSE_061
+    PARSE_062
+    PARSE_063
+    PARSE_064
+    PARSE_065
+    PARSE_066
+    PARSE_067
+    PARSE_068
+    PARSE_069
+    PARSE_070
+    PARSE_071
+    PARSE_072
+    PARSE_073
+    PARSE_074
+    PARSE_075
+    PARSE_076
+    PARSE_077
+    PARSE_078
+    PARSE_080
+    PARSE_081
+    PARSE_082
+    PARSE_083
+    PARSE_084
+    PARSE_085
+    PARSE_086
+    PARSE_087
+    PARSE_088
+    PARSE_089
+    PARSE_090
+    PARSE_091
+    PARSE_092
+    PARSE_093
+    PARSE_094
+    PARSE_095
+    PARSE_096
+    PARSE_099
+    PARSE_100
+    PARSE_101
+    PARSE_102
+    PARSE_103
+    PARSE_104
+    PARSE_105
+    PARSE_106
+    PARSE_107
+    PARSE_108
+    PARSE_109
+    PARSE_112
+    PARSE_113
+    PARSE_114
+    PARSE_115
+    PARSE_116
+    PARSE_117
+    PARSE_119
+    PARSE_120
+    PARSE_121
+    PARSE_124
+    PARSE_125
+    PARSE_126
+    PARSE_127
+    PARSE_128
+    PARSE_129
+    PARSE_130
+    PARSE_132
+    PARSE_133
+    PARSE_134
+    PARSE_135
+    PARSE_137
+    PARSE_138
+    PARSE_139
+    PARSE_140
+    PARSE_141
+    PARSE_143
+    PARSE_144
+    PARSE_145
+    PARSE_146
+    PARSE_148
+    PARSE_149
+    PARSE_150
+    PARSE_151
+    PARSE_152
+    PARSE_153
+    PARSE_154
+    PARSE_155
+    CHECK_018
+    CHECK_024
+    CHECK_042
+    CHECK_048
+    CHECK_076
+    CHECK_077
+    CHECK_078
+    CHECK_107
+    CHECK_121
+    CHECK_179
+    CHECK_214
+    CHECK_254
+    CHECK_297
+    CHECK_300
+    CHECK_316
+    CHECK_351
+    CHECK_352
+    CHECK_354
+    CHECK_355
+    CHECK_359
+    CHECK_378
+    CHECK_379
+    CHECK_380
+    CHECK_381
+    CHECK_382
+    CHECK_383
+    CHECK_384
+    CHECK_385
+    CHECK_394
+    CHECK_395
+    CHECK_396
+    CHECK_397
+    CHECK_398
+    CHECK_399
+    CHECK_400
+    CHECK_401
+    CHECK_402
+    CHECK_403
+    CHECK_405
+    CHECK_406
+    CHECK_407
+    CHECK_408
+    CHECK_409
+    CHECK_419
+    CHECK_420
+    CHECK_421
+    LOCK_404
+    LOCK_410
+    LOCK_411
+    LOCK_412
+    LOCK_413
+    LOCK_414
+    LOCK_415
+    LOCK_416
+
+
+enum DiagnosticCategory:
+    LEXICAL
+    SYNTAX
+    NAME_RESOLUTION
+    TYPE_SYSTEM
+    OWNERSHIP
+    IMPORT
+    GENERICS
+    CONCURRENCY
+    LOCK_ORDER
+    SEMANTIC
+    INTERNAL
+
+
+enum DiagnosticArgumentKind:
+    TEXT
+    TYPE
+    TOKEN
+    SYMBOL
+    PATH
+    SIGNED_INTEGER
+    UNSIGNED_INTEGER
+    COUNT
+    BOOLEAN
+    CHARACTER
+
+
+struct SourceSpan:
+    path: String
+    start: usize
+    length: usize
+    line: i32
+    column: i32
+
+
+struct RelatedSpan:
+    label: String
+    span: SourceSpan
+
+
+# DiagnosticArgument uses an explicit tag plus primitive storage instead of an
+# owning variant payload. This keeps diagnostics independent of compiler AST,
+# token, symbol, and type modules.
+struct DiagnosticArgument:
+    name: String
+    kind: DiagnosticArgumentKind
+    text: String
+    signed_value: i64
+    unsigned_value: u64
+    bool_value: bool
+    char_value: char
+
+
+struct DiagnosticDefinition:
+    id: DiagnosticId
+    code: i32
+    category: DiagnosticCategory
+    name: String
+    title: String
+    message_template: String
+    note: String
+    help: String
+
+
+struct Diagnostic:
+    id: DiagnosticId
+    primary: SourceSpan
+    arguments: List[DiagnosticArgument]
+    related: List[RelatedSpan]
+    notes: List[String]
+    help: String
+
+    def add_argument(self: &Diagnostic, argument: DiagnosticArgument) -> void:
+        self.arguments.append(argument)
+
+    def add_related(self: &Diagnostic, related: RelatedSpan) -> void:
+        self.related.append(related)
+
+    def add_note(self: &Diagnostic, note: String) -> void:
+        self.notes.append(note)
+
+    def set_help(self: &Diagnostic, help: String) -> void:
+        self.help = help
+
+
+def source_span(start: usize, length: usize, line: i32, column: i32) -> SourceSpan:
+    return SourceSpan(path="", start=start, length=length, line=line, column=column)
+
+
+def source_span_in(path: String, start: usize, length: usize, line: i32, column: i32) -> SourceSpan:
+    return SourceSpan(path=path, start=start, length=length, line=line, column=column)
+
+
+def related_span(label: String, span: SourceSpan) -> RelatedSpan:
+    return RelatedSpan(label=label, span=span)
+
+
+def new_diagnostic(id: DiagnosticId, primary: SourceSpan) -> Diagnostic:
+    arguments: List[DiagnosticArgument] = []
+    related: List[RelatedSpan] = []
+    notes: List[String] = []
+    return Diagnostic(id=id, primary=primary, arguments=arguments, related=related, notes=notes, help="")
+
+
+def clone_diagnostic(value: &const Diagnostic) -> Diagnostic:
+    result = new_diagnostic(value.id, clone_source_span(&value.primary))
+    for argument in value.arguments:
+        result.add_argument(
+            DiagnosticArgument(
+                name=argument.name[0:len(argument.name)],
+                kind=argument.kind,
+                text=argument.text[0:len(argument.text)],
+                signed_value=argument.signed_value,
+                unsigned_value=argument.unsigned_value,
+                bool_value=argument.bool_value,
+                char_value=argument.char_value,
+            )
+        )
+    for related in value.related:
+        result.add_related(
+            related_span(
+                related.label[0:len(related.label)],
+                clone_source_span(&related.span),
+            )
+        )
+    for note in value.notes:
+        result.add_note(note[0:len(note)])
+    result.set_help(value.help[0:len(value.help)])
+    return result
+
+
+def clone_source_span(value: &const SourceSpan) -> SourceSpan:
+    return source_span_in(
+        value.path[0:len(value.path)],
+        value.start,
+        value.length,
+        value.line,
+        value.column,
+    )
+
+
+def clone_diagnostic_at(values: &const List[Diagnostic], index: usize) -> Diagnostic:
+    return clone_diagnostic(&values[index])
+
+
+def diagnostic_matches_at(
+    values: &const List[Diagnostic],
+    index: usize,
+    id: DiagnosticId,
+    start: usize,
+) -> bool:
+    if index >= len(values):
+        return false
+    value: &const Diagnostic = &values[index]
+    return value.id == id and value.primary.start == start
+
+
+def diagnostic_with_argument(id: DiagnosticId, primary: SourceSpan, argument: DiagnosticArgument) -> Diagnostic:
+    result = new_diagnostic(id, primary)
+    result.add_argument(argument)
+    return result
+
+
+def diagnostic_with_arguments(
+    id: DiagnosticId,
+    primary: SourceSpan,
+    first: DiagnosticArgument,
+    second: DiagnosticArgument,
+) -> Diagnostic:
+    result = new_diagnostic(id, primary)
+    result.add_argument(first)
+    result.add_argument(second)
+    return result
+
+
+def diagnostic_with_three_arguments(
+    id: DiagnosticId,
+    primary: SourceSpan,
+    first: DiagnosticArgument,
+    second: DiagnosticArgument,
+    third: DiagnosticArgument,
+) -> Diagnostic:
+    result = new_diagnostic(id, primary)
+    result.add_argument(first)
+    result.add_argument(second)
+    result.add_argument(third)
+    return result
+
+
+def parser_expected_diagnostic(id: DiagnosticId, primary: SourceSpan, expected: String, actual: String) -> Diagnostic:
+    return diagnostic_with_arguments(id, primary, argument_token("expected", expected), argument_token("actual", actual))
+
+
+def type_mismatch_diagnostic(primary: SourceSpan, expected: String, actual: String) -> Diagnostic:
+    return diagnostic_with_arguments(
+        DiagnosticId.CHECK_107,
+        primary,
+        argument_type("expected", expected),
+        argument_type("actual", actual),
+    )
+
+
+def argument_text(name: String, value: String) -> DiagnosticArgument:
+    return text_argument(name, DiagnosticArgumentKind.TEXT, value)
+
+
+def argument_type(name: String, display: String) -> DiagnosticArgument:
+    return text_argument(name, DiagnosticArgumentKind.TYPE, display)
+
+
+def argument_token(name: String, display: String) -> DiagnosticArgument:
+    return text_argument(name, DiagnosticArgumentKind.TOKEN, display)
+
+
+def argument_symbol(name: String, display: String) -> DiagnosticArgument:
+    return text_argument(name, DiagnosticArgumentKind.SYMBOL, display)
+
+
+def argument_path(name: String, path: String) -> DiagnosticArgument:
+    return text_argument(name, DiagnosticArgumentKind.PATH, path)
+
+
+def argument_signed(name: String, value: i64) -> DiagnosticArgument:
+    return primitive_argument(name, DiagnosticArgumentKind.SIGNED_INTEGER, value, 0, false, cast[char](0))
+
+
+def argument_unsigned(name: String, value: u64) -> DiagnosticArgument:
+    return primitive_argument(name, DiagnosticArgumentKind.UNSIGNED_INTEGER, 0, value, false, cast[char](0))
+
+
+def argument_count(name: String, value: i32) -> DiagnosticArgument:
+    return primitive_argument(name, DiagnosticArgumentKind.COUNT, cast[i64](value), 0, false, cast[char](0))
+
+
+def argument_boolean(name: String, value: bool) -> DiagnosticArgument:
+    return primitive_argument(name, DiagnosticArgumentKind.BOOLEAN, 0, 0, value, cast[char](0))
+
+
+def argument_character(name: String, value: char) -> DiagnosticArgument:
+    return primitive_argument(name, DiagnosticArgumentKind.CHARACTER, 0, 0, false, value)
+
+
+def text_argument(name: String, kind: DiagnosticArgumentKind, value: String) -> DiagnosticArgument:
+    return DiagnosticArgument(
+        name=name,
+        kind=kind,
+        text=value,
+        signed_value=0,
+        unsigned_value=0,
+        bool_value=false,
+        char_value=cast[char](0),
+    )
+
+
+def primitive_argument(
+    name: String,
+    kind: DiagnosticArgumentKind,
+    signed_value: i64,
+    unsigned_value: u64,
+    bool_value: bool,
+    char_value: char,
+) -> DiagnosticArgument:
+    return DiagnosticArgument(
+        name=name,
+        kind=kind,
+        text="",
+        signed_value=signed_value,
+        unsigned_value=unsigned_value,
+        bool_value=bool_value,
+        char_value=char_value,
+    )
+
+
+def diagnostic_code(id: DiagnosticId) -> i32:
+    definition_value = diagnostic_definition(id)
+    return definition_value.code
+
+
+def diagnostic_definition(id: DiagnosticId) -> DiagnosticDefinition:
+    # LexerCode is currently cast directly to i32, so compatibility requires
+    # retaining its actual ordinal-derived values 0 through 10. The explicit
+    # mapping here prevents future enum edits from changing those values.
+    if id == DiagnosticId.LEX_001:
+        return definition(id, 0, DiagnosticCategory.LEXICAL, "lexer.L001", "Tab in indentation", "tabs are not allowed in indentation", "replace indentation tabs with spaces")
+    if id == DiagnosticId.LEX_002:
+        return definition(id, 1, DiagnosticCategory.LEXICAL, "lexer.L002", "Incomplete continuation", "the file ends after an explicit line continuation", "continue the expression on the next line or remove the backslash")
+    if id == DiagnosticId.LEX_003:
+        return definition(id, 2, DiagnosticCategory.LEXICAL, "lexer.L003", "Unclosed delimiter", "the opening delimiter is not closed", "add the matching closing delimiter")
+    if id == DiagnosticId.LEX_004:
+        return definition(id, 3, DiagnosticCategory.LEXICAL, "lexer.L004", "Inconsistent indentation", "indentation does not match an earlier indentation level", "align this line with an existing block indentation")
+    if id == DiagnosticId.LEX_005:
+        return definition(id, 4, DiagnosticCategory.LEXICAL, "lexer.L005", "Unexpected character", "the character {actual} is not valid here", "remove the character or replace it with a valid token")
+    if id == DiagnosticId.LEX_006:
+        return definition(id, 5, DiagnosticCategory.LEXICAL, "lexer.L006", "Unterminated string", "the string literal is not terminated on this line", "add the matching quote")
+    if id == DiagnosticId.LEX_007:
+        return definition(id, 6, DiagnosticCategory.LEXICAL, "lexer.L007", "Incomplete exponent", "the floating-point exponent has no digits", "add exponent digits after e or E")
+    if id == DiagnosticId.LEX_008:
+        return definition(id, 7, DiagnosticCategory.LEXICAL, "lexer.L008", "Invalid decimal literal", "the decimal literal has invalid digit separators", "place underscores only between digits")
+    if id == DiagnosticId.LEX_009:
+        return definition(id, 8, DiagnosticCategory.LEXICAL, "lexer.L009", "Invalid based literal", "the integer literal is invalid for its base", "use at least one valid digit and place underscores only between digits")
+    if id == DiagnosticId.LEX_010:
+        return definition(id, 9, DiagnosticCategory.LEXICAL, "lexer.L010", "Unexpected closing delimiter", "a closing delimiter has no matching opener", "remove it or add the matching opening delimiter")
+    if id == DiagnosticId.LEX_011:
+        return definition(id, 10, DiagnosticCategory.LEXICAL, "lexer.L011", "Mismatched delimiter", "expected {expected}, found {actual}", "close delimiters in the reverse order in which they were opened")
+
+    if id == DiagnosticId.PARSE_002:
+        return parser_definition(id, 2)
+    if id == DiagnosticId.PARSE_003:
+        return parser_definition(id, 3)
+    if id == DiagnosticId.PARSE_005:
+        return parser_definition(id, 5)
+    if id == DiagnosticId.PARSE_006:
+        return parser_definition(id, 6)
+    if id == DiagnosticId.PARSE_007:
+        return parser_definition(id, 7)
+    if id == DiagnosticId.PARSE_008:
+        return parser_definition(id, 8)
+    if id == DiagnosticId.PARSE_009:
+        return parser_definition(id, 9)
+    if id == DiagnosticId.PARSE_010:
+        return parser_definition(id, 10)
+    if id == DiagnosticId.PARSE_011:
+        return parser_definition(id, 11)
+    if id == DiagnosticId.PARSE_012:
+        return parser_definition(id, 12)
+    if id == DiagnosticId.PARSE_013:
+        return parser_definition(id, 13)
+    if id == DiagnosticId.PARSE_014:
+        return parser_definition(id, 14)
+    if id == DiagnosticId.PARSE_015:
+        return parser_definition(id, 15)
+    if id == DiagnosticId.PARSE_017:
+        return parser_definition(id, 17)
+    if id == DiagnosticId.PARSE_018:
+        return parser_definition(id, 18)
+    if id == DiagnosticId.PARSE_019:
+        return parser_definition(id, 19)
+    if id == DiagnosticId.PARSE_020:
+        return parser_definition(id, 20)
+    if id == DiagnosticId.PARSE_021:
+        return parser_definition(id, 21)
+    if id == DiagnosticId.PARSE_022:
+        return parser_definition(id, 22)
+    if id == DiagnosticId.PARSE_023:
+        return parser_definition(id, 23)
+    if id == DiagnosticId.PARSE_024:
+        return parser_definition(id, 24)
+    if id == DiagnosticId.PARSE_025:
+        return parser_definition(id, 25)
+    if id == DiagnosticId.PARSE_026:
+        return parser_definition(id, 26)
+    if id == DiagnosticId.PARSE_027:
+        return parser_definition(id, 27)
+    if id == DiagnosticId.PARSE_029:
+        return parser_definition(id, 29)
+    if id == DiagnosticId.PARSE_030:
+        return parser_definition(id, 30)
+    if id == DiagnosticId.PARSE_031:
+        return parser_definition(id, 31)
+    if id == DiagnosticId.PARSE_032:
+        return parser_definition(id, 32)
+    if id == DiagnosticId.PARSE_034:
+        return parser_definition(id, 34)
+    if id == DiagnosticId.PARSE_035:
+        return parser_definition(id, 35)
+    if id == DiagnosticId.PARSE_036:
+        return parser_definition(id, 36)
+    if id == DiagnosticId.PARSE_040:
+        return parser_definition(id, 40)
+    if id == DiagnosticId.PARSE_041:
+        return parser_definition(id, 41)
+    if id == DiagnosticId.PARSE_044:
+        return parser_definition(id, 44)
+    if id == DiagnosticId.PARSE_045:
+        return parser_definition(id, 45)
+    if id == DiagnosticId.PARSE_046:
+        return parser_definition(id, 46)
+    if id == DiagnosticId.PARSE_047:
+        return parser_definition(id, 47)
+    if id == DiagnosticId.PARSE_048:
+        return parser_definition(id, 48)
+    if id == DiagnosticId.PARSE_049:
+        return parser_definition(id, 49)
+    if id == DiagnosticId.PARSE_050:
+        return parser_definition(id, 50)
+    if id == DiagnosticId.PARSE_051:
+        return parser_definition(id, 51)
+    if id == DiagnosticId.PARSE_052:
+        return parser_definition(id, 52)
+    if id == DiagnosticId.PARSE_053:
+        return parser_definition(id, 53)
+    if id == DiagnosticId.PARSE_054:
+        return parser_definition(id, 54)
+    if id == DiagnosticId.PARSE_055:
+        return parser_definition(id, 55)
+    if id == DiagnosticId.PARSE_056:
+        return parser_definition(id, 56)
+    if id == DiagnosticId.PARSE_057:
+        return parser_definition(id, 57)
+    if id == DiagnosticId.PARSE_058:
+        return parser_definition(id, 58)
+    if id == DiagnosticId.PARSE_059:
+        return parser_definition(id, 59)
+    if id == DiagnosticId.PARSE_060:
+        return parser_definition(id, 60)
+    if id == DiagnosticId.PARSE_061:
+        return parser_definition(id, 61)
+    if id == DiagnosticId.PARSE_062:
+        return parser_definition(id, 62)
+    if id == DiagnosticId.PARSE_063:
+        return parser_definition(id, 63)
+    if id == DiagnosticId.PARSE_064:
+        return parser_definition(id, 64)
+    if id == DiagnosticId.PARSE_065:
+        return parser_definition(id, 65)
+    if id == DiagnosticId.PARSE_066:
+        return parser_definition(id, 66)
+    if id == DiagnosticId.PARSE_067:
+        return parser_definition(id, 67)
+    if id == DiagnosticId.PARSE_068:
+        return parser_definition(id, 68)
+    if id == DiagnosticId.PARSE_069:
+        return parser_definition(id, 69)
+    if id == DiagnosticId.PARSE_070:
+        return parser_definition(id, 70)
+    if id == DiagnosticId.PARSE_071:
+        return parser_definition(id, 71)
+    if id == DiagnosticId.PARSE_072:
+        return parser_definition(id, 72)
+    if id == DiagnosticId.PARSE_073:
+        return parser_definition(id, 73)
+    if id == DiagnosticId.PARSE_074:
+        return parser_definition(id, 74)
+    if id == DiagnosticId.PARSE_075:
+        return parser_definition(id, 75)
+    if id == DiagnosticId.PARSE_076:
+        return parser_definition(id, 76)
+    if id == DiagnosticId.PARSE_077:
+        return parser_definition(id, 77)
+    if id == DiagnosticId.PARSE_078:
+        return parser_definition(id, 78)
+    if id == DiagnosticId.PARSE_080:
+        return parser_definition(id, 80)
+    if id == DiagnosticId.PARSE_081:
+        return parser_definition(id, 81)
+    if id == DiagnosticId.PARSE_082:
+        return parser_definition(id, 82)
+    if id == DiagnosticId.PARSE_083:
+        return parser_definition(id, 83)
+    if id == DiagnosticId.PARSE_084:
+        return parser_definition(id, 84)
+    if id == DiagnosticId.PARSE_085:
+        return parser_definition(id, 85)
+    if id == DiagnosticId.PARSE_086:
+        return parser_definition(id, 86)
+    if id == DiagnosticId.PARSE_087:
+        return parser_definition(id, 87)
+    if id == DiagnosticId.PARSE_088:
+        return parser_definition(id, 88)
+    if id == DiagnosticId.PARSE_089:
+        return parser_definition(id, 89)
+    if id == DiagnosticId.PARSE_090:
+        return parser_definition(id, 90)
+    if id == DiagnosticId.PARSE_091:
+        return parser_definition(id, 91)
+    if id == DiagnosticId.PARSE_092:
+        return parser_definition(id, 92)
+    if id == DiagnosticId.PARSE_093:
+        return parser_definition(id, 93)
+    if id == DiagnosticId.PARSE_094:
+        return parser_definition(id, 94)
+    if id == DiagnosticId.PARSE_095:
+        return parser_definition(id, 95)
+    if id == DiagnosticId.PARSE_096:
+        return parser_definition(id, 96)
+    if id == DiagnosticId.PARSE_099:
+        return parser_definition(id, 99)
+    if id == DiagnosticId.PARSE_100:
+        return parser_definition(id, 100)
+    if id == DiagnosticId.PARSE_101:
+        return parser_definition(id, 101)
+    if id == DiagnosticId.PARSE_102:
+        return parser_definition(id, 102)
+    if id == DiagnosticId.PARSE_103:
+        return parser_definition(id, 103)
+    if id == DiagnosticId.PARSE_104:
+        return parser_definition(id, 104)
+    if id == DiagnosticId.PARSE_105:
+        return parser_definition(id, 105)
+    if id == DiagnosticId.PARSE_106:
+        return parser_definition(id, 106)
+    if id == DiagnosticId.PARSE_107:
+        return parser_definition(id, 107)
+    if id == DiagnosticId.PARSE_108:
+        return parser_definition(id, 108)
+    if id == DiagnosticId.PARSE_109:
+        return parser_definition(id, 109)
+    if id == DiagnosticId.PARSE_112:
+        return parser_definition(id, 112)
+    if id == DiagnosticId.PARSE_113:
+        return parser_definition(id, 113)
+    if id == DiagnosticId.PARSE_114:
+        return parser_definition(id, 114)
+    if id == DiagnosticId.PARSE_115:
+        return parser_definition(id, 115)
+    if id == DiagnosticId.PARSE_116:
+        return parser_definition(id, 116)
+    if id == DiagnosticId.PARSE_117:
+        return parser_definition(id, 117)
+    if id == DiagnosticId.PARSE_119:
+        return parser_definition(id, 119)
+    if id == DiagnosticId.PARSE_120:
+        return parser_definition(id, 120)
+    if id == DiagnosticId.PARSE_121:
+        return parser_definition(id, 121)
+    if id == DiagnosticId.PARSE_124:
+        return parser_definition(id, 124)
+    if id == DiagnosticId.PARSE_125:
+        return parser_definition(id, 125)
+    if id == DiagnosticId.PARSE_126:
+        return parser_definition(id, 126)
+    if id == DiagnosticId.PARSE_127:
+        return parser_definition(id, 127)
+    if id == DiagnosticId.PARSE_128:
+        return parser_definition(id, 128)
+    if id == DiagnosticId.PARSE_129:
+        return parser_definition(id, 129)
+    if id == DiagnosticId.PARSE_130:
+        return parser_definition(id, 130)
+    if id == DiagnosticId.PARSE_132:
+        return parser_definition(id, 132)
+    if id == DiagnosticId.PARSE_133:
+        return parser_definition(id, 133)
+    if id == DiagnosticId.PARSE_134:
+        return parser_definition(id, 134)
+    if id == DiagnosticId.PARSE_135:
+        return parser_definition(id, 135)
+    if id == DiagnosticId.PARSE_137:
+        return parser_definition(id, 137)
+    if id == DiagnosticId.PARSE_138:
+        return parser_definition(id, 138)
+    if id == DiagnosticId.PARSE_139:
+        return parser_definition(id, 139)
+    if id == DiagnosticId.PARSE_140:
+        return parser_definition(id, 140)
+    if id == DiagnosticId.PARSE_141:
+        return parser_definition(id, 141)
+    if id == DiagnosticId.PARSE_143:
+        return parser_definition(id, 143)
+    if id == DiagnosticId.PARSE_144:
+        return parser_definition(id, 144)
+    if id == DiagnosticId.PARSE_145:
+        return parser_definition(id, 145)
+    if id == DiagnosticId.PARSE_146:
+        return parser_definition(id, 146)
+    if id == DiagnosticId.PARSE_148:
+        return parser_definition(id, 148)
+    if id == DiagnosticId.PARSE_149:
+        return parser_definition(id, 149)
+    if id == DiagnosticId.PARSE_150:
+        return parser_definition(id, 150)
+    if id == DiagnosticId.PARSE_151:
+        return parser_definition(id, 151)
+    if id == DiagnosticId.PARSE_152:
+        return parser_definition(id, 152)
+    if id == DiagnosticId.PARSE_153:
+        return parser_definition(id, 153)
+    if id == DiagnosticId.PARSE_154:
+        return parser_definition(id, 154)
+    if id == DiagnosticId.PARSE_155:
+        return parser_definition(id, 155)
+
+    if id == DiagnosticId.CHECK_018:
+        return checker_definition(id, 18, DiagnosticCategory.CONCURRENCY, "non-constant-atomic-global", "Non-constant atomic global", "an atomic global initializer must be a compile-time scalar constant", "use a scalar literal or another compile-time scalar constant")
+    if id == DiagnosticId.CHECK_024:
+        return checker_definition(id, 24, DiagnosticCategory.TYPE_SYSTEM, "string-condition", "String used as condition", "a String value cannot be used as a condition", "compare the string explicitly or use a bool expression")
+    if id == DiagnosticId.CHECK_042:
+        return checker_definition(id, 42, DiagnosticCategory.TYPE_SYSTEM, "missing-return-value", "Missing return value", "this function must return a value of type {expected}", "return a value compatible with the declared return type")
+    if id == DiagnosticId.CHECK_048:
+        return checker_definition(id, 48, DiagnosticCategory.NAME_RESOLUTION, "unresolved-name-or-member", "Unresolved name", "cannot resolve {name}", "check the spelling, scope, and imported module members")
+    if id == DiagnosticId.CHECK_076:
+        return checker_definition(id, 76, DiagnosticCategory.SEMANTIC, "positional-after-named", "Positional argument after named argument", "a positional argument cannot follow a named argument", "move positional arguments before named arguments")
+    if id == DiagnosticId.CHECK_077:
+        return checker_definition(id, 77, DiagnosticCategory.TYPE_SYSTEM, "too-many-arguments", "Too many arguments", "expected {expected} arguments, found {actual}", "remove the extra arguments")
+    if id == DiagnosticId.CHECK_078:
+        return checker_definition(id, 78, DiagnosticCategory.TYPE_SYSTEM, "too-few-arguments", "Too few arguments", "expected {expected} arguments, found {actual}", "supply the missing arguments")
+    if id == DiagnosticId.CHECK_107:
+        return checker_definition(id, 107, DiagnosticCategory.TYPE_SYSTEM, "type-mismatch", "Type mismatch", "expected {expected}, found {actual}", "change the value or its declared type")
+    if id == DiagnosticId.CHECK_121:
+        return checker_definition(id, 121, DiagnosticCategory.SEMANTIC, "non-final-wildcard-case", "Wildcard case is not last", "a wildcard match case must be the final case", "move the wildcard case to the end")
+    if id == DiagnosticId.CHECK_179:
+        return checker_definition(id, 179, DiagnosticCategory.TYPE_SYSTEM, "override-mismatch", "Override does not match", "implementation of {name} does not match the base declaration", "match the base method parameters and return type")
+    if id == DiagnosticId.CHECK_214:
+        return checker_definition(id, 214, DiagnosticCategory.SEMANTIC, "static-assertion-failed", "Static assertion failed", "the compile-time assertion evaluates to false", "")
+    if id == DiagnosticId.CHECK_254:
+        return checker_definition(id, 254, DiagnosticCategory.OWNERSHIP, "invalid-partial-move", "Invalid move", "cannot perform {transfer} from owner {owner}", "borrow the value, clone it when supported, or move the complete owner")
+    if id == DiagnosticId.CHECK_297:
+        return checker_definition(id, 297, DiagnosticCategory.TYPE_SYSTEM, "unhashable-map-key", "Map key is not hashable", "Map key type {actual} is not hashable", "use a scalar, String, enum, pointer, or another supported hashable type")
+    if id == DiagnosticId.CHECK_300:
+        return checker_definition(id, 300, DiagnosticCategory.TYPE_SYSTEM, "unhashable-set-element", "Set element is not hashable", "Set element type {actual} is not hashable", "use a scalar, String, enum, pointer, or another supported hashable type")
+    if id == DiagnosticId.CHECK_316:
+        return checker_definition(id, 316, DiagnosticCategory.SEMANTIC, "or-pattern-binding-mismatch", "Inconsistent or-pattern bindings", "every alternative in an or-pattern must bind the same names", "make each alternative bind the same set of names")
+    if id == DiagnosticId.CHECK_351:
+        return checker_definition(id, 351, DiagnosticCategory.GENERICS, "unspecialized-atomic", "Atomic type is not specialized", "Atomic must be written with one supported scalar type argument", "use Atomic[bool], Atomic[u32], Atomic[u64], or Atomic[usize]")
+    if id == DiagnosticId.CHECK_352:
+        return checker_definition(id, 352, DiagnosticCategory.GENERICS, "generic-arity-mismatch", "Wrong number of type arguments", "expected {expected} type arguments, found {actual}", "supply the declared number of type arguments")
+    if id == DiagnosticId.CHECK_354:
+        return checker_definition(id, 354, DiagnosticCategory.GENERICS, "specialization-arity-mismatch", "Wrong specialization arity", "the explicit specialization has the wrong number of type arguments", "supply one type argument for each declared type parameter")
+    if id == DiagnosticId.CHECK_355:
+        return checker_definition(id, 355, DiagnosticCategory.GENERICS, "cannot-infer-type-argument", "Cannot infer type argument", "a generic type argument cannot be inferred from this call", "provide explicit type arguments")
+    if id == DiagnosticId.CHECK_359:
+        return checker_definition(id, 359, DiagnosticCategory.GENERICS, "generic-call-requires-specialization", "Generic call is not specialized", "this generic call requires explicit or inferable type arguments", "provide explicit type arguments")
+    if id == DiagnosticId.CHECK_378:
+        return checker_definition(id, 378, DiagnosticCategory.TYPE_SYSTEM, "closure-constructor-arity", "Invalid closure constructor", "closure construction requires an environment and an adapter function", "pass exactly two positional arguments")
+    if id == DiagnosticId.CHECK_379:
+        return checker_definition(id, 379, DiagnosticCategory.TYPE_SYSTEM, "named-closure-constructor-argument", "Named closure argument", "closure constructor arguments must be positional", "remove the argument names")
+    if id == DiagnosticId.CHECK_380:
+        return checker_definition(id, 380, DiagnosticCategory.TYPE_SYSTEM, "closure-environment-not-struct", "Invalid closure environment", "the closure environment must be a struct value", "place captured values in a struct")
+    if id == DiagnosticId.CHECK_381:
+        return checker_definition(id, 381, DiagnosticCategory.TYPE_SYSTEM, "closure-environment-ownership", "Invalid closure environment ownership", "the closure environment has unsupported ownership", "use an owned struct environment")
+    if id == DiagnosticId.CHECK_382:
+        return checker_definition(id, 382, DiagnosticCategory.TYPE_SYSTEM, "closure-adapter-signature", "Invalid closure adapter signature", "the closure adapter signature is incompatible with the closure", "make the adapter accept the environment and declared closure arguments")
+    if id == DiagnosticId.CHECK_383:
+        return checker_definition(id, 383, DiagnosticCategory.NAME_RESOLUTION, "invalid-closure-adapter", "Invalid closure adapter", "the closure adapter must name a function", "pass the name of a compatible function")
+    if id == DiagnosticId.CHECK_384:
+        return checker_definition(id, 384, DiagnosticCategory.TYPE_SYSTEM, "closure-adapter-missing-environment", "Closure adapter has no environment parameter", "the closure adapter must accept its environment as the first parameter", "add an environment reference parameter")
+    if id == DiagnosticId.CHECK_385:
+        return checker_definition(id, 385, DiagnosticCategory.TYPE_SYSTEM, "closure-adapter-environment-reference", "Closure environment is not passed by reference", "the first closure adapter parameter must be a reference", "change the first adapter parameter to a reference type")
+    if id == DiagnosticId.CHECK_394:
+        return checker_definition(id, 394, DiagnosticCategory.CONCURRENCY, "unsupported-atomic-element", "Unsupported atomic element type", "Atomic does not support element type {actual}", "use bool, u32, u64, or usize")
+    if id == DiagnosticId.CHECK_395:
+        return checker_definition(id, 395, DiagnosticCategory.OWNERSHIP, "immobile-atomic-storage", "Atomic storage cannot move", "owner {owner} has type {actual} with immobile atomic storage during {transfer}", "store Atomic directly and access it by address")
+    if id == DiagnosticId.CHECK_396:
+        return checker_definition(id, 396, DiagnosticCategory.CONCURRENCY, "atomic-in-callable-signature", "Atomic storage in callable signature", "callable parameters and returns cannot contain atomic storage", "pass a reference to the owning object instead")
+    if id == DiagnosticId.CHECK_397:
+        return checker_definition(id, 397, DiagnosticCategory.CONCURRENCY, "atomic-missing-initializer", "Atomic declaration needs an initializer", "an Atomic declaration must have a scalar initializer", "initialize the Atomic where it is declared")
+    if id == DiagnosticId.CHECK_398:
+        return checker_definition(id, 398, DiagnosticCategory.CONCURRENCY, "invalid-atomic-declaration", "Invalid atomic declaration", "Atomic storage must be declared directly and cannot be const", "declare a mutable value whose declared type is Atomic[T]")
+    if id == DiagnosticId.CHECK_399:
+        return checker_definition(id, 399, DiagnosticCategory.OWNERSHIP, "atomic-value-move", "Atomic value cannot move", "cannot perform {transfer} on Atomic owner {owner}", "operate through Atomic methods on an addressable receiver")
+    if id == DiagnosticId.CHECK_400:
+        return checker_definition(id, 400, DiagnosticCategory.TYPE_SYSTEM, "atomic-used-as-value", "Atomic used as a scalar value", "Atomic value {actual} is not valid in this scalar context", "use load(), store(), exchange(), compare_exchange(), or a supported fetch operation")
+    if id == DiagnosticId.CHECK_401:
+        return checker_definition(id, 401, DiagnosticCategory.CONCURRENCY, "assignment-to-atomic", "Direct assignment to Atomic", "Atomic storage cannot be assigned directly", "use store() to update an Atomic value")
+    if id == DiagnosticId.CHECK_402:
+        return checker_definition(id, 402, DiagnosticCategory.CONCURRENCY, "unknown-atomic-member", "Unknown Atomic operation", "Atomic has no supported operation named {name}", "use load, store, exchange, compare_exchange, or a supported fetch operation")
+    if id == DiagnosticId.CHECK_403:
+        return checker_definition(id, 403, DiagnosticCategory.CONCURRENCY, "invalid-atomic-operation", "Invalid Atomic operation", "the Atomic operation is not valid for this receiver or argument list", "use an addressable receiver and the operation's required positional or named arguments")
+    if id == DiagnosticId.CHECK_405:
+        return checker_definition(id, 405, DiagnosticCategory.TYPE_SYSTEM, "sorted-argument-count", "Invalid sorted call", "sorted expects one positional argument", "pass exactly one collection")
+    if id == DiagnosticId.CHECK_406:
+        return checker_definition(id, 406, DiagnosticCategory.TYPE_SYSTEM, "sorted-argument-not-sequence", "Value is not sortable", "sorted expects a List, array, or slice", "pass a supported sequence")
+    if id == DiagnosticId.CHECK_407:
+        return checker_definition(id, 407, DiagnosticCategory.TYPE_SYSTEM, "unsortable-element", "Element type is not sortable", "values of type {actual} cannot be sorted", "use a sequence with sortable elements")
+    if id == DiagnosticId.CHECK_408:
+        return checker_definition(id, 408, DiagnosticCategory.LOCK_ORDER, "unordered-lock-list", "Lock list has no canonical order", "this List[Lock] is not the result of sorted()", "sort the lock list before entering a dynamic critical section")
+    if id == DiagnosticId.CHECK_409:
+        return checker_definition(id, 409, DiagnosticCategory.LOCK_ORDER, "invalid-critical-section-target", "Invalid critical-section target", "CriticalSection expects a Lock or canonically ordered List[Lock]", "pass a static Lock or sorted lock list")
+    if id == DiagnosticId.CHECK_419:
+        return checker_definition(id, 419, DiagnosticCategory.LOCK_ORDER, "ordered-lock-list-mutation", "Ordered lock list cannot be mutated", "a canonically ordered lock list cannot be mutated except by sort", "create a new list or preserve canonical order")
+    if id == DiagnosticId.CHECK_420:
+        return checker_definition(id, 420, DiagnosticCategory.OWNERSHIP, "string-indexing", "String indexing is not supported", "owner {owner} cannot be used for {transfer}", "use byte_at() or an owned UTF-8 slice")
+    if id == DiagnosticId.CHECK_421:
+        return checker_definition(id, 421, DiagnosticCategory.OWNERSHIP, "temporary-reference-escape", "Reference to temporary escapes", "owner {owner} cannot be used for {transfer}", "bind the owner to a local before taking or returning a reference")
+
+    if id == DiagnosticId.LOCK_404:
+        return lock_definition(id, 404, "unresolved-reference", "Unresolved lock reference", "cannot resolve lock order reference {lock}", "import or declare the referenced lock")
+    if id == DiagnosticId.LOCK_410:
+        return lock_definition(id, 410, "order-cycle", "Lock-order cycle", "lock order contains a cycle near {before} -> {after}", "remove or reverse an ordering edge so the graph is acyclic")
+    if id == DiagnosticId.LOCK_411:
+        return lock_definition(id, 411, "recursive-acquisition", "Lock is already held", "cannot acquire {lock} while it is already held", "avoid recursive acquisition or restructure the critical section")
+    if id == DiagnosticId.LOCK_412:
+        return lock_definition(id, 412, "order-inversion", "Lock-order inversion", "cannot acquire {lock} while {held} is held", "acquire locks in canonical order")
+    if id == DiagnosticId.LOCK_413:
+        return lock_definition(id, 413, "unknown-call-effect", "Unknown lock effect", "cannot call a function with an unknown lock effect while a lock is held", "move the call outside the critical section or make its lock effect resolvable")
+    if id == DiagnosticId.LOCK_414:
+        return lock_definition(id, 414, "static-from-dynamic-effect", "Static lock under dynamic lock set", "cannot acquire another lock while a dynamic lock set is held", "finish the dynamic critical section before acquiring another lock")
+    if id == DiagnosticId.LOCK_415:
+        return lock_definition(id, 415, "static-under-dynamic", "Static lock under dynamic lock set", "cannot acquire a static lock while a dynamic lock set is held", "acquire the static lock before the dynamic set or in a separate section")
+    if id == DiagnosticId.LOCK_416:
+        return lock_definition(id, 416, "dynamic-under-lock", "Dynamic lock set under held lock", "cannot acquire a dynamic lock while another lock is held", "enter the dynamic critical section before other lock acquisitions")
+
+    return definition(id, -1, DiagnosticCategory.INTERNAL, "internal.unknown-diagnostic", "Unknown diagnostic", "an unregistered diagnostic was emitted", "")
+
+
+def definition(
+    id: DiagnosticId,
+    code: i32,
+    category: DiagnosticCategory,
+    name: String,
+    title: String,
+    message_template: String,
+    help: String,
+) -> DiagnosticDefinition:
+    return DiagnosticDefinition(
+        id=id,
+        code=code,
+        category=category,
+        name=name,
+        title=title,
+        message_template=message_template,
+        note="",
+        help=help,
+    )
+
+
+def parser_definition(id: DiagnosticId, code: i32) -> DiagnosticDefinition:
+    return definition(
+        id,
+        code,
+        DiagnosticCategory.SYNTAX,
+        catalog_name("parser.P", code),
+        "Invalid syntax",
+        "expected {expected}, found {actual}",
+        "check the surrounding declaration, delimiters, and indentation",
+    )
+
+
+def checker_definition(
+    id: DiagnosticId,
+    code: i32,
+    category: DiagnosticCategory,
+    suffix: String,
+    title: String,
+    message_template: String,
+    help: String,
+) -> DiagnosticDefinition:
+    return definition(id, code, category, "checker." + suffix, title, message_template, help)
+
+
+def lock_definition(
+    id: DiagnosticId,
+    code: i32,
+    suffix: String,
+    title: String,
+    message_template: String,
+    help: String,
+) -> DiagnosticDefinition:
+    return definition(id, code, DiagnosticCategory.LOCK_ORDER, "lock." + suffix, title, message_template, help)
+
+
+def catalog_name(prefix: String, code: i32) -> String:
+    builder = StringBuilder()
+    builder.append(prefix)
+    if code < 10:
+        builder.append("00")
+    elif code < 100:
+        builder.append("0")
+    builder.append(to_string(code))
+    return builder.finish()
+
+
+def category_name(category: DiagnosticCategory) -> String:
+    if category == DiagnosticCategory.LEXICAL:
+        return "lexical"
+    if category == DiagnosticCategory.SYNTAX:
+        return "syntax"
+    if category == DiagnosticCategory.NAME_RESOLUTION:
+        return "name resolution"
+    if category == DiagnosticCategory.TYPE_SYSTEM:
+        return "type"
+    if category == DiagnosticCategory.OWNERSHIP:
+        return "ownership"
+    if category == DiagnosticCategory.IMPORT:
+        return "import"
+    if category == DiagnosticCategory.GENERICS:
+        return "generics"
+    if category == DiagnosticCategory.CONCURRENCY:
+        return "concurrency"
+    if category == DiagnosticCategory.LOCK_ORDER:
+        return "lock order"
+    if category == DiagnosticCategory.SEMANTIC:
+        return "semantic"
+    return "internal"
+
+
+def catalog_is_valid() -> bool:
+    names: List[String] = []
+    category_codes: List[String] = []
+    index: i32 = 0
+    final_index = cast[i32](DiagnosticId.LOCK_416)
+    while index <= final_index:
+        id = cast[DiagnosticId](index)
+        definition_value = diagnostic_definition(id)
+        if (
+            definition_value.code < 0
+            or len(definition_value.name) == 0
+            or len(definition_value.title) == 0
+            or len(definition_value.message_template) == 0
+            or not template_placeholders_are_valid(&definition_value.message_template)
+        ):
+            return false
+        category_code = category_name(definition_value.category) + ":" + to_string(definition_value.code)
+        if contains_catalog_value(&names, &definition_value.name) or contains_catalog_value(&category_codes, &category_code):
+            return false
+        names.append(definition_value.name[0:len(definition_value.name)])
+        category_codes.append(category_code)
+        index += 1
+    return true
+
+
+def contains_catalog_value(values: &const List[String], wanted: &const String) -> bool:
+    for value in values:
+        if value == wanted[0:len(wanted)]:
+            return true
+    return false
+
+
+def template_placeholders_are_valid(template: &const String) -> bool:
+    index: usize = 0
+    while index < len(template):
+        byte = template.byte_at(index)
+        if byte == 123:
+            if index + 1 < len(template) and template.byte_at(index + 1) == 123:
+                index += 2
+                continue
+            close = index + 1
+            while close < len(template) and template.byte_at(close) != 125:
+                close += 1
+            if close >= len(template) or close == index + 1:
+                return false
+            index = close + 1
+            continue
+        if byte == 125:
+            if index + 1 < len(template) and template.byte_at(index + 1) == 125:
+                index += 2
+                continue
+            return false
+        index += 1
+    return true
+
+
+def interpolate_template(template: &const String, arguments: &const List[DiagnosticArgument]) -> String:
+    builder = StringBuilder()
+    literal_start: usize = 0
+    index: usize = 0
+    while index < len(template):
+        byte = template.byte_at(index)
+        if byte == 123:
+            if index + 1 < len(template) and template.byte_at(index + 1) == 123:
+                append_range(&builder, template, literal_start, index)
+                builder.append("{")
+                index += 2
+                literal_start = index
+                continue
+            close = index + 1
+            while close < len(template) and template.byte_at(close) != 125:
+                close += 1
+            if close < len(template):
+                append_range(&builder, template, literal_start, index)
+                name = template[index + 1:close]
+                if not append_named_argument(&builder, arguments, &name):
+                    builder.append("{")
+                    builder.append(name)
+                    builder.append("}")
+                index = close + 1
+                literal_start = index
+                continue
+        elif byte == 125 and index + 1 < len(template) and template.byte_at(index + 1) == 125:
+            append_range(&builder, template, literal_start, index)
+            builder.append("}")
+            index += 2
+            literal_start = index
+            continue
+        index += 1
+    append_range(&builder, template, literal_start, len(template))
+    return builder.finish()
+
+
+def append_named_argument(
+    builder: &StringBuilder,
+    arguments: &const List[DiagnosticArgument],
+    name: &const String,
+) -> bool:
+    index: usize = 0
+    while index < len(arguments):
+        argument: &const DiagnosticArgument = &arguments[index]
+        if argument.name == name[0:len(name)]:
+            append_argument_value(builder, argument)
+            return true
+        index += 1
+    return false
+
+
+def append_argument_value(builder: &StringBuilder, argument: &const DiagnosticArgument) -> void:
+    if argument.kind == DiagnosticArgumentKind.TEXT or argument.kind == DiagnosticArgumentKind.TYPE or argument.kind == DiagnosticArgumentKind.TOKEN or argument.kind == DiagnosticArgumentKind.SYMBOL or argument.kind == DiagnosticArgumentKind.PATH:
+        builder.append(argument.text[0:len(argument.text)])
+    elif argument.kind == DiagnosticArgumentKind.SIGNED_INTEGER or argument.kind == DiagnosticArgumentKind.COUNT:
+        builder.append(to_string(argument.signed_value))
+    elif argument.kind == DiagnosticArgumentKind.UNSIGNED_INTEGER:
+        builder.append(to_string(argument.unsigned_value))
+    elif argument.kind == DiagnosticArgumentKind.BOOLEAN:
+        builder.append(to_string(argument.bool_value))
+    else:
+        builder.append(to_string(argument.char_value))
+
+
+def render_diagnostic(diagnostic: &const Diagnostic, path: &const String, source: &const String) -> String:
+    definition_value = diagnostic_definition(diagnostic.id)
+    effective_path = path[0:len(path)]
+    if len(diagnostic.primary.path) > 0:
+        effective_path = diagnostic.primary.path[0:len(diagnostic.primary.path)]
+    line = diagnostic.primary.line
+    column = diagnostic.primary.column
+    if line <= 0 or column <= 0:
+        location = line_and_column(source, diagnostic.primary.start)
+        line = location[0]
+        column = location[1]
+
+    builder = StringBuilder()
+    if len(effective_path) > 0:
+        builder.append(effective_path)
+    else:
+        builder.append("<source>")
+    builder.append(":")
+    builder.append(to_string(line))
+    builder.append(":")
+    builder.append(to_string(column))
+    builder.append(": error[")
+    category = category_name(definition_value.category)
+    builder.append(category)
+    builder.append(" ")
+    builder.append(definition_value.name[0:len(definition_value.name)])
+    builder.append("/")
+    builder.append(to_string(definition_value.code))
+    builder.append("]: ")
+    builder.append(definition_value.title[0:len(definition_value.title)])
+    builder.append("\n")
+    message = interpolate_template(&definition_value.message_template, &diagnostic.arguments)
+    builder.append("  ")
+    builder.append(message)
+    builder.append("\n")
+    append_source_excerpt(&builder, source, &diagnostic.primary, line, column, "")
+
+    related_index: usize = 0
+    while related_index < len(diagnostic.related):
+        related: &const RelatedSpan = &diagnostic.related[related_index]
+        related_path = effective_path[0:len(effective_path)]
+        if len(related.span.path) > 0:
+            related_path = related.span.path[0:len(related.span.path)]
+        related_line = related.span.line
+        related_column = related.span.column
+        if related_line <= 0 or related_column <= 0:
+            related_location = line_and_column(source, related.span.start)
+            related_line = related_location[0]
+            related_column = related_location[1]
+        builder.append("  = related: ")
+        builder.append(related.label[0:len(related.label)])
+        builder.append(" at ")
+        if len(related_path) > 0:
+            builder.append(related_path)
+        else:
+            builder.append("<source>")
+        builder.append(":")
+        builder.append(to_string(related_line))
+        builder.append(":")
+        builder.append(to_string(related_column))
+        builder.append("\n")
+        if related_path == effective_path:
+            append_source_excerpt(&builder, source, &related.span, related_line, related_column, related.label[0:len(related.label)])
+        related_index += 1
+
+    if len(definition_value.note) > 0:
+        builder.append("  = note: ")
+        builder.append(definition_value.note[0:len(definition_value.note)])
+        builder.append("\n")
+    for note in diagnostic.notes:
+        builder.append("  = note: ")
+        builder.append(note[0:len(note)])
+        builder.append("\n")
+
+    help = definition_value.help[0:len(definition_value.help)]
+    if len(diagnostic.help) > 0:
+        help = diagnostic.help[0:len(diagnostic.help)]
+    if len(help) > 0:
+        builder.append("  = help: ")
+        builder.append(help)
+        builder.append("\n")
+    return builder.finish()
+
+
+def write_diagnostic_stderr(diagnostic: &const Diagnostic, path: &const String, source: &const String) -> void:
+    rendered = render_diagnostic(diagnostic, path, source)
+    cinder.write_stderr(rendered)
+
+
+def write_diagnostics_stderr(
+    values: &const List[Diagnostic],
+    path: &const String,
+    source: &const String,
+) -> void:
+    for value in values:
+        write_diagnostic_stderr(&value, path, source)
+
+
+def append_source_excerpt(
+    builder: &StringBuilder,
+    source: &const String,
+    span: &const SourceSpan,
+    line: i32,
+    column: i32,
+    label: String,
+) -> void:
+    if span.start > len(source):
+        return
+    line_start = span.start
+    while line_start > 0:
+        byte = source.byte_at(line_start - 1)
+        if byte == 10 or byte == 13:
+            break
+        line_start -= 1
+    line_end = span.start
+    while line_end < len(source):
+        byte = source.byte_at(line_end)
+        if byte == 10 or byte == 13:
+            break
+        line_end += 1
+
+    builder.append("  |\n")
+    builder.append(to_string(line))
+    builder.append(" | ")
+    append_range(builder, source, line_start, line_end)
+    builder.append("\n")
+    builder.append("  | ")
+    marker_column: i32 = 1
+    while marker_column < column:
+        builder.append(" ")
+        marker_column += 1
+    marker_count = span_display_width(source, span, line_end)
+    while marker_count > 0:
+        builder.append("^")
+        marker_count -= 1
+    if len(label) > 0:
+        builder.append(" ")
+        builder.append(label)
+    builder.append("\n")
+
+
+def span_display_width(source: &const String, span: &const SourceSpan, line_end: usize) -> i32:
+    end = span.start + span.length
+    if end > line_end:
+        end = line_end
+    index = span.start
+    width: i32 = 0
+    while index < end:
+        byte = source.byte_at(index)
+        if byte < 128 or byte > 191:
+            width += 1
+        index += 1
+    if width <= 0:
+        return 1
+    return width
+
+
+def line_and_column(source: &const String, target: usize) -> Tuple[i32, i32]:
+    end = target
+    if end > len(source):
+        end = len(source)
+    line: i32 = 1
+    column: i32 = 1
+    index: usize = 0
+    while index < end:
+        byte = source.byte_at(index)
+        if byte == 10:
+            line += 1
+            column = 1
+        elif byte == 13:
+            line += 1
+            column = 1
+            if index + 1 < end and source.byte_at(index + 1) == 10:
+                index += 1
+        elif byte < 128 or byte > 191:
+            column += 1
+        index += 1
+    return (line, column)
+
+
+def append_range(builder: &StringBuilder, value: &const String, start: usize, end: usize) -> void:
+    if start >= end or start >= len(value):
+        return
+    bounded_end = end
+    if bounded_end > len(value):
+        bounded_end = len(value)
+    builder.append(value[start:bounded_end])

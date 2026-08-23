@@ -1,3 +1,4 @@
+import diagnostics
 import project
 import syntax
 from syntax import NodeId, SyntaxArena, SyntaxKind
@@ -19,16 +20,6 @@ struct LockEdge:
     length: usize
     line: i32
     column: i32
-
-
-struct LockDiagnostic:
-    module_name: String
-    code: i32
-    start: usize
-    length: usize
-    line: i32
-    column: i32
-    message: String
 
 
 struct FunctionLockEffect:
@@ -75,7 +66,8 @@ struct ProjectLockModel:
     edges: List[LockEdge]
     functions: List[FunctionLockEffect]
     classes: List[ClassLockLifecycle]
-    diagnostics: List[LockDiagnostic]
+    diagnostic_values: List[diagnostics.Diagnostic]
+    diagnostic_modules: List[String]
     prepared: bool
 
 
@@ -84,13 +76,15 @@ def new_project_lock_model() -> ProjectLockModel:
     edge_values: List[LockEdge] = []
     function_values: List[FunctionLockEffect] = []
     class_values: List[ClassLockLifecycle] = []
-    diagnostic_values: List[LockDiagnostic] = []
+    diagnostic_values: List[diagnostics.Diagnostic] = []
+    diagnostic_modules: List[String] = []
     return ProjectLockModel(
         locks=lock_values,
         edges=edge_values,
         functions=function_values,
         classes=class_values,
-        diagnostics=diagnostic_values,
+        diagnostic_values=diagnostic_values,
+        diagnostic_modules=diagnostic_modules,
         prepared=false,
     )
 
@@ -248,7 +242,15 @@ def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[projec
                 if before >= 0 and after >= 0:
                     add_edge(model, before, after, true, &module.name, &declaration)
                 elif before < 0:
-                    add_diagnostic(model, &module.name, 404, &declaration, "cannot resolve the lock order reference")
+                    reference = module_arena.nodes[module_arena.children[declaration.first_child].index]
+                    reference_name = module.source[reference.start:reference.start + reference.length]
+                    add_lock_name_diagnostic(
+                        model,
+                        &module.name,
+                        diagnostics.DiagnosticId.LOCK_404,
+                        &declaration,
+                        &reference_name,
+                    )
             elif declaration.kind == SyntaxKind.LOCK_ORDER_DECL and declaration.child_count >= 2:
                 before = resolve_lock_reference(
                     model,
@@ -269,7 +271,14 @@ def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[projec
                 if before >= 0 and after >= 0:
                     add_edge(model, before, after, true, &module.name, &declaration)
                 else:
-                    add_diagnostic(model, &module.name, 404, &declaration, "cannot resolve the lock order reference")
+                    reference_name = module.source[declaration.start:declaration.start + declaration.length]
+                    add_lock_name_diagnostic(
+                        model,
+                        &module.name,
+                        diagnostics.DiagnosticId.LOCK_404,
+                        &declaration,
+                        &reference_name,
+                    )
 
 
 def collect_function_effects(model: &ProjectLockModel, modules: &const List[project.ParsedModule]) -> void:
@@ -655,15 +664,34 @@ def validate_lock_node(
         body = find_child_kind(arena, id, SyntaxKind.BLOCK)
         if lock_index >= 0:
             if dynamic_held:
-                add_diagnostic(model, module_name, 415, &arena.nodes[expression.index], "cannot acquire a static lock while a dynamic lock set is held")
+                add_diagnostic(
+                    model,
+                    module_name,
+                    diagnostics.DiagnosticId.LOCK_415,
+                    &arena.nodes[expression.index],
+                )
             for current in held:
                 if current == lock_index:
                     name: &const String = &model.locks[cast[usize](lock_index)].name
-                    add_diagnostic(model, module_name, 411, &arena.nodes[expression.index], "cannot acquire '" + name[0:len(name)] + "' while it is already held")
+                    add_lock_name_diagnostic(
+                        model,
+                        module_name,
+                        diagnostics.DiagnosticId.LOCK_411,
+                        &arena.nodes[expression.index],
+                        name,
+                    )
                 elif explicit_path_exists(model, lock_index, current):
                     name: &const String = &model.locks[cast[usize](lock_index)].name
                     held_name: &const String = &model.locks[cast[usize](current)].name
-                    add_diagnostic(model, module_name, 412, &arena.nodes[expression.index], "cannot acquire '" + name[0:len(name)] + "' while '" + held_name[0:len(held_name)] + "' is held")
+                    add_lock_pair_diagnostic(
+                        model,
+                        module_name,
+                        &arena.nodes[expression.index],
+                        name,
+                        held_name,
+                        lock_index,
+                        current,
+                    )
                 else:
                     add_edge(model, current, lock_index, false, module_name, &arena.nodes[expression.index])
             held.append(lock_index)
@@ -671,7 +699,12 @@ def validate_lock_node(
             held.pop()
         else:
             if len(held) > 0 or dynamic_held:
-                add_diagnostic(model, module_name, 416, &arena.nodes[expression.index], "cannot acquire a dynamic lock while another lock is held")
+                add_diagnostic(
+                    model,
+                    module_name,
+                    diagnostics.DiagnosticId.LOCK_416,
+                    &arena.nodes[expression.index],
+                )
             validate_lock_node(model, module_name, imports, arena, body, source, held, aliases, unstable_aliases, true, receiver_bindings, owner_name)
         return
     if node.kind == SyntaxKind.EXPR_CALL and (len(held) > 0 or dynamic_held):
@@ -729,7 +762,7 @@ def assign_canonical_keys(model: &ProjectLockModel) -> void:
                 edge: &const LockEdge = &model.edges[len(model.edges) - 1]
                 before_name: &const String = &model.locks[cast[usize](edge.before)].name
                 after_name: &const String = &model.locks[cast[usize](edge.after)].name
-                add_raw_diagnostic(model, &edge.module_name, 410, edge.start, edge.length, edge.line, edge.column, "lock order contains a cycle near: " + before_name[0:len(before_name)] + " -> " + after_name[0:len(after_name)])
+                add_cycle_diagnostic(model, edge, before_name, after_name)
             index = 0
             while index < count:
                 if not assigned[index]:
@@ -1176,9 +1209,9 @@ def validate_lock_effect(
     module_name: &const String,
 ) -> void:
     if unknown and (len(held) > 0 or dynamic_held):
-        add_diagnostic(model, module_name, 413, node, "cannot call a function with an unknown lock effect while a lock is held")
+        add_diagnostic(model, module_name, diagnostics.DiagnosticId.LOCK_413, node)
     if dynamic_held and len(locks) > 0:
-        add_diagnostic(model, module_name, 414, node, "cannot acquire another lock while a dynamic lock set is held")
+        add_diagnostic(model, module_name, diagnostics.DiagnosticId.LOCK_414, node)
         return
     if dynamic_held:
         return
@@ -1186,11 +1219,25 @@ def validate_lock_effect(
         for current in held:
             if current == lock_index:
                 name: &const String = &model.locks[cast[usize](lock_index)].name
-                add_diagnostic(model, module_name, 411, node, "cannot acquire '" + name[0:len(name)] + "' while it is already held")
+                add_lock_name_diagnostic(
+                    model,
+                    module_name,
+                    diagnostics.DiagnosticId.LOCK_411,
+                    node,
+                    name,
+                )
             elif explicit_path_exists(model, lock_index, current):
                 name: &const String = &model.locks[cast[usize](lock_index)].name
                 held_name: &const String = &model.locks[cast[usize](current)].name
-                add_diagnostic(model, module_name, 412, node, "cannot acquire '" + name[0:len(name)] + "' while '" + held_name[0:len(held_name)] + "' is held")
+                add_lock_pair_diagnostic(
+                    model,
+                    module_name,
+                    node,
+                    name,
+                    held_name,
+                    lock_index,
+                    current,
+                )
             else:
                 add_edge(model, current, lock_index, false, module_name, node)
 
@@ -1350,38 +1397,109 @@ def explicit_path_exists(model: &const ProjectLockModel, start: i32, target: i32
     return false
 
 
-def add_diagnostic(model: &ProjectLockModel, module_name: &const String, code: i32, node: &const syntax.SyntaxNode, message: String) -> void:
-    add_raw_diagnostic(model, module_name, code, node.start, node.length, node.line, node.column, message)
+def add_diagnostic(
+    model: &ProjectLockModel,
+    module_name: &const String,
+    id: diagnostics.DiagnosticId,
+    node: &const syntax.SyntaxNode,
+) -> void:
+    diagnostic = diagnostics.new_diagnostic(id, diagnostic_span(node))
+    add_raw_diagnostic(model, module_name, diagnostic)
+
+
+def add_lock_name_diagnostic(
+    model: &ProjectLockModel,
+    module_name: &const String,
+    id: diagnostics.DiagnosticId,
+    node: &const syntax.SyntaxNode,
+    name: &const String,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_argument(
+        id,
+        diagnostic_span(node),
+        diagnostics.argument_symbol("lock", name[0:len(name)]),
+    )
+    add_raw_diagnostic(model, module_name, diagnostic)
+
+
+def add_lock_pair_diagnostic(
+    model: &ProjectLockModel,
+    module_name: &const String,
+    node: &const syntax.SyntaxNode,
+    lock_name: &const String,
+    held_name: &const String,
+    lock_index: i32,
+    held_index: i32,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_arguments(
+        diagnostics.DiagnosticId.LOCK_412,
+        diagnostic_span(node),
+        diagnostics.argument_symbol("lock", lock_name[0:len(lock_name)]),
+        diagnostics.argument_symbol("held", held_name[0:len(held_name)]),
+    )
+    add_explicit_order_related(model, &diagnostic, lock_index, held_index)
+    add_raw_diagnostic(model, module_name, diagnostic)
+
+
+def add_cycle_diagnostic(
+    model: &ProjectLockModel,
+    edge: &const LockEdge,
+    before_name: &const String,
+    after_name: &const String,
+) -> void:
+    diagnostic = diagnostics.diagnostic_with_arguments(
+        diagnostics.DiagnosticId.LOCK_410,
+        diagnostics.source_span(edge.start, edge.length, edge.line, edge.column),
+        diagnostics.argument_symbol("before", before_name[0:len(before_name)]),
+        diagnostics.argument_symbol("after", after_name[0:len(after_name)]),
+    )
+    add_explicit_order_related(model, &diagnostic, edge.after, edge.before)
+    add_raw_diagnostic(model, &edge.module_name, diagnostic)
+
+
+def add_explicit_order_related(
+    model: &const ProjectLockModel,
+    diagnostic: &diagnostics.Diagnostic,
+    before: i32,
+    after: i32,
+) -> void:
+    for edge in model.edges:
+        if edge.explicit and edge.before == before and edge.after == after:
+            diagnostic.add_related(
+                diagnostics.related_span(
+                    "conflicting lock order declared here",
+                    diagnostics.source_span(edge.start, edge.length, edge.line, edge.column),
+                )
+            )
+            return
 
 
 def add_raw_diagnostic(
     model: &ProjectLockModel,
     module_name: &const String,
-    code: i32,
-    start: usize,
-    length: usize,
-    line: i32,
-    column: i32,
-    message: String,
+    diagnostic: diagnostics.Diagnostic,
 ) -> void:
-    for diagnostic in model.diagnostics:
-        if diagnostic.module_name == module_name[0:len(module_name)] and diagnostic.code == code and diagnostic.start == start:
+    index: usize = 0
+    while index < len(model.diagnostic_values):
+        if (
+            model.diagnostic_modules[index] == module_name[0:len(module_name)]
+            and diagnostics.diagnostic_matches_at(
+                &model.diagnostic_values,
+                index,
+                diagnostic.id,
+                diagnostic.primary.start,
+            )
+        ):
             return
-    model.diagnostics.append(
-        LockDiagnostic(
-            module_name=module_name[0:len(module_name)],
-            code=code,
-            start=start,
-            length=length,
-            line=line,
-            column=column,
-            message=message,
-        )
+        index += 1
+    model.diagnostic_modules.append(module_name[0:len(module_name)])
+    model.diagnostic_values.append(
+        diagnostic
     )
 
 
-def print_diagnostic(diagnostic: &const LockDiagnostic) -> void:
-    print("error:", diagnostic.message)
+def diagnostic_span(node: &const syntax.SyntaxNode) -> diagnostics.SourceSpan:
+    return diagnostics.source_span(node.start, node.length, node.line, node.column)
 
 
 def find_lock(model: &const ProjectLockModel, module_name: &const String, name: &const String) -> i32:
