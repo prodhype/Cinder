@@ -139,12 +139,33 @@ def test_check_diagnostic(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/diagnostic_lock_cycle.ci",
     ]
+    cross_module_lock_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_cross_module/src/main.ci",
+    ]
+    unresolved_before_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci",
+    ]
+    unresolved_after_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci",
+    ]
     syntax_result = process.run(syntax_command)
     type_result = process.run(type_command)
     import_result = process.run(import_command)
     override_result = process.run(override_command)
     ownership_result = process.run(ownership_command)
     lock_result = process.run(lock_command)
+    cross_module_lock_result = process.run(cross_module_lock_command)
+    unresolved_before_result = process.run(unresolved_before_command)
+    unresolved_after_result = process.run(unresolved_after_command)
+    cross_module_related_location = "= related: conflicting lock order declared here at " + state.root + "/tests/cases/diagnostic_lock_cross_module/src/locks.ci:2:1"
+    unresolved_before_location = state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci:2:11"
+    unresolved_after_location = state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci:2:24"
     ok = (
         syntax_result.exit_code == 1
         and contains(&syntax_result.stderr, "error[lexical lexer.L003/2]: Unclosed delimiter")
@@ -168,6 +189,20 @@ def test_check_diagnostic(state: &TestState) -> void:
         and contains(&lock_result.stderr, "lock.order-cycle/410")
         and contains(&lock_result.stderr, "lock order contains a cycle near second -> first")
         and contains(&lock_result.stderr, "= related: conflicting lock order declared here")
+        and cross_module_lock_result.exit_code == 1
+        and contains(&cross_module_lock_result.stderr, "lock.order-cycle/410")
+        and contains(&cross_module_lock_result.stderr, "= related: conflicting lock order declared here")
+        and contains(&cross_module_lock_result.stderr, cross_module_related_location)
+        and unresolved_before_result.exit_code == 1
+        and contains(&unresolved_before_result.stderr, "lock.unresolved-reference/404")
+        and contains(&unresolved_before_result.stderr, "cannot resolve lock order reference missing")
+        and contains(&unresolved_before_result.stderr, unresolved_before_location)
+        and not contains(&unresolved_before_result.stderr, "cannot resolve lock order reference lockorder missing before first")
+        and unresolved_after_result.exit_code == 1
+        and contains(&unresolved_after_result.stderr, "lock.unresolved-reference/404")
+        and contains(&unresolved_after_result.stderr, "cannot resolve lock order reference missing")
+        and contains(&unresolved_after_result.stderr, unresolved_after_location)
+        and not contains(&unresolved_after_result.stderr, "cannot resolve lock order reference lockorder first before missing")
     )
     expect(state, "check reports structured rich source diagnostics", ok)
     if not ok:
@@ -177,6 +212,9 @@ def test_check_diagnostic(state: &TestState) -> void:
         report_process_failure(&override_result.stdout, &override_result.stderr)
         report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
         report_process_failure(&lock_result.stdout, &lock_result.stderr)
+        report_process_failure(&cross_module_lock_result.stdout, &cross_module_lock_result.stderr)
+        report_process_failure(&unresolved_before_result.stdout, &unresolved_before_result.stderr)
+        report_process_failure(&unresolved_after_result.stdout, &unresolved_after_result.stderr)
 
 
 def test_check_ir_validation(state: &TestState) -> void:

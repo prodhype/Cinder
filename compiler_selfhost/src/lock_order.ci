@@ -16,6 +16,7 @@ struct LockEdge:
     after: i32
     explicit: bool
     module_name: String
+    source_path: String
     start: usize
     length: usize
     line: i32
@@ -240,7 +241,7 @@ def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[projec
                     &module.source,
                 )
                 if before >= 0 and after >= 0:
-                    add_edge(model, before, after, true, &module.name, &declaration)
+                    add_explicit_edge(model, before, after, &module.name, &module.path, &declaration)
                 elif before < 0:
                     reference = module_arena.nodes[module_arena.children[declaration.first_child].index]
                     reference_name = module.source[reference.start:reference.start + reference.length]
@@ -269,14 +270,18 @@ def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[projec
                     &module.source,
                 )
                 if before >= 0 and after >= 0:
-                    add_edge(model, before, after, true, &module.name, &declaration)
+                    add_explicit_edge(model, before, after, &module.name, &module.path, &declaration)
                 else:
-                    reference_name = module.source[declaration.start:declaration.start + declaration.length]
+                    reference_id = module_arena.children[declaration.first_child]
+                    if before >= 0 and after < 0:
+                        reference_id = module_arena.children[declaration.first_child + 1]
+                    reference = module_arena.nodes[reference_id.index]
+                    reference_name = module.source[reference.start:reference.start + reference.length]
                     add_lock_name_diagnostic(
                         model,
                         &module.name,
                         diagnostics.DiagnosticId.LOCK_404,
-                        &declaration,
+                        &reference,
                         &reference_name,
                     )
 
@@ -1357,11 +1362,41 @@ def add_edge(
     module_name: &const String,
     node: &const syntax.SyntaxNode,
 ) -> void:
+    empty_path = ""
+    add_edge_with_path(model, before, after, explicit, module_name, &empty_path, node)
+
+
+def add_explicit_edge(
+    model: &ProjectLockModel,
+    before: i32,
+    after: i32,
+    module_name: &const String,
+    source_path: &const String,
+    node: &const syntax.SyntaxNode,
+) -> void:
+    add_edge_with_path(model, before, after, true, module_name, source_path, node)
+
+
+def add_edge_with_path(
+    model: &ProjectLockModel,
+    before: i32,
+    after: i32,
+    explicit: bool,
+    module_name: &const String,
+    source_path: &const String,
+    node: &const syntax.SyntaxNode,
+) -> void:
     edge_index: usize = 0
     while edge_index < len(model.edges):
         if model.edges[edge_index].before == before and model.edges[edge_index].after == after:
             if explicit and not model.edges[edge_index].explicit:
                 model.edges[edge_index].explicit = true
+                model.edges[edge_index].module_name = module_name[0:len(module_name)]
+                model.edges[edge_index].source_path = source_path[0:len(source_path)]
+                model.edges[edge_index].start = node.start
+                model.edges[edge_index].length = node.length
+                model.edges[edge_index].line = node.line
+                model.edges[edge_index].column = node.column
             return
         edge_index += 1
     model.edges.append(
@@ -1370,6 +1405,7 @@ def add_edge(
             after=after,
             explicit=explicit,
             module_name=module_name[0:len(module_name)],
+            source_path=source_path[0:len(source_path)],
             start=node.start,
             length=node.length,
             line=node.line,
@@ -1468,7 +1504,13 @@ def add_explicit_order_related(
             diagnostic.add_related(
                 diagnostics.related_span(
                     "conflicting lock order declared here",
-                    diagnostics.source_span(edge.start, edge.length, edge.line, edge.column),
+                    diagnostics.source_span_in(
+                        edge.source_path[0:len(edge.source_path)],
+                        edge.start,
+                        edge.length,
+                        edge.line,
+                        edge.column,
+                    ),
                 )
             )
             return
