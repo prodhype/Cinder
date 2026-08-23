@@ -169,6 +169,7 @@ def test_check_diagnostic(state: &TestState) -> void:
     cross_module_lock_result = process.run(cross_module_lock_command)
     unresolved_before_result = process.run(unresolved_before_command)
     unresolved_after_result = process.run(unresolved_after_command)
+    override_excerpt = "   |\n10 |     def value(self, input: String) -> i32:\n   |     ^"
     cross_module_related_location = "= related: conflicting lock order declared here at " + state.root + "/tests/cases/diagnostic_lock_cross_module/src/locks.ci:2:1"
     unresolved_before_location = state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci:2:11"
     unresolved_after_location = state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci:2:24"
@@ -186,6 +187,7 @@ def test_check_diagnostic(state: &TestState) -> void:
         and override_result.exit_code == 1
         and contains(&override_result.stderr, "checker.override-mismatch/179")
         and contains(&override_result.stderr, "implementation of value")
+        and contains(&override_result.stderr, override_excerpt)
         and contains(&override_result.stderr, "= related: base declaration is here")
         and contains(&override_result.stderr, "= note: the base declaration is shown as a related source location")
         and ownership_result.exit_code == 1

@@ -1223,12 +1223,22 @@ def append_source_excerpt(
             break
         line_end += 1
 
-    builder.append("  |\n")
-    builder.append(to_string(line))
+    rendered_line = to_string(line)
+    line_width = len(rendered_line)
+    gutter_width: usize = 0
+    while gutter_width < line_width:
+        builder.append(" ")
+        gutter_width += 1
+    builder.append(" |\n")
+    builder.append(rendered_line)
     builder.append(" | ")
     append_range(builder, source, line_start, line_end)
     builder.append("\n")
-    builder.append("  | ")
+    gutter_width = 0
+    while gutter_width < line_width:
+        builder.append(" ")
+        gutter_width += 1
+    builder.append(" | ")
     marker_column: i32 = 1
     while marker_column < column:
         builder.append(" ")
