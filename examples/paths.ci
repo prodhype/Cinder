@@ -99,7 +99,11 @@ def main() -> i32:
         return fail(27, "multi-dot hidden-file stem")
     if Path.with_suffix("..profile", ".txt") != "..profile.txt":
         return fail(28, "multi-dot hidden-file suffix")
-    if Path.parent("/") != "/" or Path.name("/") != "":
+    if (
+        Path.parent("/") != "/"
+        or Path.parent("////") != "/"
+        or Path.name("/") != ""
+    ):
         return fail(6, "root handling")
     computed = Path.join(Path.parent("alpha/file.tmp"), Path.name("beta/result.txt"))
     if computed != "alpha/result.txt":

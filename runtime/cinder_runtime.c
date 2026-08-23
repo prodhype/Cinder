@@ -688,6 +688,9 @@ CinderString cinder_path_parent(const char *path)
     if (end == 0) {
         return cinder_string_from_cstr(".");
     }
+    if (end == 1 && path[0] == '/') {
+        return cinder_string_from_cstr("/");
+    }
 
     const size_t component_start = cinder_path_component_start(path, end);
     if (component_start == 0) {
