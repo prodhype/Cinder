@@ -129,6 +129,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/diagnostic_override.ci",
     ]
+    tab_marker_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_tab_marker.ci",
+    ]
     ownership_command: List[String] = [
         state.compiler.clone(),
         "check",
@@ -159,20 +164,29 @@ def test_check_diagnostic(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci",
     ]
+    unresolved_after_decl_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_unresolved_after_decl.ci",
+    ]
     syntax_result = process.run(syntax_command)
     type_result = process.run(type_command)
     import_result = process.run(import_command)
     override_result = process.run(override_command)
+    tab_marker_result = process.run(tab_marker_command)
     ownership_result = process.run(ownership_command)
     atomic_import_result = process.run(atomic_import_command)
     lock_result = process.run(lock_command)
     cross_module_lock_result = process.run(cross_module_lock_command)
     unresolved_before_result = process.run(unresolved_before_command)
     unresolved_after_result = process.run(unresolved_after_command)
+    unresolved_after_decl_result = process.run(unresolved_after_decl_command)
     override_excerpt = "   |\n10 |     def value(self, input: String) -> i32:\n   |     ^"
+    tab_marker_excerpt = "  |\n2 |     return\tmissing\n  |             ^^^^^^^"
     cross_module_related_location = "= related: conflicting lock order declared here at " + state.root + "/tests/cases/diagnostic_lock_cross_module/src/locks.ci:2:1"
     unresolved_before_location = state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci:2:11"
     unresolved_after_location = state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci:2:24"
+    unresolved_after_decl_location = state.root + "/tests/cases/diagnostic_lock_unresolved_after_decl.ci:2:18"
     ok = (
         syntax_result.exit_code == 1
         and contains(&syntax_result.stderr, "error[lexical lexer.L003/2]: Unclosed delimiter")
@@ -190,6 +204,9 @@ def test_check_diagnostic(state: &TestState) -> void:
         and contains(&override_result.stderr, override_excerpt)
         and contains(&override_result.stderr, "= related: base declaration is here")
         and contains(&override_result.stderr, "= note: the base declaration is shown as a related source location")
+        and tab_marker_result.exit_code == 1
+        and contains(&tab_marker_result.stderr, "checker.unresolved-name-or-member/48")
+        and contains(&tab_marker_result.stderr, tab_marker_excerpt)
         and ownership_result.exit_code == 1
         and contains(&ownership_result.stderr, "checker.atomic-value-move/399")
         and contains(&ownership_result.stderr, "Atomic owner source")
@@ -214,6 +231,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         and contains(&unresolved_after_result.stderr, "cannot resolve lock order reference missing")
         and contains(&unresolved_after_result.stderr, unresolved_after_location)
         and not contains(&unresolved_after_result.stderr, "cannot resolve lock order reference lockorder first before missing")
+        and unresolved_after_decl_result.exit_code == 1
+        and contains(&unresolved_after_decl_result.stderr, "lock.unresolved-reference/404")
+        and contains(&unresolved_after_decl_result.stderr, "cannot resolve lock order reference missing")
+        and contains(&unresolved_after_decl_result.stderr, unresolved_after_decl_location)
+        and not contains(&unresolved_after_decl_result.stderr, "cannot resolve lock order reference lock first after missing")
     )
     expect(state, "check reports structured rich source diagnostics", ok)
     if not ok:
@@ -221,12 +243,14 @@ def test_check_diagnostic(state: &TestState) -> void:
         report_process_failure(&type_result.stdout, &type_result.stderr)
         report_process_failure(&import_result.stdout, &import_result.stderr)
         report_process_failure(&override_result.stdout, &override_result.stderr)
+        report_process_failure(&tab_marker_result.stdout, &tab_marker_result.stderr)
         report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
         report_process_failure(&atomic_import_result.stdout, &atomic_import_result.stderr)
         report_process_failure(&lock_result.stdout, &lock_result.stderr)
         report_process_failure(&cross_module_lock_result.stdout, &cross_module_lock_result.stderr)
         report_process_failure(&unresolved_before_result.stdout, &unresolved_before_result.stderr)
         report_process_failure(&unresolved_after_result.stdout, &unresolved_after_result.stderr)
+        report_process_failure(&unresolved_after_decl_result.stdout, &unresolved_after_decl_result.stderr)
 
 
 def test_check_ir_validation(state: &TestState) -> void:

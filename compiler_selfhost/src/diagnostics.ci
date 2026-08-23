@@ -1137,7 +1137,7 @@ def render_diagnostic(diagnostic: &const Diagnostic, path: &const String, source
     builder.append("  ")
     builder.append(message)
     builder.append("\n")
-    append_source_excerpt(&builder, source, &diagnostic.primary, line, column, "")
+    append_source_excerpt(&builder, source, &diagnostic.primary, line, "")
 
     related_index: usize = 0
     while related_index < len(diagnostic.related):
@@ -1164,7 +1164,7 @@ def render_diagnostic(diagnostic: &const Diagnostic, path: &const String, source
         builder.append(to_string(related_column))
         builder.append("\n")
         if related_path == effective_path:
-            append_source_excerpt(&builder, source, &related.span, related_line, related_column, related.label[0:len(related.label)])
+            append_source_excerpt(&builder, source, &related.span, related_line, related.label[0:len(related.label)])
         related_index += 1
 
     if len(definition_value.note) > 0:
@@ -1205,7 +1205,6 @@ def append_source_excerpt(
     source: &const String,
     span: &const SourceSpan,
     line: i32,
-    column: i32,
     label: String,
 ) -> void:
     if span.start > len(source):
@@ -1239,11 +1238,13 @@ def append_source_excerpt(
         builder.append(" ")
         gutter_width += 1
     builder.append(" | ")
-    marker_column: i32 = 1
-    while marker_column < column:
+    source_display_column = cast[i32](line_width) + 3
+    marker_column = display_column_at(source, line_start, span.start, source_display_column)
+    marker_indent = marker_column - source_display_column
+    while marker_indent > 0:
         builder.append(" ")
-        marker_column += 1
-    marker_count = span_display_width(source, span, line_end)
+        marker_indent -= 1
+    marker_count = span_display_width(source, span, line_end, marker_column)
     while marker_count > 0:
         builder.append("^")
         marker_count -= 1
@@ -1253,17 +1254,38 @@ def append_source_excerpt(
     builder.append("\n")
 
 
-def span_display_width(source: &const String, span: &const SourceSpan, line_end: usize) -> i32:
+def display_column_at(
+    source: &const String,
+    start: usize,
+    target: usize,
+    initial_column: i32,
+) -> i32:
+    end = target
+    if end > len(source):
+        end = len(source)
+    index = start
+    column = initial_column
+    tab_width: i32 = 8
+    while index < end:
+        byte = source.byte_at(index)
+        if byte == 9:
+            column += tab_width - column % tab_width
+        elif byte < 128 or byte > 191:
+            column += 1
+        index += 1
+    return column
+
+
+def span_display_width(
+    source: &const String,
+    span: &const SourceSpan,
+    line_end: usize,
+    start_column: i32,
+) -> i32:
     end = span.start + span.length
     if end > line_end:
         end = line_end
-    index = span.start
-    width: i32 = 0
-    while index < end:
-        byte = source.byte_at(index)
-        if byte < 128 or byte > 191:
-            width += 1
-        index += 1
+    width = display_column_at(source, span.start, end, start_column) - start_column
     if width <= 0:
         return 1
     return width

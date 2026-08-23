@@ -1,0 +1,6 @@
+lock first
+lock first after missing
+
+
+def main() -> i32:
+    return 0

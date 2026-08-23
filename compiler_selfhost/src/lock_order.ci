@@ -249,7 +249,7 @@ def collect_explicit_edges(model: &ProjectLockModel, modules: &const List[projec
                         model,
                         &module.name,
                         diagnostics.DiagnosticId.LOCK_404,
-                        &declaration,
+                        &reference,
                         &reference_name,
                     )
             elif declaration.kind == SyntaxKind.LOCK_ORDER_DECL and declaration.child_count >= 2:
