@@ -172,6 +172,11 @@ def main() -> i32:
     names_by_path[Path.name("a/b")] += 1
     if names_by_path["b"] != 8:
         return fail(29, "Path result compound map key")
+    if not ((Path.name("a/b"), 8) in names_by_path.items()):
+        return fail(37, "Path result map items key")
+    paths_by_rank: Map[i32, String] = {1: "b"}
+    if not ((1, Path.name("a/b")) in paths_by_rank.items()):
+        return fail(38, "Path result map items value")
 
     with open(Path.join(nested, "borrowed.tmp"), "wb") as borrowed_file:
         borrowed_file.write("borrowed path result\n")

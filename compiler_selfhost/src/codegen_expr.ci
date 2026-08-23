@@ -856,6 +856,22 @@ def emit_collection_membership_binary(
     codegen_type_names.emit_semantic_specialized_type_name(table, record.inner, context.type_source, &map_name_builder, context.specialization_names)
     map_name = map_name_builder.finish()
     member_owned_path = codegen_access.expression_is_owned_path_string(arena, member, source, imports, context)
+    item_key_needs_drop = false
+    item_value_needs_drop = false
+    if record.kind == types.TypeKind.MAP_ITEMS and member.index >= 0:
+        member_node = arena.nodes[member.index]
+        map_record = table.types[record.inner.index]
+        if member_node.kind == SyntaxKind.EXPR_TUPLE and member_node.child_count >= 2 and map_record.kind == types.TypeKind.MAP:
+            item_key = arena.children[member_node.first_child]
+            item_value = arena.children[member_node.first_child + 1]
+            item_key_needs_drop = (
+                codegen_context.context_semantic_type_is_kind(context, map_record.inner, types.TypeKind.STRING)
+                and codegen_access.path_argument_needs_materialization(arena, context, item_key, source)
+            )
+            item_value_needs_drop = (
+                codegen_context.context_semantic_type_is_kind(context, map_record.second, types.TypeKind.STRING)
+                and codegen_access.path_argument_needs_materialization(arena, context, item_value, source)
+            )
     member_temporary: i32 = -1
     builder.append("({ __auto_type cinder_view = ")
     emit_module_expression_state(state, collection)
@@ -891,6 +907,10 @@ def emit_collection_membership_binary(
     else:
         builder.append("_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1")
     builder.append("); ")
+    if item_value_needs_drop:
+        builder.append("cinder_string_drop(&cinder_item.item_1); ")
+    if item_key_needs_drop:
+        builder.append("cinder_string_drop(&cinder_item.item_0); ")
     if member_owned_path:
         builder.append("cinder_string_drop(&")
         codegen_access.append_path_temporary_name(builder, "membership", member_temporary)
