@@ -523,10 +523,16 @@ def test_path_diagnostics(state: &TestState) -> void:
 
 def test_path_alias_shadowing(state: &TestState) -> void:
     source = state.root + "/tests/cases/path_shadowed_alias.ci"
+    qualified_source = state.root + "/tests/cases/path_shadowed_import_alias.ci"
     emit_command: List[String] = [
         state.compiler.clone(),
         "emit-c",
         source.clone(),
+    ]
+    qualified_emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        qualified_source.clone(),
     ]
     run_command: List[String] = [
         state.compiler.clone(),
@@ -537,18 +543,35 @@ def test_path_alias_shadowing(state: &TestState) -> void:
         "--build-dir",
         state.workspace + "/path-shadowed-alias-build",
     ]
+    qualified_run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        qualified_source,
+        "-o",
+        state.workspace + "/path-shadowed-import-alias",
+        "--build-dir",
+        state.workspace + "/path-shadowed-import-alias-build",
+    ]
     emitted = process.run(emit_command)
+    qualified_emitted = process.run(qualified_emit_command)
     ran = process.run(run_command)
+    qualified_ran = process.run(qualified_run_command)
     ok = (
         emitted.exit_code == 0
         and ran.exit_code == 0
         and contains(&emitted.stdout, "PathProbe_exists")
         and not contains(&emitted.stdout, "cinder_path_exists")
+        and qualified_emitted.exit_code == 0
+        and qualified_ran.exit_code == 0
+        and contains(&qualified_emitted.stdout, "PathProbe_exists")
+        and not contains(&qualified_emitted.stdout, "cinder_path_exists")
     )
-    expect(state, "Path imports respect local and module-level shadowing", ok)
+    expect(state, "Path imports and qualified aliases respect local and module-level shadowing", ok)
     if not ok:
         report_process_failure(&emitted.stdout, &emitted.stderr)
         report_process_failure(&ran.stdout, &ran.stderr)
+        report_process_failure(&qualified_emitted.stdout, &qualified_emitted.stderr)
+        report_process_failure(&qualified_ran.stdout, &qualified_ran.stderr)
 
 
 def test_builtin_module_shadowing(state: &TestState) -> void:

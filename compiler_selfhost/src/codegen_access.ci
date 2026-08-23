@@ -762,11 +762,16 @@ def expression_is_path_namespace(
         or not codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "Path")
     ):
         return false
-    if codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length):
-        return false
     name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
     imported = codegen_names.find_import_alias(imports, &name)
-    return imported.virtual_builtin and imported.module_name == "std.path"
+    if not imported.virtual_builtin or imported.module_name != "std.path":
+        return false
+    if codegen_context.context_expression_resolves_to_import(context, receiver):
+        return true
+    return (
+        not codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length)
+        and not codegen_context.context_name_is_global(context, &name)
+    )
 
 
 def append_path_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:
@@ -1709,7 +1714,17 @@ def emit_module_attribute(
         if receiver_node.kind == SyntaxKind.EXPR_NAME and member_node.kind == SyntaxKind.NAME:
             receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
             imported = codegen_names.find_import_alias(imports, &receiver_name)
-            if len(imported.module_name) > 0:
+            resolves_to_import = codegen_context.context_expression_resolves_to_import(context, receiver)
+            if (
+                len(imported.module_name) > 0
+                and (
+                    resolves_to_import
+                    or (
+                        not codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length)
+                        and not codegen_context.context_name_is_global(context, &receiver_name)
+                    )
+                )
+            ):
                 if imported.virtual_builtin and imported.module_name == "math" and codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "pi"):
                     builder.append("CINDER_PI")
                     return
