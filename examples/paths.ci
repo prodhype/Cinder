@@ -177,6 +177,18 @@ def main() -> i32:
     paths_by_rank: Map[i32, String] = {1: "b"}
     if not ((1, Path.name("a/b")) in paths_by_rank.items()):
         return fail(38, "Path result map items value")
+    borrowed_holders: Map[String, PathHolder] = {
+        "key": PathHolder(path=Path.name("owned/key")),
+        "value": PathHolder(path=Path.name("owned/value")),
+    }
+    borrowed_values: Map[String, i32] = {"key": 1}
+    if not ((borrowed_holders["key"].path, 1) in borrowed_values.items()):
+        return fail(39, "borrowed map field map items key")
+    borrowed_paths_by_rank: Map[i32, String] = {1: "value"}
+    if not ((1, borrowed_holders["value"].path) in borrowed_paths_by_rank.items()):
+        return fail(40, "borrowed map field map items value")
+    if borrowed_holders["key"].path != "key" or borrowed_holders["value"].path != "value":
+        return fail(41, "borrowed map field remains live")
 
     with open(Path.join(nested, "borrowed.tmp"), "wb") as borrowed_file:
         borrowed_file.write("borrowed path result\n")

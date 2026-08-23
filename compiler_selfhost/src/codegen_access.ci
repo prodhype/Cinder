@@ -686,6 +686,39 @@ def path_argument_needs_materialization(
     return not codegen_context.context_expression_is_addressable_for_borrow(arena, context, argument, source)
 
 
+def expression_is_borrowed_map_projection(
+    arena: &const SyntaxArena,
+    context: &codegen_model.ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        return expression_is_borrowed_map_projection(
+            arena,
+            context,
+            codegen_names.first_child(arena, id),
+            source,
+        )
+    if node.kind == SyntaxKind.EXPR_INDEX:
+        receiver = codegen_names.first_child(arena, id)
+        if codegen_context.context_expression_is_collection(arena, context, receiver, source, "Map", types.TypeKind.MAP):
+            return true
+        return expression_is_borrowed_map_projection(arena, context, receiver, source)
+    if node.kind != SyntaxKind.EXPR_CAST:
+        return false
+    operand = codegen_names.last_child(arena, id)
+    if operand.index < 0:
+        return false
+    cast_type = codegen_context.context_semantic_type(context, id)
+    operand_type = codegen_context.context_semantic_type(context, operand)
+    if not context.type_table.same(cast_type, operand_type):
+        return false
+    return expression_is_borrowed_map_projection(arena, context, operand, source)
+
+
 def path_member_returns_string(member_name: &const String) -> bool:
     return member_name == "parent" or member_name == "name" or member_name == "stem" or member_name == "join" or member_name == "with_suffix"
 

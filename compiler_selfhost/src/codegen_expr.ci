@@ -867,10 +867,12 @@ def emit_collection_membership_binary(
             item_key_needs_drop = (
                 codegen_context.context_semantic_type_is_kind(context, map_record.inner, types.TypeKind.STRING)
                 and codegen_access.path_argument_needs_materialization(arena, context, item_key, source)
+                and not codegen_access.expression_is_borrowed_map_projection(arena, context, item_key, source)
             )
             item_value_needs_drop = (
                 codegen_context.context_semantic_type_is_kind(context, map_record.second, types.TypeKind.STRING)
                 and codegen_access.path_argument_needs_materialization(arena, context, item_value, source)
+                and not codegen_access.expression_is_borrowed_map_projection(arena, context, item_value, source)
             )
     member_temporary: i32 = -1
     builder.append("({ __auto_type cinder_view = ")

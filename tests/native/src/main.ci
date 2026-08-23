@@ -346,6 +346,8 @@ def test_path_codegen(state: &TestState) -> void:
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_membership_")
         and contains(&result.stdout, "_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1); cinder_string_drop(&cinder_item.item_0);")
         and contains(&result.stdout, "_items_contains(&cinder_view, cinder_item.item_0, cinder_item.item_1); cinder_string_drop(&cinder_item.item_1);")
+        and not contains(&result.stdout, "cinder_string_drop(&cinder_item.item_0); cinder_contains; })) {\n    {\n    __auto_type cinder_return_value = cinder_paths_paths__fail(39")
+        and not contains(&result.stdout, "cinder_string_drop(&cinder_item.item_1); cinder_contains; })) {\n    {\n    __auto_type cinder_return_value = cinder_paths_paths__fail(40")
         and contains(&result.stdout, "CinderString cinder_path_slice_")
         and contains(&result.stdout, "CinderString cinder_path_slice_result_")
         and contains(&result.stdout, "cinder_string_slice(&cinder_path_slice_")
