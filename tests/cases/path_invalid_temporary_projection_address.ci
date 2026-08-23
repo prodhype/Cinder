@@ -1,0 +1,7 @@
+from std.path import Path
+
+
+def main() -> i32:
+    pointer: *usize = &Path.name("a/b").length
+    print(pointer)
+    return 0

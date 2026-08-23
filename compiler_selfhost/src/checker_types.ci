@@ -28,6 +28,22 @@ def checker_type_needs_drop(checker: &checker_core.Checker, arena: &const syntax
     return checker_type_needs_drop_inner(checker, arena, type_id, source, seen)
 
 
+def checker_expression_is_derived_from_owned_temporary(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+) -> bool:
+    if id.index < 0:
+        return false
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_CALL:
+        return checker_type_needs_drop(checker, arena, checker.model.expr_type(id), source)
+    if node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE or node.kind == syntax.SyntaxKind.EXPR_INDEX or node.kind == syntax.SyntaxKind.EXPR_SLICE:
+        return checker_expression_is_derived_from_owned_temporary(checker, arena, checker_core.first_child(arena, id), source)
+    return false
+
+
 def checker_type_can_clone(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
     if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
         return false
@@ -1395,7 +1411,7 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
         operand_type = infer_expression_type(checker, arena, operand, source, current_scope)
         result = operand_type
         if node.flags == cast[i32](token.TokenKind.AMPERSAND):
-            operand_is_owned_temporary = operand.index >= 0 and arena.nodes[operand.index].kind == syntax.SyntaxKind.EXPR_CALL and checker_type_needs_drop(checker, arena, operand_type, source)
+            operand_is_owned_temporary = checker_expression_is_derived_from_owned_temporary(checker, arena, operand, source)
             if operand_is_owned_temporary:
                 checker_core.emit_error(checker, 421, node.start, node.length, node.line, node.column)
                 result = types.type_error()

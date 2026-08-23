@@ -353,6 +353,7 @@ def emit_module_statement(
     node = arena.nodes[id.index]
     if node.kind == SyntaxKind.RETURN_STMT:
         expr = codegen_names.first_child(arena, id)
+        borrowed_owner = codegen_context.context_expression_borrowed_owner(context, expr, arena, source)
         has_cleanups = len(context.deferred_expressions) > 0 or len(context.with_resources) > 0 or len(context.iterator_guard_names) > 0 or len(context.lock_cleanups) > 0 or len(context.value_cleanups) > 0 or codegen_context.context_has_live_drops(arena, context, source)
         if not has_cleanups:
             builder.append("    return")
@@ -373,6 +374,10 @@ def emit_module_statement(
             context.expected_type = previous_expected
             builder.append(";\n")
             codegen_context.mark_context_expression_moved(arena, context, expr, source)
+        if len(borrowed_owner) > 0:
+            builder.append("    ")
+            builder.append(borrowed_owner[0:len(borrowed_owner)])
+            builder.append(" = (CinderString){0};\n")
         emit_module_return_cleanups(arena, source, builder, prefix, project_name, imports, context)
         builder.append("    return")
         if expr.index >= 0:
@@ -1362,7 +1367,7 @@ def emit_match_binding_declaration_once(
     builder.append(";\n")
     if binding_info.syntax_type.index >= 0:
         if borrowed:
-            codegen_context.register_context_borrowed_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
+            codegen_context.register_context_borrowed_name_type_with_owner(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type, root_value)
         else:
             codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
     if binding_info.semantic_type.index >= 0:

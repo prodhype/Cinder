@@ -18,6 +18,7 @@ struct ModuleNameTypeBinding:
     name: String
     type_id: NodeId
     moved: bool
+    borrowed_owner: String
 
 
 struct ModuleSemanticNameTypeBinding:
@@ -582,7 +583,7 @@ def register_context_name_type(arena: &const SyntaxArena, context: &ModuleCodege
     if length == 0:
         return
     name = source[start:start + length]
-    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false))
+    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false, borrowed_owner=""))
     if type_id.index >= 0 and context_type_is_pointer_like(arena, type_id):
         context.pointer_names.append(name[0:len(name)])
 
@@ -592,10 +593,24 @@ def register_context_borrowed_name_type(arena: &const SyntaxArena, context: &Mod
         context.local_types[len(context.local_types) - 1].moved = true
 
 
+def register_context_borrowed_name_type_with_owner(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    source: &const String,
+    start: usize,
+    length: usize,
+    type_id: NodeId,
+    owner: &const String,
+) -> void:
+    register_context_borrowed_name_type(arena, context, source, start, length, type_id)
+    if length > 0 and len(context.local_types) > 0:
+        context.local_types[len(context.local_types) - 1].borrowed_owner = owner[0:len(owner)]
+
+
 def register_context_generated_name_type(context: &ModuleCodegenContext, name: String, type_id: NodeId) -> void:
     if len(name) == 0:
         return
-    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false))
+    context.local_types.append(ModuleNameTypeBinding(name=name[0:len(name)], type_id=type_id, moved=false, borrowed_owner=""))
 
 
 def register_context_pointer_name(context: &ModuleCodegenContext, source: &const String, start: usize, length: usize) -> void:
@@ -764,6 +779,21 @@ def context_expression_is_moved(context: &ModuleCodegenContext, id: NodeId, aren
         if context.local_types[index].name == name[0:len(name)]:
             return context.local_types[index].moved
     return false
+
+
+def context_expression_borrowed_owner(context: &ModuleCodegenContext, id: NodeId, arena: &const SyntaxArena, source: &const String) -> String:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_NAME:
+        return ""
+    node = arena.nodes[id.index]
+    name = source[node.value_start:node.value_start + node.value_length]
+    index = len(context.local_types)
+    while index > context.local_start:
+        index -= 1
+        binding: &const ModuleNameTypeBinding = &context.local_types[index]
+        if binding.name == name[0:len(name)]:
+            return binding.borrowed_owner[0:len(binding.borrowed_owner)]
+    return ""
+
 
 def mark_context_expression_live(context: &ModuleCodegenContext, id: NodeId, arena: &const SyntaxArena, source: &const String) -> void:
     if id.index < 0:

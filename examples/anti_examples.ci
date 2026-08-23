@@ -144,8 +144,10 @@ def path_name_first_byte() -> char:
     return Path.name("a/b").byte_at(0)
 
 
-# WRONG: an owned Path result is a temporary, so it cannot be addressed.
+# WRONG: an owned Path result is a temporary, so neither it nor a projected
+# field can be addressed.
 # path_pointer = &Path.name("a/b")
+# path_length_pointer = &Path.name("a/b").length
 
 # CORRECT: bind the owner to a local before taking its address.
 def addressable_path_name() -> bool:
