@@ -328,6 +328,7 @@ def test_path_codegen(state: &TestState) -> void:
         and contains(&result.stdout, "cinder_string_drop(&cinder_match_value_")
         and contains(&result.stdout, "__auto_type matched_name = cinder_string_clone(&(cinder_match_value_")
         and contains(&result.stdout, "cinder_string_drop(&matched_name)")
+        and contains(&result.stdout, "    }\n    cinder_string_drop(&matched_name);\n    }\n    }\n    if (!cinder_match_found_")
         and contains(&result.stdout, "CinderString cinder_path_membership_")
         and contains(&result.stdout, "_contains(&cinder_collection, cinder_path_membership_")
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_membership_")

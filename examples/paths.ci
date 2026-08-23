@@ -40,6 +40,15 @@ def returned_path_match_capture_codegen() -> String:
     return ""
 
 
+def guarded_path_match_capture_codegen() -> bool:
+    match Path.name("a/b"):
+        case matched_name if matched_name == "nope":
+            return false
+        case matched_name:
+            return matched_name == "b"
+    return false
+
+
 def fail(code: i32, message: String) -> i32:
     print("path example failed:", message)
     return code
@@ -99,6 +108,8 @@ def main() -> i32:
         return fail(26, "Path result match subject")
     if returned_path_match_capture_codegen() != "b":
         return fail(32, "returned Path match capture")
+    if not guarded_path_match_capture_codegen():
+        return fail(33, "guarded Path match capture")
     names: Set[String] = {"b"}
     if not (Path.name("a/b") in names):
         return fail(15, "Path result collection membership")

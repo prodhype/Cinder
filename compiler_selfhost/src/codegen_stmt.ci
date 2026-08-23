@@ -1063,7 +1063,6 @@ def emit_module_match(
             builder.append(" = true;\n")
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
-            codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
             builder.append("    }\n")
         else:
             builder.append("    ")
@@ -1071,7 +1070,7 @@ def emit_module_match(
             builder.append(" = true;\n")
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
-            codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
+        codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
         while len(context.local_types) > local_start:
             context.local_types.pop()
         while len(context.semantic_name_types) > semantic_name_start:
