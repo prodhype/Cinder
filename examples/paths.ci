@@ -14,6 +14,18 @@ def string_length_is_one(value: &const String) -> bool:
     return len(value) == 1
 
 
+def path_name_matches_holder(holder: &const PathHolder, value: &const String) -> bool:
+    return value == holder.path
+
+
+def invoke_path_name_function(callback: def(&const String) -> bool) -> bool:
+    return callback(Path.name("a/b"))
+
+
+def invoke_path_name_closure(callback: closure[const PathHolder](&const String) -> bool) -> bool:
+    return callback(Path.name("a/b"))
+
+
 def borrowed_path_input_codegen() -> String:
     return input(Path.name("a/prompt.txt"))
 
@@ -102,6 +114,11 @@ def main() -> i32:
     print(Path.parent("a/b"))
     if not string_length_is_one(Path.parent("a/b")):
         return fail(11, "borrowed Path result")
+    if not invoke_path_name_function(string_length_is_one):
+        return fail(35, "function-pointer borrowed Path result")
+    path_name_checker = closure(PathHolder(path="b"), path_name_matches_holder)
+    if not invoke_path_name_closure(path_name_checker):
+        return fail(36, "closure borrowed Path result")
     combined = Path.parent("alpha/file.tmp") + Path.name("beta/result.txt")
     if combined != "alpharesult.txt":
         return fail(12, "Path result concatenation")

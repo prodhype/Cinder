@@ -2098,6 +2098,25 @@ def context_callee_parameter_type(
     )
 
 
+def context_callable_parameter_type(
+    context: &ModuleCodegenContext,
+    callable_type: types.TypeId,
+    argument_index: usize,
+) -> types.TypeId:
+    table: &const types.TypeTable = context.type_table
+    if callable_type.index < 0 or callable_type.index >= cast[i32](len(table.types)):
+        return types.missing_type()
+    record = table.types[callable_type.index]
+    if record.kind != types.TypeKind.FUNCTION and record.kind != types.TypeKind.CLOSURE:
+        return types.missing_type()
+    if record.flags < 0 or argument_index >= cast[usize](record.flags):
+        return types.missing_type()
+    parameter_index = record.extra + cast[i32](argument_index)
+    if parameter_index < 0 or parameter_index >= cast[i32](len(table.type_args)):
+        return types.missing_type()
+    return table.type_args[cast[usize](parameter_index)]
+
+
 def context_callee_parameter_is_reference(
     arena: &const SyntaxArena,
     context: &ModuleCodegenContext,
@@ -2108,6 +2127,13 @@ def context_callee_parameter_is_reference(
 ) -> bool:
     if expected_type.index >= 0:
         return codegen_type_names.type_node_kind(context.type_arena, expected_type) == SyntaxKind.TYPE_REFERENCE
+    semantic_parameter_type = context_callable_parameter_type(
+        context,
+        context_semantic_type(context, callee),
+        argument_index,
+    )
+    if semantic_parameter_type.index >= 0:
+        return codegen_type_names.semantic_type_is_kind(context.type_table, semantic_parameter_type, types.TypeKind.REFERENCE)
     model: &const classes.ProjectClassModel = context.class_model
     function_index = context_callee_function(arena, context, callee, source)
     if function_index < 0:

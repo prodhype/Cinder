@@ -589,8 +589,7 @@ def emit_closure_call(
     append_closure_temporary_name(builder, temporary_index)
     builder.append("->env")
     call = arena.nodes[id.index]
-    record = type_table.types[closure_type.index]
-    argument_index: i32 = 0
+    argument_index: usize = 0
     for offset in range(1, call.child_count):
         child_id = arena.children[call.first_child + offset]
         child = arena.nodes[child_id.index]
@@ -598,10 +597,9 @@ def emit_closure_call(
             continue
         argument = codegen_names.last_child(arena, child_id)
         builder.append(", ")
-        if argument_index < record.flags:
-            parameter_type = type_table.type_args[cast[usize](record.extra + argument_index)]
-            if codegen_type_names.semantic_type_is_kind(type_table, parameter_type, types.TypeKind.REFERENCE) and not codegen_context.context_expression_is_pointer_like(arena, context, argument, source):
-                builder.append("&")
+        parameter_type = codegen_context.context_callable_parameter_type(context, closure_type, argument_index)
+        if codegen_type_names.semantic_type_is_kind(type_table, parameter_type, types.TypeKind.REFERENCE) and not codegen_context.context_expression_is_pointer_like(arena, context, argument, source):
+            builder.append("&")
         emit_nested(state, argument)
         codegen_context.mark_context_expression_moved(arena, context, argument, source)
         argument_index += 1
