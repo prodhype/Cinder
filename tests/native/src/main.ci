@@ -422,17 +422,24 @@ def test_path_diagnostics(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/path_invalid_string_index.ci",
     ]
+    bad_temporary_address: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_temporary_address.ci",
+    ]
     member_result = process.run(bad_member)
     argument_result = process.run(bad_argument)
     indirection_result = process.run(bad_indirection)
     string_index_result = process.run(bad_string_index)
-    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and indirection_result.exit_code == 1 and string_index_result.exit_code == 1
-    expect(state, "Path rejects unknown members, invalid String arguments, and String indexing", ok)
+    temporary_address_result = process.run(bad_temporary_address)
+    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and indirection_result.exit_code == 1 and string_index_result.exit_code == 1 and temporary_address_result.exit_code == 1
+    expect(state, "Path rejects invalid members, String uses, and temporary addresses", ok)
     if not ok:
         report_process_failure(&member_result.stdout, &member_result.stderr)
         report_process_failure(&argument_result.stdout, &argument_result.stderr)
         report_process_failure(&indirection_result.stdout, &indirection_result.stderr)
         report_process_failure(&string_index_result.stdout, &string_index_result.stderr)
+        report_process_failure(&temporary_address_result.stdout, &temporary_address_result.stderr)
 
 
 def test_path_alias_shadowing(state: &TestState) -> void:

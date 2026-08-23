@@ -144,6 +144,16 @@ def path_name_first_byte() -> char:
     return Path.name("a/b").byte_at(0)
 
 
+# WRONG: an owned Path result is a temporary, so it cannot be addressed.
+# path_pointer = &Path.name("a/b")
+
+# CORRECT: bind the owner to a local before taking its address.
+def addressable_path_name() -> bool:
+    path_name = Path.name("a/b")
+    path_pointer: *String = &path_name
+    return Path.name(*path_pointer) == "b"
+
+
 # WRONG: `cast` only reinterprets numbers and pointers. It does not parse text,
 # and `to_string` does not accept string values.
 # value = cast[i32]("42")
