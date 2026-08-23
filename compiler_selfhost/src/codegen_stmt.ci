@@ -1063,6 +1063,7 @@ def emit_module_match(
             builder.append(" = true;\n")
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
+            codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
             builder.append("    }\n")
         else:
             builder.append("    ")
@@ -1070,6 +1071,7 @@ def emit_module_match(
             builder.append(" = true;\n")
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
+            codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
         while len(context.local_types) > local_start:
             context.local_types.pop()
         while len(context.semantic_name_types) > semantic_name_start:
@@ -1363,13 +1365,14 @@ def emit_match_binding_declaration_once(
     builder.append("    __auto_type ")
     builder.append(name_text[0:len(name_text)])
     builder.append(" = ")
+    if borrowed:
+        builder.append("cinder_string_clone(&(")
     binding_info = emit_match_binding_value(arena, root_pattern, &name_text, source, builder, prefix, project_name, imports, context, root_value, root_info)
+    if borrowed:
+        builder.append("))")
     builder.append(";\n")
     if binding_info.syntax_type.index >= 0:
-        if borrowed:
-            codegen_context.register_context_borrowed_name_type_with_owner(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type, root_value)
-        else:
-            codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
+        codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
     if binding_info.semantic_type.index >= 0:
         codegen_context.register_context_semantic_name_type(context, source, name.value_start, name.value_length, binding_info.semantic_type)
 

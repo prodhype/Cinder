@@ -50,6 +50,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
     test_path_codegen(&state)
+    test_path_match_capture_escape(&state)
     test_path_runtime(&state)
     test_path_diagnostics(&state)
     test_path_alias_shadowing(&state)
@@ -322,6 +323,8 @@ def test_path_codegen(state: &TestState) -> void:
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_attribute_")
         and contains(&result.stdout, "__auto_type cinder_match_value_")
         and contains(&result.stdout, "cinder_string_drop(&cinder_match_value_")
+        and contains(&result.stdout, "__auto_type matched_name = cinder_string_clone(&(cinder_match_value_")
+        and contains(&result.stdout, "cinder_string_drop(&matched_name)")
         and contains(&result.stdout, "CinderString cinder_path_membership_")
         and contains(&result.stdout, "_contains(&cinder_collection, cinder_path_membership_")
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_membership_")
@@ -354,7 +357,6 @@ def test_path_codegen(state: &TestState) -> void:
         and not contains(&result.stdout, "cinder_path_name(\"a/b\").length")
         and not contains(&result.stdout, "cinder_index < cinder_path_name(")
         and not contains(&result.stdout, "cinder_path_name(\"a/b\").data)[cinder_index]")
-        and not contains(&result.stdout, "cinder_string_drop(&matched_name)")
         and not contains(&result.stdout, "cinder_string_slice(&cinder_path_name(")
         and not contains(&result.stdout, "_get(&names_by_path, cinder_path_name(")
         and not contains(&result.stdout, "_add(&cinder_set, cinder_path_name(")
@@ -369,6 +371,23 @@ def test_path_codegen(state: &TestState) -> void:
         and not contains(&result.stdout, "cinder_string_cstr(&cinder_paths_paths__make_path_holder().path")
     )
     expect(state, "emit-c lowers Path calls to runtime functions", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_path_match_capture_escape(state: &TestState) -> void:
+    command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        state.root + "/tests/cases/path_match_capture_escape.ci",
+        "-o",
+        state.workspace + "/path-match-capture-escape",
+        "--build-dir",
+        state.workspace + "/path-match-capture-escape-build",
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 0
+    expect(state, "Path match captures escape without aliasing temporary storage", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
 
