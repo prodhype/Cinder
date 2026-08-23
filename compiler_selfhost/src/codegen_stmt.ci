@@ -1843,8 +1843,42 @@ def emit_module_for_each(
     element_name = ""
     if element_type.index < 0:
         element_name = codegen_access.known_list_element_name(arena, iterable, source, context)
+    iterable_owned_path = codegen_access.expression_is_owned_path_string(arena, iterable, source, imports, context)
+    iteration_value_name = ""
+    if iterable_owned_path:
+        temporary_index = context.temporary_index
+        context.temporary_index += 1
+        iteration_name_builder = StringBuilder()
+        iteration_name_builder.append("cinder_path_iteration_")
+        codegen_type_names.append_specialization_decimal(&iteration_name_builder, cast[usize](temporary_index))
+        iteration_value_name = iteration_name_builder.finish()
+        builder.append("    {\n    CinderString ")
+        builder.append(iteration_value_name[0:len(iteration_value_name)])
+        builder.append(" = ")
+        codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+        builder.append(";\n")
+        context.cleanup_boundaries.append(
+            codegen_context.CodegenCleanupBoundary(
+                local_start=len(context.local_types),
+                defer_start=len(context.deferred_expressions),
+                with_resource_start=len(context.with_resources),
+                iterator_guard_start=len(context.iterator_guard_names),
+                lock_cleanup_start=len(context.lock_cleanups),
+                value_cleanup_start=len(context.value_cleanups),
+                loop_body=false,
+            )
+        )
+        context.value_cleanups.append(
+            codegen_context.CodegenValueCleanup(
+                name=iteration_value_name[0:len(iteration_value_name)],
+                semantic_type=codegen_context.context_semantic_type(context, iterable),
+            )
+        )
     builder.append("    for (size_t cinder_index = 0; cinder_index < ")
-    codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+    if iterable_owned_path:
+        builder.append(iteration_value_name[0:len(iteration_value_name)])
+    else:
+        codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
     if codegen_context.context_expression_is_pointer_like(arena, context, iterable, source):
         builder.append("->length")
     else:
@@ -1867,7 +1901,10 @@ def emit_module_for_each(
     else:
         builder.append("char")
     builder.append(" *)")
-    codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
+    if iterable_owned_path:
+        builder.append(iteration_value_name[0:len(iteration_value_name)])
+    else:
+        codegen_expr.emit_module_expression(arena, iterable, source, builder, prefix, project_name, imports, context)
     if codegen_context.context_expression_is_pointer_like(arena, context, iterable, source):
         builder.append("->data)[cinder_index];\n")
     else:
@@ -1879,6 +1916,11 @@ def emit_module_for_each(
         if len(context.local_types) > 0:
             context.local_types.pop()
     builder.append("    }\n")
+    if iterable_owned_path:
+        emit_module_value_cleanups_until(builder, context, len(context.value_cleanups) - 1, len(context.value_cleanups), prefix, project_name, imports)
+        context.value_cleanups.pop()
+        context.cleanup_boundaries.pop()
+        builder.append("    }\n")
 
 
 def emit_runtime_reflection_for_each(

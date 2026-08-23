@@ -329,6 +329,10 @@ def test_path_codegen(state: &TestState) -> void:
         and contains(&result.stdout, "CinderString cinder_path_slice_result_")
         and contains(&result.stdout, "cinder_string_slice(&cinder_path_slice_")
         and contains(&result.stdout, "cinder_string_drop(&cinder_path_slice_")
+        and contains(&result.stdout, "CinderString cinder_path_iteration_")
+        and contains(&result.stdout, "cinder_index < cinder_path_iteration_")
+        and contains(&result.stdout, "*)cinder_path_iteration_")
+        and contains(&result.stdout, "cinder_string_drop(&cinder_path_iteration_")
         and contains(&result.stdout, "_get(&names_by_path, cinder_path_borrow_")
         and contains(&result.stdout, "CinderString cinder_path_set_literal_")
         and contains(&result.stdout, "_add(&cinder_set, cinder_path_set_literal_")
@@ -348,6 +352,8 @@ def test_path_codegen(state: &TestState) -> void:
         and not contains(&result.stdout, " = *path_pointer;")
         and not contains(&result.stdout, "cinder_string_clone(&cinder_path_name(")
         and not contains(&result.stdout, "cinder_path_name(\"a/b\").length")
+        and not contains(&result.stdout, "cinder_index < cinder_path_name(")
+        and not contains(&result.stdout, "cinder_path_name(\"a/b\").data)[cinder_index]")
         and not contains(&result.stdout, "cinder_string_drop(&matched_name)")
         and not contains(&result.stdout, "cinder_string_slice(&cinder_path_name(")
         and not contains(&result.stdout, "_get(&names_by_path, cinder_path_name(")
@@ -411,15 +417,22 @@ def test_path_diagnostics(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/path_invalid_string_indirection.ci",
     ]
+    bad_string_index: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_string_index.ci",
+    ]
     member_result = process.run(bad_member)
     argument_result = process.run(bad_argument)
     indirection_result = process.run(bad_indirection)
-    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and indirection_result.exit_code == 1
-    expect(state, "Path rejects unknown members and invalid String arguments", ok)
+    string_index_result = process.run(bad_string_index)
+    ok = member_result.exit_code == 1 and argument_result.exit_code == 1 and indirection_result.exit_code == 1 and string_index_result.exit_code == 1
+    expect(state, "Path rejects unknown members, invalid String arguments, and String indexing", ok)
     if not ok:
         report_process_failure(&member_result.stdout, &member_result.stderr)
         report_process_failure(&argument_result.stdout, &argument_result.stderr)
         report_process_failure(&indirection_result.stdout, &indirection_result.stderr)
+        report_process_failure(&string_index_result.stdout, &string_index_result.stderr)
 
 
 def test_path_alias_shadowing(state: &TestState) -> void:

@@ -1332,10 +1332,16 @@ def generic_actual_argument(table: &const types.TypeTable, record: types.TypeRec
 def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
     if id.index < 0:
         return types.type_error()
+    node = arena.nodes[id.index]
+    if node.kind == syntax.SyntaxKind.EXPR_INDEX:
+        receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, checker_core.first_child(arena, id), source, current_scope))
+        if receiver_type.index >= 0 and receiver_type.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[receiver_type.index].kind == types.TypeKind.STRING:
+            checker_core.emit_error(checker, 420, node.start, node.length, node.line, node.column)
+            checker.model.record_expr_type(id, types.type_error())
+            return types.type_error()
     existing = checker.model.expr_type(id)
     if existing.index != types.type_error().index and checker.specialization_declaration.index < 0:
         return existing
-    node = arena.nodes[id.index]
     result = types.type_error()
     if node.kind == syntax.SyntaxKind.EXPR_LITERAL:
         if node.flags == cast[i32](token.TokenKind.TRUE) or node.flags == cast[i32](token.TokenKind.FALSE):

@@ -1,0 +1,6 @@
+from std.path import Path
+
+
+def main() -> i32:
+    print(Path.name("a/b")[0])
+    return 0

@@ -91,6 +91,13 @@ def main() -> i32:
     sliced_name = Path.name("a/b")[0:1]
     if sliced_name != "b":
         return fail(20, "Path result slice")
+    if Path.name("a/b").byte_at(0) != 98:
+        return fail(30, "Path result byte access")
+    path_byte_total: i32 = 0
+    for path_byte: char in Path.name("a/b"):
+        path_byte_total += cast[i32](path_byte)
+    if path_byte_total != 98:
+        return fail(31, "Path result for-each")
     names_by_path: Map[String, i32] = {"b": 7}
     match names_by_path.get(Path.name("a/b")):
         case Some(mapped_name):
