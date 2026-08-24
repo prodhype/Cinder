@@ -119,6 +119,12 @@ def test_check_diagnostic(state: &TestState) -> void:
         control_path.clone(),
         "def main() -> i32:\n    \x1b[2J\n    return 0\n",
     )
+    c1_control_path = state.workspace + "/diagnostic_c1_control.ci"
+    with open(c1_control_path, "wb") as file:
+        file.write("def main() -> i32:\n    ")
+        c1_control: u8[2] = [194, 155]
+        file.write(c1_control)
+        file.write("[2J\n    return 0\n")
     path_control_path = state.workspace + "/diagnostic_\x1b[2J_path.ci"
     write_test_text(
         path_control_path.clone(),
@@ -163,6 +169,11 @@ def test_check_diagnostic(state: &TestState) -> void:
         state.compiler.clone(),
         "check",
         control_path.clone(),
+    ]
+    c1_control_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        c1_control_path.clone(),
     ]
     path_control_command: List[String] = [
         state.compiler.clone(),
@@ -217,6 +228,7 @@ def test_check_diagnostic(state: &TestState) -> void:
     unicode_marker_result = process.run(unicode_marker_command)
     nonascii_character_result = process.run(nonascii_character_command)
     control_result = process.run(control_command)
+    c1_control_result = process.run(c1_control_command)
     path_control_result = process.run(path_control_command)
     continuation_result = process.run(continuation_command)
     ownership_result = process.run(ownership_command)
@@ -231,6 +243,7 @@ def test_check_diagnostic(state: &TestState) -> void:
     unicode_marker_excerpt = "  |\n2 |     print(\"👨‍👩‍👧‍👦\", \"é\n  |                 ^^"
     nonascii_character_excerpt = "  |\n1 | def 界() -> i32:\n  |     ^^"
     control_excerpt = "  |\n2 |     \\x1b[2J\n  |     ^^^^"
+    c1_control_excerpt = "  |\n2 |     \\u009b[2J\n  |     ^^^^^^"
     continuation_excerpt = "  |\n2 |     return \\\n  |             ^"
     nonascii_character_location = state.root + "/tests/cases/diagnostic_nonascii_character.ci:1:5"
     escaped_path_control_path = state.workspace + "/diagnostic_\\x1b[2J_path.ci"
@@ -275,6 +288,10 @@ def test_check_diagnostic(state: &TestState) -> void:
         and contains(&control_result.stderr, "the character \\x1b is not valid here")
         and contains(&control_result.stderr, control_excerpt)
         and not contains(&control_result.stderr, "\x1b")
+        and c1_control_result.exit_code == 1
+        and contains(&c1_control_result.stderr, "the character \\u009b is not valid here")
+        and contains(&c1_control_result.stderr, c1_control_excerpt)
+        and not contains_byte_pair(&c1_control_result.stderr, 194, 155)
         and path_control_result.exit_code == 1
         and contains(&path_control_result.stderr, path_control_location)
         and contains(&path_control_result.stderr, path_control_related_location)
@@ -323,6 +340,7 @@ def test_check_diagnostic(state: &TestState) -> void:
         report_process_failure(&unicode_marker_result.stdout, &unicode_marker_result.stderr)
         report_process_failure(&nonascii_character_result.stdout, &nonascii_character_result.stderr)
         report_process_failure(&control_result.stdout, &control_result.stderr)
+        report_process_failure(&c1_control_result.stdout, &c1_control_result.stderr)
         report_process_failure(&path_control_result.stdout, &path_control_result.stderr)
         report_process_failure(&continuation_result.stdout, &continuation_result.stderr)
         report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
@@ -3275,5 +3293,15 @@ def contains(text: &const String, fragment: String) -> bool:
                 break
             offset += 1
         if matches:
+            return true
+    return false
+
+
+def contains_byte_pair(text: &const String, first: u8, second: u8) -> bool:
+    if len(text) < 2:
+        return false
+    limit = len(text) - 1
+    for index in range(0, limit):
+        if text.byte_at(index) == first and text.byte_at(index + 1) == second:
             return true
     return false

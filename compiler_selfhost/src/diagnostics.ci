@@ -1347,17 +1347,67 @@ def append_escaped_diagnostic_range(
     literal_start = start
     index = start
     while index < bounded_end:
-        byte = value.byte_at(index)
-        if byte < 32 or byte == 127:
+        decoded = diagnostic_utf8_scalar_at(value, index, bounded_end)
+        scalar = decoded[0]
+        scalar_length = decoded[1]
+        if scalar < 32 or scalar == 127:
             append_range(builder, value, literal_start, index)
-            append_escaped_diagnostic_byte(builder, byte)
-            literal_start = index + 1
-        index += 1
+            append_escaped_diagnostic_byte(builder, cast[u8](scalar))
+            literal_start = index + scalar_length
+        elif scalar >= 128 and scalar <= 159:
+            append_range(builder, value, literal_start, index)
+            append_escaped_diagnostic_scalar(builder, scalar)
+            literal_start = index + scalar_length
+        index += scalar_length
     append_range(builder, value, literal_start, bounded_end)
+
+
+def diagnostic_utf8_scalar_at(
+    value: &const String,
+    index: usize,
+    end: usize,
+) -> Tuple[u32, usize]:
+    first = value.byte_at(index)
+    if first < 128:
+        return (cast[u32](first), 1)
+    if first >= 192 and first < 224 and index + 1 < end:
+        second = value.byte_at(index + 1)
+        scalar = cast[u32](first - 192) * 64 + cast[u32](second - 128)
+        return (scalar, 2)
+    if first >= 224 and first < 240 and index + 2 < end:
+        second = value.byte_at(index + 1)
+        third = value.byte_at(index + 2)
+        scalar = (
+            cast[u32](first - 224) * 4096
+            + cast[u32](second - 128) * 64
+            + cast[u32](third - 128)
+        )
+        return (scalar, 3)
+    if first >= 240 and first < 248 and index + 3 < end:
+        second = value.byte_at(index + 1)
+        third = value.byte_at(index + 2)
+        fourth = value.byte_at(index + 3)
+        scalar = (
+            cast[u32](first - 240) * 262144
+            + cast[u32](second - 128) * 4096
+            + cast[u32](third - 128) * 64
+            + cast[u32](fourth - 128)
+        )
+        return (scalar, 4)
+    return (cast[u32](first), 1)
 
 
 def append_escaped_diagnostic_byte(builder: &StringBuilder, value: u8) -> void:
     digits = "0123456789abcdef"
     builder.append("\\x")
     builder.append_char(cast[char](digits.byte_at(cast[usize](value / 16))))
+    builder.append_char(cast[char](digits.byte_at(cast[usize](value % 16))))
+
+
+def append_escaped_diagnostic_scalar(builder: &StringBuilder, value: u32) -> void:
+    digits = "0123456789abcdef"
+    builder.append("\\u")
+    builder.append_char(cast[char](digits.byte_at(cast[usize]((value / 4096) % 16))))
+    builder.append_char(cast[char](digits.byte_at(cast[usize]((value / 256) % 16))))
+    builder.append_char(cast[char](digits.byte_at(cast[usize]((value / 16) % 16))))
     builder.append_char(cast[char](digits.byte_at(cast[usize](value % 16))))
