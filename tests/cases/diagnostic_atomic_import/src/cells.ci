@@ -1,0 +1,4 @@
+from std.atomic import Atomic
+
+
+cell: Atomic[u64] = 0

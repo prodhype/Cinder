@@ -2,7 +2,8 @@ import lexer
 
 
 def main() -> i32:
-    with open("bootstrap_lexer_input.ci", "rb") as file:
+    path: String = "bootstrap_lexer_input.ci"
+    with open(path, "rb") as file:
         scanner = lexer.new_lexer(file.read_text())
         scanner.tokenize()
-        return scanner.dump()
+        return scanner.dump_with_path(&path)

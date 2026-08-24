@@ -3,7 +3,9 @@ import checker_core
 import checker_imports
 import checker_scopes
 import checker_symbols
+import cinder
 import codegen
+import diagnostics
 import lexer
 import parser
 import project
@@ -36,27 +38,29 @@ def validate_names(checker: &checker_core.Checker, arena: &const syntax.SyntaxAr
 def check_and_dump(source: String) -> i32:
     scan = lexer.new_lexer(source)
     scan.tokenize()
-    if len(scan.diagnostics) > 0:
+    if len(scan.diagnostic_values) > 0:
         return scan.dump()
 
     parsed = parser.new_parser(scan)
     root = parsed.parse_module()
-    if len(parsed.diagnostics) > 0:
-        for diagnostic in parsed.diagnostics:
-            print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+    if len(parsed.diagnostic_values) > 0:
+        diagnostic_path = "<source>"
+        diagnostics.write_diagnostics_stderr(&parsed.diagnostic_values, &diagnostic_path, &scan.source)
         return 1
 
     checker: checker_core.Checker = new_checker()
     modules: List[project.ParsedModule] = []
     collect_symbols(checker, parsed.arena, root, scan.source, &modules)
     validate_names(checker, parsed.arena, root, scan.source)
-    if len(checker.diagnostics) > 0:
-        checker_core.dump_diagnostics(checker)
+    if len(checker.diagnostic_values) > 0:
+        diagnostic_path = "<source>"
+        checker_core.dump_diagnostics(checker, &diagnostic_path, &scan.source)
         return 1
 
     ir: backend_ir.IRModule = backend_ir.lower(parsed.arena, root, checker.model, checker.type_table)
     if not ir.is_valid:
-        print("E internal atomic IR validation failed")
+        diagnostic_message = "internal atomic IR validation failed\n"
+        cinder.write_stderr(diagnostic_message)
         return 1
     summary = backend_ir.summarize_ir(ir)
     backend_ir.dump_summary(summary)

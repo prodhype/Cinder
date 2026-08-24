@@ -141,6 +141,14 @@ CinderString cinder_string_concat(
     const CinderString *right
 );
 uint8_t cinder_string_byte_at(const CinderString *string, size_t index);
+int32_t cinder_unicode_display_width(uint32_t scalar);
+int32_t cinder_unicode_display_column(
+    const char *source,
+    size_t source_length,
+    size_t start,
+    size_t end,
+    int32_t initial_column
+);
 CinderString cinder_string_slice(
     const CinderString *string,
     size_t start,

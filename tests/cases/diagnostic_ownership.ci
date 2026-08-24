@@ -1,0 +1,7 @@
+from std.atomic import Atomic
+
+
+def main() -> i32:
+    source: Atomic[u64] = 1
+    source
+    return 0

@@ -1,0 +1,15 @@
+abstract class DiagnosticBase[T]:
+    @abstractmethod
+    def value(self, input: T) -> i32:
+        pass
+
+
+class DiagnosticOverride(
+    DiagnosticBase[i32],
+):
+    def value(self, input: String) -> i32:
+        return 0
+
+
+def main() -> i32:
+    return 0

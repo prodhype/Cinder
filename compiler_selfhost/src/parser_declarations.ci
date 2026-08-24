@@ -1,3 +1,4 @@
+import diagnostics
 import parser_core
 import parser_expressions
 import parser_statements
@@ -10,57 +11,62 @@ def parse_decorators(context: &parser_core.ParserContext) -> List[NodeId]:
     decorators: List[NodeId] = []
     while parser_core.match_kind(context, TokenKind.AT):
         at_token = parser_core.previous(context)
-        name = parser_core.expect(context, TokenKind.NAME, 5)
-        parser_core.expect(context, TokenKind.NEWLINE, 6)
+        name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_005)
+        parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_006)
         syntax.append_valid(decorators, parser_core.make_leaf(context, SyntaxKind.DECORATOR, at_token, name, name, 0))
     return decorators
 
 def parse_import(context: &parser_core.ParserContext, decorators: &const List[NodeId]) -> NodeId:
-    start = parser_core.expect(context, TokenKind.IMPORT, 3)
+    start = parser_core.expect(context, TokenKind.IMPORT, diagnostics.DiagnosticId.PARSE_003)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     syntax.append_valid(children, parse_dotted_name(context))
     if parser_core.match_kind(context, TokenKind.AS):
-        alias = parser_core.expect(context, TokenKind.NAME, 7)
+        alias = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_007)
         syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, alias, 1))
-    end = parser_core.expect(context, TokenKind.NEWLINE, 8)
+    end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_008)
     return parser_core.make_node_from_range(context, SyntaxKind.IMPORT_DECL, start, end, children, 0)
 
 def parse_from_import(context: &parser_core.ParserContext, decorators: &const List[NodeId]) -> NodeId:
-    start = parser_core.expect(context, TokenKind.FROM, 3)
+    start = parser_core.expect(context, TokenKind.FROM, diagnostics.DiagnosticId.PARSE_003)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     syntax.append_valid(children, parse_dotted_name(context))
-    parser_core.expect(context, TokenKind.IMPORT, 9)
+    parser_core.expect(context, TokenKind.IMPORT, diagnostics.DiagnosticId.PARSE_009)
     if parser_core.at(context, TokenKind.NEWLINE) or parser_core.at(context, TokenKind.EOF):
-        parser_core.emit_error(context, 10, parser_core.current(context))
+        parser_core.emit_error(
+            context,
+            diagnostics.DiagnosticId.PARSE_010,
+            "imported name",
+            parser_core.current(context),
+        )
     while not parser_core.at(context, TokenKind.NEWLINE) and not parser_core.at(context, TokenKind.EOF) and not *context.failed:
-        name = parser_core.expect(context, TokenKind.NAME, 10)
+        name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_010)
         item_children: List[NodeId] = []
         syntax.append_valid(item_children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
         if parser_core.match_kind(context, TokenKind.AS):
-            alias = parser_core.expect(context, TokenKind.NAME, 11)
+            alias = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_011)
             syntax.append_valid(item_children, parser_core.make_token_node(context, SyntaxKind.NAME, alias, 1))
         syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.IMPORT_NAME, name, parser_core.previous(context), name, item_children, 0))
         if not parser_core.match_kind(context, TokenKind.COMMA):
             break
-    end = parser_core.expect(context, TokenKind.NEWLINE, 12)
+    end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_012)
     return parser_core.make_node_from_range(context, SyntaxKind.FROM_IMPORT_DECL, start, end, children, 0)
 
 def parse_extern(context: &parser_core.ParserContext, parent_children: &List[NodeId], decorators: &const List[NodeId]) -> void:
-    start = parser_core.expect(context, TokenKind.EXTERN, 3)
+    start = parser_core.expect(context, TokenKind.EXTERN, diagnostics.DiagnosticId.PARSE_003)
     if parser_core.match_kind(context, TokenKind.IMPORT):
-        header = parser_core.expect(context, TokenKind.STRING, 13)
-        end = parser_core.expect(context, TokenKind.NEWLINE, 14)
+        header = parser_core.expect(context, TokenKind.STRING, diagnostics.DiagnosticId.PARSE_013)
+        end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_014)
         children: List[NodeId] = []
         syntax.append_all(children, decorators)
         syntax.append_valid(parent_children, parser_core.make_node(context, SyntaxKind.EXTERN_IMPORT_DECL, start, end, header, children, 0))
         return
 
-    abi = parser_core.expect(context, TokenKind.STRING, 15)
-    parser_core.expect(context, TokenKind.COLON, 17)
-    parser_core.expect(context, TokenKind.NEWLINE, 18)
-    parser_core.expect(context, TokenKind.INDENT, 19)
+    abi = parser_core.expect(context, TokenKind.STRING, diagnostics.DiagnosticId.PARSE_015)
+    parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_017)
+    parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_018)
+    parser_core.expect(context, TokenKind.INDENT, diagnostics.DiagnosticId.PARSE_019)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     while not parser_core.at(context, TokenKind.DEDENT) and not parser_core.at(context, TokenKind.EOF) and not *context.failed:
@@ -72,26 +78,31 @@ def parse_extern(context: &parser_core.ParserContext, parent_children: &List[Nod
         elif parser_core.at(context, TokenKind.DEF):
             syntax.append_valid(children, parse_function(context, member_decorators, true))
         else:
-            parser_core.emit_error(context, 20, parser_core.current(context))
+            parser_core.emit_error(
+                context,
+                diagnostics.DiagnosticId.PARSE_020,
+                "extern declaration",
+                parser_core.current(context),
+            )
             break
-    end = parser_core.expect(context, TokenKind.DEDENT, 21)
+    end = parser_core.expect(context, TokenKind.DEDENT, diagnostics.DiagnosticId.PARSE_021)
     syntax.append_valid(parent_children, parser_core.make_node(context, SyntaxKind.EXTERN_BLOCK, start, end, abi, children, 0))
 
 def parse_extern_type(context: &parser_core.ParserContext) -> NodeId:
-    start = parser_core.expect(context, TokenKind.NAME, 145)
-    name = parser_core.expect(context, TokenKind.NAME, 146)
-    end = parser_core.expect(context, TokenKind.NEWLINE, 148)
+    start = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_145)
+    name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_146)
+    end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_148)
     children: List[NodeId] = []
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
     return parser_core.make_node(context, SyntaxKind.EXTERN_TYPE_DECL, start, end, name, children, 0)
 
 def parse_dotted_name(context: &parser_core.ParserContext) -> NodeId:
-    start = parser_core.expect(context, TokenKind.NAME, 22)
+    start = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_022)
     children: List[NodeId] = []
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, start, 0))
     end = start
     while parser_core.match_kind(context, TokenKind.DOT):
-        name = parser_core.expect(context, TokenKind.NAME, 23)
+        name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_023)
         syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
         end = name
     return parser_core.make_node(context, SyntaxKind.DOTTED_NAME, start, end, start, children, 0)
@@ -103,35 +114,39 @@ def parse_type_params(context: &parser_core.ParserContext) -> NodeId:
     children: List[NodeId] = []
     if not parser_core.at(context, TokenKind.RIGHT_BRACKET):
         while not *context.failed:
-            name = parser_core.expect(context, TokenKind.NAME, 141)
+            name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_141)
             syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
             if not parser_core.match_kind(context, TokenKind.COMMA):
                 break
             if parser_core.at(context, TokenKind.RIGHT_BRACKET):
                 break
-    end = parser_core.expect(context, TokenKind.RIGHT_BRACKET, 143)
+    end = parser_core.expect(context, TokenKind.RIGHT_BRACKET, diagnostics.DiagnosticId.PARSE_143)
     return parser_core.make_node_from_range(context, SyntaxKind.TYPE_PARAMS, start, end, children, 0)
 
 def parse_function(context: &parser_core.ParserContext, decorators: &const List[NodeId], is_extern: bool) -> NodeId:
-    start = parser_core.expect(context, TokenKind.DEF, 3)
-    name = parser_core.expect(context, TokenKind.NAME, 34)
+    start = parser_core.expect(context, TokenKind.DEF, diagnostics.DiagnosticId.PARSE_003)
+    name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_034)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
     syntax.append_valid(children, parse_type_params(context))
-    parser_core.expect(context, TokenKind.LEFT_PAREN, 35)
+    parser_core.expect(context, TokenKind.LEFT_PAREN, diagnostics.DiagnosticId.PARSE_035)
     parse_parameters(context, children)
-    close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 36)
+    close = parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_036)
     end = close
     if parser_core.match_kind(context, TokenKind.ARROW):
         return_type = parser_types.parse_type(context)
         syntax.append_valid(children, return_type)
         end = parser_core.previous(context)
     if is_extern:
-        end = parser_core.expect(context, TokenKind.NEWLINE, 40)
+        end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_040)
         return parser_core.make_node(context, SyntaxKind.FUNCTION_DECL, start, end, name, children, 1)
-    parser_core.expect(context, TokenKind.COLON, 41)
-    body = parser_statements.parse_suite_after_colon(context, 45, 46)
+    parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_041)
+    body = parser_statements.parse_suite_after_colon(
+        context,
+        diagnostics.DiagnosticId.PARSE_045,
+        diagnostics.DiagnosticId.PARSE_046,
+    )
     syntax.append_valid(children, body)
     end = parser_core.previous(context)
     return parser_core.make_node(context, SyntaxKind.FUNCTION_DECL, start, end, name, children, 0)
@@ -144,7 +159,7 @@ def parse_parameters(context: &parser_core.ParserContext, children: &List[NodeId
             ellipsis = parser_core.previous(context)
             syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.PARAMETER, ellipsis, 1))
             break
-        start = parser_core.expect(context, TokenKind.NAME, 41)
+        start = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_041)
         param_children: List[NodeId] = []
         syntax.append_valid(param_children, parser_core.make_token_node(context, SyntaxKind.NAME, start, 0))
         if parser_core.match_kind(context, TokenKind.COLON):
@@ -156,31 +171,51 @@ def parse_parameters(context: &parser_core.ParserContext, children: &List[NodeId
             break
 
 def parse_struct(context: &parser_core.ParserContext, decorators: &const List[NodeId]) -> NodeId:
-    return parse_field_method_decl(context, SyntaxKind.STRUCT_DECL, TokenKind.STRUCT, decorators, 24, 25, 26, 27, 32)
+    return parse_field_method_decl(
+        context,
+        SyntaxKind.STRUCT_DECL,
+        TokenKind.STRUCT,
+        decorators,
+        diagnostics.DiagnosticId.PARSE_024,
+        diagnostics.DiagnosticId.PARSE_025,
+        diagnostics.DiagnosticId.PARSE_026,
+        diagnostics.DiagnosticId.PARSE_027,
+        diagnostics.DiagnosticId.PARSE_032,
+    )
 
 def parse_union(context: &parser_core.ParserContext, decorators: &const List[NodeId]) -> NodeId:
-    return parse_field_method_decl(context, SyntaxKind.UNION_DECL, TokenKind.UNION, decorators, 93, 94, 95, 96, 99)
+    return parse_field_method_decl(
+        context,
+        SyntaxKind.UNION_DECL,
+        TokenKind.UNION,
+        decorators,
+        diagnostics.DiagnosticId.PARSE_093,
+        diagnostics.DiagnosticId.PARSE_094,
+        diagnostics.DiagnosticId.PARSE_095,
+        diagnostics.DiagnosticId.PARSE_096,
+        diagnostics.DiagnosticId.PARSE_099,
+    )
 
 def parse_field_method_decl(
     context: &parser_core.ParserContext,
     kind: SyntaxKind,
     opening: TokenKind,
     decorators: &const List[NodeId],
-    name_code: i32,
-    colon_code: i32,
-    newline_code: i32,
-    indent_code: i32,
-    dedent_code: i32,
+    name_id: diagnostics.DiagnosticId,
+    colon_id: diagnostics.DiagnosticId,
+    newline_id: diagnostics.DiagnosticId,
+    indent_id: diagnostics.DiagnosticId,
+    dedent_id: diagnostics.DiagnosticId,
 ) -> NodeId:
-    start = parser_core.expect(context, opening, 3)
-    name = parser_core.expect(context, TokenKind.NAME, name_code)
+    start = parser_core.expect(context, opening, diagnostics.DiagnosticId.PARSE_003)
+    name = parser_core.expect(context, TokenKind.NAME, name_id)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
     syntax.append_valid(children, parse_type_params(context))
-    parser_core.expect(context, TokenKind.COLON, colon_code)
-    parser_core.expect(context, TokenKind.NEWLINE, newline_code)
-    parser_core.expect(context, TokenKind.INDENT, indent_code)
+    parser_core.expect(context, TokenKind.COLON, colon_id)
+    parser_core.expect(context, TokenKind.NEWLINE, newline_id)
+    parser_core.expect(context, TokenKind.INDENT, indent_id)
     while not parser_core.at(context, TokenKind.DEDENT) and not parser_core.at(context, TokenKind.EOF) and not *context.failed:
         if parser_core.match_kind(context, TokenKind.NEWLINE):
             continue
@@ -189,18 +224,18 @@ def parse_field_method_decl(
             syntax.append_valid(children, parse_function(context, member_decorators, false))
             continue
         is_private = parser_core.match_kind(context, TokenKind.PRIVATE)
-        field = parser_core.expect(context, TokenKind.NAME, 29)
-        parser_core.expect(context, TokenKind.COLON, 30)
+        field = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_029)
+        parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_030)
         field_children: List[NodeId] = []
         syntax.append_all(field_children, member_decorators)
         syntax.append_valid(field_children, parser_core.make_token_node(context, SyntaxKind.NAME, field, 0))
         syntax.append_valid(field_children, parser_types.parse_type(context))
-        end_field = parser_core.expect(context, TokenKind.NEWLINE, 31)
+        end_field = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_031)
         flags: i32 = 0
         if is_private:
             flags = 1
         syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.FIELD_DECL, field, end_field, field, field_children, flags))
-    end = parser_core.expect(context, TokenKind.DEDENT, dedent_code)
+    end = parser_core.expect(context, TokenKind.DEDENT, dedent_id)
     result_kind = SyntaxKind.UNION_DECL
     if kind == SyntaxKind.STRUCT_DECL:
         result_kind = SyntaxKind.STRUCT_DECL
@@ -211,8 +246,8 @@ def parse_class(context: &parser_core.ParserContext, decorators: &const List[Nod
     start = parser_core.current(context)
     if is_abstract:
         start = parser_core.previous(context)
-    parser_core.expect(context, TokenKind.CLASS, 124)
-    name = parser_core.expect(context, TokenKind.NAME, 125)
+    parser_core.expect(context, TokenKind.CLASS, diagnostics.DiagnosticId.PARSE_124)
+    name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_125)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
@@ -224,16 +259,16 @@ def parse_class(context: &parser_core.ParserContext, decorators: &const List[Nod
                 break
             if parser_core.at(context, TokenKind.RIGHT_PAREN):
                 break
-        parser_core.expect(context, TokenKind.RIGHT_PAREN, 126)
-    parser_core.expect(context, TokenKind.COLON, 127)
-    parser_core.expect(context, TokenKind.NEWLINE, 128)
-    parser_core.expect(context, TokenKind.INDENT, 129)
+        parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_126)
+    parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_127)
+    parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_128)
+    parser_core.expect(context, TokenKind.INDENT, diagnostics.DiagnosticId.PARSE_129)
     while not parser_core.at(context, TokenKind.DEDENT) and not parser_core.at(context, TokenKind.EOF) and not *context.failed:
         if parser_core.match_kind(context, TokenKind.NEWLINE):
             continue
         if parser_core.match_kind(context, TokenKind.PASS):
             pass_token = parser_core.previous(context)
-            end_pass = parser_core.expect(context, TokenKind.NEWLINE, 130)
+            end_pass = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_130)
             syntax.append_valid(children, parser_core.make_leaf(context, SyntaxKind.PASS_STMT, pass_token, end_pass, pass_token, 0))
             continue
         member_decorators = parse_decorators(context)
@@ -241,71 +276,71 @@ def parse_class(context: &parser_core.ParserContext, decorators: &const List[Nod
             syntax.append_valid(children, parse_function(context, member_decorators, false))
             continue
         is_private = parser_core.match_kind(context, TokenKind.PRIVATE)
-        field = parser_core.expect(context, TokenKind.NAME, 132)
-        parser_core.expect(context, TokenKind.COLON, 133)
+        field = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_132)
+        parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_133)
         field_children: List[NodeId] = []
         syntax.append_all(field_children, member_decorators)
         syntax.append_valid(field_children, parser_core.make_token_node(context, SyntaxKind.NAME, field, 0))
         syntax.append_valid(field_children, parser_types.parse_type(context))
-        end_field = parser_core.expect(context, TokenKind.NEWLINE, 134)
+        end_field = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_134)
         flags: i32 = 0
         if is_private:
             flags = 1
         syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.FIELD_DECL, field, end_field, field, field_children, flags))
-    end = parser_core.expect(context, TokenKind.DEDENT, 135)
+    end = parser_core.expect(context, TokenKind.DEDENT, diagnostics.DiagnosticId.PARSE_135)
     flags: i32 = 0
     if is_abstract:
         flags = 1
     return parser_core.make_node(context, SyntaxKind.CLASS_DECL, start, end, name, children, flags)
 
 def parse_enum(context: &parser_core.ParserContext, decorators: &const List[NodeId]) -> NodeId:
-    start = parser_core.expect(context, TokenKind.ENUM, 3)
-    name = parser_core.expect(context, TokenKind.NAME, 83)
+    start = parser_core.expect(context, TokenKind.ENUM, diagnostics.DiagnosticId.PARSE_003)
+    name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_083)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
     syntax.append_valid(children, parse_type_params(context))
-    parser_core.expect(context, TokenKind.COLON, 84)
-    parser_core.expect(context, TokenKind.NEWLINE, 85)
-    parser_core.expect(context, TokenKind.INDENT, 86)
+    parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_084)
+    parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_085)
+    parser_core.expect(context, TokenKind.INDENT, diagnostics.DiagnosticId.PARSE_086)
     while not parser_core.at(context, TokenKind.DEDENT) and not parser_core.at(context, TokenKind.EOF) and not *context.failed:
         if parser_core.match_kind(context, TokenKind.NEWLINE):
             continue
-        member = parser_core.expect(context, TokenKind.NAME, 87)
+        member = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_087)
         member_children: List[NodeId] = []
         if parser_core.match_kind(context, TokenKind.ASSIGN):
             if parser_core.match_kind(context, TokenKind.MINUS):
                 minus = parser_core.previous(context)
-                value = parser_core.expect(context, TokenKind.INTEGER, 88)
+                value = parser_core.expect(context, TokenKind.INTEGER, diagnostics.DiagnosticId.PARSE_088)
                 syntax.append_valid(member_children, parser_core.make_leaf(context, SyntaxKind.EXPR_UNARY, minus, value, minus, cast[i32](TokenKind.MINUS)))
             else:
-                value = parser_core.expect(context, TokenKind.INTEGER, 88)
+                value = parser_core.expect(context, TokenKind.INTEGER, diagnostics.DiagnosticId.PARSE_088)
                 syntax.append_valid(member_children, parser_core.make_token_node(context, SyntaxKind.EXPR_LITERAL, value, cast[i32](TokenKind.INTEGER)))
-        end_member = parser_core.expect(context, TokenKind.NEWLINE, 89)
+        end_member = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_089)
         syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.ENUM_MEMBER_DECL, member, end_member, member, member_children, 0))
-    end = parser_core.expect(context, TokenKind.DEDENT, 90)
+    end = parser_core.expect(context, TokenKind.DEDENT, diagnostics.DiagnosticId.PARSE_090)
     return parser_core.make_node(context, SyntaxKind.ENUM_DECL, start, end, name, children, 0)
 
 def parse_variant(context: &parser_core.ParserContext, decorators: &const List[NodeId]) -> NodeId:
-    start = parser_core.expect(context, TokenKind.VARIANT, 3)
-    name = parser_core.expect(context, TokenKind.NAME, 100)
+    start = parser_core.expect(context, TokenKind.VARIANT, diagnostics.DiagnosticId.PARSE_003)
+    name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_100)
     children: List[NodeId] = []
     syntax.append_all(children, decorators)
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
     syntax.append_valid(children, parse_type_params(context))
-    parser_core.expect(context, TokenKind.COLON, 101)
-    parser_core.expect(context, TokenKind.NEWLINE, 102)
-    parser_core.expect(context, TokenKind.INDENT, 103)
+    parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_101)
+    parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_102)
+    parser_core.expect(context, TokenKind.INDENT, diagnostics.DiagnosticId.PARSE_103)
     while not parser_core.at(context, TokenKind.DEDENT) and not parser_core.at(context, TokenKind.EOF) and not *context.failed:
         if parser_core.match_kind(context, TokenKind.NEWLINE):
             continue
-        case_name = parser_core.expect(context, TokenKind.NAME, 104)
+        case_name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_104)
         case_children: List[NodeId] = []
         if parser_core.match_kind(context, TokenKind.LEFT_PAREN):
             if not parser_core.at(context, TokenKind.RIGHT_PAREN):
                 while not *context.failed:
-                    field = parser_core.expect(context, TokenKind.NAME, 105)
-                    parser_core.expect(context, TokenKind.COLON, 106)
+                    field = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_105)
+                    parser_core.expect(context, TokenKind.COLON, diagnostics.DiagnosticId.PARSE_106)
                     field_children: List[NodeId] = []
                     syntax.append_valid(field_children, parser_core.make_token_node(context, SyntaxKind.NAME, field, 0))
                     syntax.append_valid(field_children, parser_types.parse_type(context))
@@ -314,37 +349,37 @@ def parse_variant(context: &parser_core.ParserContext, decorators: &const List[N
                         break
                     if parser_core.at(context, TokenKind.RIGHT_PAREN):
                         break
-            parser_core.expect(context, TokenKind.RIGHT_PAREN, 107)
-        end_case = parser_core.expect(context, TokenKind.NEWLINE, 108)
+            parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_107)
+        end_case = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_108)
         syntax.append_valid(children, parser_core.make_node(context, SyntaxKind.VARIANT_CASE_DECL, case_name, end_case, case_name, case_children, 0))
-    end = parser_core.expect(context, TokenKind.DEDENT, 109)
+    end = parser_core.expect(context, TokenKind.DEDENT, diagnostics.DiagnosticId.PARSE_109)
     return parser_core.make_node(context, SyntaxKind.VARIANT_DECL, start, end, name, children, 0)
 
 def parse_global(context: &parser_core.ParserContext) -> NodeId:
     start = parser_core.current(context)
     is_const = parser_core.match_kind(context, TokenKind.CONST)
-    name = parser_core.expect(context, TokenKind.NAME, 44)
+    name = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_044)
     children: List[NodeId] = []
     syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.NAME, name, 0))
     if parser_core.match_kind(context, TokenKind.COLON):
         syntax.append_valid(children, parser_types.parse_type(context))
     if parser_core.match_kind(context, TokenKind.ASSIGN):
         syntax.append_valid(children, parser_expressions.parse_expression(context, 0))
-    end = parser_core.expect(context, TokenKind.NEWLINE, 47)
+    end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_047)
     flags: i32 = 0
     if is_const:
         flags = 1
     return parser_core.make_node(context, SyntaxKind.GLOBAL_DECL, start, end, name, children, flags)
 
 def parse_static_assert(context: &parser_core.ParserContext) -> NodeId:
-    start = parser_core.expect(context, TokenKind.NAME, 137)
+    start = parser_core.expect(context, TokenKind.NAME, diagnostics.DiagnosticId.PARSE_137)
     children: List[NodeId] = []
-    parser_core.expect(context, TokenKind.LEFT_PAREN, 137)
+    parser_core.expect(context, TokenKind.LEFT_PAREN, diagnostics.DiagnosticId.PARSE_137)
     syntax.append_valid(children, parser_expressions.parse_expression(context, 0))
     if parser_core.match_kind(context, TokenKind.COMMA):
-        message = parser_core.expect(context, TokenKind.STRING, 138)
+        message = parser_core.expect(context, TokenKind.STRING, diagnostics.DiagnosticId.PARSE_138)
         syntax.append_valid(children, parser_core.make_token_node(context, SyntaxKind.EXPR_LITERAL, message, cast[i32](TokenKind.STRING)))
-    close = parser_core.expect(context, TokenKind.RIGHT_PAREN, 139)
-    end = parser_core.expect(context, TokenKind.NEWLINE, 140)
+    close = parser_core.expect(context, TokenKind.RIGHT_PAREN, diagnostics.DiagnosticId.PARSE_139)
+    end = parser_core.expect(context, TokenKind.NEWLINE, diagnostics.DiagnosticId.PARSE_140)
     ignored_close = close
     return parser_core.make_node(context, SyntaxKind.STATIC_ASSERT_DECL, start, end, start, children, 0)

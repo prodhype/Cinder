@@ -1523,8 +1523,8 @@ def canonical_fstring_snapshot_value(
             parsed = parser.new_parser(&scan)
             expression = parsed.parse_expression(0)
             if (
-                len(scan.diagnostics) > 0
-                or len(parsed.diagnostics) > 0
+                len(scan.diagnostic_values) > 0
+                or len(parsed.diagnostic_values) > 0
                 or expression.index < 0
             ):
                 return raw
@@ -3140,7 +3140,7 @@ def collect_fstring_relations(
                 scan.tokenize()
                 parsed = parser.new_parser(&scan)
                 expression = parsed.parse_expression(0)
-                if len(scan.diagnostics) == 0 and len(parsed.diagnostics) == 0 and expression.index >= 0:
+                if len(scan.diagnostic_values) == 0 and len(parsed.diagnostic_values) == 0 and expression.index >= 0:
                     collect_reparsed_relations_in_node(
                         project_graph,
                         class_model,

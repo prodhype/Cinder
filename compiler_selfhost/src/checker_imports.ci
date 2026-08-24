@@ -1,4 +1,5 @@
 import checker_core
+import diagnostics
 import project
 import semantic
 import symbols
@@ -288,7 +289,12 @@ def validate_from_import_members(checker: &checker_core.Checker, arena: &const s
                     declaration = find_exported_declaration(&target_module.arena, target_module.root, &target_module.source, &member_name)
                     if declaration.index < 0:
                         if not imported_member_is_atomic_template(&module_name, &member_name, modules):
-                            checker_core.emit_error(checker, 48, name_node.start, name_node.length, name_node.line, name_node.column)
+                            checker_core.emit_import_member_error(
+                                checker,
+                                &name_node,
+                                module_name[0:len(module_name)],
+                                member_name[0:len(member_name)],
+                            )
                     elif exported_declaration_kind(&target_module.arena, declaration) == syntax.SyntaxKind.ENUM_DECL:
                         binding_id = name_id
                         for binding_offset in range(0, imported.child_count):
@@ -323,7 +329,12 @@ def validate_path_import_members(
             if name_node.kind == syntax.SyntaxKind.NAME and name_node.flags != 1:
                 member_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
                 if not imported_member_is_path_namespace(module_name, &member_name, modules):
-                    checker_core.emit_error(checker, 48, name_node.start, name_node.length, name_node.line, name_node.column)
+                    checker_core.emit_import_member_error(
+                        checker,
+                        &name_node,
+                        module_name[0:len(module_name)],
+                        member_name[0:len(member_name)],
+                    )
 
 
 def validate_import_member_calls_in_node(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, imports: &const List[project.ImportBinding], modules: &const List[project.ParsedModule]) -> void:
@@ -367,11 +378,21 @@ def validate_import_member_call(checker: &checker_core.Checker, arena: &const sy
     target_module: &const project.ParsedModule = &modules[cast[usize](module_index)]
     declaration = find_exported_declaration(&target_module.arena, target_module.root, &target_module.source, &member_name)
     if declaration.index < 0:
-        checker_core.emit_error(checker, 48, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker_core.emit_import_member_error(
+            checker,
+            &member_node,
+            module_name[0:len(module_name)],
+            member_name[0:len(member_name)],
+        )
         return
     declaration_kind = exported_declaration_kind(&target_module.arena, declaration)
     if declaration_kind != syntax.SyntaxKind.FUNCTION_DECL and declaration_kind != syntax.SyntaxKind.STRUCT_DECL and declaration_kind != syntax.SyntaxKind.CLASS_DECL and declaration_kind != syntax.SyntaxKind.ENUM_DECL and declaration_kind != syntax.SyntaxKind.UNION_DECL and declaration_kind != syntax.SyntaxKind.VARIANT_DECL:
-        checker_core.emit_error(checker, 48, member_node.start, member_node.length, member_node.line, member_node.column)
+        checker_core.emit_import_member_error(
+            checker,
+            &member_node,
+            module_name[0:len(module_name)],
+            member_name[0:len(member_name)],
+        )
         return
     if declaration_kind != syntax.SyntaxKind.FUNCTION_DECL:
         return
@@ -379,9 +400,21 @@ def validate_import_member_call(checker: &checker_core.Checker, arena: &const sy
     expected = checker_core.count_direct_children(&target_module.arena, declaration, syntax.SyntaxKind.PARAMETER)
     call = arena.nodes[call_id.index]
     if actual < expected:
-        checker_core.emit_error(checker, 78, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_078,
+            &call,
+            expected,
+            actual,
+        )
     elif actual > expected:
-        checker_core.emit_error(checker, 77, call.start, call.length, call.line, call.column)
+        checker_core.emit_argument_count_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_077,
+            &call,
+            expected,
+            actual,
+        )
 
 
 def find_exported_declaration(arena: &const syntax.SyntaxArena, root: NodeId, source: &const String, name: &const String) -> NodeId:

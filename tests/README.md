@@ -15,7 +15,8 @@ language runtime, builds the Cinder test runner, and executes the smoke suite.
 
 `native/src/main.ci` exercises the public compiler interface:
 
-- valid and invalid `check` operations and rendered diagnostics
+- valid and invalid `check` operations and rich source diagnostics, including
+  stable codes, symbolic names, typed message values, and related spans
 - self-contained and deterministic `emit-c` output
 - per-module headers and sources from `emit-project`
 - native `build`/`run` behavior

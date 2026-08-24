@@ -1,13 +1,14 @@
+import diagnostics
 import lexer
 import syntax
-from syntax import NodeId, ParseDiagnostic, SyntaxArena, SyntaxKind
-from token import Token, TokenKind
+from syntax import NodeId, SyntaxArena, SyntaxKind
+from token import Token, TokenKind, token_kind_display
 
 struct ParserContext:
     scan: &const lexer.Lexer
     index: *usize
     arena: &SyntaxArena
-    diagnostics: &List[ParseDiagnostic]
+    diagnostic_values: &List[diagnostics.Diagnostic]
     failed: *bool
 
 
@@ -15,10 +16,10 @@ def new_context(
     scan: &const lexer.Lexer,
     index: *usize,
     arena: &SyntaxArena,
-    diagnostics: &List[ParseDiagnostic],
+    diagnostic_values: &List[diagnostics.Diagnostic],
     failed: *bool,
 ) -> ParserContext:
-    return ParserContext(scan=scan, index=index, arena=arena, diagnostics=diagnostics, failed=failed)
+    return ParserContext(scan=scan, index=index, arena=arena, diagnostic_values=diagnostic_values, failed=failed)
 
 
 def current(context: &ParserContext) -> Token:
@@ -58,24 +59,28 @@ def match_kind(context: &ParserContext, kind: TokenKind) -> bool:
         return true
     return false
 
-def emit_error(context: &ParserContext, code: i32, token: Token) -> void:
+def emit_error(
+    context: &ParserContext,
+    id: diagnostics.DiagnosticId,
+    expected: String,
+    token: Token,
+) -> void:
     if not *context.failed:
-        context.diagnostics.append(
-            ParseDiagnostic(
-                code=code,
-                start=token.start,
-                length=token.length,
-                line=token.line,
-                column=token.column,
+        context.diagnostic_values.append(
+            diagnostics.parser_expected_diagnostic(
+                id,
+                diagnostics.source_span(token.start, token.length, token.line, token.column),
+                expected,
+                token_kind_display(token.kind),
             )
         )
     *context.failed = true
 
-def expect(context: &ParserContext, kind: TokenKind, code: i32) -> Token:
+def expect(context: &ParserContext, kind: TokenKind, id: diagnostics.DiagnosticId) -> Token:
     if at(context, kind):
         return advance(context)
     token = current(context)
-    emit_error(context, code, token)
+    emit_error(context, id, token_kind_display(kind), token)
     return token
 
 def make_token_node(context: &ParserContext, kind: SyntaxKind, token: Token, flags: i32) -> NodeId:

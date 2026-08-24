@@ -462,9 +462,11 @@ See the [`rust_host`](../examples/rust_host/README.md),
    being accepted.
 2. **One successful `check` is not a portability promise.** Cinder is pre-1.0;
    generated helpers, ABI details, and runtime layouts may change.
-3. **Diagnostics are terse.** Most semantic failures are numeric
-   `E code start length line column` records, and checking currently records at
-   most one semantic diagnostic per module. Fix the first error and check again.
+3. **Source diagnostics are structured and rendered for people.** Each
+   diagnostic has a stable numeric code and symbolic name, a primary source
+   span, and may include related locations, notes, and help. Checking currently
+   records at most one semantic diagnostic per module. Fix the first error and
+   check again.
 4. **A temporary owner is often not addressable.** Bind returned or literal
    Lists, classes, and other owners to a local before indexing, iterating,
    sorting, taking a reference, or converting a List to a slice.

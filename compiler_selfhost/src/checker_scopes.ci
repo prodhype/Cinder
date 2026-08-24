@@ -1,5 +1,6 @@
 import checker_core
 import checker_types
+import diagnostics
 import lock_order
 import ownership
 import reflection
@@ -121,7 +122,16 @@ def validate_class_methods_against_specialization(
         actual_id = find_method_declaration(arena, implementation, source, expected.value_start, expected.value_length)
         if actual_id.index < 0 or not specialized_method_signatures_match(checker, arena, expected_id, actual_id, source):
             implementation_node = arena.nodes[implementation.index]
-            checker_core.emit_error(checker, 179, implementation_node.start, implementation_node.length, implementation_node.line, implementation_node.column)
+            method_name = source[expected.value_start:expected.value_start + expected.value_length]
+            if actual_id.index >= 0:
+                checker_core.emit_override_error(
+                    checker,
+                    &arena.nodes[actual_id.index],
+                    method_name,
+                    &expected,
+                )
+            else:
+                checker_core.emit_override_error(checker, &implementation_node, method_name, &expected)
             return
 
 
@@ -184,7 +194,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         function_scope = checker.symbols.add_scope(current_scope)
         function_return = checker_core.resolve_declared_type_or_default(checker, arena, id, source, types.type_i32())
         if ownership.type_contains_atomic_storage(&checker.type_table, function_return):
-            checker_core.emit_error(checker, 396, node.start, node.length, node.line, node.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_396, &node)
         checker.model.record_scope(id, function_scope)
         for offset in range(0, node.child_count):
             validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, function_scope, function_return)
@@ -221,7 +231,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         )
         checker.model.record_declaration_symbol(id, symbol)
         if node.kind == syntax.SyntaxKind.PARAMETER and ownership.type_contains_atomic_storage(&checker.type_table, local_type):
-            checker_core.emit_error(checker, 396, node.start, node.length, node.line, node.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_396, &node)
         if ownership.type_needs_drop_for_table(checker.type_table, local_type):
             checker.model.record_cleanup(id, local_type, 0)
         if node.kind == syntax.SyntaxKind.VAR_DECL_STMT:
@@ -235,23 +245,52 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         if global_symbol.index >= 0:
             global_type = checker.symbols.symbols[global_symbol.index].type_id
             if not types.is_atomic_type(&checker.type_table, global_type) and ownership.type_contains_atomic_storage(&checker.type_table, global_type):
-                checker_core.emit_error(checker, 395, node.start, node.length, node.line, node.column)
+                checker_types.emit_ownership_failure(
+                    checker,
+                    arena,
+                    diagnostics.DiagnosticId.CHECK_395,
+                    id,
+                    global_type,
+                    global_type,
+                    source,
+                    "storage",
+                )
             elif not types.is_atomic_type(&checker.type_table, global_type):
                 initializer = atomic_declaration_initializer(arena, id)
                 if initializer.index >= 0:
                     initializer_type = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
                     if types.is_atomic_type(&checker.type_table, initializer_type):
                         initializer_node = arena.nodes[initializer.index]
-                        checker_core.emit_error(checker, 400, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+                        checker_core.emit_actual_type_error(
+                            checker,
+                            diagnostics.DiagnosticId.CHECK_400,
+                            &initializer_node,
+                            initializer_type,
+                            source,
+                        )
     elif node.kind == syntax.SyntaxKind.FIELD_DECL:
         field_type = checker_core.resolve_declared_type_or_default(checker, arena, id, source, types.type_i32())
         if ownership.type_contains_atomic_storage(&checker.type_table, field_type):
-            checker_core.emit_error(checker, 395, node.start, node.length, node.line, node.column)
+            checker_types.emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_395,
+                id,
+                field_type,
+                field_type,
+                source,
+                "storage",
+            )
     elif node.kind == syntax.SyntaxKind.EXPR_NAME:
         if not checker_types.is_builtin_name(source, node.value_start, node.value_length):
             found = checker.symbols.find_in_scope(source, current_scope, node.value_start, node.value_length)
             if found.index < 0:
-                checker_core.emit_error(checker, 48, node.start, node.length, node.line, node.column)
+                checker_core.emit_symbol_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_048,
+                    &node,
+                    source[node.value_start:node.value_start + node.value_length],
+                )
                 return
             checker.model.record_name_symbol(id, found)
             checker.model.record_expr_type(id, checker.symbols.symbols[found.index].type_id)
@@ -285,24 +324,42 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             checker.model.record_critical_section(id, 3, -1)
         elif expression_type.index >= 0 and expression_type.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[expression_type.index].kind == types.TypeKind.LIST and types.strip_const(&checker.type_table, checker.type_table.types[expression_type.index].inner).index == types.type_lock().index:
             expression_node = arena.nodes[expression.index]
-            checker_core.emit_error(checker, 408, expression_node.start, expression_node.length, expression_node.line, expression_node.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_408, &expression_node)
         else:
             expression_node = arena.nodes[expression.index]
-            checker_core.emit_error(checker, 409, expression_node.start, expression_node.length, expression_node.line, expression_node.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_409, &expression_node)
     elif node.kind == syntax.SyntaxKind.RETURN_STMT:
         if node.child_count == 0:
             if expected_return.index != types.type_void().index:
-                checker_core.emit_error(checker, 42, node.start, node.length, node.line, node.column)
+                checker_core.emit_expected_type_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_042,
+                    &node,
+                    expected_return,
+                    source,
+                )
             return
         returned = checker_core.first_child(arena, id)
         returned_type = checker_types.infer_expression_type(checker, arena, returned, source, current_scope)
         if types.is_atomic_type(&checker.type_table, returned_type) and not types.is_atomic_type(&checker.type_table, expected_return):
             returned_node = arena.nodes[returned.index]
-            checker_core.emit_error(checker, 400, returned_node.start, returned_node.length, returned_node.line, returned_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_400,
+                &returned_node,
+                returned_type,
+                source,
+            )
         checker_types.validate_partial_move_source(checker, arena, returned, returned_type, expected_return, source, current_scope)
         if expected_return.index != types.type_void().index and returned_type.index != types.type_error().index and not checker_types.types_compatible(checker, expected_return, returned_type) and not (checker.specialization_declaration.index < 0 and checker_core.type_is_unbound_parameter(checker, expected_return, source)):
             returned_node = arena.nodes[returned.index]
-            checker_core.emit_error(checker, 107, returned_node.start, returned_node.length, returned_node.line, returned_node.column)
+            checker_core.emit_type_mismatch(
+                checker,
+                &returned_node,
+                expected_return,
+                returned_type,
+                source,
+            )
             return
     elif node.kind == syntax.SyntaxKind.ASSIGN_STMT:
         declare_assignment_target_if_missing(checker, arena, id, source, current_scope)
@@ -315,31 +372,56 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             checker_types.validate_ordered_lock_element_mutation(checker, arena, target, source, current_scope)
             if types.is_atomic_type(&checker.type_table, target_type):
                 target_node = arena.nodes[target.index]
-                checker_core.emit_error(checker, 401, target_node.start, target_node.length, target_node.line, target_node.column)
+                checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_401, &target_node)
             elif types.is_atomic_type(&checker.type_table, value_type):
                 value_node = arena.nodes[value.index]
-                checker_core.emit_error(checker, 400, value_node.start, value_node.length, value_node.line, value_node.column)
+                checker_core.emit_actual_type_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_400,
+                    &value_node,
+                    value_type,
+                    source,
+                )
             elif ownership.type_contains_atomic_storage(&checker.type_table, value_type):
                 value_node = arena.nodes[value.index]
-                checker_core.emit_error(checker, 395, value_node.start, value_node.length, value_node.line, value_node.column)
+                checker_types.emit_ownership_failure(
+                    checker,
+                    arena,
+                    diagnostics.DiagnosticId.CHECK_395,
+                    value,
+                    value_type,
+                    target_type,
+                    source,
+                    "assignment",
+                )
             checker_types.validate_partial_move_source(checker, arena, value, value_type, target_type, source, current_scope)
     elif node.kind == syntax.SyntaxKind.FOR_EACH_STMT:
         declare_for_each_target_if_missing(checker, arena, id, source, current_scope)
     elif node.kind == syntax.SyntaxKind.IF_STMT or node.kind == syntax.SyntaxKind.WHILE_STMT:
         condition = checker_core.first_child(arena, id)
         if condition.index >= 0 and checker_types.is_string_literal(arena, condition):
-            checker_core.emit_error(checker, 24, arena.nodes[condition.index].start, arena.nodes[condition.index].length, arena.nodes[condition.index].line, arena.nodes[condition.index].column)
+            checker_core.emit_error_at(
+                checker,
+                diagnostics.DiagnosticId.CHECK_024,
+                &arena.nodes[condition.index],
+            )
             return
         if condition.index >= 0:
             condition_type = checker_types.infer_expression_type(checker, arena, condition, source, current_scope)
             if types.is_atomic_type(&checker.type_table, condition_type):
                 condition_node = arena.nodes[condition.index]
-                checker_core.emit_error(checker, 400, condition_node.start, condition_node.length, condition_node.line, condition_node.column)
+                checker_core.emit_actual_type_error(
+                    checker,
+                    diagnostics.DiagnosticId.CHECK_400,
+                    &condition_node,
+                    condition_type,
+                    source,
+                )
     elif node.kind == syntax.SyntaxKind.MATCH_STMT:
         wildcard = variants.first_wildcard_before_last(arena, id)
         if wildcard.index >= 0:
             wildcard_node = arena.nodes[wildcard.index]
-            checker_core.emit_error(checker, 121, wildcard_node.start, wildcard_node.length, wildcard_node.line, wildcard_node.column)
+            checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_121, &wildcard_node)
             return
     elif node.kind == syntax.SyntaxKind.STATIC_ASSERT_DECL:
         static_assert = reflection.summarize_static_assert(arena, id)
@@ -348,13 +430,22 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         if assertion.index >= 0:
             assertion_node = arena.nodes[assertion.index]
             if assertion_node.kind == syntax.SyntaxKind.EXPR_LITERAL and assertion_node.flags == cast[i32](token.TokenKind.FALSE):
-                checker_core.emit_error(checker, 214, assertion_node.start, assertion_node.length, assertion_node.line, assertion_node.column)
+                checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_214, &assertion_node)
                 return
     elif node.kind == syntax.SyntaxKind.TYPE_GENERIC:
         checker_types.validate_hashable_collection_type(checker, arena, id, source, current_scope)
         generic_type = checker_core.resolve_type_node(checker, arena, id, source)
         if generic_type.index >= 0 and generic_type.index < cast[i32](len(checker.type_table.types)) and checker.type_table.types[generic_type.index].kind != types.TypeKind.ATOMIC and ownership.type_contains_atomic_storage(&checker.type_table, generic_type):
-            checker_core.emit_error(checker, 395, node.start, node.length, node.line, node.column)
+            checker_types.emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_395,
+                id,
+                generic_type,
+                generic_type,
+                source,
+                "storage",
+            )
         checker_types.record_user_type_specialization(checker, arena, id, source)
     for offset in range(0, node.child_count):
         validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, current_scope, expected_return)
@@ -403,7 +494,7 @@ def validate_or_pattern_bindings(checker: &checker_core.Checker, arena: &const s
             actual: List[String] = []
             collect_pattern_binding_names(arena, arena.children[node.first_child + offset], source, actual)
             if not pattern_binding_names_equal(&expected, &actual):
-                checker_core.emit_error(checker, 316, node.start, node.length, node.line, node.column)
+                checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_316, &node)
                 return
     for offset in range(0, node.child_count):
         child_id = arena.children[node.first_child + offset]
@@ -528,7 +619,7 @@ def validate_set_compound_assignment(checker: &checker_core.Checker, arena: &con
     value_type = checker_types.strip_collection_indirection(checker.type_table, checker_types.infer_expression_type(checker, arena, value, source, current_scope))
     if not checker.type_table.same(target_type, value_type):
         value_node = arena.nodes[value.index]
-        checker_core.emit_error(checker, 107, value_node.start, value_node.length, value_node.line, value_node.column)
+        checker_core.emit_type_mismatch(checker, &value_node, target_type, value_type, source)
 
 
 def declare_assignment_target_if_missing(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
@@ -546,10 +637,22 @@ def declare_assignment_target_if_missing(checker: &checker_core.Checker, arena: 
         inferred = checker.type_table.types[local_type.index]
         if inferred.kind == types.TypeKind.MAP and not checker_types.semantic_type_is_hashable(checker.type_table, inferred.inner, source):
             value_node = arena.nodes[value.index]
-            checker_core.emit_error(checker, 297, value_node.start, value_node.length, value_node.line, value_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_297,
+                &value_node,
+                inferred.inner,
+                source,
+            )
         elif inferred.kind == types.TypeKind.SET and not checker_types.semantic_type_is_hashable(checker.type_table, inferred.inner, source):
             value_node = arena.nodes[value.index]
-            checker_core.emit_error(checker, 300, value_node.start, value_node.length, value_node.line, value_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_300,
+                &value_node,
+                inferred.inner,
+                source,
+            )
     if local_type.index == types.type_error().index:
         local_type = types.type_i32()
     symbol = checker.symbols.add_symbol(
@@ -574,7 +677,16 @@ def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.Synta
             return
         if ownership.type_contains_atomic_storage(&checker.type_table, annotation_type):
             annotation_node = arena.nodes[annotation.index]
-            checker_core.emit_error(checker, 395, annotation_node.start, annotation_node.length, annotation_node.line, annotation_node.column)
+            checker_types.emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_395,
+                annotation,
+                annotation_type,
+                annotation_type,
+                source,
+                "storage",
+            )
     initializer = checker_core.last_child(arena, id)
     if initializer.index < 0:
         return
@@ -588,13 +700,43 @@ def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.Synta
         inferred_type = checker.type_table.types[inferred.index]
         initializer_node = arena.nodes[initializer.index]
         if inferred_type.kind == types.TypeKind.ATOMIC:
-            checker_core.emit_error(checker, 399, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+            checker_types.emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_399,
+                initializer,
+                inferred,
+                inferred,
+                source,
+                "initialization",
+            )
         elif ownership.type_contains_atomic_storage(&checker.type_table, inferred):
-            checker_core.emit_error(checker, 395, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+            checker_types.emit_ownership_failure(
+                checker,
+                arena,
+                diagnostics.DiagnosticId.CHECK_395,
+                initializer,
+                inferred,
+                inferred,
+                source,
+                "initialization",
+            )
         elif inferred_type.kind == types.TypeKind.MAP and not checker_types.semantic_type_is_hashable(checker.type_table, inferred_type.inner, source):
-            checker_core.emit_error(checker, 297, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_297,
+                &initializer_node,
+                inferred_type.inner,
+                source,
+            )
         elif inferred_type.kind == types.TypeKind.SET and not checker_types.semantic_type_is_hashable(checker.type_table, inferred_type.inner, source):
-            checker_core.emit_error(checker, 300, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_300,
+                &initializer_node,
+                inferred_type.inner,
+                source,
+            )
         checker_types.validate_partial_move_source(checker, arena, initializer, inferred, inferred, source, current_scope)
         return
     annotation_type = checker_core.resolve_type_node(checker, arena, annotation, source)
@@ -608,9 +750,21 @@ def validate_var_decl(checker: &checker_core.Checker, arena: &const syntax.Synta
         checker_types.validate_ordered_lock_element_mutation(checker, arena, initializer, source, current_scope)
     if initializer_type.index >= 0 and initializer_type.index != types.type_error().index and not checker_types.types_compatible(checker, annotation_type, initializer_type):
         if types.is_atomic_type(&checker.type_table, initializer_type):
-            checker_core.emit_error(checker, 400, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+            checker_core.emit_actual_type_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_400,
+                &initializer_node,
+                initializer_type,
+                source,
+            )
         else:
-            checker_core.emit_error(checker, 107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+            checker_core.emit_type_mismatch(
+                checker,
+                &initializer_node,
+                annotation_type,
+                initializer_type,
+                source,
+            )
     checker_types.validate_partial_move_source(checker, arena, initializer, initializer_type, annotation_type, source, current_scope)
 
 
@@ -641,19 +795,34 @@ def validate_atomic_declaration(
     atomic_record = checker.type_table.types[storage_atomic_type.index]
     initializer = atomic_declaration_initializer(arena, id)
     if initializer.index < 0:
-        checker_core.emit_error(checker, 397, node.start, node.length, node.line, node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_397, &node)
         return
     if node.flags == 1 or storage_atomic_type.index != atomic_type.index:
-        checker_core.emit_error(checker, 398, node.start, node.length, node.line, node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_398, &node)
     initializer_type = checker_types.infer_expression_type(checker, arena, initializer, source, current_scope)
     initializer_node = arena.nodes[initializer.index]
     element_kind = types.atomic_type_element_kind(&checker.type_table, storage_atomic_type)
     if is_global and not atomic_global_initializer_is_constant(checker, arena, initializer, source, current_scope):
-        checker_core.emit_error(checker, 18, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+        checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_018, &initializer_node)
     if types.is_atomic_type(&checker.type_table, initializer_type):
-        checker_core.emit_error(checker, 399, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+        checker_types.emit_ownership_failure(
+            checker,
+            arena,
+            diagnostics.DiagnosticId.CHECK_399,
+            initializer,
+            initializer_type,
+            storage_atomic_type,
+            source,
+            "initialization",
+        )
     elif not checker_types.atomic_value_type_is_compatible(checker, element_kind, initializer_type, source):
-        checker_core.emit_error(checker, 107, initializer_node.start, initializer_node.length, initializer_node.line, initializer_node.column)
+        checker_core.emit_type_mismatch(
+            checker,
+            &initializer_node,
+            atomic_record.inner,
+            initializer_type,
+            source,
+        )
     flags: i32 = 4
     if is_global:
         flags = flags | 8

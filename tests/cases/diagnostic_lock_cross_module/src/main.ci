@@ -1,0 +1,7 @@
+import locks
+
+lockorder locks.second before locks.first
+
+
+def main() -> i32:
+    return 0

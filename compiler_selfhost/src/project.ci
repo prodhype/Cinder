@@ -1,10 +1,11 @@
+import diagnostics
 import fs
 import lexer
 import manifest
 import parser_core
 import parser_module
 import syntax
-from syntax import NodeId, ParseDiagnostic, SyntaxArena, SyntaxKind
+from syntax import NodeId, SyntaxArena, SyntaxKind
 
 
 struct ImportBinding:
@@ -190,20 +191,20 @@ def visit_module(
         source = file.read_text()
         scan = lexer.new_lexer(source[0:len(source)])
         scan.tokenize()
-        if len(scan.diagnostics) > 0:
-            scan.dump()
+        if len(scan.diagnostic_values) > 0:
+            scan.dump_with_path(&path)
             error_parts.append("lexing failed: ")
             error_parts.append(path[0:len(path)])
             visiting.pop()
             return false
         arena = syntax.new_arena()
-        parse_diagnostics: List[ParseDiagnostic] = []
+        parse_diagnostics: List[diagnostics.Diagnostic] = []
         parse_failed = false
         parse_index: usize = 0
         parse_context = parser_core.new_context(scan, &parse_index, &arena, &parse_diagnostics, &parse_failed)
         root = parser_module.parse_module(&parse_context)
         if len(parse_diagnostics) > 0:
-            dump_parse_diagnostics(&parse_diagnostics)
+            dump_parse_diagnostics(&parse_diagnostics, &path, &source)
             error_parts.append("parsing failed: ")
             error_parts.append(path[0:len(path)])
             visiting.pop()
@@ -403,9 +404,12 @@ def join_strings(values: &const List[String]) -> String:
     return builder.finish()
 
 
-def dump_parse_diagnostics(diagnostics: &const List[ParseDiagnostic]) -> void:
-    for diagnostic in diagnostics:
-        print("E", diagnostic.code, diagnostic.start, diagnostic.length, diagnostic.line, diagnostic.column)
+def dump_parse_diagnostics(
+    diagnostic_values: &const List[diagnostics.Diagnostic],
+    path: &const String,
+    source: &const String,
+) -> void:
+    diagnostics.write_diagnostics_stderr(diagnostic_values, path, source)
 
 
 def is_builtin_module(module_name: &const String) -> bool:

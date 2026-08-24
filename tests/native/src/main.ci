@@ -109,17 +109,247 @@ def test_anti_example_pattern_documentation(state: &TestState) -> void:
 
 
 def test_check_diagnostic(state: &TestState) -> void:
-    source_path = state.root + "/tests/cases/invalid_syntax.ci"
-    command: List[String] = [
+    continuation_path = state.workspace + "/diagnostic_continuation_eof.ci"
+    write_test_text(
+        continuation_path.clone(),
+        "def main() -> i32:\n    return \\",
+    )
+    control_path = state.workspace + "/diagnostic_control_byte.ci"
+    write_test_text(
+        control_path.clone(),
+        "def main() -> i32:\n    \x1b[2J\n    return 0\n",
+    )
+    c1_control_path = state.workspace + "/diagnostic_c1_control.ci"
+    with open(c1_control_path, "wb") as file:
+        file.write("def main() -> i32:\n    ")
+        c1_control: u8[2] = [194, 155]
+        file.write(c1_control)
+        file.write("[2J\n    return 0\n")
+    path_control_path = state.workspace + "/diagnostic_\x1b[2J_path.ci"
+    write_test_text(
+        path_control_path.clone(),
+        "abstract class DiagnosticBase[T]:\n    @abstractmethod\n    def value(self, input: T) -> i32:\n        pass\n\n\nclass DiagnosticOverride(\n    DiagnosticBase[i32],\n):\n    def value(self, input: String) -> i32:\n        return 0\n\n\ndef main() -> i32:\n    return 0\n",
+    )
+    syntax_command: List[String] = [
         state.compiler.clone(),
         "check",
-        source_path,
+        state.root + "/tests/cases/invalid_syntax.ci",
     ]
-    result = process.run(command)
-    ok = result.exit_code == 1 and contains(&result.stderr, "project error: lexing failed")
-    expect(state, "check reports source diagnostics", ok)
+    type_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_argument.ci",
+    ]
+    import_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/path_invalid_module_member.ci",
+    ]
+    override_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_override.ci",
+    ]
+    tab_marker_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_tab_marker.ci",
+    ]
+    unicode_marker_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_unicode_marker.ci",
+    ]
+    nonascii_character_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_nonascii_character.ci",
+    ]
+    control_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        control_path.clone(),
+    ]
+    c1_control_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        c1_control_path.clone(),
+    ]
+    path_control_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        path_control_path.clone(),
+    ]
+    continuation_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        continuation_path.clone(),
+    ]
+    ownership_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_ownership.ci",
+    ]
+    atomic_import_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_atomic_import/src/main.ci",
+    ]
+    lock_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_cycle.ci",
+    ]
+    cross_module_lock_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_cross_module/src/main.ci",
+    ]
+    unresolved_before_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci",
+    ]
+    unresolved_after_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci",
+    ]
+    unresolved_after_decl_command: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/diagnostic_lock_unresolved_after_decl.ci",
+    ]
+    syntax_result = process.run(syntax_command)
+    type_result = process.run(type_command)
+    import_result = process.run(import_command)
+    override_result = process.run(override_command)
+    tab_marker_result = process.run(tab_marker_command)
+    unicode_marker_result = process.run(unicode_marker_command)
+    nonascii_character_result = process.run(nonascii_character_command)
+    control_result = process.run(control_command)
+    c1_control_result = process.run(c1_control_command)
+    path_control_result = process.run(path_control_command)
+    continuation_result = process.run(continuation_command)
+    ownership_result = process.run(ownership_command)
+    atomic_import_result = process.run(atomic_import_command)
+    lock_result = process.run(lock_command)
+    cross_module_lock_result = process.run(cross_module_lock_command)
+    unresolved_before_result = process.run(unresolved_before_command)
+    unresolved_after_result = process.run(unresolved_after_command)
+    unresolved_after_decl_result = process.run(unresolved_after_decl_command)
+    override_excerpt = "   |\n10 |     def value(self, input: String) -> i32:\n   |     ^"
+    tab_marker_excerpt = "  |\n2 |     return\\x09missing\n  |               ^^^^^^^"
+    unicode_marker_excerpt = "  |\n2 |     print(\"👨‍👩‍👧‍👦\", \"é\n  |                 ^^"
+    nonascii_character_excerpt = "  |\n1 | def 界() -> i32:\n  |     ^^"
+    control_excerpt = "  |\n2 |     \\x1b[2J\n  |     ^^^^"
+    c1_control_excerpt = "  |\n2 |     \\u009b[2J\n  |     ^^^^^^"
+    continuation_excerpt = "  |\n2 |     return \\\n  |             ^"
+    nonascii_character_location = state.root + "/tests/cases/diagnostic_nonascii_character.ci:1:5"
+    escaped_path_control_path = state.workspace + "/diagnostic_\\x1b[2J_path.ci"
+    path_control_location = escaped_path_control_path + ":10:5"
+    path_control_related_location = "= related: base declaration is here at " + escaped_path_control_path + ":3:5"
+    continuation_location = continuation_path + ":2:13"
+    cross_module_related_location = "= related: conflicting lock order declared here at " + state.root + "/tests/cases/diagnostic_lock_cross_module/src/locks.ci:2:1"
+    unresolved_before_location = state.root + "/tests/cases/diagnostic_lock_unresolved_before.ci:2:11"
+    unresolved_after_location = state.root + "/tests/cases/diagnostic_lock_unresolved_after.ci:2:24"
+    unresolved_after_decl_location = state.root + "/tests/cases/diagnostic_lock_unresolved_after_decl.ci:2:18"
+    ok = (
+        syntax_result.exit_code == 1
+        and contains(&syntax_result.stderr, "error[lexical lexer.L003/2]: Unclosed delimiter")
+        and contains(&syntax_result.stderr, "= help: add the matching closing delimiter")
+        and not contains(&syntax_result.stdout, "E ")
+        and type_result.exit_code == 1
+        and contains(&type_result.stderr, "checker.type-mismatch/107")
+        and contains(&type_result.stderr, "expected &const String, found i32")
+        and import_result.exit_code == 1
+        and contains(&import_result.stderr, "checker.unresolved-name-or-member/48")
+        and contains(&import_result.stderr, "cannot resolve std.path.missing")
+        and override_result.exit_code == 1
+        and contains(&override_result.stderr, "checker.override-mismatch/179")
+        and contains(&override_result.stderr, "implementation of value")
+        and contains(&override_result.stderr, override_excerpt)
+        and contains(&override_result.stderr, "= related: base declaration is here")
+        and contains(&override_result.stderr, "= note: the base declaration is shown as a related source location")
+        and tab_marker_result.exit_code == 1
+        and contains(&tab_marker_result.stderr, "checker.unresolved-name-or-member/48")
+        and contains(&tab_marker_result.stderr, tab_marker_excerpt)
+        and unicode_marker_result.exit_code == 1
+        and contains(&unicode_marker_result.stderr, "lexer.L006/5")
+        and contains(&unicode_marker_result.stderr, unicode_marker_excerpt)
+        and nonascii_character_result.exit_code == 1
+        and contains(&nonascii_character_result.stderr, "lexer.L005/4")
+        and contains(&nonascii_character_result.stderr, "the character 界 is not valid here")
+        and contains(&nonascii_character_result.stderr, nonascii_character_location)
+        and contains(&nonascii_character_result.stderr, nonascii_character_excerpt)
+        and not contains(&nonascii_character_result.stderr, "panic: invalid UTF-8 string")
+        and control_result.exit_code == 1
+        and contains(&control_result.stderr, "lexer.L005/4")
+        and contains(&control_result.stderr, "the character \\x1b is not valid here")
+        and contains(&control_result.stderr, control_excerpt)
+        and not contains(&control_result.stderr, "\x1b")
+        and c1_control_result.exit_code == 1
+        and contains(&c1_control_result.stderr, "the character \\u009b is not valid here")
+        and contains(&c1_control_result.stderr, c1_control_excerpt)
+        and not contains_byte_pair(&c1_control_result.stderr, 194, 155)
+        and path_control_result.exit_code == 1
+        and contains(&path_control_result.stderr, path_control_location)
+        and contains(&path_control_result.stderr, path_control_related_location)
+        and not contains(&path_control_result.stderr, "\x1b")
+        and continuation_result.exit_code == 1
+        and contains(&continuation_result.stderr, "lexer.L002/1")
+        and contains(&continuation_result.stderr, continuation_location)
+        and contains(&continuation_result.stderr, continuation_excerpt)
+        and ownership_result.exit_code == 1
+        and contains(&ownership_result.stderr, "checker.atomic-value-move/399")
+        and contains(&ownership_result.stderr, "Atomic owner source")
+        and atomic_import_result.exit_code == 1
+        and contains(&atomic_import_result.stderr, "checker.atomic-used-as-value/400")
+        and contains(&atomic_import_result.stderr, "Atomic value Atomic[u64]")
+        and lock_result.exit_code == 1
+        and contains(&lock_result.stderr, "lock.order-cycle/410")
+        and contains(&lock_result.stderr, "lock order contains a cycle near second -> first")
+        and contains(&lock_result.stderr, "= related: conflicting lock order declared here")
+        and cross_module_lock_result.exit_code == 1
+        and contains(&cross_module_lock_result.stderr, "lock.order-cycle/410")
+        and contains(&cross_module_lock_result.stderr, "= related: conflicting lock order declared here")
+        and contains(&cross_module_lock_result.stderr, cross_module_related_location)
+        and unresolved_before_result.exit_code == 1
+        and contains(&unresolved_before_result.stderr, "lock.unresolved-reference/404")
+        and contains(&unresolved_before_result.stderr, "cannot resolve lock order reference missing")
+        and contains(&unresolved_before_result.stderr, unresolved_before_location)
+        and not contains(&unresolved_before_result.stderr, "cannot resolve lock order reference lockorder missing before first")
+        and unresolved_after_result.exit_code == 1
+        and contains(&unresolved_after_result.stderr, "lock.unresolved-reference/404")
+        and contains(&unresolved_after_result.stderr, "cannot resolve lock order reference missing")
+        and contains(&unresolved_after_result.stderr, unresolved_after_location)
+        and not contains(&unresolved_after_result.stderr, "cannot resolve lock order reference lockorder first before missing")
+        and unresolved_after_decl_result.exit_code == 1
+        and contains(&unresolved_after_decl_result.stderr, "lock.unresolved-reference/404")
+        and contains(&unresolved_after_decl_result.stderr, "cannot resolve lock order reference missing")
+        and contains(&unresolved_after_decl_result.stderr, unresolved_after_decl_location)
+        and not contains(&unresolved_after_decl_result.stderr, "cannot resolve lock order reference lock first after missing")
+    )
+    expect(state, "check reports structured rich source diagnostics", ok)
     if not ok:
-        report_process_failure(&result.stdout, &result.stderr)
+        report_process_failure(&syntax_result.stdout, &syntax_result.stderr)
+        report_process_failure(&type_result.stdout, &type_result.stderr)
+        report_process_failure(&import_result.stdout, &import_result.stderr)
+        report_process_failure(&override_result.stdout, &override_result.stderr)
+        report_process_failure(&tab_marker_result.stdout, &tab_marker_result.stderr)
+        report_process_failure(&unicode_marker_result.stdout, &unicode_marker_result.stderr)
+        report_process_failure(&nonascii_character_result.stdout, &nonascii_character_result.stderr)
+        report_process_failure(&control_result.stdout, &control_result.stderr)
+        report_process_failure(&c1_control_result.stdout, &c1_control_result.stderr)
+        report_process_failure(&path_control_result.stdout, &path_control_result.stderr)
+        report_process_failure(&continuation_result.stdout, &continuation_result.stderr)
+        report_process_failure(&ownership_result.stdout, &ownership_result.stderr)
+        report_process_failure(&atomic_import_result.stdout, &atomic_import_result.stderr)
+        report_process_failure(&lock_result.stdout, &lock_result.stderr)
+        report_process_failure(&cross_module_lock_result.stdout, &cross_module_lock_result.stderr)
+        report_process_failure(&unresolved_before_result.stdout, &unresolved_before_result.stderr)
+        report_process_failure(&unresolved_after_result.stdout, &unresolved_after_result.stderr)
+        report_process_failure(&unresolved_after_decl_result.stdout, &unresolved_after_decl_result.stderr)
 
 
 def test_check_ir_validation(state: &TestState) -> void:
@@ -3055,6 +3285,23 @@ def contains(text: &const String, fragment: String) -> bool:
         return false
     limit = len(text) - len(fragment)
     for start in range(0, limit + 1):
-        if text[start:start + len(fragment)] == fragment:
+        offset: usize = 0
+        matches = true
+        while offset < len(fragment):
+            if text.byte_at(start + offset) != fragment.byte_at(offset):
+                matches = false
+                break
+            offset += 1
+        if matches:
+            return true
+    return false
+
+
+def contains_byte_pair(text: &const String, first: u8, second: u8) -> bool:
+    if len(text) < 2:
+        return false
+    limit = len(text) - 1
+    for index in range(0, limit):
+        if text.byte_at(index) == first and text.byte_at(index + 1) == second:
             return true
     return false

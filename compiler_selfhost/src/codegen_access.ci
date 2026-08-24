@@ -1483,12 +1483,6 @@ def known_list_element_name(arena: &const SyntaxArena, receiver: NodeId, source:
         return "cinder_cinder_selfhost_token__Token"
     if member_name == "tokens":
         return "cinder_cinder_selfhost_token__Token"
-    if owner == "Lexer" and member_name == "diagnostics":
-        return "cinder_cinder_selfhost_token__LexerDiagnostic"
-    if owner == "Parser" and member_name == "diagnostics":
-        return "cinder_cinder_selfhost_syntax__ParseDiagnostic"
-    if owner == "Checker" and member_name == "diagnostics":
-        return "cinder_cinder_selfhost_checker__CheckerDiagnostic"
     if owner == "ProjectGraph" and member_name == "modules":
         return "cinder_cinder_selfhost_project__ParsedModule"
     if owner == "DriverOptions" and member_name == "program_args":

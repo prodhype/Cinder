@@ -75,8 +75,8 @@ def analyze_module(
     checker.collect_symbols(checked, module.arena, module.root, module.source, modules)
     checker.validate_import_member_calls(checked, module.arena, module.root, module.source, &module.imports, modules)
     checker.validate_names(checked, module.arena, module.root, module.source)
-    if len(checked.diagnostics) > 0:
-        checker_core.dump_diagnostics(checked)
+    if len(checked.diagnostic_values) > 0:
+        checker_core.dump_diagnostics(checked, &module.path, &module.source)
         return "semantic check failed"
     return ""
 
