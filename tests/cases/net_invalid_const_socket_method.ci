@@ -1,0 +1,9 @@
+import std.net as net
+
+
+def close_const_socket(socket: &const net.Socket) -> Result[void, net.NetError]:
+    return socket.close()
+
+
+def main() -> i32:
+    return 0

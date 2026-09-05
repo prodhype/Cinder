@@ -26,6 +26,33 @@ def imported_constants() -> i32:
     return FAMILY + FAMILY6 + STREAM + cast[i32](events)
 
 
+def socket_identity(socket: net.Socket) -> net.Socket:
+    return socket
+
+
+def payload() -> List[u8]:
+    return [1, 2, 3, 4]
+
+
+def rvalue_socket_fileno(socket: net.Socket) -> i32:
+    return socket_identity(socket).fileno()
+
+
+def rvalue_socket_close(socket: net.Socket) -> Result[void, net.NetError]:
+    socket_identity(socket).close()?
+    return Ok()
+
+
+def temporary_socket_io(socket: &net.Socket) -> Result[void, net.NetError]:
+    socket.send(payload())?
+    socket.recv(payload())?
+    return Ok()
+
+
+def const_socket_fileno(socket: &const net.Socket) -> i32:
+    return socket.fileno()
+
+
 def discard_accepted(listener: &net.Socket) -> void:
     match listener.accept():
         case Ok(_):

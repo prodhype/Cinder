@@ -953,7 +953,9 @@ def validate_socket_method_call(
     member = checker_core.second_child(arena, callee_id)
     if receiver.index < 0 or member.index < 0:
         return false
-    receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, receiver, source, current_scope))
+    inferred_receiver_type = infer_expression_type(checker, arena, receiver, source, current_scope)
+    receiver_is_const = net_socket_receiver_type_is_const(checker.type_table, inferred_receiver_type)
+    receiver_type = strip_collection_indirection(checker.type_table, inferred_receiver_type)
     if receiver_type.index < 0 or receiver_type.index >= cast[i32](len(checker.type_table.types)) or checker.type_table.types[receiver_type.index].kind != types.TypeKind.SOCKET:
         return false
     member_node = arena.nodes[member.index]
@@ -984,6 +986,13 @@ def validate_socket_method_call(
         )
         checker.model.record_expr_type(call_id, types.type_error())
         return true
+    if receiver_is_const and member_name != "fileno":
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_423,
+            &member_node,
+            member_name[0:len(member_name)],
+        )
     validate_net_call_arguments(checker, arena, call_id, source, current_scope, &member_name, expected, expected)
     receiver_symbol = symbols.missing_symbol()
     receiver_node = arena.nodes[receiver.index]
@@ -993,6 +1002,18 @@ def validate_socket_method_call(
     checker.model.record_expr_type(callee_id, result)
     checker.model.record_expr_type(call_id, result)
     return true
+
+
+def net_socket_receiver_type_is_const(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = type_id
+    while current.index >= 0 and current.index < cast[i32](len(table.types)):
+        record = table.types[current.index]
+        if record.kind == types.TypeKind.CONST:
+            return true
+        if record.kind != types.TypeKind.POINTER and record.kind != types.TypeKind.REFERENCE:
+            return false
+        current = record.inner
+    return false
 
 
 def validate_net_call_arguments(
@@ -1179,7 +1200,12 @@ def net_type_is_poll_fd_buffer(table: &const types.TypeTable, type_id: types.Typ
     record = table.types[current.index]
     if record.kind != types.TypeKind.LIST and record.kind != types.TypeKind.ARRAY and record.kind != types.TypeKind.SLICE:
         return false
-    return types.strip_const(table, record.inner).index == types.type_poll_fd().index
+    element = record.inner
+    if element.index < 0 or element.index >= cast[i32](len(table.types)):
+        return false
+    if table.types[element.index].kind == types.TypeKind.CONST:
+        return false
+    return element.index == types.type_poll_fd().index
 
 
 def net_type_is_byte_buffer(table: &const types.TypeTable, type_id: types.TypeId, source: &const String, mutable: bool) -> bool:

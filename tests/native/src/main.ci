@@ -599,6 +599,10 @@ def test_net_regressions(state: &TestState) -> void:
         and contains(&emitted.stdout, "cinder_string_drop(&cinder_net_host_")
         and contains(&emitted.stdout, "CinderResult_Socket_NetError_drop(&cinder_match_value_")
         and contains(&emitted.stdout, "cinder_net_socket_drop(&connection)")
+        and contains(&emitted.stdout, "CinderSocket cinder_net_receiver_")
+        and contains(&emitted.stdout, "cinder_net_socket_drop(&cinder_net_receiver_")
+        and contains(&emitted.stdout, "__auto_type cinder_net_buffer_value_")
+        and contains(&emitted.stdout, "CinderList_u8_drop(&cinder_net_buffer_value_")
         and contains(&emitted.stdout, "(CinderNetError){")
         and contains(&emitted.stdout, "CINDER_NET_AF_INET")
         and contains(&emitted.stdout, "CINDER_NET_AF_INET6")
@@ -611,6 +615,8 @@ def test_net_regressions(state: &TestState) -> void:
         and not contains(&emitted.stdout, "fileno(&connection)")
         and not contains(&emitted.stdout, "std_net__NetError")
         and not contains(&emitted.stdout, "cinder_string_cstr(&net_regressions__host())")
+        and not contains(&emitted.stdout, " = &cinder_net_regressions_net_regressions__socket_identity(")
+        and not contains(&emitted.stdout, " = &cinder_net_regressions_net_regressions__payload(")
     )
     expect(state, "std.net direct imports, matches, temporaries, and aliases lower safely", ok)
     if not ok:
@@ -634,9 +640,21 @@ def test_net_diagnostics(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/net_invalid_socket_constructor.ci",
     ]
+    const_socket: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_const_socket_method.ci",
+    ]
+    const_poll: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_const_poll_buffer.ci",
+    ]
     member_result = process.run(bad_member)
     buffer_result = process.run(bad_buffer)
     constructor_result = process.run(bad_constructor)
+    const_socket_result = process.run(const_socket)
+    const_poll_result = process.run(const_poll)
     ok = (
         member_result.exit_code == 1
         and contains(&member_result.stderr, "cannot resolve std.net.missing")
@@ -645,12 +663,19 @@ def test_net_diagnostics(state: &TestState) -> void:
         and constructor_result.exit_code == 1
         and contains(&constructor_result.stderr, "checker.non-constructible-runtime-type/422")
         and contains(&constructor_result.stderr, "Socket cannot be constructed directly")
+        and const_socket_result.exit_code == 1
+        and contains(&const_socket_result.stderr, "checker.socket-const-receiver/423")
+        and contains(&const_socket_result.stderr, "cannot call close through a const Socket reference")
+        and const_poll_result.exit_code == 1
+        and contains(&const_poll_result.stderr, "expected []PollFd, found []const PollFd")
     )
-    expect(state, "std.net rejects invalid members, buffers, and Socket construction", ok)
+    expect(state, "std.net rejects invalid members, buffers, construction, and const mutation", ok)
     if not ok:
         report_process_failure(&member_result.stdout, &member_result.stderr)
         report_process_failure(&buffer_result.stdout, &buffer_result.stderr)
         report_process_failure(&constructor_result.stdout, &constructor_result.stderr)
+        report_process_failure(&const_socket_result.stdout, &const_socket_result.stderr)
+        report_process_failure(&const_poll_result.stdout, &const_poll_result.stderr)
 
 
 def test_net_shadowing(state: &TestState) -> void:
