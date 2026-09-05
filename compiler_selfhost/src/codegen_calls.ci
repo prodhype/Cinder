@@ -56,6 +56,8 @@ def emit_module_call_body(
             name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
             if emit_reflection_call(arena, id, &name, source, builder, context, state, emit_nested):
                 return
+            if emit_std_net_named_call(arena, id, callee, &name, source, builder, prefix, project_name, imports, context, state, emit_nested):
+                return
             if name == "closure":
                 emit_closure_constructor(arena, id, source, builder, prefix, project_name, imports, context, state, emit_nested)
                 return
@@ -185,6 +187,40 @@ def emit_module_call_body(
             argument_index += 1
     builder.append(")")
     return
+
+
+def emit_std_net_named_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    callee: NodeId,
+    name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> bool:
+    imported = codegen_names.find_import_member(imports, name)
+    if (
+        not imported.virtual_builtin
+        or imported.module_name != "std.net"
+        or (imported.member != "socket" and imported.member != "poll" and imported.member != "PollFd")
+    ):
+        return false
+    callee_node = arena.nodes[callee.index]
+    if (
+        not codegen_context.context_expression_resolves_to_import(context, callee)
+        and (
+            codegen_context.context_has_name(context, source, callee_node.value_start, callee_node.value_length)
+            or codegen_context.context_name_is_global(context, name)
+        )
+    ):
+        return false
+    codegen_access.emit_net_namespace_call(arena, call_id, &imported.member, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    return true
 
 
 def callee_is_cinder_output_builtin(
@@ -881,8 +917,9 @@ def emit_nominal_constructor(
     if len(specialized_name) > 0:
         builder.append(specialized_name[0:len(specialized_name)])
     elif len(imported.module_name) > 0 and len(imported.member) > 0:
-        builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
-        builder.append(imported.member)
+        if not imported.virtual_builtin or imported.module_name != "std.net" or not codegen_type_names.emit_std_net_runtime_type(builder, &imported.member):
+            builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
+            builder.append(imported.member)
     else:
         builder.append(prefix[0:len(prefix)])
         builder.append(name[0:len(name)])

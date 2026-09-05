@@ -205,6 +205,8 @@ enum DiagnosticId:
     CHECK_419
     CHECK_420
     CHECK_421
+    CHECK_422
+    CHECK_423
     LOCK_404
     LOCK_410
     LOCK_411
@@ -879,6 +881,10 @@ def diagnostic_definition(id: DiagnosticId) -> DiagnosticDefinition:
         return checker_definition(id, 420, DiagnosticCategory.OWNERSHIP, "string-indexing", "String indexing is not supported", "owner {owner} cannot be used for {transfer}", "use byte_at() or an owned UTF-8 slice")
     if id == DiagnosticId.CHECK_421:
         return checker_definition(id, 421, DiagnosticCategory.OWNERSHIP, "temporary-reference-escape", "Reference to temporary escapes", "owner {owner} cannot be used for {transfer}", "bind the owner to a local before taking or returning a reference")
+    if id == DiagnosticId.CHECK_422:
+        return checker_definition(id, 422, DiagnosticCategory.TYPE_SYSTEM, "non-constructible-runtime-type", "Runtime type is not constructible", "{name} cannot be constructed directly", "create a Socket with std.net.socket()")
+    if id == DiagnosticId.CHECK_423:
+        return checker_definition(id, 423, DiagnosticCategory.TYPE_SYSTEM, "socket-const-receiver", "Socket operation requires mutable access", "cannot call {name} through a const Socket reference", "use a mutable Socket reference or call fileno for read-only access")
 
     if id == DiagnosticId.LOCK_404:
         return lock_definition(id, 404, "unresolved-reference", "Unresolved lock reference", "cannot resolve lock order reference {lock}", "import or declare the referenced lock")

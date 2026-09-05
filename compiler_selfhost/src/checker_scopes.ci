@@ -205,7 +205,7 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         if node.child_count > 0:
             pattern = arena.children[node.first_child]
             validate_or_pattern_bindings(checker, arena, pattern, source)
-            declare_pattern_bindings(checker, arena, pattern, source, case_scope)
+            declare_pattern_bindings(checker, arena, pattern, source, case_scope, types.type_i32())
         for offset in range(0, node.child_count):
             validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, case_scope, expected_return)
         return
@@ -423,6 +423,15 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
             wildcard_node = arena.nodes[wildcard.index]
             checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_121, &wildcard_node)
             return
+        subject = checker_core.first_child(arena, id)
+        if subject.index >= 0:
+            validate_names_in_scope(checker, arena, subject, source, current_scope, expected_return)
+        subject_type = checker_types.infer_expression_type(checker, arena, subject, source, current_scope)
+        for offset in range(1, node.child_count):
+            case_id = arena.children[node.first_child + offset]
+            if arena.nodes[case_id.index].kind == syntax.SyntaxKind.MATCH_CASE:
+                validate_typed_match_case(checker, arena, case_id, source, current_scope, expected_return, subject_type)
+        return
     elif node.kind == syntax.SyntaxKind.STATIC_ASSERT_DECL:
         static_assert = reflection.summarize_static_assert(arena, id)
         ignored_static_assert = static_assert
@@ -451,36 +460,107 @@ def validate_names_in_scope(checker: &checker_core.Checker, arena: &const syntax
         validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, current_scope, expected_return)
 
 
-def declare_pattern_bindings(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> void:
+def validate_typed_match_case(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+    expected_return: types.TypeId,
+    subject_type: types.TypeId,
+) -> void:
+    case_scope = checker.symbols.add_scope(current_scope)
+    checker.model.record_scope(id, case_scope)
+    node = arena.nodes[id.index]
+    if node.child_count > 0:
+        pattern = arena.children[node.first_child]
+        validate_or_pattern_bindings(checker, arena, pattern, source)
+        declare_pattern_bindings(checker, arena, pattern, source, case_scope, subject_type)
+    for offset in range(0, node.child_count):
+        validate_names_in_scope(checker, arena, arena.children[node.first_child + offset], source, case_scope, expected_return)
+
+
+def declare_pattern_bindings(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+    value_type: types.TypeId,
+) -> void:
     if id.index < 0:
         return
     node = arena.nodes[id.index]
     if node.kind == syntax.SyntaxKind.PATTERN_PATH:
+        if node.flags == 1:
+            declare_pattern_bindings(checker, arena, checker_core.first_child(arena, id), source, current_scope, value_type)
+            return
         if node.flags == 0 and node.child_count == 1:
             name_id = arena.children[node.first_child]
             name = arena.nodes[name_id.index]
             if name.kind == syntax.SyntaxKind.NAME and is_pattern_binding_name(source, name.value_start, name.value_length):
                 if checker.symbols.find_in_current_scope(source, current_scope, name.value_start, name.value_length).index < 0:
+                    binding_type = value_type
+                    if binding_type.index < 0 or binding_type.index == types.type_error().index:
+                        binding_type = types.type_i32()
                     symbol = checker.symbols.add_symbol(
                         symbols.SymbolKind.LOCAL,
                         name.value_start,
                         name.value_length,
-                        types.type_i32(),
+                        binding_type,
                         name_id,
                         current_scope,
                         0,
                     )
                     checker.model.record_declaration_symbol(name_id, symbol)
+                    if ownership.type_needs_drop_for_table(checker.type_table, binding_type):
+                        checker.model.record_cleanup(name_id, binding_type, 0)
                 return
-        for offset in range(0, node.child_count):
+        name_count = pattern_name_count(arena, id)
+        nested_type = pattern_payload_type(checker.type_table, arena, id, source, value_type)
+        for offset in range(name_count, node.child_count):
             child_id = arena.children[node.first_child + offset]
-            child = arena.nodes[child_id.index]
-            if child.kind != syntax.SyntaxKind.NAME:
-                declare_pattern_bindings(checker, arena, child_id, source, current_scope)
+            declare_pattern_bindings(checker, arena, child_id, source, current_scope, nested_type)
         return
     if node.kind == syntax.SyntaxKind.PATTERN_CAPTURE or node.kind == syntax.SyntaxKind.PATTERN_OR:
         for offset in range(0, node.child_count):
-            declare_pattern_bindings(checker, arena, arena.children[node.first_child + offset], source, current_scope)
+            declare_pattern_bindings(checker, arena, arena.children[node.first_child + offset], source, current_scope, value_type)
+
+
+def pattern_name_count(arena: &const syntax.SyntaxArena, id: NodeId) -> i32:
+    node = arena.nodes[id.index]
+    count: i32 = 0
+    while count < node.child_count:
+        child = arena.nodes[arena.children[node.first_child + count].index]
+        if child.kind != syntax.SyntaxKind.NAME:
+            break
+        count += 1
+    return count
+
+
+def pattern_payload_type(
+    table: &const types.TypeTable,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    value_type: types.TypeId,
+) -> types.TypeId:
+    if value_type.index < 0 or value_type.index >= cast[i32](len(table.types)):
+        return types.type_i32()
+    name_count = pattern_name_count(arena, id)
+    if name_count <= 0:
+        return types.type_i32()
+    constructor_id = arena.children[arena.nodes[id.index].first_child + name_count - 1]
+    constructor = arena.nodes[constructor_id.index]
+    record = table.types[value_type.index]
+    if record.kind == types.TypeKind.RESULT:
+        if checker_core.range_text_equals(source, constructor.value_start, constructor.value_length, "Ok"):
+            return record.inner
+        if checker_core.range_text_equals(source, constructor.value_start, constructor.value_length, "Err"):
+            return record.second
+    if record.kind == types.TypeKind.OPTION and checker_core.range_text_equals(source, constructor.value_start, constructor.value_length, "Some"):
+        return record.inner
+    return types.type_i32()
 
 
 def validate_or_pattern_bindings(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> void:

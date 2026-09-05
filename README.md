@@ -965,6 +965,31 @@ Strings. `create_dir`, `create_dir_all`, `remove_file`, and `rename` return
 follows symlinks for predicates; Windows filesystem operations compile but
 panic as unsupported.
 
+The compiler-provided `std.net` module offers Python-shaped, move-only TCP
+sockets while keeping generated C close to the native socket API:
+
+```python
+import std.net as net
+
+listener = net.socket(net.AF_INET, net.SOCK_STREAM)?
+listener.bind("127.0.0.1", 8080)?
+listener.listen(128)?
+
+fds: List[net.PollFd] = [net.PollFd(&listener, net.POLL_IN)]
+ready = net.poll(fds, -1)?
+if ready > 0:
+    connection = listener.accept()?
+    buffer: u8[4096]
+    count = connection.recv(buffer)?
+    sent = connection.send(buffer[0:count])?
+```
+
+Socket operations return `Result[..., NetError]`; `would_block` and other
+expected network failures are values rather than panics. `recv` writes into a
+mutable byte slice, `send` borrows a const byte slice, and `poll` updates
+`PollFd.revents` in place. The first implementation covers IPv4/IPv6 TCP on
+POSIX. Windows builds retain the API and return `unsupported`.
+
 `@export` keeps the C symbol name of a top-level function:
 
 ```python

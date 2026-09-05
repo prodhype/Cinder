@@ -1,10 +1,17 @@
 #ifndef CINDER_RUNTIME_H
 #define CINDER_RUNTIME_H
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+
+#if !defined(_WIN32)
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#endif
 
 #if !defined(__cplusplus)
 #include <stdatomic.h>
@@ -90,6 +97,80 @@ typedef struct CinderProcessResult {
     CinderString stdout;
     CinderString stderr;
 } CinderProcessResult;
+
+typedef enum CinderNetErrorKind {
+    CinderNetErrorKind_would_block = 0,
+    CinderNetErrorKind_interrupted = 1,
+    CinderNetErrorKind_address_in_use = 2,
+    CinderNetErrorKind_connection_refused = 3,
+    CinderNetErrorKind_connection_reset = 4,
+    CinderNetErrorKind_timed_out = 5,
+    CinderNetErrorKind_not_connected = 6,
+    CinderNetErrorKind_invalid_input = 7,
+    CinderNetErrorKind_unsupported = 8,
+    CinderNetErrorKind_system = 9
+} CinderNetErrorKind;
+
+typedef struct CinderNetError {
+    CinderNetErrorKind kind;
+    int32_t code;
+} CinderNetError;
+
+typedef struct CinderSocket {
+    int32_t handle;
+    int32_t family;
+    int32_t type;
+    int32_t protocol;
+} CinderSocket;
+
+#if defined(_WIN32)
+typedef struct CinderPollFd {
+    int32_t fd;
+    int16_t events;
+    int16_t revents;
+} CinderPollFd;
+#else
+/* Exact alias: generated code can pass CinderPollFd arrays to poll(2). */
+typedef struct pollfd CinderPollFd;
+#endif
+
+#define CINDER_NET_INVALID_SOCKET INT32_C(-1)
+
+#if defined(_WIN32)
+#define CINDER_NET_AF_INET INT32_C(2)
+#define CINDER_NET_AF_INET6 INT32_C(23)
+#define CINDER_NET_SOCK_STREAM INT32_C(1)
+#define CINDER_NET_POLL_IN INT16_C(0x0001)
+#define CINDER_NET_POLL_OUT INT16_C(0x0004)
+#define CINDER_NET_POLL_ERROR INT16_C(0x0008)
+#define CINDER_NET_POLL_HANGUP INT16_C(0x0010)
+#define CINDER_NET_POLL_INVALID INT16_C(0x0020)
+#else
+#define CINDER_NET_AF_INET ((int32_t)AF_INET)
+#define CINDER_NET_AF_INET6 ((int32_t)AF_INET6)
+#define CINDER_NET_SOCK_STREAM ((int32_t)SOCK_STREAM)
+#define CINDER_NET_POLL_IN ((int16_t)POLLIN)
+#define CINDER_NET_POLL_OUT ((int16_t)POLLOUT)
+#define CINDER_NET_POLL_ERROR ((int16_t)POLLERR)
+#define CINDER_NET_POLL_HANGUP ((int16_t)POLLHUP)
+#define CINDER_NET_POLL_INVALID ((int16_t)POLLNVAL)
+#endif
+
+#if !defined(_WIN32) && defined(MSG_NOSIGNAL)
+#define CINDER_NET_SEND_FLAGS MSG_NOSIGNAL
+#else
+#define CINDER_NET_SEND_FLAGS 0
+#endif
+
+#define CINDER_NET_SOCKET_INIT(family_value, type_value, protocol_value) \
+    { \
+        CINDER_NET_INVALID_SOCKET, \
+        (int32_t)(family_value), \
+        (int32_t)(type_value), \
+        (int32_t)(protocol_value) \
+    }
+#define CINDER_NET_POLL_FD_INIT(socket_value, events_value) \
+    { (socket_value).handle, (int16_t)(events_value), INT16_C(0) }
 
 typedef int (*CinderCompareFn)(const void *left, const void *right);
 
@@ -184,6 +265,51 @@ void cinder_process_result_drop_raw(void *self);
 CinderProcessResult cinder_process_run_argv(
     size_t argc,
     const char *const *argv
+);
+CinderNetError cinder_net_error_from_code(int32_t code);
+CinderNetError cinder_net_last_error(void);
+bool cinder_net_socket(
+    int32_t family,
+    int32_t type,
+    int32_t protocol,
+    CinderSocket *out,
+    CinderNetError *error
+);
+bool cinder_net_bind(
+    CinderSocket *socket,
+    const char *host,
+    int32_t port,
+    CinderNetError *error
+);
+bool cinder_net_connect(
+    CinderSocket *socket,
+    const char *host,
+    int32_t port,
+    CinderNetError *error
+);
+bool cinder_net_listen(
+    CinderSocket *socket,
+    int32_t backlog,
+    CinderNetError *error
+);
+bool cinder_net_accept(
+    CinderSocket *socket,
+    CinderSocket *out,
+    CinderNetError *error
+);
+bool cinder_net_set_blocking(
+    CinderSocket *socket,
+    bool blocking,
+    CinderNetError *error
+);
+bool cinder_net_close(CinderSocket *socket, CinderNetError *error);
+void cinder_net_socket_drop(CinderSocket *socket);
+void CinderSocket__drop(CinderSocket *self);
+bool cinder_net_socket_is_open(const CinderSocket *socket);
+int32_t cinder_net_socket_fileno(const CinderSocket *socket);
+CinderPollFd cinder_net_poll_fd(
+    const CinderSocket *socket,
+    int16_t events
 );
 bool cinder_path_exists(const char *path);
 bool cinder_path_is_file(const char *path);

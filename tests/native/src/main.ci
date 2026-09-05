@@ -49,6 +49,11 @@ def main(argc: i32, argv: **char) -> i32:
     test_build_and_run(&state)
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
+    test_net_codegen(&state)
+    test_net_regressions(&state)
+    test_net_runtime(&state)
+    test_net_diagnostics(&state)
+    test_net_shadowing(&state)
     test_path_codegen(&state)
     test_path_match_capture_escape(&state)
     test_path_embedded_nul(&state)
@@ -518,6 +523,209 @@ def test_atomic_codegen(state: &TestState) -> void:
     expect(state, "emit-c lowers atomic operations to C11 atomics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_net_codegen(state: &TestState) -> void:
+    source = state.root + "/examples/network.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "CinderSocket")
+        and contains(&result.stdout, "CinderPollFd")
+        and contains(&result.stdout, "CinderResult_usize_NetError")
+        and contains(&result.stdout, "recv(socket->handle")
+        and contains(&result.stdout, "send(socket->handle")
+        and contains(&result.stdout, "poll((struct pollfd *)fds")
+        and contains(&result.stdout, "CINDER_NET_POLL_OUT")
+        and contains(&result.stdout, "CINDER_NET_POLL_ERROR")
+        and contains(&result.stdout, "CINDER_NET_POLL_HANGUP")
+        and contains(&result.stdout, "CINDER_NET_POLL_INVALID")
+        and not contains(&result.stdout, "std_net__")
+    )
+    expect(state, "emit-c lowers std.net to native socket operations", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_net_runtime(state: &TestState) -> void:
+    source = state.root + "/tests/cases/net_loopback.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/net-loopback",
+        "--build-dir",
+        state.workspace + "/net-loopback-build",
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 0
+    expect(state, "std.net handles loopback, poll, nonblocking, bytes, and EOF", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_net_regressions(state: &TestState) -> void:
+    source = state.root + "/tests/cases/net_regressions.ci"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/net-regressions",
+        "--build-dir",
+        state.workspace + "/net-regressions-build",
+    ]
+    emitted = process.run(emit_command)
+    ran = process.run(run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "cinder_net_socket(")
+        and contains(&emitted.stdout, "cinder_selfhost_net_poll(")
+        and contains(&emitted.stdout, "cinder_net_socket_fileno(cinder_net_socket_")
+        and contains(&emitted.stdout, "CinderString cinder_net_host_")
+        and contains(&emitted.stdout, "cinder_string_cstr(&cinder_net_host_")
+        and contains(&emitted.stdout, "cinder_string_drop(&cinder_net_host_")
+        and contains(&emitted.stdout, "CinderResult_Socket_NetError_drop(&cinder_match_value_")
+        and contains(&emitted.stdout, "cinder_net_socket_drop(&connection)")
+        and contains(&emitted.stdout, "CinderSocket cinder_net_receiver_")
+        and contains(&emitted.stdout, "cinder_net_socket_drop(&cinder_net_receiver_")
+        and contains(&emitted.stdout, "__auto_type cinder_net_buffer_value_")
+        and contains(&emitted.stdout, "CinderList_u8_drop(&cinder_net_buffer_value_")
+        and contains(&emitted.stdout, "__auto_type cinder_net_poll_fds_value_")
+        and contains(&emitted.stdout, "CinderList_PollFd_drop(&cinder_net_poll_fds_value_")
+        and contains(&emitted.stdout, "__socket_reference(socket); int32_t cinder_net_fileno_")
+        and contains(&emitted.stdout, "__socket_pointer(socket); int32_t cinder_net_fileno_")
+        and contains(&emitted.stdout, "(void *)(*cinder_net_buffer_")
+        and contains(&emitted.stdout, "), 4, &cinder_net_error_value")
+        and contains(&emitted.stdout, "), 8, &cinder_net_error_value")
+        and contains(&emitted.stdout, "(void *)(*cinder_net_poll_fds_")
+        and contains(&emitted.stdout, "), 1, cinder_net_poll_timeout_")
+        and contains(&emitted.stdout, "(CinderNetError){")
+        and contains(&emitted.stdout, "return (CinderNetError){ .kind = CinderNetErrorKind_invalid_input, .code = 0 };")
+        and contains(&emitted.stdout, "CINDER_NET_AF_INET")
+        and contains(&emitted.stdout, "CINDER_NET_AF_INET6")
+        and contains(&emitted.stdout, "CINDER_NET_SOCK_STREAM")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_IN")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_OUT")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_ERROR")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_HANGUP")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_INVALID")
+        and not contains(&emitted.stdout, "fileno(&connection)")
+        and not contains(&emitted.stdout, "std_net__NetError")
+        and not contains(&emitted.stdout, "cinder_string_cstr(&net_regressions__host())")
+        and not contains(&emitted.stdout, " = &cinder_net_regressions_net_regressions__socket_identity(")
+        and not contains(&emitted.stdout, " = &cinder_net_regressions_net_regressions__payload(")
+        and not contains(&emitted.stdout, " = &cinder_net_regressions_net_regressions__make_poll_fds(")
+    )
+    expect(state, "std.net direct imports, matches, temporaries, and aliases lower safely", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
+
+
+def test_net_diagnostics(state: &TestState) -> void:
+    bad_member: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_member.ci",
+    ]
+    bad_buffer: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_buffer.ci",
+    ]
+    bad_constructor: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_socket_constructor.ci",
+    ]
+    const_socket: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_const_socket_method.ci",
+    ]
+    const_poll: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_const_poll_buffer.ci",
+    ]
+    bad_attribute: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_namespace_attr.ci",
+    ]
+    member_result = process.run(bad_member)
+    buffer_result = process.run(bad_buffer)
+    constructor_result = process.run(bad_constructor)
+    const_socket_result = process.run(const_socket)
+    const_poll_result = process.run(const_poll)
+    attribute_result = process.run(bad_attribute)
+    ok = (
+        member_result.exit_code == 1
+        and contains(&member_result.stderr, "cannot resolve std.net.missing")
+        and buffer_result.exit_code == 1
+        and contains(&buffer_result.stderr, "expected []const u8, found String")
+        and constructor_result.exit_code == 1
+        and contains(&constructor_result.stderr, "checker.non-constructible-runtime-type/422")
+        and contains(&constructor_result.stderr, "Socket cannot be constructed directly")
+        and const_socket_result.exit_code == 1
+        and contains(&const_socket_result.stderr, "checker.socket-const-receiver/423")
+        and contains(&const_socket_result.stderr, "cannot call close through a const Socket reference")
+        and const_poll_result.exit_code == 1
+        and contains(&const_poll_result.stderr, "expected []PollFd, found []const PollFd")
+        and attribute_result.exit_code == 1
+        and contains(&attribute_result.stderr, "cannot resolve std.net.NOPE")
+    )
+    expect(state, "std.net rejects invalid members, buffers, construction, and const mutation", ok)
+    if not ok:
+        report_process_failure(&member_result.stdout, &member_result.stderr)
+        report_process_failure(&buffer_result.stdout, &buffer_result.stderr)
+        report_process_failure(&constructor_result.stdout, &constructor_result.stderr)
+        report_process_failure(&const_socket_result.stdout, &const_socket_result.stderr)
+        report_process_failure(&const_poll_result.stdout, &const_poll_result.stderr)
+        report_process_failure(&attribute_result.stdout, &attribute_result.stderr)
+
+
+def test_net_shadowing(state: &TestState) -> void:
+    source = state.root + "/tests/cases/net_shadow_project"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/net-shadow",
+        "--build-dir",
+        state.workspace + "/net-shadow-build",
+    ]
+    emitted = process.run(emit_command)
+    ran = process.run(run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "net_shadow_demo_std_net__socket")
+        and not contains(&emitted.stdout, "cinder_net_socket")
+    )
+    expect(state, "local std.net modules shadow the compiler builtin", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
 
 
 def test_path_codegen(state: &TestState) -> void:

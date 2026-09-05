@@ -14,6 +14,9 @@ enum TypeKind:
     STRING_BUILDER
     CONVERT_ERROR
     LOCK
+    I16
+    U8
+    USIZE
     NAMED
     POINTER
     REFERENCE
@@ -39,6 +42,10 @@ enum TypeKind:
     MAP_VALUES
     MAP_ITEMS
     FILE
+    SOCKET
+    POLL_FD
+    NET_ERROR
+    NET_ERROR_KIND
     ATOMIC
     ATOMIC_COMPARE_EXCHANGE_RESULT
 
@@ -68,6 +75,7 @@ struct TypeRecord:
 struct TypeTable:
     types: List[TypeRecord]
     type_args: List[TypeId]
+    net_namespaces: List[String]
 
     def add(self: &TypeTable, kind: TypeKind, name_start: usize, name_length: usize, inner: TypeId, extra: i32, flags: i32) -> TypeId:
         return self.add_full(kind, name_start, name_length, inner, missing_type(), extra, flags)
@@ -116,6 +124,24 @@ struct TypeTable:
 
     def ordered_lock_list(self: &TypeTable) -> TypeId:
         return self.add(TypeKind.LIST, 0, 0, type_lock(), 1, 1)
+
+    def register_net_namespace(self: &TypeTable, source: &const String, start: usize, length: usize) -> void:
+        name = source[start:start + length]
+        index: usize = 0
+        while index < len(self.net_namespaces):
+            if self.net_namespaces[index] == name:
+                return
+            index += 1
+        self.net_namespaces.append(name)
+
+    def is_net_namespace(self: &const TypeTable, source: &const String, start: usize, length: usize) -> bool:
+        index: usize = 0
+        while index < len(self.net_namespaces):
+            candidate: &const String = &self.net_namespaces[index]
+            if source_range_equals_string(source, start, length, candidate):
+                return true
+            index += 1
+        return false
 
     def named(self: &TypeTable, start: usize, length: usize) -> TypeId:
         return self.add(TypeKind.NAMED, start, length, missing_type(), 0, 0)
@@ -257,6 +283,10 @@ struct TypeTable:
             return type_lock()
         if range_text_equals(source, start, length, "File"):
             return self.nominal(TypeKind.FILE, start, length)
+        if self.is_net_namespace(source, start, length):
+            qualified = resolve_qualified_net_type(source, start + length)
+            if qualified.index >= 0:
+                return qualified
         return self.named(start, length)
 
     def resolve_generic_type_node(self: &TypeTable, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String) -> TypeId:
@@ -425,6 +455,12 @@ def append_type_display(builder: &StringBuilder, table: &const TypeTable, type_i
         builder.append("ConvertError")
     elif record.kind == TypeKind.LOCK:
         builder.append("Lock")
+    elif record.kind == TypeKind.I16:
+        builder.append("i16")
+    elif record.kind == TypeKind.U8:
+        builder.append("u8")
+    elif record.kind == TypeKind.USIZE:
+        builder.append("usize")
     elif record.kind == TypeKind.POINTER:
         builder.append("*")
         append_type_display(builder, table, record.inner, source)
@@ -497,6 +533,14 @@ def append_type_display(builder: &StringBuilder, table: &const TypeTable, type_i
             append_type_source_name(builder, source, record.name_start, record.name_length)
         else:
             builder.append("File")
+    elif record.kind == TypeKind.SOCKET:
+        builder.append("Socket")
+    elif record.kind == TypeKind.POLL_FD:
+        builder.append("PollFd")
+    elif record.kind == TypeKind.NET_ERROR:
+        builder.append("NetError")
+    elif record.kind == TypeKind.NET_ERROR_KIND:
+        builder.append("NetErrorKind")
     elif is_nominal_kind(record.kind):
         append_type_source_name(builder, source, record.name_start, record.name_length)
         if record.flags > 0:
@@ -588,7 +632,8 @@ def append_type_source_name(builder: &StringBuilder, source: &const String, star
 def new_type_table() -> TypeTable:
     records: List[TypeRecord] = []
     args: List[TypeId] = []
-    table = TypeTable(types=records, type_args=args)
+    net_namespaces: List[String] = []
+    table = TypeTable(types=records, type_args=args, net_namespaces=net_namespaces)
     table.primitive(TypeKind.ERROR)
     table.primitive(TypeKind.VOID)
     table.primitive(TypeKind.BOOL)
@@ -600,6 +645,13 @@ def new_type_table() -> TypeTable:
     table.primitive(TypeKind.STRING_BUILDER)
     table.primitive(TypeKind.CONVERT_ERROR)
     table.primitive(TypeKind.LOCK)
+    table.primitive(TypeKind.I16)
+    table.primitive(TypeKind.U8)
+    table.primitive(TypeKind.USIZE)
+    table.primitive(TypeKind.SOCKET)
+    table.primitive(TypeKind.POLL_FD)
+    table.primitive(TypeKind.NET_ERROR)
+    table.primitive(TypeKind.NET_ERROR_KIND)
     return table
 
 
@@ -645,6 +697,55 @@ def type_convert_error() -> TypeId:
 
 def type_lock() -> TypeId:
     return TypeId(index=10)
+
+def type_i16() -> TypeId:
+    return TypeId(index=11)
+
+
+def type_u8() -> TypeId:
+    return TypeId(index=12)
+
+
+def type_usize() -> TypeId:
+    return TypeId(index=13)
+
+
+def type_socket() -> TypeId:
+    return TypeId(index=14)
+
+
+def type_poll_fd() -> TypeId:
+    return TypeId(index=15)
+
+
+def type_net_error() -> TypeId:
+    return TypeId(index=16)
+
+
+def type_net_error_kind() -> TypeId:
+    return TypeId(index=17)
+
+
+def resolve_qualified_net_type(source: &const String, separator: usize) -> TypeId:
+    if separator >= len(source) or source.byte_at(separator) != 46:
+        return missing_type()
+    start = separator + 1
+    end = start
+    while end < len(source):
+        byte = source.byte_at(end)
+        if not ((byte >= 65 and byte <= 90) or (byte >= 97 and byte <= 122) or (byte >= 48 and byte <= 57) or byte == 95):
+            break
+        end += 1
+    length = end - start
+    if range_text_equals(source, start, length, "Socket"):
+        return type_socket()
+    if range_text_equals(source, start, length, "PollFd"):
+        return type_poll_fd()
+    if range_text_equals(source, start, length, "NetError"):
+        return type_net_error()
+    if range_text_equals(source, start, length, "NetErrorKind"):
+        return type_net_error_kind()
+    return missing_type()
 
 
 def first_child(arena: &const syntax.SyntaxArena, id: NodeId) -> NodeId:
@@ -701,6 +802,17 @@ def callable_type_has_return(source: &const String, node: &const syntax.SyntaxNo
 
 def range_text_equals(source: &const String, start: usize, length: usize, text: String) -> bool:
     if length != len(text):
+        return false
+    offset: usize = 0
+    while offset < length:
+        if source.byte_at(start + offset) != text.byte_at(offset):
+            return false
+        offset += 1
+    return true
+
+
+def source_range_equals_string(source: &const String, start: usize, length: usize, text: &const String) -> bool:
+    if length != len(text) or start > len(source) or length > len(source) - start:
         return false
     offset: usize = 0
     while offset < length:

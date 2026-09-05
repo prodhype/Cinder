@@ -573,6 +573,14 @@ def emit_semantic_readable_type_name(table: &const types.TypeTable, type_id: typ
         builder.append("Lock")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE")
+    elif record.kind == types.TypeKind.SOCKET:
+        builder.append("Socket")
+    elif record.kind == types.TypeKind.POLL_FD:
+        builder.append("PollFd")
+    elif record.kind == types.TypeKind.NET_ERROR:
+        builder.append("NetError")
+    elif record.kind == types.TypeKind.NET_ERROR_KIND:
+        builder.append("NetErrorKind")
     elif record.kind == types.TypeKind.ATOMIC:
         codegen_atomics.append_atomic_wrapper_name(builder, types.atomic_type_element_kind(table, type_id))
     elif record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
@@ -703,6 +711,14 @@ def emit_semantic_c_type(
         builder.append("CinderLock")
     elif record.kind == types.TypeKind.FILE:
         builder.append("FILE *")
+    elif record.kind == types.TypeKind.SOCKET:
+        builder.append("CinderSocket")
+    elif record.kind == types.TypeKind.POLL_FD:
+        builder.append("CinderPollFd")
+    elif record.kind == types.TypeKind.NET_ERROR:
+        builder.append("CinderNetError")
+    elif record.kind == types.TypeKind.NET_ERROR_KIND:
+        builder.append("CinderNetErrorKind")
     elif record.kind == types.TypeKind.ATOMIC:
         codegen_atomics.append_atomic_wrapper_name(builder, types.atomic_type_element_kind(table, type_id))
     elif record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
@@ -848,6 +864,10 @@ def emit_module_nominal_type(
             alias = source[first_node.value_start:first_node.value_start + first_node.value_length]
             imported_alias = codegen_names.find_import_alias(imports, &alias)
             if len(imported_alias.module_name) > 0:
+                if imported_alias.virtual_builtin and imported_alias.module_name == "std.net":
+                    member_name = source[second_node.value_start:second_node.value_start + second_node.value_length]
+                    if emit_std_net_runtime_type(builder, &member_name):
+                        return
                 imported_prefix = codegen_names.c_prefix(project_name, &imported_alias.module_name)
                 builder.append(imported_prefix)
                 codegen_names.append_source(builder, source, second_node.value_start, second_node.value_length)
@@ -855,12 +875,30 @@ def emit_module_nominal_type(
         name = source[node.value_start:node.value_start + node.value_length]
         imported = codegen_names.find_import_member(imports, &name)
         if len(imported.module_name) > 0 and len(imported.member) > 0:
+            if imported.virtual_builtin and imported.module_name == "std.net" and emit_std_net_runtime_type(builder, &imported.member):
+                return
             imported_prefix = codegen_names.c_prefix(project_name, &imported.module_name)
             builder.append(imported_prefix)
             builder.append(imported.member)
         else:
             builder.append(prefix[0:len(prefix)])
             codegen_names.append_source(builder, source, node.value_start, node.value_length)
+
+
+def emit_std_net_runtime_type(builder: &StringBuilder, name: &const String) -> bool:
+    if name == "Socket":
+        builder.append("CinderSocket")
+        return true
+    if name == "PollFd":
+        builder.append("CinderPollFd")
+        return true
+    if name == "NetError":
+        builder.append("CinderNetError")
+        return true
+    if name == "NetErrorKind":
+        builder.append("CinderNetErrorKind")
+        return true
+    return false
 
 def find_child_type(arena: &const SyntaxArena, id: NodeId) -> NodeId:
     node = arena.nodes[id.index]

@@ -1,0 +1,82 @@
+import process
+import std.net as net
+from std.net import NetError, PollFd, Socket
+
+
+const TEST_PORT: i32 = 39483
+
+
+def fail(kind: net.NetErrorKind) -> NetError:
+    return NetError(kind=kind, code=0)
+
+
+def run_client() -> Result[void, NetError]:
+    socket = net.socket()?
+    socket.connect(port=TEST_PORT, host="127.0.0.1")?
+    payload: u8[4] = [112, 105, 110, 103]
+    counted = socket.send(payload)?
+    if counted != 4:
+        return Err(fail(net.NetErrorKind.system))
+    socket.close()?
+    return Ok()
+
+
+def run_server(executable: String) -> Result[void, NetError]:
+    listener = net.socket()?
+    listener.bind(port=TEST_PORT, host="127.0.0.1")?
+    listener.listen(4)?
+    listener.set_blocking(blocking=false)?
+
+    match listener.accept():
+        case Ok(_):
+            return Err(fail(net.NetErrorKind.system))
+        case Err(error):
+            if error.kind != net.NetErrorKind.would_block:
+                return Err(fail(net.NetErrorKind.system))
+
+    watched: List[PollFd] = [PollFd(&listener, net.POLL_IN)]
+    before = net.poll(watched, 0)?
+    if before != 0:
+        return Err(fail(net.NetErrorKind.system))
+
+    listener.set_blocking(true)?
+    command: List[String] = [executable, "--client"]
+    child = process.run(command)
+    if child.exit_code != 0:
+        return Err(fail(net.NetErrorKind.system))
+
+    ready = net.poll(watched, 1000)?
+    if ready != 1 or watched[0].revents & net.POLL_IN == 0:
+        return Err(fail(net.NetErrorKind.timed_out))
+
+    connection = listener.accept()?
+    buffer: u8[8]
+    counted = connection.recv(buffer)?
+    if (
+        counted != 4
+        or buffer[0] != 112
+        or buffer[1] != 105
+        or buffer[2] != 110
+        or buffer[3] != 103
+    ):
+        return Err(fail(net.NetErrorKind.system))
+    eof = connection.recv(buffer)?
+    if eof != 0:
+        return Err(fail(net.NetErrorKind.system))
+    connection.close()?
+    listener.close()?
+    return Ok()
+
+
+def main(argc: i32, argv: **char) -> i32:
+    result: Result[void, NetError]
+    if argc == 2:
+        result = run_client()
+    else:
+        result = run_server(String(argv[0]))
+    match result:
+        case Ok():
+            return 0
+        case Err(error):
+            print("net loopback failed:", cast[i32](error.kind), error.code)
+            return 1

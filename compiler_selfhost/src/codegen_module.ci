@@ -148,6 +148,8 @@ def emit_module_header_with_semantics_and_models(
     if codegen_atomics.module_uses_atomics(semantic_nodes, type_table):
         codegen_atomics.emit_atomic_header_support(builder)
     emit_common_support(builder)
+    if module_uses_net(semantic_nodes, type_table):
+        emit_net_support(builder)
     for dependency in dependencies:
         if not project.import_module_is_virtual_builtin(imports, &dependency):
             builder.append("#include \"")
@@ -337,6 +339,105 @@ def append_reflection_field_offset(
     builder.append(", _base) + ")
     append_reflection_field_offset(builder, model, class_model, base, owner, field_name)
     builder.append(")")
+
+
+def module_uses_net(nodes: &const List[backend_ir.IRNode], table: &const types.TypeTable) -> bool:
+    for node in nodes:
+        if semantic_type_contains_net(table, node.type_id):
+            return true
+    return false
+
+
+def semantic_type_contains_net(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    if type_id.index < 0 or type_id.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[type_id.index]
+    if record.kind == types.TypeKind.SOCKET or record.kind == types.TypeKind.POLL_FD or record.kind == types.TypeKind.NET_ERROR or record.kind == types.TypeKind.NET_ERROR_KIND:
+        return true
+    if record.kind == types.TypeKind.CONST or record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.ARRAY or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.DYN or record.kind == types.TypeKind.OPTION or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.SET or types.is_map_view_kind(record.kind):
+        return semantic_type_contains_net(table, record.inner)
+    if record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.RESULT:
+        return semantic_type_contains_net(table, record.inner) or semantic_type_contains_net(table, record.second)
+    if record.kind == types.TypeKind.TUPLE:
+        offset: i32 = 0
+        while offset < record.flags:
+            if semantic_type_contains_net(table, table.type_args[cast[usize](record.extra + offset)]):
+                return true
+            offset += 1
+    if record.kind == types.TypeKind.FUNCTION or record.kind == types.TypeKind.CLOSURE:
+        if record.kind == types.TypeKind.CLOSURE and semantic_type_contains_net(table, record.second):
+            return true
+        if semantic_type_contains_net(table, record.inner):
+            return true
+        offset: i32 = 0
+        while offset < record.flags:
+            if semantic_type_contains_net(table, table.type_args[cast[usize](record.extra + offset)]):
+                return true
+            offset += 1
+    return false
+
+
+def emit_net_support(builder: &StringBuilder) -> void:
+    builder.append("\n#ifndef CINDER_SELFHOST_NET_SUPPORT\n")
+    builder.append("#define CINDER_SELFHOST_NET_SUPPORT\n")
+    builder.append("#ifndef CINDER_DECLARED_CinderResult_Socket_NetError\n")
+    builder.append("#define CINDER_DECLARED_CinderResult_Socket_NetError\n")
+    builder.append("typedef struct CinderResult_Socket_NetError CinderResult_Socket_NetError;\n")
+    builder.append("#endif\n")
+    builder.append("#ifndef CINDER_SPECIALIZED_CinderResult_Socket_NetError\n")
+    builder.append("#define CINDER_SPECIALIZED_CinderResult_Socket_NetError\n")
+    builder.append("typedef enum CinderResult_Socket_NetError_Tag { CinderResult_Socket_NetError_Tag_Ok = 0, CinderResult_Socket_NetError_Tag_Err = 1 } CinderResult_Socket_NetError_Tag;\n")
+    builder.append("struct CinderResult_Socket_NetError { CinderResult_Socket_NetError_Tag tag; union { unsigned char _cinder_empty; CinderSocket ok; CinderNetError err; } data; };\n")
+    builder.append("static inline void CinderResult_Socket_NetError_drop(CinderResult_Socket_NetError *self) { if (self != NULL && self->tag == CinderResult_Socket_NetError_Tag_Ok) cinder_net_socket_drop(&self->data.ok); }\n")
+    builder.append("#endif\n")
+    builder.append("#ifndef CINDER_DECLARED_CinderResult_usize_NetError\n")
+    builder.append("#define CINDER_DECLARED_CinderResult_usize_NetError\n")
+    builder.append("typedef struct CinderResult_usize_NetError CinderResult_usize_NetError;\n")
+    builder.append("#endif\n")
+    builder.append("#ifndef CINDER_SPECIALIZED_CinderResult_usize_NetError\n")
+    builder.append("#define CINDER_SPECIALIZED_CinderResult_usize_NetError\n")
+    builder.append("typedef enum CinderResult_usize_NetError_Tag { CinderResult_usize_NetError_Tag_Ok = 0, CinderResult_usize_NetError_Tag_Err = 1 } CinderResult_usize_NetError_Tag;\n")
+    builder.append("struct CinderResult_usize_NetError { CinderResult_usize_NetError_Tag tag; union { unsigned char _cinder_empty; size_t ok; CinderNetError err; } data; };\n")
+    builder.append("static inline void CinderResult_usize_NetError_drop(CinderResult_usize_NetError *self) { (void)self; }\n")
+    builder.append("#endif\n")
+    builder.append("#ifndef CINDER_DECLARED_CinderResult_void_NetError\n")
+    builder.append("#define CINDER_DECLARED_CinderResult_void_NetError\n")
+    builder.append("typedef struct CinderResult_void_NetError CinderResult_void_NetError;\n")
+    builder.append("#endif\n")
+    builder.append("#ifndef CINDER_SPECIALIZED_CinderResult_void_NetError\n")
+    builder.append("#define CINDER_SPECIALIZED_CinderResult_void_NetError\n")
+    builder.append("typedef enum CinderResult_void_NetError_Tag { CinderResult_void_NetError_Tag_Ok = 0, CinderResult_void_NetError_Tag_Err = 1 } CinderResult_void_NetError_Tag;\n")
+    builder.append("struct CinderResult_void_NetError { CinderResult_void_NetError_Tag tag; union { unsigned char _cinder_empty; unsigned char ok; CinderNetError err; } data; };\n")
+    builder.append("static inline void CinderResult_void_NetError_drop(CinderResult_void_NetError *self) { (void)self; }\n")
+    builder.append("#endif\n")
+    builder.append("static inline ptrdiff_t cinder_selfhost_net_recv(CinderSocket *socket, void *data, size_t length, CinderNetError *error) {\n")
+    builder.append("#ifndef _WIN32\n")
+    builder.append("    ssize_t result = recv(socket->handle, data, length, 0);\n")
+    builder.append("    if (result < 0 && error != NULL) *error = cinder_net_error_from_code(errno);\n")
+    builder.append("    return (ptrdiff_t)result;\n")
+    builder.append("#else\n")
+    builder.append("    (void)socket; (void)data; (void)length; if (error != NULL) *error = (CinderNetError){ CinderNetErrorKind_unsupported, 0 }; return -1;\n")
+    builder.append("#endif\n")
+    builder.append("}\n")
+    builder.append("static inline ptrdiff_t cinder_selfhost_net_send(CinderSocket *socket, const void *data, size_t length, CinderNetError *error) {\n")
+    builder.append("#ifndef _WIN32\n")
+    builder.append("    ssize_t result = send(socket->handle, data, length, CINDER_NET_SEND_FLAGS);\n")
+    builder.append("    if (result < 0 && error != NULL) *error = cinder_net_error_from_code(errno);\n")
+    builder.append("    return (ptrdiff_t)result;\n")
+    builder.append("#else\n")
+    builder.append("    (void)socket; (void)data; (void)length; if (error != NULL) *error = (CinderNetError){ CinderNetErrorKind_unsupported, 0 }; return -1;\n")
+    builder.append("#endif\n")
+    builder.append("}\n")
+    builder.append("static inline ptrdiff_t cinder_selfhost_net_poll(void *fds, size_t length, int32_t timeout_ms, CinderNetError *error) {\n")
+    builder.append("#ifndef _WIN32\n")
+    builder.append("    int result = poll((struct pollfd *)fds, (nfds_t)length, timeout_ms);\n")
+    builder.append("    if (result < 0 && error != NULL) *error = cinder_net_error_from_code(errno);\n")
+    builder.append("    return (ptrdiff_t)result;\n")
+    builder.append("#else\n")
+    builder.append("    (void)fds; (void)length; (void)timeout_ms; if (error != NULL) *error = (CinderNetError){ CinderNetErrorKind_unsupported, 0 }; return -1;\n")
+    builder.append("#endif\n")
+    builder.append("}\n")
+    builder.append("#endif\n")
 
 
 def emit_common_support(builder: &StringBuilder) -> void:

@@ -1,0 +1,42 @@
+import std.net as net
+from std.net import NetError, PollFd, Socket
+
+
+def echo_once(socket: &Socket, buffer: []u8) -> Result[usize, NetError]:
+    counted = socket.recv(buffer)?
+    if counted == 0:
+        return Ok(0)
+    return socket.send(buffer[0:counted])
+
+
+def all_poll_events(socket: &Socket) -> PollFd:
+    events = (
+        net.POLL_IN
+        | net.POLL_OUT
+        | net.POLL_ERROR
+        | net.POLL_HANGUP
+        | net.POLL_INVALID
+    )
+    return PollFd(socket, events)
+
+
+def exercise_socket() -> Result[void, NetError]:
+    socket = net.socket(type=net.SOCK_STREAM, family=net.AF_INET)?
+    watched: List[PollFd] = [
+        PollFd(events=net.POLL_OUT, socket=&socket),
+    ]
+    ready = net.poll(timeout_ms=0, fds=watched)?
+    descriptor = socket.fileno()
+    if descriptor < 0 or ready > 1:
+        return Err(NetError(kind=net.NetErrorKind.invalid_input, code=0))
+    socket.close()?
+    return Ok()
+
+
+def main() -> i32:
+    match exercise_socket():
+        case Ok():
+            return 0
+        case Err(error):
+            print("network example failed:", cast[i32](error.kind), error.code)
+            return 1

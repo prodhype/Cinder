@@ -207,6 +207,16 @@ def imported_member_is_path_namespace(
     return module_name == "std.path" and member_name == "Path" and project.module_name_is_virtual_builtin(module_name, modules)
 
 
+def imported_member_is_net_builtin(
+    module_name: &const String,
+    member_name: &const String,
+    modules: &const List[project.ParsedModule],
+) -> bool:
+    if module_name != "std.net" or not project.module_name_is_virtual_builtin(module_name, modules):
+        return false
+    return member_name == "AF_INET" or member_name == "AF_INET6" or member_name == "SOCK_STREAM" or member_name == "POLL_IN" or member_name == "POLL_OUT" or member_name == "POLL_ERROR" or member_name == "POLL_HANGUP" or member_name == "POLL_INVALID" or member_name == "Socket" or member_name == "PollFd" or member_name == "NetError" or member_name == "NetErrorKind" or member_name == "socket" or member_name == "poll"
+
+
 def imported_member_is_lock(
     module_name: &const String,
     member_name: &const String,
@@ -266,6 +276,9 @@ def validate_from_import_members(checker: &checker_core.Checker, arena: &const s
     module_name = source[dotted_node.start:dotted_node.start + dotted_node.length]
     if module_name == "std.path" and project.module_name_is_virtual_builtin(&module_name, modules):
         validate_path_import_members(checker, arena, id, source, &module_name, modules)
+        return
+    if module_name == "std.net" and project.module_name_is_virtual_builtin(&module_name, modules):
+        validate_net_import_members(checker, arena, id, source, &module_name, modules)
         return
     module_index: i32 = -1
     index: i32 = 0
@@ -329,6 +342,34 @@ def validate_path_import_members(
             if name_node.kind == syntax.SyntaxKind.NAME and name_node.flags != 1:
                 member_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
                 if not imported_member_is_path_namespace(module_name, &member_name, modules):
+                    checker_core.emit_import_member_error(
+                        checker,
+                        &name_node,
+                        module_name[0:len(module_name)],
+                        member_name[0:len(member_name)],
+                    )
+
+
+def validate_net_import_members(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    module_name: &const String,
+    modules: &const List[project.ParsedModule],
+) -> void:
+    node = arena.nodes[id.index]
+    for offset in range(0, node.child_count):
+        import_id = arena.children[node.first_child + offset]
+        imported = arena.nodes[import_id.index]
+        if imported.kind != syntax.SyntaxKind.IMPORT_NAME:
+            continue
+        for item_offset in range(0, imported.child_count):
+            name_id = arena.children[imported.first_child + item_offset]
+            name_node = arena.nodes[name_id.index]
+            if name_node.kind == syntax.SyntaxKind.NAME and name_node.flags != 1:
+                member_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+                if not imported_member_is_net_builtin(module_name, &member_name, modules):
                     checker_core.emit_import_member_error(
                         checker,
                         &name_node,

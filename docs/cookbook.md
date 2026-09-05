@@ -252,8 +252,9 @@ Frequently used globals need no import:
 Python-style `key` or `reverse` arguments. F-strings are currently accepted
 only as arguments to `print`.
 
-Common compiler-provided modules are `math`, `process`, `std.atomic`, `std.path`,
-`stdio`, `stdlib`, `string`, and `cinder`. Local modules may shadow them.
+Common compiler-provided modules are `math`, `process`, `std.atomic`, `std.net`,
+`std.path`, `stdio`, `stdlib`, `string`, and `cinder`. Local modules may shadow
+them.
 
 ```python
 import math
@@ -300,6 +301,47 @@ Path.rename(file_path, final_path)
   `stat`/`mkdir`/`unlink`/`rename`; they do not start shell utilities. Windows
   builds compile the API, but filesystem operations currently panic as
   unsupported.
+
+`std.net` provides move-only TCP sockets for IPv4 and IPv6:
+
+```python
+import std.net as net
+
+listener = net.socket(net.AF_INET, net.SOCK_STREAM)?
+listener.bind("127.0.0.1", 8080)?
+listener.listen(128)?
+
+watched: List[net.PollFd] = [
+    net.PollFd(&listener, net.POLL_IN),
+]
+ready = net.poll(watched, -1)?
+if ready > 0 and watched[0].revents & net.POLL_IN != 0:
+    connection = listener.accept()?
+    buffer: u8[4096]
+    count = connection.recv(buffer)?
+```
+
+- `net.socket()` defaults to `AF_INET`, `SOCK_STREAM`, and protocol `0`; it
+  also accepts `family`, `type`, and `protocol` arguments.
+- `bind(host, port)` and `connect(host, port)` accept numeric addresses or
+  hostnames; ports must be between 0 and 65535. `listen`, `accept`,
+  `set_blocking`, `fileno`, and `close` provide the remaining TCP lifecycle
+  operations.
+- `recv([]u8)` fills a mutable byte slice and returns `Ok(0)` for orderly EOF.
+  `send([]const u8)` may report a partial byte count.
+- Socket operations return `Result[..., NetError]`. Inspect `error.kind` for a
+  portable category such as `would_block`, and `error.code` for the native
+  error number.
+- `PollFd` snapshots a descriptor without keeping its `Socket` alive.
+  `poll(fds, timeout_ms)` updates each entry's `revents`; `-1` waits
+  indefinitely and `0` returns immediately.
+- Socket scope exit closes an open descriptor. Explicit `close()` reports an
+  error and invalidates the handle before closing it.
+
+The initial implementation supports TCP streams on POSIX platforms. Windows
+builds compile the API but return `NetErrorKind.unsupported`. UDP, Unix-domain
+sockets, socket options, peer-address reporting, and `sendall` are not part of
+the first API.
 
 Integer atomics provide `load`, `store`, `exchange`, `compare_exchange`, and
 `fetch_add`, `fetch_sub`, `fetch_and`, `fetch_or`, and `fetch_xor`. Bool atomics

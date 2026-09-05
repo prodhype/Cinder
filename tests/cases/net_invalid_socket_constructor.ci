@@ -1,0 +1,10 @@
+from std.net import Socket
+
+
+def descriptor(socket: &Socket) -> i32:
+    return socket.fileno()
+
+
+def main() -> i32:
+    socket = Socket()
+    return descriptor(&socket)

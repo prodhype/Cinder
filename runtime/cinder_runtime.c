@@ -1,3 +1,7 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200112L
+#endif
+
 #include "cinder_runtime.h"
 
 #include <ctype.h>
@@ -12,6 +16,8 @@
 #include <time.h>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
+#include <netdb.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -24,6 +30,532 @@ CINDER_NORETURN void cinder_panic(const char *message)
     const char *text = message != NULL ? message : "Cinder panic";
     (void)fprintf(stderr, "panic: %s\n", text);
     abort();
+}
+
+static CinderNetError cinder_net_make_error(
+    CinderNetErrorKind kind,
+    int32_t code
+)
+{
+    CinderNetError error = {kind, code};
+    return error;
+}
+
+static void cinder_net_store_error(
+    CinderNetError *out,
+    CinderNetError error
+)
+{
+    if (out != NULL) {
+        *out = error;
+    }
+}
+
+#if defined(_WIN32)
+
+static bool cinder_net_unsupported(CinderNetError *error)
+{
+    cinder_net_store_error(
+        error,
+        cinder_net_make_error(CinderNetErrorKind_unsupported, 0)
+    );
+    return false;
+}
+
+CinderNetError cinder_net_error_from_code(int32_t code)
+{
+    return cinder_net_make_error(CinderNetErrorKind_unsupported, code);
+}
+
+CinderNetError cinder_net_last_error(void)
+{
+    return cinder_net_make_error(CinderNetErrorKind_unsupported, 0);
+}
+
+bool cinder_net_socket(
+    int32_t family,
+    int32_t type,
+    int32_t protocol,
+    CinderSocket *out,
+    CinderNetError *error
+)
+{
+    if (out != NULL) {
+        *out = (CinderSocket)CINDER_NET_SOCKET_INIT(family, type, protocol);
+    }
+    return cinder_net_unsupported(error);
+}
+
+bool cinder_net_bind(
+    CinderSocket *socket,
+    const char *host,
+    int32_t port,
+    CinderNetError *error
+)
+{
+    (void)socket;
+    (void)host;
+    (void)port;
+    return cinder_net_unsupported(error);
+}
+
+bool cinder_net_connect(
+    CinderSocket *socket,
+    const char *host,
+    int32_t port,
+    CinderNetError *error
+)
+{
+    (void)socket;
+    (void)host;
+    (void)port;
+    return cinder_net_unsupported(error);
+}
+
+bool cinder_net_listen(
+    CinderSocket *socket,
+    int32_t backlog,
+    CinderNetError *error
+)
+{
+    (void)socket;
+    (void)backlog;
+    return cinder_net_unsupported(error);
+}
+
+bool cinder_net_accept(
+    CinderSocket *socket,
+    CinderSocket *out,
+    CinderNetError *error
+)
+{
+    if (out != NULL) {
+        *out = (CinderSocket)CINDER_NET_SOCKET_INIT(
+            socket == NULL ? 0 : socket->family,
+            socket == NULL ? 0 : socket->type,
+            socket == NULL ? 0 : socket->protocol
+        );
+    }
+    return cinder_net_unsupported(error);
+}
+
+bool cinder_net_set_blocking(
+    CinderSocket *socket,
+    bool blocking,
+    CinderNetError *error
+)
+{
+    (void)socket;
+    (void)blocking;
+    return cinder_net_unsupported(error);
+}
+
+bool cinder_net_close(CinderSocket *socket, CinderNetError *error)
+{
+    if (socket != NULL) {
+        socket->handle = CINDER_NET_INVALID_SOCKET;
+    }
+    return cinder_net_unsupported(error);
+}
+
+#else
+
+CinderNetError cinder_net_error_from_code(int32_t code)
+{
+    CinderNetErrorKind kind = CinderNetErrorKind_system;
+
+    if (code == EAGAIN
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+        || code == EWOULDBLOCK
+#endif
+#if defined(EINPROGRESS)
+        || code == EINPROGRESS
+#endif
+#if defined(EALREADY)
+        || code == EALREADY
+#endif
+    ) {
+        kind = CinderNetErrorKind_would_block;
+    } else if (code == EINTR) {
+        kind = CinderNetErrorKind_interrupted;
+    } else if (code == EADDRINUSE) {
+        kind = CinderNetErrorKind_address_in_use;
+    } else if (code == ECONNREFUSED) {
+        kind = CinderNetErrorKind_connection_refused;
+    } else if (code == ECONNRESET
+#if defined(ECONNABORTED)
+        || code == ECONNABORTED
+#endif
+    ) {
+        kind = CinderNetErrorKind_connection_reset;
+    } else if (code == ETIMEDOUT) {
+        kind = CinderNetErrorKind_timed_out;
+    } else if (code == ENOTCONN
+#if defined(EPIPE)
+        || code == EPIPE
+#endif
+    ) {
+        kind = CinderNetErrorKind_not_connected;
+    } else if (code == EINVAL
+#if defined(EBADF)
+        || code == EBADF
+#endif
+#if defined(ENOTSOCK)
+        || code == ENOTSOCK
+#endif
+    ) {
+        kind = CinderNetErrorKind_invalid_input;
+    } else if (code == EAFNOSUPPORT
+#if defined(EPROTONOSUPPORT)
+        || code == EPROTONOSUPPORT
+#endif
+#if defined(ESOCKTNOSUPPORT)
+        || code == ESOCKTNOSUPPORT
+#endif
+#if defined(EOPNOTSUPP)
+        || code == EOPNOTSUPP
+#endif
+#if defined(ENOTSUP) && (!defined(EOPNOTSUPP) || ENOTSUP != EOPNOTSUPP)
+        || code == ENOTSUP
+#endif
+    ) {
+        kind = CinderNetErrorKind_unsupported;
+    }
+
+    return cinder_net_make_error(kind, code);
+}
+
+CinderNetError cinder_net_last_error(void)
+{
+    return cinder_net_error_from_code((int32_t)errno);
+}
+
+static bool cinder_net_invalid_input(CinderNetError *error)
+{
+    cinder_net_store_error(
+        error,
+        cinder_net_error_from_code((int32_t)EINVAL)
+    );
+    return false;
+}
+
+static bool cinder_net_fail_errno(CinderNetError *error)
+{
+    const int saved_errno = errno;
+    cinder_net_store_error(
+        error,
+        cinder_net_error_from_code((int32_t)saved_errno)
+    );
+    return false;
+}
+
+static CinderNetError cinder_net_error_from_gai(int code)
+{
+    if (code == EAI_SYSTEM) {
+        return cinder_net_last_error();
+    }
+    if (code == EAI_AGAIN) {
+        return cinder_net_make_error(CinderNetErrorKind_timed_out, code);
+    }
+    if (code == EAI_FAMILY || code == EAI_SOCKTYPE) {
+        return cinder_net_make_error(CinderNetErrorKind_unsupported, code);
+    }
+    if (code == EAI_BADFLAGS || code == EAI_NONAME || code == EAI_SERVICE) {
+        return cinder_net_make_error(CinderNetErrorKind_invalid_input, code);
+    }
+    return cinder_net_make_error(CinderNetErrorKind_system, code);
+}
+
+static bool cinder_net_socket_valid(const CinderSocket *socket)
+{
+    return socket != NULL && socket->handle != CINDER_NET_INVALID_SOCKET;
+}
+
+bool cinder_net_socket(
+    int32_t family,
+    int32_t type,
+    int32_t protocol,
+    CinderSocket *out,
+    CinderNetError *error
+)
+{
+    if (out == NULL) {
+        return cinder_net_invalid_input(error);
+    }
+
+    *out = (CinderSocket)CINDER_NET_SOCKET_INIT(family, type, protocol);
+    const int handle = socket((int)family, (int)type, (int)protocol);
+    if (handle < 0) {
+        return cinder_net_fail_errno(error);
+    }
+#if defined(SO_NOSIGPIPE)
+    const int no_sigpipe = 1;
+    if (setsockopt(
+            handle,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &no_sigpipe,
+            (socklen_t)sizeof(no_sigpipe)
+        ) != 0) {
+        const int saved_errno = errno;
+        (void)close(handle);
+        errno = saved_errno;
+        return cinder_net_fail_errno(error);
+    }
+#endif
+    out->handle = (int32_t)handle;
+    return true;
+}
+
+typedef enum CinderNetAddressOperation {
+    CinderNetAddressOperation_bind,
+    CinderNetAddressOperation_connect
+} CinderNetAddressOperation;
+
+static bool cinder_net_address_operation(
+    CinderSocket *socket,
+    const char *host,
+    int32_t port,
+    CinderNetAddressOperation operation,
+    CinderNetError *error
+)
+{
+    if (!cinder_net_socket_valid(socket) ||
+        port < 0 ||
+        port > UINT16_MAX ||
+        (operation == CinderNetAddressOperation_connect &&
+         (host == NULL || host[0] == '\0'))) {
+        return cinder_net_invalid_input(error);
+    }
+
+    char service[6];
+    const int service_length = snprintf(
+        service,
+        sizeof(service),
+        "%u",
+        (unsigned int)port
+    );
+    if (service_length <= 0 || (size_t)service_length >= sizeof(service)) {
+        return cinder_net_invalid_input(error);
+    }
+
+    struct addrinfo hints;
+    (void)memset(&hints, 0, sizeof(hints));
+    hints.ai_family = (int)socket->family;
+    hints.ai_socktype = (int)socket->type;
+    hints.ai_protocol = (int)socket->protocol;
+    hints.ai_flags = AI_NUMERICSERV;
+
+    const char *resolved_host = host;
+    if (operation == CinderNetAddressOperation_bind &&
+        (host == NULL || host[0] == '\0')) {
+        resolved_host = NULL;
+        hints.ai_flags |= AI_PASSIVE;
+    }
+
+    struct addrinfo *addresses = NULL;
+    const int status = getaddrinfo(
+        resolved_host,
+        service,
+        &hints,
+        &addresses
+    );
+    if (status != 0) {
+        cinder_net_store_error(error, cinder_net_error_from_gai(status));
+        return false;
+    }
+
+    bool succeeded = false;
+    CinderNetError last_error =
+        cinder_net_make_error(CinderNetErrorKind_invalid_input, EINVAL);
+    for (const struct addrinfo *address = addresses;
+         address != NULL;
+         address = address->ai_next) {
+        int result;
+        if (operation == CinderNetAddressOperation_bind) {
+            result = bind(
+                (int)socket->handle,
+                address->ai_addr,
+                address->ai_addrlen
+            );
+        } else {
+            result = connect(
+                (int)socket->handle,
+                address->ai_addr,
+                address->ai_addrlen
+            );
+        }
+        if (result == 0) {
+            succeeded = true;
+            break;
+        }
+        last_error = cinder_net_last_error();
+        if (last_error.kind == CinderNetErrorKind_would_block ||
+            last_error.kind == CinderNetErrorKind_interrupted) {
+            break;
+        }
+    }
+    freeaddrinfo(addresses);
+
+    if (!succeeded) {
+        cinder_net_store_error(error, last_error);
+    }
+    return succeeded;
+}
+
+bool cinder_net_bind(
+    CinderSocket *socket,
+    const char *host,
+    int32_t port,
+    CinderNetError *error
+)
+{
+    return cinder_net_address_operation(
+        socket,
+        host,
+        port,
+        CinderNetAddressOperation_bind,
+        error
+    );
+}
+
+bool cinder_net_connect(
+    CinderSocket *socket,
+    const char *host,
+    int32_t port,
+    CinderNetError *error
+)
+{
+    return cinder_net_address_operation(
+        socket,
+        host,
+        port,
+        CinderNetAddressOperation_connect,
+        error
+    );
+}
+
+bool cinder_net_listen(
+    CinderSocket *socket,
+    int32_t backlog,
+    CinderNetError *error
+)
+{
+    if (!cinder_net_socket_valid(socket)) {
+        return cinder_net_invalid_input(error);
+    }
+    if (listen((int)socket->handle, (int)backlog) != 0) {
+        return cinder_net_fail_errno(error);
+    }
+    return true;
+}
+
+bool cinder_net_accept(
+    CinderSocket *socket,
+    CinderSocket *out,
+    CinderNetError *error
+)
+{
+    if (out == socket) {
+        return cinder_net_invalid_input(error);
+    }
+    if (out != NULL) {
+        *out = (CinderSocket)CINDER_NET_SOCKET_INIT(
+            socket == NULL ? 0 : socket->family,
+            socket == NULL ? 0 : socket->type,
+            socket == NULL ? 0 : socket->protocol
+        );
+    }
+    if (!cinder_net_socket_valid(socket) || out == NULL) {
+        return cinder_net_invalid_input(error);
+    }
+    const int accepted = accept((int)socket->handle, NULL, NULL);
+    if (accepted < 0) {
+        return cinder_net_fail_errno(error);
+    }
+    out->handle = (int32_t)accepted;
+    return true;
+}
+
+bool cinder_net_set_blocking(
+    CinderSocket *socket,
+    bool blocking,
+    CinderNetError *error
+)
+{
+    if (!cinder_net_socket_valid(socket)) {
+        return cinder_net_invalid_input(error);
+    }
+
+    const int current = fcntl((int)socket->handle, F_GETFL);
+    if (current < 0) {
+        return cinder_net_fail_errno(error);
+    }
+    const int updated = blocking ? current & ~O_NONBLOCK : current | O_NONBLOCK;
+    if (updated != current &&
+        fcntl((int)socket->handle, F_SETFL, updated) != 0) {
+        return cinder_net_fail_errno(error);
+    }
+    return true;
+}
+
+bool cinder_net_close(CinderSocket *socket, CinderNetError *error)
+{
+    if (socket == NULL) {
+        return cinder_net_invalid_input(error);
+    }
+    if (socket->handle == CINDER_NET_INVALID_SOCKET) {
+        return true;
+    }
+
+    const int handle = (int)socket->handle;
+    socket->handle = CINDER_NET_INVALID_SOCKET;
+    if (close(handle) != 0) {
+        return cinder_net_fail_errno(error);
+    }
+    return true;
+}
+
+#endif
+
+void cinder_net_socket_drop(CinderSocket *socket)
+{
+    if (socket == NULL ||
+        socket->handle == CINDER_NET_INVALID_SOCKET) {
+        return;
+    }
+    CinderNetError ignored;
+    (void)cinder_net_close(socket, &ignored);
+}
+
+void CinderSocket__drop(CinderSocket *self)
+{
+    cinder_net_socket_drop(self);
+}
+
+bool cinder_net_socket_is_open(const CinderSocket *socket)
+{
+    return socket != NULL &&
+        socket->handle != CINDER_NET_INVALID_SOCKET;
+}
+
+int32_t cinder_net_socket_fileno(const CinderSocket *socket)
+{
+    return socket == NULL
+        ? CINDER_NET_INVALID_SOCKET
+        : socket->handle;
+}
+
+CinderPollFd cinder_net_poll_fd(
+    const CinderSocket *socket,
+    int16_t events
+)
+{
+    CinderPollFd result;
+    result.fd = cinder_net_socket_fileno(socket);
+    result.events = events;
+    result.revents = 0;
+    return result;
 }
 
 void cinder_lock_acquire(CinderLock lock)

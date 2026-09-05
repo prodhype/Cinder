@@ -1,0 +1,4 @@
+[project]
+name = "net_shadow_demo"
+source-root = "src"
+entry = "main.ci"

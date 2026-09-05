@@ -1,0 +1,125 @@
+import std.net as net
+from std.net import AF_INET as FAMILY
+from std.net import AF_INET6 as FAMILY6
+from std.net import NetError as E
+from std.net import POLL_ERROR as EVENT_ERROR
+from std.net import POLL_HANGUP as EVENT_HANGUP
+from std.net import POLL_IN as EVENT_IN
+from std.net import POLL_INVALID as EVENT_INVALID
+from std.net import POLL_OUT as EVENT_OUT
+from std.net import PollFd as PF
+from std.net import SOCK_STREAM as STREAM
+from std.net import poll as wait_for_events
+from std.net import socket as make_socket
+
+
+def host() -> String:
+    return "127.0.0.1"
+
+
+def imported_error() -> net.NetError:
+    return E(kind=net.NetErrorKind.invalid_input, code=0)
+
+
+def qualified_error() -> net.NetError:
+    return net.NetError(kind=net.NetErrorKind.invalid_input, code=0)
+
+
+def imported_constants() -> i32:
+    events = EVENT_IN | EVENT_OUT | EVENT_ERROR | EVENT_HANGUP | EVENT_INVALID
+    return FAMILY + FAMILY6 + STREAM + cast[i32](events)
+
+
+def socket_identity(socket: net.Socket) -> net.Socket:
+    return socket
+
+
+def payload() -> List[u8]:
+    return [1, 2, 3, 4]
+
+
+def rvalue_socket_fileno(socket: net.Socket) -> i32:
+    return socket_identity(socket).fileno()
+
+
+def rvalue_socket_close(socket: net.Socket) -> Result[void, net.NetError]:
+    socket_identity(socket).close()?
+    return Ok()
+
+
+def temporary_socket_io(socket: &net.Socket) -> Result[void, net.NetError]:
+    socket.send(payload())?
+    socket.recv(payload())?
+    return Ok()
+
+
+def const_socket_fileno(socket: &const net.Socket) -> i32:
+    return socket.fileno()
+
+
+def socket_reference(socket: &net.Socket) -> &net.Socket:
+    return socket
+
+
+def socket_pointer(socket: *net.Socket) -> *net.Socket:
+    return socket
+
+
+def reference_socket_fileno(socket: &net.Socket) -> i32:
+    return socket_reference(socket).fileno()
+
+
+def pointer_socket_fileno(socket: *net.Socket) -> i32:
+    return socket_pointer(socket).fileno()
+
+
+def make_poll_fds(socket: &net.Socket) -> List[PF]:
+    return [PF(socket, EVENT_IN)]
+
+
+def poll_temporary(socket: &net.Socket) -> Result[usize, net.NetError]:
+    return wait_for_events(make_poll_fds(socket), 0)
+
+
+def send_referenced_array(socket: &net.Socket, buffer: &u8[4]) -> Result[usize, net.NetError]:
+    return socket.send(buffer)
+
+
+def recv_referenced_array(socket: &net.Socket, buffer: &u8[8]) -> Result[usize, net.NetError]:
+    return socket.recv(buffer)
+
+
+def poll_referenced_array(fds: &PF[1]) -> Result[usize, net.NetError]:
+    return wait_for_events(fds, 0)
+
+
+def discard_accepted(listener: &net.Socket) -> void:
+    match listener.accept():
+        case Ok(_):
+            pass
+        case Err(_):
+            pass
+
+
+def exercise_direct_imports() -> Result[void, net.NetError]:
+    listener = make_socket(family=FAMILY, type=STREAM)?
+    watched: List[PF] = [PF(&listener, EVENT_IN)]
+    ready = wait_for_events(watched, 0)?
+    if ready > 1:
+        return Err(imported_error())
+    listener.bind(host(), 0)?
+    listener.connect(host=host(), port=1)?
+    match listener.accept():
+        case Ok(connection) if connection.fileno() >= 0:
+            connection.close()?
+        case Ok(_):
+            pass
+        case Err(_):
+            pass
+    discard_accepted(&listener)
+    listener.close()?
+    return Ok()
+
+
+def main() -> i32:
+    return 0

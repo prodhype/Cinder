@@ -1,0 +1,9 @@
+import std.net as net
+
+
+def poll_const_entries(fds: []const net.PollFd) -> Result[usize, net.NetError]:
+    return net.poll(fds, 0)
+
+
+def main() -> i32:
+    return 0
