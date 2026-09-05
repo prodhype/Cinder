@@ -104,6 +104,12 @@ def checker_type_can_clone(table: &const types.TypeTable, type_id: types.TypeId)
         or record.kind == types.TypeKind.STRING
         or record.kind == types.TypeKind.ENUM
         or record.kind == types.TypeKind.LOCK
+        or record.kind == types.TypeKind.I16
+        or record.kind == types.TypeKind.U8
+        or record.kind == types.TypeKind.USIZE
+        or record.kind == types.TypeKind.POLL_FD
+        or record.kind == types.TypeKind.NET_ERROR
+        or record.kind == types.TypeKind.NET_ERROR_KIND
         or record.kind == types.TypeKind.POINTER
         or record.kind == types.TypeKind.REFERENCE
     ):
@@ -133,7 +139,7 @@ def checker_type_needs_drop_inner(checker: &checker_core.Checker, arena: &const 
     if type_id.index < 0 or type_id.index >= cast[i32](len(checker.type_table.types)):
         return false
     record = checker.type_table.types[type_id.index]
-    if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.STRING_BUILDER or record.kind == types.TypeKind.FILE or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET:
+    if record.kind == types.TypeKind.STRING or record.kind == types.TypeKind.STRING_BUILDER or record.kind == types.TypeKind.FILE or record.kind == types.TypeKind.SOCKET or record.kind == types.TypeKind.OWNED or record.kind == types.TypeKind.LIST or record.kind == types.TypeKind.MAP or record.kind == types.TypeKind.SET:
         return true
     if record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE or record.kind == types.TypeKind.SLICE or record.kind == types.TypeKind.DYN or types.is_map_view_kind(record.kind):
         return false
@@ -391,6 +397,10 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
     callee_node = arena.nodes[callee.index]
     if callee_node.kind == syntax.SyntaxKind.EXPR_ATTRIBUTE:
         if validate_path_namespace_call(checker, arena, id, callee, source, current_scope):
+            return
+        if validate_net_namespace_call(checker, arena, id, callee, source, current_scope):
+            return
+        if validate_socket_method_call(checker, arena, id, callee, source, current_scope):
             return
         if validate_atomic_method_call(checker, arena, id, callee, source, current_scope):
             return
@@ -781,6 +791,338 @@ def path_argument_type_is_string(table: &const types.TypeTable, type_id: types.T
             continue
         return record.kind == types.TypeKind.STRING
     return false
+
+
+def virtual_net_namespace_receiver(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    receiver: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    if receiver.index < 0 or arena.nodes[receiver.index].kind != syntax.SyntaxKind.EXPR_NAME:
+        return false
+    receiver_node = arena.nodes[receiver.index]
+    found = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
+    if found.index < 0:
+        return false
+    resolved = checker.symbols.symbols[found.index]
+    if resolved.kind != symbols.SymbolKind.GLOBAL or resolved.node.index < 0 or arena.nodes[resolved.node.index].kind != syntax.SyntaxKind.IMPORT_DECL:
+        return false
+    receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    module_imports: &const List[project.ImportBinding] = &checker.module_imports
+    for imported in module_imports:
+        if imported.alias == receiver_name and imported.virtual_builtin and imported.module_name == "std.net" and len(imported.member) == 0:
+            checker.model.record_name_symbol(receiver, found)
+            return true
+    return false
+
+
+def net_result_type(checker: &checker_core.Checker, value_type: types.TypeId) -> types.TypeId:
+    return checker.type_table.generic2(types.TypeKind.RESULT, 0, 0, value_type, types.type_net_error())
+
+
+def validate_net_namespace_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callee_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    receiver = checker_core.first_child(arena, callee_id)
+    member = checker_core.second_child(arena, callee_id)
+    if receiver.index < 0 or member.index < 0 or not virtual_net_namespace_receiver(checker, arena, receiver, source, current_scope):
+        return false
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    minimum: i32 = 0
+    maximum: i32 = 0
+    result = types.type_error()
+    if member_name == "socket":
+        maximum = 3
+        result = net_result_type(checker, types.type_socket())
+    elif member_name == "PollFd":
+        minimum = 2
+        maximum = 2
+        result = types.type_poll_fd()
+    elif member_name == "poll":
+        minimum = 2
+        maximum = 2
+        result = net_result_type(checker, types.type_usize())
+    else:
+        checker_core.emit_import_member_error(checker, &member_node, "std.net", member_name)
+        checker.model.record_expr_type(call_id, types.type_error())
+        return true
+    validate_net_call_arguments(checker, arena, call_id, source, current_scope, &member_name, minimum, maximum)
+    checker.model.record_expr_type(callee_id, result)
+    checker.model.record_expr_type(call_id, result)
+    return true
+
+
+def validate_socket_method_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callee_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    receiver = checker_core.first_child(arena, callee_id)
+    member = checker_core.second_child(arena, callee_id)
+    if receiver.index < 0 or member.index < 0:
+        return false
+    receiver_type = strip_collection_indirection(checker.type_table, infer_expression_type(checker, arena, receiver, source, current_scope))
+    if receiver_type.index < 0 or receiver_type.index >= cast[i32](len(checker.type_table.types)) or checker.type_table.types[receiver_type.index].kind != types.TypeKind.SOCKET:
+        return false
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    expected: i32 = 0
+    result = types.type_error()
+    if member_name == "bind" or member_name == "connect":
+        expected = 2
+        result = net_result_type(checker, types.type_void())
+    elif member_name == "listen" or member_name == "recv" or member_name == "send" or member_name == "set_blocking":
+        expected = 1
+        if member_name == "recv" or member_name == "send":
+            result = net_result_type(checker, types.type_usize())
+        else:
+            result = net_result_type(checker, types.type_void())
+    elif member_name == "accept":
+        result = net_result_type(checker, types.type_socket())
+    elif member_name == "fileno":
+        result = types.type_i32()
+    elif member_name == "close":
+        result = net_result_type(checker, types.type_void())
+    else:
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_402,
+            &member_node,
+            member_name[0:len(member_name)],
+        )
+        checker.model.record_expr_type(call_id, types.type_error())
+        return true
+    validate_net_call_arguments(checker, arena, call_id, source, current_scope, &member_name, expected, expected)
+    receiver_symbol = symbols.missing_symbol()
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind == syntax.SyntaxKind.EXPR_NAME:
+        receiver_symbol = checker.symbols.find_in_scope(source, current_scope, receiver_node.value_start, receiver_node.value_length)
+    checker.model.record_value_use(receiver, semantic.ValueUseKind.ADDRESS, receiver_symbol, receiver_type, receiver_type)
+    checker.model.record_expr_type(callee_id, result)
+    checker.model.record_expr_type(call_id, result)
+    return true
+
+
+def validate_net_call_arguments(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+    operation: &const String,
+    minimum: i32,
+    maximum: i32,
+) -> void:
+    call = arena.nodes[call_id.index]
+    actual = checker_core.count_direct_children(arena, call_id, syntax.SyntaxKind.EXPR_ARGUMENT)
+    if actual < minimum:
+        checker_core.emit_argument_count_error(checker, diagnostics.DiagnosticId.CHECK_078, &call, minimum, actual)
+    elif actual > maximum:
+        checker_core.emit_argument_count_error(checker, diagnostics.DiagnosticId.CHECK_077, &call, maximum, actual)
+    seen_first = false
+    seen_second = false
+    seen_third = false
+    seen_named = false
+    positional_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != syntax.SyntaxKind.EXPR_ARGUMENT:
+            continue
+        role = positional_index
+        if argument.flags == 1:
+            seen_named = true
+            role = net_named_argument_index(arena, argument_id, source, operation)
+        else:
+            if seen_named:
+                checker_core.emit_error_at(checker, diagnostics.DiagnosticId.CHECK_076, &argument)
+            positional_index += 1
+        duplicate = false
+        if role == 0:
+            duplicate = seen_first
+            seen_first = true
+        elif role == 1:
+            duplicate = seen_second
+            seen_second = true
+        elif role == 2:
+            duplicate = seen_third
+            seen_third = true
+        if role < 0 or role >= maximum or duplicate:
+            checker_core.emit_symbol_error(
+                checker,
+                diagnostics.DiagnosticId.CHECK_048,
+                &argument,
+                source[argument.start:argument.start + argument.length],
+            )
+        value = checker_core.last_child(arena, argument_id)
+        value_type = infer_expression_type(checker, arena, value, source, current_scope)
+        if role >= 0 and role < maximum:
+            destination_type = net_argument_destination_type(checker, operation, role)
+            if not net_argument_type_matches(checker, operation, role, value_type, source):
+                value_node = arena.nodes[value.index]
+                checker_core.emit_type_mismatch(checker, &value_node, destination_type, value_type, source)
+            validate_partial_move_source(checker, arena, value, value_type, destination_type, source, current_scope)
+
+
+def net_named_argument_index(arena: &const syntax.SyntaxArena, argument: NodeId, source: &const String, operation: &const String) -> i32:
+    name = checker_core.first_child(arena, argument)
+    if name.index < 0:
+        return -1
+    name_node = arena.nodes[name.index]
+    argument_name = source[name_node.value_start:name_node.value_start + name_node.value_length]
+    if operation == "socket":
+        if argument_name == "family":
+            return 0
+        if argument_name == "type":
+            return 1
+        if argument_name == "protocol":
+            return 2
+        return -1
+    if operation == "PollFd":
+        if argument_name == "socket":
+            return 0
+        if argument_name == "events":
+            return 1
+        return -1
+    if operation == "poll":
+        if argument_name == "fds":
+            return 0
+        if argument_name == "timeout_ms":
+            return 1
+        return -1
+    if operation == "bind" or operation == "connect":
+        if argument_name == "host":
+            return 0
+        if argument_name == "port":
+            return 1
+        return -1
+    if operation == "listen" and argument_name == "backlog":
+        return 0
+    if operation == "recv" and argument_name == "buffer":
+        return 0
+    if operation == "send" and argument_name == "data":
+        return 0
+    if operation == "set_blocking" and argument_name == "blocking":
+        return 0
+    return -1
+
+
+def net_argument_destination_type(checker: &checker_core.Checker, operation: &const String, role: i32) -> types.TypeId:
+    if operation == "PollFd":
+        if role == 0:
+            return checker.type_table.pointer_to(checker.type_table.const_of(types.type_socket()))
+        return types.type_i16()
+    if operation == "poll":
+        if role == 0:
+            return checker.type_table.slice_of(types.type_poll_fd())
+        return types.type_i32()
+    if operation == "bind" or operation == "connect":
+        if role == 0:
+            return checker.type_table.reference_to(checker.type_table.const_of(types.type_string()))
+        return types.type_i32()
+    if operation == "recv":
+        return checker.type_table.slice_of(types.type_u8())
+    if operation == "send":
+        return checker.type_table.slice_of(checker.type_table.const_of(types.type_u8()))
+    if operation == "set_blocking":
+        return types.type_bool()
+    if operation == "socket":
+        return types.type_i32()
+    return types.type_i32()
+
+
+def net_argument_type_matches(checker: &const checker_core.Checker, operation: &const String, role: i32, actual: types.TypeId, source: &const String) -> bool:
+    if operation == "socket":
+        return net_type_is_integer(checker.type_table, actual, source)
+    if operation == "PollFd":
+        if role == 0:
+            return net_type_is_socket_reference(checker.type_table, actual)
+        return net_type_is_integer(checker.type_table, actual, source)
+    if operation == "poll":
+        if role == 0:
+            return net_type_is_poll_fd_buffer(checker.type_table, actual)
+        return types.strip_const(&checker.type_table, actual).index == types.type_i32().index
+    if operation == "bind" or operation == "connect":
+        if role == 0:
+            return path_argument_type_is_string(checker.type_table, actual)
+        return net_type_is_integer(checker.type_table, actual, source)
+    if operation == "listen":
+        return types.strip_const(&checker.type_table, actual).index == types.type_i32().index
+    if operation == "recv":
+        return net_type_is_byte_buffer(checker.type_table, actual, source, true)
+    if operation == "send":
+        return net_type_is_byte_buffer(checker.type_table, actual, source, false)
+    if operation == "set_blocking":
+        return types.strip_const(&checker.type_table, actual).index == types.type_bool().index
+    return true
+
+
+def net_type_is_integer(table: &const types.TypeTable, type_id: types.TypeId, source: &const String) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if record.kind == types.TypeKind.I16 or record.kind == types.TypeKind.I32 or record.kind == types.TypeKind.I64 or record.kind == types.TypeKind.U8 or record.kind == types.TypeKind.USIZE:
+        return true
+    if record.kind != types.TypeKind.NAMED or record.flags != 0 or record.name_length == 0:
+        return false
+    name = source[record.name_start:record.name_start + record.name_length]
+    return name == "i8" or name == "u16" or name == "u32" or name == "u64" or name == "isize" or name == "c_int" or name == "c_long" or name == "c_size_t"
+
+
+def net_type_is_socket_reference(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = types.strip_const(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if record.kind != types.TypeKind.POINTER and record.kind != types.TypeKind.REFERENCE:
+        return false
+    return types.strip_const(table, record.inner).index == types.type_socket().index
+
+
+def net_type_is_poll_fd_buffer(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
+    current = strip_collection_indirection(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if record.kind != types.TypeKind.LIST and record.kind != types.TypeKind.ARRAY and record.kind != types.TypeKind.SLICE:
+        return false
+    return types.strip_const(table, record.inner).index == types.type_poll_fd().index
+
+
+def net_type_is_byte_buffer(table: &const types.TypeTable, type_id: types.TypeId, source: &const String, mutable: bool) -> bool:
+    current = strip_collection_indirection(table, type_id)
+    if current.index < 0 or current.index >= cast[i32](len(table.types)):
+        return false
+    record = table.types[current.index]
+    if record.kind != types.TypeKind.LIST and record.kind != types.TypeKind.ARRAY and record.kind != types.TypeKind.SLICE:
+        return false
+    element = record.inner
+    if element.index < 0 or element.index >= cast[i32](len(table.types)):
+        return false
+    element_record = table.types[element.index]
+    if mutable and element_record.kind == types.TypeKind.CONST:
+        return false
+    stripped = types.strip_const(table, element)
+    if stripped.index == types.type_u8().index:
+        return true
+    if stripped.index < 0 or stripped.index >= cast[i32](len(table.types)):
+        return false
+    stripped_record = table.types[stripped.index]
+    if stripped_record.kind != types.TypeKind.NAMED or stripped_record.flags != 0 or stripped_record.name_length == 0:
+        return false
+    return source[stripped_record.name_start:stripped_record.name_start + stripped_record.name_length] == "u8"
 
 
 def validate_sorted_call(
@@ -1715,6 +2057,13 @@ def infer_expression_type(checker: &checker_core.Checker, arena: &const syntax.S
     elif node.kind == syntax.SyntaxKind.EXPR_CALL:
         validate_call(checker, arena, id, source, current_scope)
         result = checker.model.expr_type(id)
+    elif node.kind == syntax.SyntaxKind.EXPR_PROPAGATE:
+        operand = checker_core.first_child(arena, id)
+        operand_type = infer_expression_type(checker, arena, operand, source, current_scope)
+        if operand_type.index >= 0 and operand_type.index < cast[i32](len(checker.type_table.types)):
+            operand_record = checker.type_table.types[operand_type.index]
+            if operand_record.kind == types.TypeKind.RESULT:
+                result = operand_record.inner
     elif node.kind == syntax.SyntaxKind.EXPR_CAST:
         type_node = checker_core.find_child_type(arena, id)
         result = checker_core.resolve_type_node(checker, arena, type_node, source)
@@ -1862,6 +2211,19 @@ def infer_attribute_expression_type(
         member_node = arena.nodes[member.index]
         alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
         name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+        if virtual_net_namespace_receiver(checker, arena, receiver, source, current_scope):
+            if name == "AF_INET" or name == "AF_INET6" or name == "SOCK_STREAM":
+                return types.type_i32()
+            if name == "POLL_IN" or name == "POLL_OUT" or name == "POLL_ERROR" or name == "POLL_HANGUP" or name == "POLL_INVALID":
+                return types.type_i16()
+            if name == "Socket":
+                return types.type_socket()
+            if name == "PollFd":
+                return types.type_poll_fd()
+            if name == "NetError":
+                return types.type_net_error()
+            if name == "NetErrorKind":
+                return types.type_net_error_kind()
         import_index: usize = 0
         module_imports: &const List[project.ImportBinding] = &checker.module_imports
         while import_index < len(module_imports):
@@ -1874,6 +2236,38 @@ def infer_attribute_expression_type(
         return receiver_type
     receiver_record = checker.type_table.types[receiver_type.index]
     member_node = arena.nodes[member.index]
+    if receiver_record.kind == types.TypeKind.POLL_FD:
+        if checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "events") or checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "revents"):
+            return types.type_i16()
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_402,
+            &member_node,
+            source[member_node.value_start:member_node.value_start + member_node.value_length],
+        )
+        return types.type_error()
+    if receiver_record.kind == types.TypeKind.NET_ERROR:
+        if checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "kind"):
+            return types.type_net_error_kind()
+        if checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "code"):
+            return types.type_i32()
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_402,
+            &member_node,
+            source[member_node.value_start:member_node.value_start + member_node.value_length],
+        )
+        return types.type_error()
+    if receiver_record.kind == types.TypeKind.NET_ERROR_KIND:
+        if net_error_kind_member(source, &member_node):
+            return types.type_net_error_kind()
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_402,
+            &member_node,
+            source[member_node.value_start:member_node.value_start + member_node.value_length],
+        )
+        return types.type_error()
     if receiver_record.kind == types.TypeKind.OPTION and checker_core.range_text_equals(source, member_node.value_start, member_node.value_length, "value"):
         return receiver_record.inner
     if receiver_record.kind == types.TypeKind.ATOMIC_COMPARE_EXCHANGE_RESULT:
@@ -1936,6 +2330,10 @@ def infer_attribute_expression_type(
     if len(args) > 0 and generics.has_type_params(arena, declaration):
         field_type = generics.substitute_type(checker.type_table, field_type, arena, declaration, &args, source)
     return field_type
+
+
+def net_error_kind_member(source: &const String, member: &const syntax.SyntaxNode) -> bool:
+    return checker_core.range_text_equals(source, member.value_start, member.value_length, "would_block") or checker_core.range_text_equals(source, member.value_start, member.value_length, "interrupted") or checker_core.range_text_equals(source, member.value_start, member.value_length, "address_in_use") or checker_core.range_text_equals(source, member.value_start, member.value_length, "connection_refused") or checker_core.range_text_equals(source, member.value_start, member.value_length, "connection_reset") or checker_core.range_text_equals(source, member.value_start, member.value_length, "timed_out") or checker_core.range_text_equals(source, member.value_start, member.value_length, "not_connected") or checker_core.range_text_equals(source, member.value_start, member.value_length, "invalid_input") or checker_core.range_text_equals(source, member.value_start, member.value_length, "unsupported") or checker_core.range_text_equals(source, member.value_start, member.value_length, "system")
 
 
 def infer_list_literal_type(checker: &checker_core.Checker, arena: &const syntax.SyntaxArena, id: NodeId, source: &const String, current_scope: symbols.ScopeId) -> types.TypeId:
@@ -2336,7 +2734,7 @@ def specialized_operand_types_compatible(checker: &checker_core.Checker, left: t
 
 
 def is_numeric_kind(kind: types.TypeKind) -> bool:
-    return kind == types.TypeKind.I32 or kind == types.TypeKind.I64 or kind == types.TypeKind.F64 or kind == types.TypeKind.CHAR
+    return kind == types.TypeKind.I16 or kind == types.TypeKind.I32 or kind == types.TypeKind.I64 or kind == types.TypeKind.U8 or kind == types.TypeKind.USIZE or kind == types.TypeKind.F64 or kind == types.TypeKind.CHAR
 
 
 def is_scalar_kind(kind: types.TypeKind) -> bool:

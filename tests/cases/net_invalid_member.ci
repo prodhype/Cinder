@@ -1,0 +1,6 @@
+import std.net as net
+
+
+def main() -> i32:
+    net.missing()
+    return 0

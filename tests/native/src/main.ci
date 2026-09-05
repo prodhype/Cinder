@@ -49,6 +49,10 @@ def main(argc: i32, argv: **char) -> i32:
     test_build_and_run(&state)
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
+    test_net_codegen(&state)
+    test_net_runtime(&state)
+    test_net_diagnostics(&state)
+    test_net_shadowing(&state)
     test_path_codegen(&state)
     test_path_match_capture_escape(&state)
     test_path_embedded_nul(&state)
@@ -518,6 +522,106 @@ def test_atomic_codegen(state: &TestState) -> void:
     expect(state, "emit-c lowers atomic operations to C11 atomics", ok)
     if not ok:
         report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_net_codegen(state: &TestState) -> void:
+    source = state.root + "/examples/network.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source,
+    ]
+    result = process.run(command)
+    ok = (
+        result.exit_code == 0
+        and contains(&result.stdout, "CinderSocket")
+        and contains(&result.stdout, "CinderPollFd")
+        and contains(&result.stdout, "CinderResult_usize_NetError")
+        and contains(&result.stdout, "recv(socket->handle")
+        and contains(&result.stdout, "send(socket->handle")
+        and contains(&result.stdout, "poll((struct pollfd *)fds")
+        and contains(&result.stdout, "CINDER_NET_POLL_OUT")
+        and contains(&result.stdout, "CINDER_NET_POLL_ERROR")
+        and contains(&result.stdout, "CINDER_NET_POLL_HANGUP")
+        and contains(&result.stdout, "CINDER_NET_POLL_INVALID")
+        and not contains(&result.stdout, "std_net__")
+    )
+    expect(state, "emit-c lowers std.net to native socket operations", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_net_runtime(state: &TestState) -> void:
+    source = state.root + "/tests/cases/net_loopback.ci"
+    command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/net-loopback",
+        "--build-dir",
+        state.workspace + "/net-loopback-build",
+    ]
+    result = process.run(command)
+    ok = result.exit_code == 0
+    expect(state, "std.net handles loopback, poll, nonblocking, bytes, and EOF", ok)
+    if not ok:
+        report_process_failure(&result.stdout, &result.stderr)
+
+
+def test_net_diagnostics(state: &TestState) -> void:
+    bad_member: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_member.ci",
+    ]
+    bad_buffer: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_buffer.ci",
+    ]
+    member_result = process.run(bad_member)
+    buffer_result = process.run(bad_buffer)
+    ok = (
+        member_result.exit_code == 1
+        and contains(&member_result.stderr, "cannot resolve std.net.missing")
+        and buffer_result.exit_code == 1
+        and contains(&buffer_result.stderr, "expected []const u8, found String")
+    )
+    expect(state, "std.net rejects invalid members and byte buffers", ok)
+    if not ok:
+        report_process_failure(&member_result.stdout, &member_result.stderr)
+        report_process_failure(&buffer_result.stdout, &buffer_result.stderr)
+
+
+def test_net_shadowing(state: &TestState) -> void:
+    source = state.root + "/tests/cases/net_shadow_project"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/net-shadow",
+        "--build-dir",
+        state.workspace + "/net-shadow-build",
+    ]
+    emitted = process.run(emit_command)
+    ran = process.run(run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "net_shadow_demo_std_net__socket")
+        and not contains(&emitted.stdout, "cinder_net_socket")
+    )
+    expect(state, "local std.net modules shadow the compiler builtin", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
 
 
 def test_path_codegen(state: &TestState) -> void:

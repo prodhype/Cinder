@@ -131,6 +131,7 @@ def semantic_specialization_is_inferred_expression(
                 return true
     return false
 
+
 def emit_semantic_type_specialization(
     table: &const types.TypeTable,
     type_id: types.TypeId,
@@ -753,6 +754,8 @@ def module_type_needs_managed_drop(
     c_builder = StringBuilder()
     codegen_type_names.emit_module_c_type(arena, type_id, source, &c_builder, prefix, project_name, imports, registry)
     c_type = c_builder.finish()
+    if c_type == "CinderSocket":
+        return true
     return codegen_names.is_registered_nominal_drop_name(registry, &c_type)
 
 
@@ -1267,7 +1270,9 @@ def module_managed_type_info(
             or is_c_string
             or is_enum
         )
-    can_clone = module_type_has_value_helper(arena, type_id, source, prefix, project_name, imports, registry) or is_c_string or is_enum
+    is_net_copy = c_type == "CinderPollFd" or c_type == "CinderNetError" or c_type == "CinderNetErrorKind"
+    is_net_runtime = c_type == "CinderSocket" or is_net_copy
+    can_clone = module_type_has_value_helper(arena, type_id, source, prefix, project_name, imports, registry) or is_c_string or is_enum or is_net_copy
     if type_id.index >= 0 and codegen_type_names.type_node_kind(arena, type_id) == SyntaxKind.TYPE_GENERIC:
         base = codegen_names.first_child(arena, type_id)
         base_node = arena.nodes[base.index]
@@ -1294,6 +1299,9 @@ def module_managed_type_info(
     elif is_nominal:
         drop_helper_builder.append(c_type[0:len(c_type)])
         drop_helper_builder.append("__drop")
+    if c_type == "CinderSocket":
+        drop_helper_builder = StringBuilder()
+        drop_helper_builder.append("cinder_net_socket_drop")
     return ManagedTypeInfo(
         c_type=c_type,
         token=token_builder.finish(),
@@ -1304,7 +1312,7 @@ def module_managed_type_info(
         is_c_string=is_c_string,
         is_nominal=is_nominal,
         can_clone=can_clone,
-        is_complete=is_complete,
+        is_complete=is_complete or is_net_runtime,
         hash_kind=hash_kind,
     )
 
@@ -1339,6 +1347,8 @@ def semantic_managed_type_info(
         hash_kind = ManagedHashKind.C_STRING
     elif semantic_type_is_hash_scalar(table, type_id, source) or codegen_names.is_registered_enum_name(registry, &c_type):
         hash_kind = ManagedHashKind.SCALAR
+    is_socket = kind == types.TypeKind.SOCKET
+    is_net_copy = kind == types.TypeKind.POLL_FD or kind == types.TypeKind.NET_ERROR or kind == types.TypeKind.NET_ERROR_KIND
     can_clone = semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR
     if (kind == types.TypeKind.LIST or kind == types.TypeKind.MAP or kind == types.TypeKind.SET or kind == types.TypeKind.OPTION) and can_clone:
         codegen_type_names.emit_semantic_specialized_type_name(table, type_id, source, &helper_builder, registry)
@@ -1350,6 +1360,9 @@ def semantic_managed_type_info(
     elif kind == types.TypeKind.STRUCT or kind == types.TypeKind.CLASS:
         drop_helper_builder.append(c_type[0:len(c_type)])
         drop_helper_builder.append("__drop")
+    if is_socket:
+        drop_helper_builder = StringBuilder()
+        drop_helper_builder.append("cinder_net_socket_drop")
     return ManagedTypeInfo(
         c_type=c_type,
         token=token_builder.finish(),
@@ -1360,7 +1373,7 @@ def semantic_managed_type_info(
         is_c_string=is_c_string,
         is_nominal=is_nominal,
         can_clone=can_clone,
-        is_complete=semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR or is_nominal,
+        is_complete=semantic_type_has_value_helper(table, type_id) or is_c_string or hash_kind == ManagedHashKind.SCALAR or is_nominal or is_socket or is_net_copy,
         hash_kind=hash_kind,
     )
 
@@ -1831,6 +1844,9 @@ def semantic_type_has_value_helper(table: &const types.TypeTable, type_id: types
         or record.kind == types.TypeKind.ENUM
         or record.kind == types.TypeKind.POINTER
         or record.kind == types.TypeKind.REFERENCE
+        or record.kind == types.TypeKind.POLL_FD
+        or record.kind == types.TypeKind.NET_ERROR
+        or record.kind == types.TypeKind.NET_ERROR_KIND
     ):
         return true
     if record.kind == types.TypeKind.CONST:

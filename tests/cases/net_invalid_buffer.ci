@@ -1,0 +1,13 @@
+import std.net as net
+from std.net import NetError
+
+
+def invalid_send() -> Result[void, NetError]:
+    socket = net.socket()?
+    socket.send("not bytes")
+    return Ok()
+
+
+def main() -> i32:
+    invalid_send()
+    return 0

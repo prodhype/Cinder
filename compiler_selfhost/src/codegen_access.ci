@@ -215,6 +215,9 @@ def emit_attribute_call(
     if expression_is_path_namespace(arena, receiver, source, imports, context):
         emit_path_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
         return
+    if expression_is_net_namespace(arena, receiver, source, imports, context):
+        emit_net_namespace_call(arena, call_id, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
     if receiver.index >= 0:
         receiver_node = arena.nodes[receiver.index]
         if receiver_node.kind == SyntaxKind.EXPR_NAME:
@@ -256,6 +259,9 @@ def emit_attribute_call(
     dyn_interface = codegen_context.context_expression_dyn_interface(arena, context, receiver, source)
     if dyn_interface >= 0:
         emit_dynamic_method_call(arena, call_id, receiver, &member_name, dyn_interface, source, builder, context, state, emit_nested)
+        return
+    if receiver_is_socket(arena, receiver, source, context):
+        emit_socket_method_call(arena, call_id, receiver, &member_name, source, builder, prefix, project_name, imports, context, state, emit_nested)
         return
     if member_name == "dump" and receiver.index >= 0:
         receiver_node = arena.nodes[receiver.index]
@@ -807,6 +813,365 @@ def expression_is_path_namespace(
     )
 
 
+def expression_is_net_namespace(
+    arena: &const SyntaxArena,
+    id: NodeId,
+    source: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &const codegen_model.ModuleCodegenContext,
+) -> bool:
+    if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_NAME:
+        return false
+    node = arena.nodes[id.index]
+    name = source[node.value_start:node.value_start + node.value_length]
+    imported = codegen_names.find_import_alias(imports, &name)
+    if not imported.virtual_builtin or imported.module_name != "std.net":
+        return false
+    if codegen_context.context_expression_resolves_to_import(context, id):
+        return true
+    return (
+        not codegen_context.context_has_name(context, source, node.value_start, node.value_length)
+        and not codegen_context.context_name_is_global(context, &name)
+    )
+
+
+def emit_net_namespace_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    member_name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    if member_name == "socket":
+        emit_net_socket_call(arena, call_id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+    if member_name == "PollFd":
+        emit_net_poll_fd_call(arena, call_id, source, builder, context, state, emit_nested)
+        return
+    if member_name == "poll":
+        emit_net_poll_call(arena, call_id, source, builder, prefix, project_name, imports, context, state, emit_nested)
+        return
+    builder.append("cinder_net_")
+    builder.append(member_name[0:len(member_name)])
+    builder.append("(")
+    emit_remaining_call_arguments(arena, call_id, source, builder, prefix, project_name, imports, false, context, state, emit_nested)
+    builder.append(")")
+
+
+def emit_net_socket_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    result_name = net_result_type_name(arena, call_id, source, prefix, project_name, imports, context)
+    first = net_call_argument(arena, call_id, source, "socket", 0)
+    second = net_call_argument(arena, call_id, source, "socket", 1)
+    third = net_call_argument(arena, call_id, source, "socket", 2)
+    builder.append("({ ")
+    builder.append(result_name[0:len(result_name)])
+    builder.append(" cinder_net_result = { .tag = ")
+    builder.append(result_name[0:len(result_name)])
+    builder.append("_Tag_Err }; CinderSocket cinder_net_socket_value = {0}; CinderNetError cinder_net_error_value = {0}; if (cinder_net_socket(")
+    if first.index >= 0:
+        emit_nested(state, first)
+    else:
+        builder.append("CINDER_NET_AF_INET")
+    builder.append(", ")
+    if second.index >= 0:
+        emit_nested(state, second)
+    else:
+        builder.append("CINDER_NET_SOCK_STREAM")
+    builder.append(", ")
+    if third.index >= 0:
+        emit_nested(state, third)
+    else:
+        builder.append("0")
+    builder.append(", &cinder_net_socket_value, &cinder_net_error_value)) { cinder_net_result.tag = ")
+    builder.append(result_name[0:len(result_name)])
+    builder.append("_Tag_Ok; cinder_net_result.data.ok = cinder_net_socket_value; } else { cinder_net_result.data.err = cinder_net_error_value; } cinder_net_result; })")
+
+
+def emit_net_poll_fd_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    socket = net_call_argument(arena, call_id, source, "PollFd", 0)
+    events = net_call_argument(arena, call_id, source, "PollFd", 1)
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("({ CinderSocket *cinder_net_poll_socket_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = ")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, socket, source):
+        builder.append("&")
+    emit_nested(state, socket)
+    builder.append("; int16_t cinder_net_poll_events_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = (int16_t)(")
+    emit_nested(state, events)
+    builder.append("); cinder_net_poll_fd(cinder_net_poll_socket_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(", cinder_net_poll_events_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append("); })")
+
+
+def emit_net_poll_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    fds = net_call_argument(arena, call_id, source, "poll", 0)
+    timeout = net_call_argument(arena, call_id, source, "poll", 1)
+    fds_type = codegen_context.context_expression_type(arena, context, fds, source)
+    is_array = codegen_specializations.context_type_is_array(context.type_arena, fds_type)
+    is_slice_value = fds.index >= 0 and arena.nodes[fds.index].kind == SyntaxKind.EXPR_SLICE
+    result_name = net_result_type_name(arena, call_id, source, prefix, project_name, imports, context)
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("({ __auto_type cinder_net_poll_fds_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = ")
+    if not is_slice_value and not codegen_context.context_expression_is_pointer_like(arena, context, fds, source):
+        builder.append("&")
+    emit_nested(state, fds)
+    builder.append("; int32_t cinder_net_poll_timeout_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = ")
+    emit_nested(state, timeout)
+    builder.append("; CinderNetError cinder_net_error_value = {0}; ptrdiff_t cinder_net_poll_count = cinder_selfhost_net_poll(")
+    if is_array:
+        builder.append("(void *)cinder_net_poll_fds_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+        builder.append(", ")
+        length = codegen_specializations.array_length_node(context.type_arena, fds_type)
+        codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+    else:
+        builder.append("(void *)cinder_net_poll_fds_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+        if is_slice_value:
+            builder.append(".data, cinder_net_poll_fds_")
+        else:
+            builder.append("->data, cinder_net_poll_fds_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+        if is_slice_value:
+            builder.append(".length")
+        else:
+            builder.append("->length")
+    builder.append(", cinder_net_poll_timeout_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(", &cinder_net_error_value); ")
+    append_net_count_result(builder, &result_name, "cinder_net_poll_count")
+    builder.append(" })")
+
+
+def net_result_type_name(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+) -> String:
+    if call_id.index >= 0:
+        callee = codegen_names.first_child(arena, call_id)
+        if callee.index >= 0:
+            callee_node = arena.nodes[callee.index]
+            member_name = ""
+            if callee_node.kind == SyntaxKind.EXPR_NAME:
+                member_name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+            elif callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+                member = codegen_names.second_child(arena, callee)
+                if member.index >= 0:
+                    member_node = arena.nodes[member.index]
+                    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+            if member_name == "socket" or member_name == "accept":
+                return "CinderResult_Socket_NetError"
+            if member_name == "poll" or member_name == "recv" or member_name == "send":
+                return "CinderResult_usize_NetError"
+            if member_name == "bind" or member_name == "connect" or member_name == "listen" or member_name == "set_blocking" or member_name == "close":
+                return "CinderResult_void_NetError"
+    name_builder = StringBuilder()
+    if emit_result_expression_name(arena, call_id, source, &name_builder, prefix, project_name, imports, context):
+        return name_builder.finish()
+    name_builder.append("CinderResult_usize_NetError")
+    return name_builder.finish()
+
+
+def append_net_count_result(builder: &StringBuilder, result_name: &const String, count_name: String) -> void:
+    builder.append(result_name[0:len(result_name)])
+    builder.append(" cinder_net_result = { .tag = ")
+    builder.append(result_name[0:len(result_name)])
+    builder.append("_Tag_Err }; if (")
+    builder.append(count_name[0:len(count_name)])
+    builder.append(" >= 0) { cinder_net_result.tag = ")
+    builder.append(result_name[0:len(result_name)])
+    builder.append("_Tag_Ok; cinder_net_result.data.ok = (size_t)")
+    builder.append(count_name[0:len(count_name)])
+    builder.append("; } else { cinder_net_result.data.err = cinder_net_error_value; } cinder_net_result;")
+
+
+def emit_std_net_constant(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    member: NodeId,
+    source: &const String,
+    builder: &StringBuilder,
+    imports: &const List[project.ImportBinding],
+    context: &const codegen_model.ModuleCodegenContext,
+) -> bool:
+    if receiver.index < 0 or member.index < 0:
+        return false
+    member_node = arena.nodes[member.index]
+    member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+    if expression_is_net_namespace(arena, receiver, source, imports, context):
+        if member_name == "AF_INET":
+            builder.append("CINDER_NET_AF_INET")
+        elif member_name == "AF_INET6":
+            builder.append("CINDER_NET_AF_INET6")
+        elif member_name == "SOCK_STREAM":
+            builder.append("CINDER_NET_SOCK_STREAM")
+        elif member_name == "POLL_IN":
+            builder.append("CINDER_NET_POLL_IN")
+        elif member_name == "POLL_OUT":
+            builder.append("CINDER_NET_POLL_OUT")
+        elif member_name == "POLL_ERROR":
+            builder.append("CINDER_NET_POLL_ERROR")
+        elif member_name == "POLL_HANGUP":
+            builder.append("CINDER_NET_POLL_HANGUP")
+        elif member_name == "POLL_INVALID":
+            builder.append("CINDER_NET_POLL_INVALID")
+        else:
+            return false
+        return true
+    receiver_node = arena.nodes[receiver.index]
+    if receiver_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        namespace = codegen_names.first_child(arena, receiver)
+        owner_member = codegen_names.second_child(arena, receiver)
+        if namespace.index >= 0 and owner_member.index >= 0 and expression_is_net_namespace(arena, namespace, source, imports, context):
+            owner_member_node = arena.nodes[owner_member.index]
+            if codegen_names.range_text_equals(source, owner_member_node.value_start, owner_member_node.value_length, "NetErrorKind"):
+                builder.append("CinderNetErrorKind_")
+                builder.append(member_name[0:len(member_name)])
+                return true
+    if receiver_node.kind != SyntaxKind.EXPR_NAME:
+        return false
+    receiver_name = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+    imported = codegen_names.find_import_member(imports, &receiver_name)
+    if (
+        not imported.virtual_builtin
+        or imported.module_name != "std.net"
+        or imported.member != "NetErrorKind"
+    ):
+        return false
+    if (
+        not codegen_context.context_expression_resolves_to_import(context, receiver)
+        and (
+            codegen_context.context_has_name(context, source, receiver_node.value_start, receiver_node.value_length)
+            or codegen_context.context_name_is_global(context, &receiver_name)
+        )
+    ):
+        return false
+    builder.append("CinderNetErrorKind_")
+    builder.append(member_name[0:len(member_name)])
+    return true
+
+
+def net_call_argument(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    source: &const String,
+    operation: &const String,
+    wanted: i32,
+) -> NodeId:
+    if call_id.index < 0:
+        return syntax.missing_node()
+    call = arena.nodes[call_id.index]
+    source_index: i32 = 0
+    for offset in range(0, call.child_count):
+        argument_id = arena.children[call.first_child + offset]
+        argument = arena.nodes[argument_id.index]
+        if argument.kind != SyntaxKind.EXPR_ARGUMENT:
+            continue
+        role = source_index
+        if argument.flags == 1:
+            name = codegen_names.first_child(arena, argument_id)
+            role = net_named_argument_index(arena, name, source, operation)
+        if role == wanted:
+            return codegen_names.last_child(arena, argument_id)
+        source_index += 1
+    return syntax.missing_node()
+
+
+def net_named_argument_index(
+    arena: &const SyntaxArena,
+    name: NodeId,
+    source: &const String,
+    operation: &const String,
+) -> i32:
+    if name.index < 0:
+        return -1
+    node = arena.nodes[name.index]
+    value = source[node.value_start:node.value_start + node.value_length]
+    if operation == "socket":
+        if value == "family":
+            return 0
+        if value == "type":
+            return 1
+        if value == "protocol":
+            return 2
+    elif operation == "PollFd":
+        if value == "socket":
+            return 0
+        if value == "events":
+            return 1
+    elif operation == "poll":
+        if value == "fds":
+            return 0
+        if value == "timeout_ms" or value == "timeout":
+            return 1
+    elif operation == "bind" or operation == "connect":
+        if value == "host":
+            return 0
+        if value == "port":
+            return 1
+    elif operation == "listen" and value == "backlog":
+        return 0
+    elif operation == "set_blocking" and value == "blocking":
+        return 0
+    elif operation == "recv" and value == "buffer":
+        return 0
+    elif operation == "send" and (value == "buffer" or value == "data"):
+        return 0
+    return -1
+
+
 def append_path_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:
     builder.append("cinder_path_")
     builder.append(role)
@@ -1019,6 +1384,129 @@ def receiver_is_file(
         if types.is_nominal_kind(type_table.types[semantic_type.index].kind):
             return false
     return true
+
+
+def receiver_is_socket(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    source: &const String,
+    context: &codegen_context.ModuleCodegenContext,
+) -> bool:
+    semantic_type = codegen_context.context_semantic_type(context, receiver)
+    return codegen_context.context_semantic_type_is_kind(context, semantic_type, types.TypeKind.SOCKET)
+
+
+def emit_socket_method_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    receiver: NodeId,
+    member_name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    temporary_index = context.temporary_index
+    context.temporary_index += 1
+    builder.append("({ CinderSocket *cinder_net_socket_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    builder.append(" = ")
+    if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+        builder.append("&")
+    emit_nested(state, receiver)
+    builder.append("; ")
+    if member_name == "fileno":
+        builder.append("cinder_net_socket_fileno(cinder_net_socket_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+        builder.append("); })")
+        return
+    if member_name == "recv" or member_name == "send":
+        emit_socket_data_method_call(arena, call_id, member_name, source, builder, prefix, project_name, imports, context, temporary_index, state, emit_nested)
+        return
+    result_name = net_result_type_name(arena, call_id, source, prefix, project_name, imports, context)
+    builder.append(result_name[0:len(result_name)])
+    builder.append(" cinder_net_result = { .tag = ")
+    builder.append(result_name[0:len(result_name)])
+    builder.append("_Tag_Err }; CinderNetError cinder_net_error_value = {0}; ")
+    if member_name == "accept":
+        builder.append("CinderSocket cinder_net_accepted = {0}; if (cinder_net_accept(cinder_net_socket_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+        builder.append(", &cinder_net_accepted, &cinder_net_error_value)) { cinder_net_result.tag = ")
+        builder.append(result_name[0:len(result_name)])
+        builder.append("_Tag_Ok; cinder_net_result.data.ok = cinder_net_accepted; } else { cinder_net_result.data.err = cinder_net_error_value; } cinder_net_result; })")
+        return
+    builder.append("if (cinder_net_")
+    builder.append(member_name[0:len(member_name)])
+    builder.append("(cinder_net_socket_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
+    if member_name == "bind" or member_name == "connect":
+        builder.append(", ")
+        emit_c_string_argument(arena, net_call_argument(arena, call_id, source, member_name, 0), source, builder, prefix, project_name, imports, context, state, emit_nested)
+        builder.append(", ")
+        emit_nested(state, net_call_argument(arena, call_id, source, member_name, 1))
+    elif member_name == "listen" or member_name == "set_blocking":
+        builder.append(", ")
+        emit_nested(state, net_call_argument(arena, call_id, source, member_name, 0))
+    builder.append(", &cinder_net_error_value)) { cinder_net_result.tag = ")
+    builder.append(result_name[0:len(result_name)])
+    builder.append("_Tag_Ok; } else { cinder_net_result.data.err = cinder_net_error_value; } cinder_net_result; })")
+
+
+def emit_socket_data_method_call(
+    arena: &const SyntaxArena,
+    call_id: NodeId,
+    member_name: &const String,
+    source: &const String,
+    builder: &StringBuilder,
+    prefix: &const String,
+    project_name: &const String,
+    imports: &const List[project.ImportBinding],
+    context: &codegen_model.ModuleCodegenContext,
+    socket_temporary: i32,
+    state: &codegen_model.ModuleExpressionState,
+    emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
+) -> void:
+    buffer = net_call_argument(arena, call_id, source, member_name, 0)
+    buffer_type = codegen_context.context_expression_type(arena, context, buffer, source)
+    is_array = codegen_specializations.context_type_is_array(context.type_arena, buffer_type)
+    is_slice_value = buffer.index >= 0 and arena.nodes[buffer.index].kind == SyntaxKind.EXPR_SLICE
+    builder.append("__auto_type cinder_net_buffer_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](socket_temporary))
+    builder.append(" = ")
+    if not is_slice_value and not codegen_context.context_expression_is_pointer_like(arena, context, buffer, source):
+        builder.append("&")
+    emit_nested(state, buffer)
+    builder.append("; CinderNetError cinder_net_error_value = {0}; ptrdiff_t cinder_net_io_count = cinder_selfhost_net_")
+    builder.append(member_name[0:len(member_name)])
+    builder.append("(cinder_net_socket_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](socket_temporary))
+    builder.append(", ")
+    if is_array:
+        builder.append("(void *)cinder_net_buffer_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](socket_temporary))
+        builder.append(", ")
+        length = codegen_specializations.array_length_node(context.type_arena, buffer_type)
+        codegen_specializations.append_node_numeric_literal(builder, context.type_arena, context.type_source, length)
+    else:
+        builder.append("(void *)cinder_net_buffer_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](socket_temporary))
+        if is_slice_value:
+            builder.append(".data, cinder_net_buffer_")
+        else:
+            builder.append("->data, cinder_net_buffer_")
+        codegen_type_names.append_specialization_decimal(builder, cast[usize](socket_temporary))
+        if is_slice_value:
+            builder.append(".length")
+        else:
+            builder.append("->length")
+    builder.append(", &cinder_net_error_value); ")
+    result_name = net_result_type_name(arena, call_id, source, prefix, project_name, imports, context)
+    append_net_count_result(builder, &result_name, "cinder_net_io_count")
+    builder.append(" })")
 
 
 def access_expression_creates_owned_set(arena: &const SyntaxArena, id: NodeId, source: &const String) -> bool:
@@ -1733,6 +2221,8 @@ def emit_module_attribute(
                         builder.append("_Tag_None")
                     builder.append(")")
                 return
+        if emit_std_net_constant(arena, receiver, member, source, builder, imports, context):
+            return
     if emit_nominal_member_expression(arena, id, source, builder, prefix, project_name, imports, context):
         return
     if receiver.index >= 0 and member.index >= 0:

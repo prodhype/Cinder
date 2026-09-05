@@ -1,0 +1,7 @@
+import std.net as net
+
+
+def main() -> i32:
+    if net.socket() == 42:
+        return 0
+    return 1

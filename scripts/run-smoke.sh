@@ -73,8 +73,8 @@ targets+=(
   "$ROOT/examples/path_shadow_project"
 )
 
-if [[ "${#targets[@]}" -ne 43 ]]; then
-  printf 'error: expected 43 smoke targets, found %d\n' "${#targets[@]}" >&2
+if [[ "${#targets[@]}" -ne 44 ]]; then
+  printf 'error: expected 44 smoke targets, found %d\n' "${#targets[@]}" >&2
   exit 2
 fi
 
@@ -118,10 +118,10 @@ for target in "${targets[@]}"; do
   status=$?
 
   if [[ "$status" -eq "$expected" ]]; then
-    printf 'PASS [%d/43] %s\n' "$index" "${target#"$ROOT/"}"
+    printf 'PASS [%d/44] %s\n' "$index" "${target#"$ROOT/"}"
   else
     failures=$((failures + 1))
-    printf 'FAIL [%d/43] %s (expected %d, got %d)\n' \
+    printf 'FAIL [%d/44] %s (expected %d, got %d)\n' \
       "$index" "${target#"$ROOT/"}" "$expected" "$status" >&2
     if [[ -s "$stderr" ]]; then
       while IFS= read -r line; do
@@ -131,7 +131,7 @@ for target in "${targets[@]}"; do
   fi
 done
 
-printf 'smoke tests: %d passed, %d failed\n' "$((43 - failures))" "$failures"
+printf 'smoke tests: %d passed, %d failed\n' "$((44 - failures))" "$failures"
 if [[ "$failures" -ne 0 ]]; then
   exit 1
 fi

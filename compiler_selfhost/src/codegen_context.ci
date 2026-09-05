@@ -469,6 +469,9 @@ def context_call_result_c_type(
 ) -> String:
     if id.index < 0 or arena.nodes[id.index].kind != SyntaxKind.EXPR_CALL:
         return ""
+    net_result = context_std_net_call_result_c_type(arena, context, id, source)
+    if len(net_result) > 0:
+        return net_result
     function_index = context_callee_function(
         arena,
         context,
@@ -476,12 +479,79 @@ def context_call_result_c_type(
         source,
     )
     if function_index < 0:
+        semantic_type = context_semantic_type(context, id)
+        if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.RESULT):
+            builder = StringBuilder()
+            codegen_type_names.emit_semantic_specialized_type_name(context.type_table, semantic_type, context.type_source, &builder, context.specialization_names)
+            return builder.finish()
         return ""
     model: &const classes.ProjectClassModel = context.class_model
     function: &const classes.ClassFunctionInfo = &model.functions[cast[usize](function_index)]
     if not function.returns_result:
         return ""
     return function.return_c_type[0:len(function.return_c_type)]
+
+
+def context_std_net_call_result_c_type(
+    arena: &const SyntaxArena,
+    context: &ModuleCodegenContext,
+    id: NodeId,
+    source: &const String,
+) -> String:
+    callee = codegen_names.first_child(arena, id)
+    if callee.index < 0:
+        return ""
+    callee_node = arena.nodes[callee.index]
+    member_name = ""
+    is_net_call = false
+    if callee_node.kind == SyntaxKind.EXPR_NAME:
+        member_name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+        imported = codegen_names.find_import_member(context.imports, &member_name)
+        is_net_call = (
+            imported.virtual_builtin
+            and imported.module_name == "std.net"
+            and (
+                context_expression_resolves_to_import(context, callee)
+                or (
+                    not context_has_name(context, source, callee_node.value_start, callee_node.value_length)
+                    and not context_name_is_global(context, &member_name)
+                )
+            )
+        )
+    elif callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
+        receiver = codegen_names.first_child(arena, callee)
+        member = codegen_names.second_child(arena, callee)
+        if receiver.index < 0 or member.index < 0:
+            return ""
+        member_node = arena.nodes[member.index]
+        member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
+        receiver_node = arena.nodes[receiver.index]
+        if receiver_node.kind == SyntaxKind.EXPR_NAME:
+            alias = source[receiver_node.value_start:receiver_node.value_start + receiver_node.value_length]
+            imported = codegen_names.find_import_alias(context.imports, &alias)
+            is_net_call = (
+                imported.virtual_builtin
+                and imported.module_name == "std.net"
+                and (
+                    context_expression_resolves_to_import(context, receiver)
+                    or (
+                        not context_has_name(context, source, receiver_node.value_start, receiver_node.value_length)
+                        and not context_name_is_global(context, &alias)
+                    )
+                )
+            )
+        if not is_net_call:
+            receiver_type = context_semantic_type(context, receiver)
+            is_net_call = context_semantic_type_is_kind(context, receiver_type, types.TypeKind.SOCKET)
+    if not is_net_call:
+        return ""
+    if member_name == "socket" or member_name == "accept":
+        return "CinderResult_Socket_NetError"
+    if member_name == "poll" or member_name == "recv" or member_name == "send":
+        return "CinderResult_usize_NetError"
+    if member_name == "bind" or member_name == "connect" or member_name == "listen" or member_name == "set_blocking" or member_name == "close":
+        return "CinderResult_void_NetError"
+    return ""
 
 
 def context_callee_dyn_parameter(
@@ -701,6 +771,8 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
     if type_id.index < 0:
         return false
     semantic_type = context_semantic_type(context, type_id)
+    if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.SOCKET):
+        return true
     if semantic_type.index >= 0 and not codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.ERROR) and ownership.type_needs_drop_for_table(context.type_table, semantic_type):
         return true
     node = arena.nodes[type_id.index]
@@ -715,7 +787,7 @@ def context_type_needs_drop(arena: &const SyntaxArena, context: &ModuleCodegenCo
     if node.kind == SyntaxKind.TYPE_REFERENCE or node.kind == SyntaxKind.TYPE_POINTER or node.kind == SyntaxKind.TYPE_CONST:
         return false
     if node.kind == SyntaxKind.TYPE_NAME:
-        if codegen_names.range_text_equals(source, node.value_start, node.value_length, "String") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "File"):
+        if codegen_names.range_text_equals(source, node.value_start, node.value_length, "String") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "StringBuilder") or codegen_names.range_text_equals(source, node.value_start, node.value_length, "File") or context_type_is_std_net_socket(arena, context, type_id, source):
             return true
         return context_type_is_drop_nominal(arena, context, type_id, source)
     if node.kind == SyntaxKind.TYPE_GENERIC:
@@ -1677,6 +1749,11 @@ def emit_context_semantic_drop(
         builder.append(expression[0:len(expression)])
         builder.append(");\n")
         return true
+    if record.kind == types.TypeKind.SOCKET:
+        builder.append("    cinder_net_socket_drop(&")
+        builder.append(expression[0:len(expression)])
+        builder.append(");\n")
+        return true
     if record.kind == types.TypeKind.STRUCT or record.kind == types.TypeKind.CLASS:
         builder.append("    ")
         codegen_type_names.emit_semantic_c_type(context.type_table, type_id, context.type_source, builder, prefix, project_name, imports, context.specialization_names)
@@ -1821,6 +1898,11 @@ def emit_context_drop(
             builder.append(");\n")
             return
         semantic_type = context_semantic_type(context, type_id)
+        if codegen_type_names.semantic_type_is_kind(context.type_table, semantic_type, types.TypeKind.SOCKET) or context_type_is_std_net_socket(arena, context, type_id, source):
+            builder.append("    cinder_net_socket_drop(&")
+            builder.append(name[0:len(name)])
+            builder.append(");\n")
+            return
         c_builder = StringBuilder()
         emit_context_c_type(context.type_arena, type_id, context.type_source, &c_builder, prefix, project_name, imports, context)
         c_type = c_builder.finish()
@@ -1869,6 +1951,30 @@ def emit_context_drop(
 
 def semantic_collection_inner_needs_drop(table: &const types.TypeTable, type_id: types.TypeId) -> bool:
     return ownership.type_needs_drop_for_table(table, type_id)
+
+
+def context_type_is_std_net_socket(
+    arena: &const SyntaxArena,
+    context: &const ModuleCodegenContext,
+    type_id: NodeId,
+    source: &const String,
+) -> bool:
+    if type_id.index < 0 or arena.nodes[type_id.index].kind != SyntaxKind.TYPE_NAME:
+        return false
+    node = arena.nodes[type_id.index]
+    if node.child_count > 1:
+        alias_node = arena.nodes[arena.children[node.first_child].index]
+        member_node = arena.nodes[arena.children[node.first_child + 1].index]
+        alias = source[alias_node.value_start:alias_node.value_start + alias_node.value_length]
+        imported = codegen_names.find_import_alias(context.imports, &alias)
+        return (
+            imported.virtual_builtin
+            and imported.module_name == "std.net"
+            and codegen_names.range_text_equals(source, member_node.value_start, member_node.value_length, "Socket")
+        )
+    name = source[node.value_start:node.value_start + node.value_length]
+    imported = codegen_names.find_import_member(context.imports, &name)
+    return imported.virtual_builtin and imported.module_name == "std.net" and imported.member == "Socket"
 
 def context_type_is_string(arena: &const SyntaxArena, type_id: NodeId, source: &const String) -> bool:
     if type_id.index < 0:

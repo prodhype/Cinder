@@ -512,6 +512,26 @@ Compile-time field bindings expose `name`, `type_name`, `offset`, `size`, `align
 
 `open(path, mode)` is globally available, borrows both `String` arguments, and returns a move-only `File` without importing `stdio`. A null `fopen` result panics. `File` provides text `write(text: String) -> usize` and byte-slice `write(data: []const u8) -> usize` forms, plus `read(buffer: []u8) -> usize`, `read_line() -> Option[String]`, `read_text() -> String`, `read_all() -> List[u8]`, `flush()`, and `close()`. `write` borrows its input rather than consuming it. `read` fills up to `buffer.length` and returns the byte count (`0` means EOF). `read_line` excludes the trailing newline and strips a preceding carriage return for CRLF; immediate EOF is `None`, while a blank line is `Some("")`. `read_text` reads the remaining data and validates UTF-8 before returning it as owned text. `read_all` remains the byte-oriented operation and returns the remaining bytes as an owning `List[u8]`. Closed-handle use, I/O failure, invalid text input, and out-of-memory conditions panic. Scope exit closes any still-open handle. Prefer `with open(...) as file:` to limit the file's lifetime.
 
+The compiler-provided `std.net` module exposes TCP sockets without adding
+language syntax. `socket([family[, type[, protocol]]])` returns
+`Result[Socket, NetError]`; omitted arguments default to `AF_INET`,
+`SOCK_STREAM`, and zero. `Socket` is move-only and provides `bind`, `listen`,
+`accept`, `connect`, `recv`, `send`, `set_blocking`, `fileno`, and `close`.
+`recv` accepts `[]u8`, `send` accepts `[]const u8`, and both return
+`Result[usize, NetError]`. `recv` reports orderly EOF as `Ok(0)`.
+
+`PollFd(&Socket, events)` creates a non-owning descriptor snapshot.
+`poll(fds: []PollFd, timeout_ms: i32)` mutates `revents` and returns
+`Result[usize, NetError]`. The `POLL_IN`, `POLL_OUT`, `POLL_ERROR`,
+`POLL_HANGUP`, and `POLL_INVALID` integer constants may be combined with
+bitwise operators. A `PollFd` becomes invalid if its socket closes or moves to
+an owner that is dropped; polling does not extend socket lifetime.
+
+`NetError.kind` is a portable `NetErrorKind` category and `NetError.code`
+retains the native error number. The initial implementation supports
+IPv4/IPv6 TCP streams on POSIX systems. Windows operations return
+`NetErrorKind.unsupported`.
+
 `free(pointer)` and `panic(message)` are globally available. The corresponding namespaced APIs are available from `stdlib` and `cinder`.
 
 Result values expose `.is_ok`, `.value`, and `.error`. Accessing a `void` payload is rejected.

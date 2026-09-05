@@ -30,6 +30,23 @@ it does not launch `mkdir`, `rm`, or other process utilities. Generated Windows
 programs retain a compilable API whose filesystem operations currently panic as
 unsupported.
 
+### Native TCP networking
+
+`std.net` adds move-only IPv4/IPv6 TCP sockets with Python-shaped
+`net.socket(...)`, `bind`, `listen`, `accept`, `connect`, `recv`, `send`,
+blocking-mode control, explicit close, and deterministic descriptor cleanup.
+Recoverable failures use `Result[..., NetError]`; errors retain both a portable
+kind and the native error code.
+
+`PollFd` and `poll` expose readiness polling without allocation. Poll entries
+snapshot descriptors, accept bitwise event constants, and receive `revents`
+updates in place. Mutable and const byte slices map directly to native `recv`
+and `send` buffers, including partial sends and `Ok(0)` EOF.
+
+The first runtime implementation targets POSIX and emits readable
+`send`/`recv`/`poll` calls. Windows retains a compilable API that reports
+`unsupported`.
+
 ### Owned UTF-8 text
 
 `String` becomes Cinder's primary text type. Ordinary literals produce move-only UTF-8 Strings with deterministic drop. Their runtime shape is conceptually data, byte length, and capacity; static literals use copy-on-write storage. Independent copies use explicit `clone`, addressable values support `append`, `reserve`, and `clear`, and `+` borrows its operands to return a fresh String.

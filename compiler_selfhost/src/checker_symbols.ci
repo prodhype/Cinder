@@ -117,12 +117,16 @@ def collect_symbols_in_node(
     elif node.kind == syntax.SyntaxKind.IMPORT_DECL:
         imported = checker_core.find_child_kind(arena, id, syntax.SyntaxKind.DOTTED_NAME)
         if imported.index >= 0:
+            imported_node = arena.nodes[imported.index]
+            module_name = source[imported_node.start:imported_node.start + imported_node.length]
             binding_node = arena.nodes[checker_core.last_child(arena, imported).index]
             for offset in range(0, node.child_count):
                 child_id = arena.children[node.first_child + offset]
                 child = arena.nodes[child_id.index]
                 if child.kind == syntax.SyntaxKind.NAME and child.flags == 1:
                     binding_node = child
+            if module_name == "std.net" and project.module_name_is_virtual_builtin(&module_name, modules):
+                checker.type_table.register_net_namespace(source, binding_node.value_start, binding_node.value_length)
             symbol = checker.symbols.add_symbol(
                 symbols.SymbolKind.GLOBAL,
                 binding_node.value_start,
@@ -283,6 +287,25 @@ def collect_from_import_symbols(
                     elif checker_imports.imported_member_is_lock(&module_name, &original_text, modules):
                         symbol_kind = symbols.SymbolKind.LOCK
                         imported_type = types.type_lock()
+                    elif module_name == "std.net" and project.module_name_is_virtual_builtin(&module_name, modules):
+                        if original_text == "Socket":
+                            symbol_kind = symbols.SymbolKind.CLASS
+                            imported_type = types.type_socket()
+                        elif original_text == "PollFd" or original_text == "NetError":
+                            symbol_kind = symbols.SymbolKind.STRUCT
+                            if original_text == "PollFd":
+                                imported_type = types.type_poll_fd()
+                            else:
+                                imported_type = types.type_net_error()
+                        elif original_text == "NetErrorKind":
+                            symbol_kind = symbols.SymbolKind.ENUM
+                            imported_type = types.type_net_error_kind()
+                        elif original_text == "AF_INET" or original_text == "AF_INET6" or original_text == "SOCK_STREAM":
+                            symbol_kind = symbols.SymbolKind.CONSTANT
+                            imported_type = types.type_i32()
+                        elif original_text == "POLL_IN" or original_text == "POLL_OUT" or original_text == "POLL_ERROR" or original_text == "POLL_HANGUP" or original_text == "POLL_INVALID":
+                            symbol_kind = symbols.SymbolKind.CONSTANT
+                            imported_type = types.type_i16()
                 symbol = checker.symbols.add_symbol(
                     symbol_kind,
                     name_node.value_start,

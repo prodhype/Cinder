@@ -413,7 +413,7 @@ def dump_parse_diagnostics(
 
 
 def is_builtin_module(module_name: &const String) -> bool:
-    return module_name == "stdio" or module_name == "math" or module_name == "stdlib" or module_name == "string" or module_name == "cinder" or module_name == "process" or module_name == "std.atomic" or module_name == "std.path"
+    return module_name == "stdio" or module_name == "math" or module_name == "stdlib" or module_name == "string" or module_name == "cinder" or module_name == "process" or module_name == "std.atomic" or module_name == "std.net" or module_name == "std.path"
 
 
 def module_is_loaded(modules: &const List[ParsedModule], module_name: &const String) -> bool:
