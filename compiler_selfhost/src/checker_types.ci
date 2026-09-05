@@ -2331,6 +2331,8 @@ def infer_attribute_expression_type(
                 return types.type_net_error()
             if name == "NetErrorKind":
                 return types.type_net_error_kind()
+            checker_core.emit_import_member_error(checker, &member_node, "std.net", name)
+            return types.type_error()
         import_index: usize = 0
         module_imports: &const List[project.ImportBinding] = &checker.module_imports
         while import_index < len(module_imports):

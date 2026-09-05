@@ -950,16 +950,32 @@ def emit_net_poll_call(
     timeout = net_call_argument(arena, call_id, source, "poll", 1)
     fds_type = codegen_context.context_expression_type(arena, context, fds, source)
     is_array = codegen_specializations.context_type_is_array(context.type_arena, fds_type)
-    is_slice_value = fds.index >= 0 and arena.nodes[fds.index].kind == SyntaxKind.EXPR_SLICE
+    materialize_fds = path_argument_needs_materialization(arena, context, fds, source)
+    is_slice_value = not materialize_fds and fds.index >= 0 and arena.nodes[fds.index].kind == SyntaxKind.EXPR_SLICE
     result_name = net_result_type_name(arena, call_id, source, prefix, project_name, imports, context)
     temporary_index = context.temporary_index
     context.temporary_index += 1
-    builder.append("({ __auto_type cinder_net_poll_fds_")
+    fds_value_name = ""
+    builder.append("({ ")
+    if materialize_fds:
+        name_builder = StringBuilder()
+        append_net_temporary_name(&name_builder, "poll_fds_value", temporary_index)
+        fds_value_name = name_builder.finish()
+        builder.append("__auto_type ")
+        builder.append(fds_value_name[0:len(fds_value_name)])
+        builder.append(" = ")
+        emit_nested(state, fds)
+        builder.append("; ")
+    builder.append("__auto_type cinder_net_poll_fds_")
     codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
     builder.append(" = ")
-    if not is_slice_value and not codegen_context.context_expression_is_pointer_like(arena, context, fds, source):
+    if materialize_fds:
         builder.append("&")
-    emit_nested(state, fds)
+        builder.append(fds_value_name[0:len(fds_value_name)])
+    else:
+        if not is_slice_value and not codegen_context.context_expression_is_pointer_like(arena, context, fds, source):
+            builder.append("&")
+        emit_nested(state, fds)
     builder.append("; int32_t cinder_net_poll_timeout_")
     codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
     builder.append(" = ")
@@ -987,6 +1003,9 @@ def emit_net_poll_call(
     codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
     builder.append(", &cinder_net_error_value); ")
     append_net_count_result(builder, &result_name, "cinder_net_poll_count")
+    if materialize_fds:
+        fds_semantic_type = codegen_context.context_semantic_type(context, fds)
+        codegen_context.emit_context_semantic_drop(context, fds_semantic_type, builder, &fds_value_name, prefix, project_name, imports)
     builder.append(" cinder_net_result; })")
 
 
@@ -1416,6 +1435,25 @@ def receiver_is_socket(
     return codegen_context.context_semantic_type_is_kind(context, semantic_type, types.TypeKind.SOCKET)
 
 
+def socket_receiver_is_pointer_like(
+    arena: &const SyntaxArena,
+    receiver: NodeId,
+    source: &const String,
+    context: &codegen_model.ModuleCodegenContext,
+) -> bool:
+    if codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+        return true
+    semantic_type = codegen_context.context_semantic_type(context, receiver)
+    table: &const types.TypeTable = context.type_table
+    while semantic_type.index >= 0 and semantic_type.index < cast[i32](len(table.types)):
+        record = table.types[semantic_type.index]
+        if record.kind == types.TypeKind.CONST:
+            semantic_type = record.inner
+            continue
+        return record.kind == types.TypeKind.POINTER or record.kind == types.TypeKind.REFERENCE
+    return false
+
+
 def emit_socket_method_call(
     arena: &const SyntaxArena,
     call_id: NodeId,
@@ -1432,7 +1470,8 @@ def emit_socket_method_call(
 ) -> void:
     temporary_index = context.temporary_index
     context.temporary_index += 1
-    materialize_receiver = path_argument_needs_materialization(arena, context, receiver, source)
+    receiver_pointer_like = socket_receiver_is_pointer_like(arena, receiver, source, context)
+    materialize_receiver = path_argument_needs_materialization(arena, context, receiver, source) and not receiver_pointer_like
     builder.append("({ ")
     if materialize_receiver:
         builder.append("CinderSocket ")
@@ -1447,7 +1486,7 @@ def emit_socket_method_call(
         builder.append("&")
         append_net_temporary_name(builder, "receiver", temporary_index)
     else:
-        if not codegen_context.context_expression_is_pointer_like(arena, context, receiver, source):
+        if not receiver_pointer_like:
             builder.append("&")
         emit_nested(state, receiver)
     builder.append("; ")

@@ -53,6 +53,30 @@ def const_socket_fileno(socket: &const net.Socket) -> i32:
     return socket.fileno()
 
 
+def socket_reference(socket: &net.Socket) -> &net.Socket:
+    return socket
+
+
+def socket_pointer(socket: *net.Socket) -> *net.Socket:
+    return socket
+
+
+def reference_socket_fileno(socket: &net.Socket) -> i32:
+    return socket_reference(socket).fileno()
+
+
+def pointer_socket_fileno(socket: *net.Socket) -> i32:
+    return socket_pointer(socket).fileno()
+
+
+def make_poll_fds(socket: &net.Socket) -> List[PF]:
+    return [PF(socket, EVENT_IN)]
+
+
+def poll_temporary(socket: &net.Socket) -> Result[usize, net.NetError]:
+    return wait_for_events(make_poll_fds(socket), 0)
+
+
 def discard_accepted(listener: &net.Socket) -> void:
     match listener.accept():
         case Ok(_):
