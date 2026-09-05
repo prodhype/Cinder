@@ -21,6 +21,10 @@ def imported_error() -> net.NetError:
     return E(kind=net.NetErrorKind.invalid_input, code=0)
 
 
+def qualified_error() -> net.NetError:
+    return net.NetError(kind=net.NetErrorKind.invalid_input, code=0)
+
+
 def imported_constants() -> i32:
     events = EVENT_IN | EVENT_OUT | EVENT_ERROR | EVENT_HANGUP | EVENT_INVALID
     return FAMILY + FAMILY6 + STREAM + cast[i32](events)
@@ -75,6 +79,18 @@ def make_poll_fds(socket: &net.Socket) -> List[PF]:
 
 def poll_temporary(socket: &net.Socket) -> Result[usize, net.NetError]:
     return wait_for_events(make_poll_fds(socket), 0)
+
+
+def send_referenced_array(socket: &net.Socket, buffer: &u8[4]) -> Result[usize, net.NetError]:
+    return socket.send(buffer)
+
+
+def recv_referenced_array(socket: &net.Socket, buffer: &u8[8]) -> Result[usize, net.NetError]:
+    return socket.recv(buffer)
+
+
+def poll_referenced_array(fds: &PF[1]) -> Result[usize, net.NetError]:
+    return wait_for_events(fds, 0)
 
 
 def discard_accepted(listener: &net.Socket) -> void:

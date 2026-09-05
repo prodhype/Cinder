@@ -927,6 +927,10 @@ def validate_net_namespace_call(
         minimum = 2
         maximum = 2
         result = types.type_poll_fd()
+    elif member_name == "NetError":
+        minimum = 2
+        maximum = 2
+        result = types.type_net_error()
     elif member_name == "poll":
         minimum = 2
         maximum = 2
@@ -1097,6 +1101,12 @@ def net_named_argument_index(arena: &const syntax.SyntaxArena, argument: NodeId,
         if argument_name == "events":
             return 1
         return -1
+    if operation == "NetError":
+        if argument_name == "kind":
+            return 0
+        if argument_name == "code":
+            return 1
+        return -1
     if operation == "poll":
         if argument_name == "fds":
             return 0
@@ -1121,6 +1131,10 @@ def net_named_argument_index(arena: &const syntax.SyntaxArena, argument: NodeId,
 
 
 def net_argument_destination_type(checker: &checker_core.Checker, operation: &const String, role: i32) -> types.TypeId:
+    if operation == "NetError":
+        if role == 0:
+            return types.type_net_error_kind()
+        return types.type_i32()
     if operation == "PollFd":
         if role == 0:
             return checker.type_table.pointer_to(checker.type_table.const_of(types.type_socket()))
@@ -1145,6 +1159,10 @@ def net_argument_destination_type(checker: &checker_core.Checker, operation: &co
 
 
 def net_argument_type_matches(checker: &const checker_core.Checker, operation: &const String, role: i32, actual: types.TypeId, source: &const String) -> bool:
+    if operation == "NetError":
+        if role == 0:
+            return types.strip_const(&checker.type_table, actual).index == types.type_net_error_kind().index
+        return net_type_is_integer(checker.type_table, actual, source)
     if operation == "socket":
         return net_type_is_integer(checker.type_table, actual, source)
     if operation == "PollFd":
