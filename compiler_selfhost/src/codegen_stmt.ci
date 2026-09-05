@@ -994,9 +994,14 @@ def emit_module_match(
     subject = codegen_names.first_child(arena, id)
     subject_info = match_subject_value_info(arena, subject, source, prefix, project_name, imports, context)
     subject_owned_path = codegen_access.expression_is_owned_path_string(arena, subject, source, imports, context)
+    subject_socket_result = (
+        match_subject_is_socket_result(context, &subject_info)
+        and not codegen_context.context_expression_is_addressable_for_borrow(arena, context, subject, source)
+    )
+    subject_needs_cleanup = subject_owned_path or subject_socket_result
     value_name = "cinder_match_value"
     found_name = "cinder_match_found"
-    if subject_owned_path:
+    if subject_needs_cleanup:
         temporary_index = context.temporary_index
         context.temporary_index += 1
         value_name_builder = StringBuilder()
@@ -1017,7 +1022,7 @@ def emit_module_match(
     builder.append(";\n    bool ")
     builder.append(found_name[0:len(found_name)])
     builder.append(" = false;\n")
-    if subject_owned_path:
+    if subject_needs_cleanup:
         context.cleanup_boundaries.append(
             codegen_context.CodegenCleanupBoundary(
                 local_start=len(context.local_types),
@@ -1056,18 +1061,27 @@ def emit_module_match(
         guard = match_case_guard(arena, case_id)
         body = codegen_names.find_child_kind(arena, case_id, SyntaxKind.BLOCK)
         if guard.index >= 0:
+            if subject_socket_result:
+                set_match_socket_bindings_moved(context, local_start, true)
             builder.append("    if (")
             codegen_expr.emit_module_expression(arena, guard, source, builder, prefix, project_name, imports, context)
             builder.append(") {\n    ")
             builder.append(found_name[0:len(found_name)])
             builder.append(" = true;\n")
+            if subject_socket_result:
+                emit_match_socket_binding_transfer(builder, context, local_start, &value_name, &subject_info)
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
+            if subject_socket_result:
+                codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
+                set_match_socket_bindings_moved(context, local_start, true)
             builder.append("    }\n")
         else:
             builder.append("    ")
             builder.append(found_name[0:len(found_name)])
             builder.append(" = true;\n")
+            if subject_socket_result:
+                emit_match_socket_binding_transfer(builder, context, local_start, &value_name, &subject_info)
             if body.index >= 0:
                 emit_module_block(arena, body, source, builder, prefix, project_name, imports, context, false)
         codegen_context.emit_context_live_drops_range(arena, context, source, builder, local_start, len(context.local_types), prefix, project_name, imports)
@@ -1078,11 +1092,59 @@ def emit_module_match(
         while len(context.pointer_names) > pointer_start:
             context.pointer_names.pop()
         builder.append("    }\n    }\n")
-    if subject_owned_path:
+    if subject_needs_cleanup:
         emit_module_value_cleanups_until(builder, context, len(context.value_cleanups) - 1, len(context.value_cleanups), prefix, project_name, imports)
         context.value_cleanups.pop()
         context.cleanup_boundaries.pop()
     builder.append("    }\n")
+
+
+def match_subject_is_socket_result(
+    context: &const codegen_model.ModuleCodegenContext,
+    subject_info: &const MatchValueInfo,
+) -> bool:
+    table: &const types.TypeTable = context.type_table
+    if subject_info.semantic_type.index < 0 or subject_info.semantic_type.index >= cast[i32](len(table.types)):
+        return false
+    result = table.types[subject_info.semantic_type.index]
+    if result.kind != types.TypeKind.RESULT:
+        return false
+    return codegen_type_names.semantic_type_is_kind(table, result.inner, types.TypeKind.SOCKET)
+
+
+def set_match_socket_bindings_moved(
+    context: &codegen_model.ModuleCodegenContext,
+    local_start: usize,
+    moved: bool,
+) -> void:
+    index = local_start
+    while index < len(context.local_types):
+        semantic_type = codegen_context.context_semantic_name_type_for_name(context, &context.local_types[index].name)
+        if codegen_context.context_semantic_type_is_kind(context, semantic_type, types.TypeKind.SOCKET):
+            context.local_types[index].moved = moved
+        index += 1
+
+
+def emit_match_socket_binding_transfer(
+    builder: &StringBuilder,
+    context: &codegen_model.ModuleCodegenContext,
+    local_start: usize,
+    value_name: &const String,
+    subject_info: &const MatchValueInfo,
+) -> void:
+    index = local_start
+    while index < len(context.local_types):
+        semantic_type = codegen_context.context_semantic_name_type_for_name(context, &context.local_types[index].name)
+        if codegen_context.context_semantic_type_is_kind(context, semantic_type, types.TypeKind.SOCKET):
+            builder.append("    ")
+            builder.append(value_name[0:len(value_name)])
+            builder.append(".tag = ")
+            builder.append(subject_info.c_type[0:len(subject_info.c_type)])
+            builder.append("_Tag_Err;\n")
+            context.local_types[index].moved = false
+            return
+        index += 1
+
 
 def match_case_guard(arena: &const SyntaxArena, case_id: NodeId) -> NodeId:
     node = arena.nodes[case_id.index]
@@ -1372,6 +1434,8 @@ def emit_match_binding_declaration_once(
     builder.append(";\n")
     if binding_info.syntax_type.index >= 0:
         codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, binding_info.syntax_type)
+    elif binding_info.semantic_type.index >= 0:
+        codegen_context.register_context_name_type(arena, context, source, name.value_start, name.value_length, syntax.missing_node())
     if binding_info.semantic_type.index >= 0:
         codegen_context.register_context_semantic_name_type(context, source, name.value_start, name.value_length, binding_info.semantic_type)
 

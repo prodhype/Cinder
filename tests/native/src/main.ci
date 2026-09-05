@@ -50,6 +50,7 @@ def main(argc: i32, argv: **char) -> i32:
     test_multi_module_project(&state)
     test_atomic_codegen(&state)
     test_net_codegen(&state)
+    test_net_regressions(&state)
     test_net_runtime(&state)
     test_net_diagnostics(&state)
     test_net_shadowing(&state)
@@ -569,6 +570,54 @@ def test_net_runtime(state: &TestState) -> void:
         report_process_failure(&result.stdout, &result.stderr)
 
 
+def test_net_regressions(state: &TestState) -> void:
+    source = state.root + "/tests/cases/net_regressions.ci"
+    emit_command: List[String] = [
+        state.compiler.clone(),
+        "emit-c",
+        source.clone(),
+    ]
+    run_command: List[String] = [
+        state.compiler.clone(),
+        "run",
+        source,
+        "-o",
+        state.workspace + "/net-regressions",
+        "--build-dir",
+        state.workspace + "/net-regressions-build",
+    ]
+    emitted = process.run(emit_command)
+    ran = process.run(run_command)
+    ok = (
+        emitted.exit_code == 0
+        and ran.exit_code == 0
+        and contains(&emitted.stdout, "cinder_net_socket(")
+        and contains(&emitted.stdout, "cinder_selfhost_net_poll(")
+        and contains(&emitted.stdout, "cinder_net_socket_fileno(cinder_net_socket_")
+        and contains(&emitted.stdout, "CinderString cinder_net_host_")
+        and contains(&emitted.stdout, "cinder_string_cstr(&cinder_net_host_")
+        and contains(&emitted.stdout, "cinder_string_drop(&cinder_net_host_")
+        and contains(&emitted.stdout, "CinderResult_Socket_NetError_drop(&cinder_match_value_")
+        and contains(&emitted.stdout, "cinder_net_socket_drop(&connection)")
+        and contains(&emitted.stdout, "(CinderNetError){")
+        and contains(&emitted.stdout, "CINDER_NET_AF_INET")
+        and contains(&emitted.stdout, "CINDER_NET_AF_INET6")
+        and contains(&emitted.stdout, "CINDER_NET_SOCK_STREAM")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_IN")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_OUT")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_ERROR")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_HANGUP")
+        and contains(&emitted.stdout, "CINDER_NET_POLL_INVALID")
+        and not contains(&emitted.stdout, "fileno(&connection)")
+        and not contains(&emitted.stdout, "std_net__NetError")
+        and not contains(&emitted.stdout, "cinder_string_cstr(&net_regressions__host())")
+    )
+    expect(state, "std.net direct imports, matches, temporaries, and aliases lower safely", ok)
+    if not ok:
+        report_process_failure(&emitted.stdout, &emitted.stderr)
+        report_process_failure(&ran.stdout, &ran.stderr)
+
+
 def test_net_diagnostics(state: &TestState) -> void:
     bad_member: List[String] = [
         state.compiler.clone(),
@@ -580,18 +629,28 @@ def test_net_diagnostics(state: &TestState) -> void:
         "check",
         state.root + "/tests/cases/net_invalid_buffer.ci",
     ]
+    bad_constructor: List[String] = [
+        state.compiler.clone(),
+        "check",
+        state.root + "/tests/cases/net_invalid_socket_constructor.ci",
+    ]
     member_result = process.run(bad_member)
     buffer_result = process.run(bad_buffer)
+    constructor_result = process.run(bad_constructor)
     ok = (
         member_result.exit_code == 1
         and contains(&member_result.stderr, "cannot resolve std.net.missing")
         and buffer_result.exit_code == 1
         and contains(&buffer_result.stderr, "expected []const u8, found String")
+        and constructor_result.exit_code == 1
+        and contains(&constructor_result.stderr, "checker.non-constructible-runtime-type/422")
+        and contains(&constructor_result.stderr, "Socket cannot be constructed directly")
     )
-    expect(state, "std.net rejects invalid members and byte buffers", ok)
+    expect(state, "std.net rejects invalid members, buffers, and Socket construction", ok)
     if not ok:
         report_process_failure(&member_result.stdout, &member_result.stderr)
         report_process_failure(&buffer_result.stdout, &buffer_result.stderr)
+        report_process_failure(&constructor_result.stdout, &constructor_result.stderr)
 
 
 def test_net_shadowing(state: &TestState) -> void:

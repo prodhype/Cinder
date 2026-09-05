@@ -1006,6 +1006,9 @@ def net_result_type_name(
             member_name = ""
             if callee_node.kind == SyntaxKind.EXPR_NAME:
                 member_name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+                imported = codegen_names.find_import_member(imports, &member_name)
+                if imported.virtual_builtin and imported.module_name == "std.net":
+                    member_name = imported.member[0:len(imported.member)]
             elif callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
                 member = codegen_names.second_child(arena, callee)
                 if member.index >= 0:
@@ -1051,25 +1054,7 @@ def emit_std_net_constant(
     member_node = arena.nodes[member.index]
     member_name = source[member_node.value_start:member_node.value_start + member_node.value_length]
     if expression_is_net_namespace(arena, receiver, source, imports, context):
-        if member_name == "AF_INET":
-            builder.append("CINDER_NET_AF_INET")
-        elif member_name == "AF_INET6":
-            builder.append("CINDER_NET_AF_INET6")
-        elif member_name == "SOCK_STREAM":
-            builder.append("CINDER_NET_SOCK_STREAM")
-        elif member_name == "POLL_IN":
-            builder.append("CINDER_NET_POLL_IN")
-        elif member_name == "POLL_OUT":
-            builder.append("CINDER_NET_POLL_OUT")
-        elif member_name == "POLL_ERROR":
-            builder.append("CINDER_NET_POLL_ERROR")
-        elif member_name == "POLL_HANGUP":
-            builder.append("CINDER_NET_POLL_HANGUP")
-        elif member_name == "POLL_INVALID":
-            builder.append("CINDER_NET_POLL_INVALID")
-        else:
-            return false
-        return true
+        return emit_std_net_constant_name(builder, &member_name)
     receiver_node = arena.nodes[receiver.index]
     if receiver_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
         namespace = codegen_names.first_child(arena, receiver)
@@ -1100,6 +1085,28 @@ def emit_std_net_constant(
         return false
     builder.append("CinderNetErrorKind_")
     builder.append(member_name[0:len(member_name)])
+    return true
+
+
+def emit_std_net_constant_name(builder: &StringBuilder, member_name: &const String) -> bool:
+    if member_name == "AF_INET":
+        builder.append("CINDER_NET_AF_INET")
+    elif member_name == "AF_INET6":
+        builder.append("CINDER_NET_AF_INET6")
+    elif member_name == "SOCK_STREAM":
+        builder.append("CINDER_NET_SOCK_STREAM")
+    elif member_name == "POLL_IN":
+        builder.append("CINDER_NET_POLL_IN")
+    elif member_name == "POLL_OUT":
+        builder.append("CINDER_NET_POLL_OUT")
+    elif member_name == "POLL_ERROR":
+        builder.append("CINDER_NET_POLL_ERROR")
+    elif member_name == "POLL_HANGUP":
+        builder.append("CINDER_NET_POLL_HANGUP")
+    elif member_name == "POLL_INVALID":
+        builder.append("CINDER_NET_POLL_INVALID")
+    else:
+        return false
     return true
 
 
@@ -1174,6 +1181,13 @@ def net_named_argument_index(
 
 def append_path_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:
     builder.append("cinder_path_")
+    builder.append(role)
+    builder.append("_")
+    codegen_type_names.append_specialization_decimal(builder, cast[usize](index))
+
+
+def append_net_temporary_name(builder: &StringBuilder, role: String, index: i32) -> void:
+    builder.append("cinder_net_")
     builder.append(role)
     builder.append("_")
     codegen_type_names.append_specialization_decimal(builder, cast[usize](index))
@@ -1427,6 +1441,17 @@ def emit_socket_method_call(
     if member_name == "recv" or member_name == "send":
         emit_socket_data_method_call(arena, call_id, member_name, source, builder, prefix, project_name, imports, context, temporary_index, state, emit_nested)
         return
+    host = syntax.missing_node()
+    materialize_host = false
+    if member_name == "bind" or member_name == "connect":
+        host = net_call_argument(arena, call_id, source, member_name, 0)
+        materialize_host = path_argument_needs_materialization(arena, context, host, source)
+        if materialize_host:
+            builder.append("CinderString ")
+            append_net_temporary_name(builder, "host", temporary_index)
+            builder.append(" = ")
+            emit_nested(state, host)
+            builder.append("; ")
     result_name = net_result_type_name(arena, call_id, source, prefix, project_name, imports, context)
     builder.append(result_name[0:len(result_name)])
     builder.append(" cinder_net_result = { .tag = ")
@@ -1445,7 +1470,12 @@ def emit_socket_method_call(
     codegen_type_names.append_specialization_decimal(builder, cast[usize](temporary_index))
     if member_name == "bind" or member_name == "connect":
         builder.append(", ")
-        emit_c_string_argument(arena, net_call_argument(arena, call_id, source, member_name, 0), source, builder, prefix, project_name, imports, context, state, emit_nested)
+        if materialize_host:
+            builder.append("cinder_string_cstr(&")
+            append_net_temporary_name(builder, "host", temporary_index)
+            builder.append(")")
+        else:
+            emit_c_string_argument(arena, host, source, builder, prefix, project_name, imports, context, state, emit_nested)
         builder.append(", ")
         emit_nested(state, net_call_argument(arena, call_id, source, member_name, 1))
     elif member_name == "listen" or member_name == "set_blocking":
@@ -1453,7 +1483,12 @@ def emit_socket_method_call(
         emit_nested(state, net_call_argument(arena, call_id, source, member_name, 0))
     builder.append(", &cinder_net_error_value)) { cinder_net_result.tag = ")
     builder.append(result_name[0:len(result_name)])
-    builder.append("_Tag_Ok; } else { cinder_net_result.data.err = cinder_net_error_value; } cinder_net_result; })")
+    builder.append("_Tag_Ok; } else { cinder_net_result.data.err = cinder_net_error_value; } ")
+    if materialize_host:
+        builder.append("cinder_string_drop(&")
+        append_net_temporary_name(builder, "host", temporary_index)
+        builder.append("); ")
+    builder.append("cinder_net_result; })")
 
 
 def emit_socket_data_method_call(

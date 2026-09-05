@@ -518,6 +518,8 @@ def context_std_net_call_result_c_type(
                 )
             )
         )
+        if is_net_call:
+            member_name = imported.member[0:len(imported.member)]
     elif callee_node.kind == SyntaxKind.EXPR_ATTRIBUTE:
         receiver = codegen_names.first_child(arena, callee)
         member = codegen_names.second_child(arena, callee)

@@ -439,6 +439,19 @@ def emit_module_expression_state(state: &codegen_model.ModuleExpressionState, id
     if node.kind == SyntaxKind.EXPR_NAME:
         name = source[node.value_start:node.value_start + node.value_length]
         imported = codegen_names.find_import_member(imports, &name)
+        if (
+            imported.virtual_builtin
+            and imported.module_name == "std.net"
+            and (
+                codegen_context.context_expression_resolves_to_import(context, id)
+                or (
+                    not codegen_context.context_has_name(context, source, node.value_start, node.value_length)
+                    and not codegen_context.context_name_is_global(context, &name)
+                )
+            )
+            and codegen_access.emit_std_net_constant_name(builder, &imported.member)
+        ):
+            return
         if len(imported.module_name) > 0 and len(imported.member) > 0 and not imported.virtual_builtin:
             builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
             builder.append(imported.member)

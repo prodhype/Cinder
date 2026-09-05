@@ -410,6 +410,17 @@ def validate_call(checker: &checker_core.Checker, arena: &const syntax.SyntaxAre
         return
     if callee_node.kind != syntax.SyntaxKind.EXPR_NAME:
         return
+    if validate_net_named_call(checker, arena, id, callee, source, current_scope):
+        return
+    if direct_std_net_import_kind(checker, arena, callee, source, current_scope) == 4:
+        checker_core.emit_symbol_error(
+            checker,
+            diagnostics.DiagnosticId.CHECK_422,
+            &callee_node,
+            source[callee_node.value_start:callee_node.value_start + callee_node.value_length],
+        )
+        checker.model.record_expr_type(id, types.type_error())
+        return
     if checker_core.range_text_equals(source, callee_node.value_start, callee_node.value_length, "closure"):
         validate_closure_constructor(checker, arena, id, source, current_scope)
         return
@@ -820,6 +831,76 @@ def virtual_net_namespace_receiver(
 
 def net_result_type(checker: &checker_core.Checker, value_type: types.TypeId) -> types.TypeId:
     return checker.type_table.generic2(types.TypeKind.RESULT, 0, 0, value_type, types.type_net_error())
+
+
+def direct_std_net_import_kind(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    callee: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> i32:
+    if callee.index < 0 or arena.nodes[callee.index].kind != syntax.SyntaxKind.EXPR_NAME:
+        return 0
+    callee_node = arena.nodes[callee.index]
+    found = checker.symbols.find_in_scope(source, current_scope, callee_node.value_start, callee_node.value_length)
+    if found.index < 0:
+        return 0
+    resolved = checker.symbols.symbols[found.index]
+    if resolved.node.index < 0 or arena.nodes[resolved.node.index].kind != syntax.SyntaxKind.IMPORT_NAME:
+        return 0
+    name = source[callee_node.value_start:callee_node.value_start + callee_node.value_length]
+    module_imports: &const List[project.ImportBinding] = &checker.module_imports
+    for imported in module_imports:
+        if imported.alias != name or not imported.virtual_builtin or imported.module_name != "std.net":
+            continue
+        if imported.member == "socket":
+            return 1
+        if imported.member == "poll":
+            return 2
+        if imported.member == "PollFd":
+            return 3
+        if imported.member == "Socket":
+            return 4
+    return 0
+
+
+def validate_net_named_call(
+    checker: &checker_core.Checker,
+    arena: &const syntax.SyntaxArena,
+    call_id: NodeId,
+    callee: NodeId,
+    source: &const String,
+    current_scope: symbols.ScopeId,
+) -> bool:
+    kind = direct_std_net_import_kind(checker, arena, callee, source, current_scope)
+    if kind <= 0 or kind == 4:
+        return false
+    operation = "socket"
+    minimum: i32 = 0
+    maximum: i32 = 3
+    result = net_result_type(checker, types.type_socket())
+    if kind == 2:
+        operation = "poll"
+        minimum = 2
+        maximum = 2
+        result = net_result_type(checker, types.type_usize())
+    elif kind == 3:
+        operation = "PollFd"
+        minimum = 2
+        maximum = 2
+        result = types.type_poll_fd()
+    validate_net_call_arguments(checker, arena, call_id, source, current_scope, &operation, minimum, maximum)
+    found = checker.symbols.find_in_scope(
+        source,
+        current_scope,
+        arena.nodes[callee.index].value_start,
+        arena.nodes[callee.index].value_length,
+    )
+    checker.model.record_name_symbol(callee, found)
+    checker.model.record_expr_type(callee, result)
+    checker.model.record_expr_type(call_id, result)
+    return true
 
 
 def validate_net_namespace_call(

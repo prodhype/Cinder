@@ -300,6 +300,8 @@ def collect_from_import_symbols(
                         elif original_text == "NetErrorKind":
                             symbol_kind = symbols.SymbolKind.ENUM
                             imported_type = types.type_net_error_kind()
+                        elif original_text == "socket" or original_text == "poll":
+                            symbol_kind = symbols.SymbolKind.BUILTIN
                         elif original_text == "AF_INET" or original_text == "AF_INET6" or original_text == "SOCK_STREAM":
                             symbol_kind = symbols.SymbolKind.CONSTANT
                             imported_type = types.type_i32()

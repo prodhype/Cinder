@@ -203,10 +203,12 @@ def emit_std_net_named_call(
     state: &codegen_model.ModuleExpressionState,
     emit_nested: def(&codegen_model.ModuleExpressionState, NodeId) -> void,
 ) -> bool:
-    if name != "socket" and name != "poll" and name != "PollFd":
-        return false
     imported = codegen_names.find_import_member(imports, name)
-    if not imported.virtual_builtin or imported.module_name != "std.net" or imported.member != name[0:len(name)]:
+    if (
+        not imported.virtual_builtin
+        or imported.module_name != "std.net"
+        or (imported.member != "socket" and imported.member != "poll" and imported.member != "PollFd")
+    ):
         return false
     callee_node = arena.nodes[callee.index]
     if (
@@ -217,7 +219,7 @@ def emit_std_net_named_call(
         )
     ):
         return false
-    codegen_access.emit_net_namespace_call(arena, call_id, name, source, builder, prefix, project_name, imports, context, state, emit_nested)
+    codegen_access.emit_net_namespace_call(arena, call_id, &imported.member, source, builder, prefix, project_name, imports, context, state, emit_nested)
     return true
 
 
@@ -915,7 +917,7 @@ def emit_nominal_constructor(
     if len(specialized_name) > 0:
         builder.append(specialized_name[0:len(specialized_name)])
     elif len(imported.module_name) > 0 and len(imported.member) > 0:
-        if not imported.virtual_builtin or imported.module_name != "std.net" or not codegen_type_names.emit_std_net_runtime_type(builder, name):
+        if not imported.virtual_builtin or imported.module_name != "std.net" or not codegen_type_names.emit_std_net_runtime_type(builder, &imported.member):
             builder.append(codegen_names.c_prefix(project_name, &imported.module_name))
             builder.append(imported.member)
     else:
